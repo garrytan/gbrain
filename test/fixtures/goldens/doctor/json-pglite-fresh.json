@@ -192,6 +192,11 @@
               "session_end": "extract",
               "writeback": "retire"
             },
+            "corpus_source_holds": {
+              "legacy_unstamped": 0,
+              "sessions": 0,
+              "unresolved": 0
+            },
             "counters_note": "local, append-only, loss-tolerant observability over the last 7d — never a source of truth",
             "cross_lane_duplicates_7d": 0,
             "instruction_visibility": "world",
@@ -1974,6 +1979,17 @@
         {
           "category": "brain",
           "details": {
+            "code": "held_failed",
+            "held": 0,
+            "items": []
+          },
+          "message": "No managed atom page or transcript is held after repeated extraction failures.",
+          "name": "extract_atoms_held_failed",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
             "docs": "docs/guides/write-refusals.md#invalid_fence",
             "model_repair": {
               "max_usd_per_day": 1,
@@ -2327,7 +2343,7 @@
         },
         {
           "category": "meta",
-          "message": "0 distinct typed values (pack declares 20)",
+          "message": "no typed pages",
           "name": "type_proliferation",
           "status": "ok"
         },

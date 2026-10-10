@@ -50,6 +50,8 @@ import { gbrainPath } from '../config.ts';
 import { isWriteThroughDisabled, resolvePageWriteTarget } from '../write-through.ts';
 import { isDurabilityHardened, commitWriteThroughFile } from '../brain-repo-durability.ts';
 import { upsertFactRow, parseFactsFence, formatFenceDate } from '../facts-fence.ts';
+import { unparsedFenceRefusal } from '../fence-repair/refusal.ts';
+import type { OperationError } from '../ops/contract.ts';
 import { contentHash } from '../utils.ts';
 import { extractFactsFromFenceText } from './extract-from-fence.ts';
 import { logStubGuardEvent } from './stub-guard-audit.ts';
@@ -118,6 +120,13 @@ export interface FenceWriteResult {
   /** True when fence parse-validate failed; rows were NOT inserted, .tmp quarantined. */
   fenceWriteFailed?: true;
   /**
+   * #6385 R12: set with `fenceWriteFailed` when the page's existing facts
+   * fence does not parse cleanly, so appending (a re-render) would drop the
+   * rows the parser skipped. Nothing was written (no .tmp); this is the typed
+   * `invalid_fence` / `target_fence_malformed` refusal for the caller to throw.
+   */
+  fenceRefusal?: OperationError;
+  /**
    * True when the stub-creation guard refused to spawn a phantom entity
    * page — either for an unprefixed bare slug (e.g. `jared` with no
    * `people/` directory), or (#4108) for a slug whose resolutionSource is
@@ -169,6 +178,19 @@ function recordWriteFailure(slug: string, sourceId: string, warnings: string[], 
     // eslint-disable-next-line no-console
     console.warn(`[facts.write_failures] couldn't append: ${err instanceof Error ? err.message : String(err)}`);
   }
+}
+
+/**
+ * #6385 R12: rows are appended by re-rendering the fence, which would drop
+ * every row the parser skipped, so a fence that parses with warnings is
+ * refused before anything is written (file, rows and DB stay as they are).
+ * Returns the typed refusal (recorded to the failure log), or null.
+ */
+function refuseUnparsedFence(body: string, target: FenceTarget, filePath: string): OperationError | null {
+  if (parseFactsFence(body).warnings.length === 0) return null;
+  const refusal = unparsedFenceRefusal(parseMarkdown(body, `${target.slug}.md`), 'facts', target.slug, target.sourceId);
+  recordWriteFailure(target.slug, target.sourceId, [`fence_input_unparsed: ${refusal.message}`], filePath);
+  return refusal;
 }
 
 export type FactFenceGitPathState = 'clean' | 'self_dirty' | 'foreign_dirty' | 'unknown';
@@ -289,7 +311,8 @@ export function stubEntityPage(
  * quarantine evidence, the JSONL failure log records the warnings,
  * and the DB is NOT touched. The caller treats this as a hard
  * failure on the page (no rows inserted, no duplicate count, no
- * fact_ids).
+ * fact_ids). The same flag, with `fenceRefusal` and no .tmp, means the
+ * page's existing fence does not parse cleanly (#6385 R12).
  */
 export async function writeFactsToFence(
   engine: BrainEngine,
@@ -465,6 +488,8 @@ export async function writeFactsToFence(
       } catch (err) {
         console.warn(`[facts.fence] FACTS_ROW_NUM_HINT_UNAVAILABLE: ${target.slug} (source ${target.sourceId}): ${err instanceof Error ? err.message : String(err)}; numbering from the file alone`);
       }
+      const fenceRefusal = refuseUnparsedFence(body, target, filePath);
+      if (fenceRefusal) return { inserted: 0, ids: [], fenceWriteFailed: true, fenceRefusal, ...withdrawnSkipped };
       const { facts: existingFenceFacts } = parseFactsFence(body);
       const fileMaxRowNum = existingFenceFacts.length > 0
         ? Math.max(...existingFenceFacts.map(f => f.rowNum))

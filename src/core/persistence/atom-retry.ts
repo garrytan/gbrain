@@ -34,7 +34,7 @@ export async function retryManagedAtomBatch(engine: BrainEngine, sourceId: strin
     if (atomRetryInputKey(session, current) !== atomRetryInputKey(session, origin)) throw opError('source_changed', 'The original atom input changed; this retry cannot reuse it.',
       `The ${origin.kind} that atom request ${requestId} extracted from in source ${sourceId} has changed since, so its retained batch no longer applies; nothing was started. Run a fresh atom drain, which extracts from the current content.`,
       { fix: drainFix(sourceId) });
-    if (await resumeManagedAtoms(engine, session, current)) return { status: 'completed', replayed: true, model_rerun: false };
+    if (await resumeManagedAtoms(engine, session, current) === 'done') return { status: 'completed', replayed: true, model_rerun: false };
     const checkpoint = retry.expectedCheckpoint as Array<{ failure?: string }> | null;
     if (checkpoint && !checkpoint[0]?.failure) return { status: 'completed', replayed: true, model_rerun: false };
     const saved = retry.rows.filter(row => row.intent?.kind === 'managed_atom_page');

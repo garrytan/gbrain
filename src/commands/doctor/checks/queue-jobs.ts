@@ -87,15 +87,20 @@ export async function computeQueueHealthCheck(
     );
     const rssKillCount = Number(rssKillRows[0]?.cnt ?? 0);
 
-    const promptTooLongRows: Array<{ cnt: number }> = await engine.executeRaw(
-      `SELECT count(*)::int AS cnt
-         FROM minion_jobs
-        WHERE name = 'subagent'
-          AND status = 'dead'
-          AND finished_at > now() - interval '24 hours'
-          AND error_text LIKE 'prompt_too_long:%'`,
+    const promptTooLongRows: Array<{ phase: 'patterns' | 'synthesize' | 'other'; cnt: number }> = await engine.executeRaw(
+      `SELECT CASE WHEN key LIKE 'dream:patterns:%' THEN 'patterns'
+                   WHEN key LIKE 'dream:synth%' THEN 'synthesize'
+                   ELSE 'other' END AS phase,
+              count(*)::int AS cnt
+         FROM (SELECT COALESCE(idempotency_key, data->>'__released_idempotency_key') AS key
+                 FROM minion_jobs
+                WHERE name = 'subagent'
+                  AND status = 'dead'
+                  AND finished_at > now() - interval '24 hours'
+                  AND error_text LIKE 'prompt_too_long:%') dead
+        GROUP BY 1`,
     );
-    const promptTooLongCount = Number(promptTooLongRows[0]?.cnt ?? 0);
+    const promptTooLong = Object.fromEntries(promptTooLongRows.map(r => [r.phase, Number(r.cnt)]));
 
     const oldWaitingHours = opts.oldWaitingHours
       ?? _resolveEnvNumber('GBRAIN_QUEUE_NO_WORKER_WARN_HOURS', 1);
@@ -253,13 +258,26 @@ export async function computeQueueHealthCheck(
         );
       }
     } catch { /* best-effort — divergence probes never break doctor */ }
-    if (promptTooLongCount > 0) {
+    if (promptTooLong.patterns) {
       problems.push(
-        `${promptTooLongCount} subagent job(s) dead-lettered with prompt_too_long in last 24h. ` +
+        `${promptTooLong.patterns} dream patterns subagent job(s) dead-lettered with prompt_too_long in last 24h. ` +
+        `The reflections batch exceeded the patterns model's input context. ` +
+        `Fix: set a larger-context \`models.dream.patterns\`, or shorten \`dream.patterns.lookback_days\`.`
+      );
+    }
+    if (promptTooLong.synthesize) {
+      problems.push(
+        `${promptTooLong.synthesize} dream synthesize subagent job(s) dead-lettered with prompt_too_long in last 24h. ` +
         `Dream/synthesize transcripts exceeded the model's input context. ` +
         `Fix: \`gbrain dream --phase synthesize --dry-run --json\` to identify fat transcripts; ` +
         `set \`dream.synthesize.max_prompt_tokens\` to bound the per-chunk budget, or use a ` +
         `larger-context model (Opus 4.7 = 1M tokens vs Sonnet 4.6 = 200K).`
+      );
+    }
+    if (promptTooLong.other) {
+      problems.push(
+        `${promptTooLong.other} subagent job(s) dead-lettered with prompt_too_long in last 24h. ` +
+        `The prompt exceeded the model's input context; use a larger-context model or a shorter prompt.`
       );
     }
 

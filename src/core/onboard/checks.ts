@@ -630,61 +630,67 @@ export async function checkPackUpgradeAvailable(
  * pages exceed pack-declared types + 5; fails at declared × 2. No false
  * positives on custom packs (compares to actual pack declaration count,
  * not a hardcoded threshold).
+ *
+ * #6289: each source is graded against its own resolved pack (per-source
+ * DB config included); sources sharing a pack pool their labels, and an
+ * alias counts as its canonical type. A source whose pack does not resolve,
+ * or a failed query, is "not verified" (warn), never ok.
  */
 export async function checkTypeProliferation(
   engine: BrainEngine,
 ): Promise<OnboardCheckResult> {
-  let declared = 15;  // fallback to gbrain-base-v2 default if pack unavailable
+  const result = (status: 'ok' | 'warn' | 'fail', message: string): OnboardCheckResult =>
+    ({ check: { name: 'type_proliferation', status, message }, remediations: [] });
+  let rows: Array<{ source_id: string; type: string }>;
   try {
-    const { loadActivePack } = await import('../schema-pack/load-active.ts');
-    const { loadConfigFileOnly } = await import('../config.ts');
-    let dbConfig: string | undefined;
-    try {
-      dbConfig = (await engine.getConfig('schema_pack')) ?? undefined;
-    } catch { /* tolerate pre-config brains */ }
-    const active = await loadActivePack({ cfg: loadConfigFileOnly(), remote: false, dbConfig })
-      .catch(() => null);
-    if (active) declared = active.manifest.page_types.length;
-  } catch {
-    // Use fallback.
+    rows = await engine.executeRaw<{ source_id: string; type: string }>(
+      `SELECT DISTINCT source_id, type FROM pages WHERE deleted_at IS NULL AND type IS NOT NULL ORDER BY source_id, type`);
+  } catch (e) {
+    return result('warn', `type_proliferation not verified: the page type query failed (${(e as Error).message}).`);
   }
-  const n = await safeCount(
-    engine,
-    `SELECT COUNT(DISTINCT type) AS count FROM pages WHERE deleted_at IS NULL AND type IS NOT NULL`,
-  );
-  const warn = declared + 5;
-  const fail = declared * 2;
-  if (n > fail) {
-    return {
-      check: {
-        name: 'type_proliferation',
-        status: 'fail',
-        message:
-          `${n} distinct page types (pack declares ${declared}). ` +
-          `Run \`gbrain onboard --check --explain\` to preview a pack upgrade ` +
-          `or define a custom pack with mapping_rules.`,
-      },
-      remediations: [],  // pack_upgrade_available check emits the actionable step
-    };
+  const { loadActivePackForLocalEngine } = await import('../schema-pack/best-effort.ts');
+  const { classifyStoredType } = await import('../schema-pack/type-usage.ts');
+  const pools = new Map<string, { pack: NonNullable<Awaited<ReturnType<typeof loadActivePackForLocalEngine>>>; sources: Set<string>; labels: Set<string>; undeclared: Set<string> }>();
+  const unresolved = new Set<string>();
+  for (const sourceId of new Set(rows.map(r => r.source_id))) {
+    const pack = await loadActivePackForLocalEngine(engine, { sourceId });
+    if (!pack) { unresolved.add(sourceId); continue; }
+    const pool = pools.get(pack.identity) ?? { pack, sources: new Set<string>(), labels: new Set<string>(), undeclared: new Set<string>() };
+    pool.sources.add(sourceId);
+    for (const { type } of rows.filter(r => r.source_id === sourceId)) {
+      const cls = classifyStoredType(type, pack.manifest);
+      pool.labels.add(cls.kind === 'alias_of' ? cls.canonical : type);
+      if (cls.kind === 'undeclared') pool.undeclared.add(type);
+    }
+    pools.set(pack.identity, pool);
   }
-  if (n > warn) {
-    return {
-      check: {
-        name: 'type_proliferation',
-        status: 'warn',
-        message: `${n} distinct page types vs ${declared} declared in pack — consider unification.`,
-      },
-      remediations: [],
-    };
-  }
-  return {
-    check: {
-      name: 'type_proliferation',
-      status: 'ok',
-      message: `${n} distinct typed values (pack declares ${declared})`,
-    },
-    remediations: [],
+  const graded = [...pools.values()].map(pool => {
+    const declared = pool.pack.manifest.page_types.length;
+    const n = pool.labels.size;
+    return { pool, declared, n, status: n > declared * 2 ? 'fail' as const : n > declared + 5 ? 'warn' as const : 'ok' as const };
+  });
+  const rank = { ok: 0, warn: 1, fail: 2 };
+  const worst = graded.sort((a, b) => rank[b.status] - rank[a.status] || b.n - b.declared - (a.n - a.declared))[0];
+  const where = (g: typeof graded[number]) => {
+    const undeclared = [...g.pool.undeclared].sort();
+    const names = undeclared.slice(0, 5).join(', ') + (undeclared.length > 5 ? `, +${undeclared.length - 5} more` : '');
+    return ` (source${g.pool.sources.size > 1 ? 's' : ''} ${[...g.pool.sources].sort().join(', ')}, pack ${g.pool.pack.manifest.name}${names ? `; undeclared: ${names}` : ''})`;
   };
+  const notVerified = unresolved.size
+    ? ` Not verified: the schema pack for source${unresolved.size > 1 ? 's' : ''} ${[...unresolved].sort().join(', ')} does not resolve (run \`gbrain schema active --source <id>\`).`
+    : '';
+  if (worst?.status === 'fail') {
+    return result('fail',
+      `${worst.n} distinct page types (pack declares ${worst.declared})${where(worst)}. ` +
+      `Run \`gbrain onboard --check --explain\` to preview a pack upgrade ` +
+      `or define a custom pack with mapping_rules.${notVerified}`);
+  }
+  if (worst?.status === 'warn') {
+    return result('warn', `${worst.n} distinct page types vs ${worst.declared} declared in pack — consider unification${where(worst)}.${notVerified}`);
+  }
+  if (notVerified) return result('warn', `type_proliferation${notVerified.trimEnd()}`);
+  if (!worst) return result('ok', 'no typed pages');
+  return result('ok', graded.map(g => `${g.n} distinct typed values (pack ${g.pool.pack.manifest.name} declares ${g.declared})`).join('; '));
 }
 
 /**

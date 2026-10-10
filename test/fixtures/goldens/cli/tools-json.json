@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 222258,
-    "stdoutSha256": "c57b5a6ee1354ed3411589becdcc087ea6d74b14101affa2869bbbb0ce20ce94",
+    "stdoutBytes": 222268,
+    "stdoutSha256": "c5f3afd4f6382a87d9d982ec0927d334dc01ca55e4d5eb8f99ed590e8b0cc704",
     "toolNames": [
       "remember",
       "entity",
@@ -227,7 +227,7 @@
               "type": "boolean"
             },
             "items": {
-              "description": "≤20 facts: [{fact, provenance}]",
+              "description": "≤20 of {fact,entity,provenance,kind,ttl,visibility}",
               "items": {
                 "type": "object"
               },
@@ -261,11 +261,11 @@
               "type": "string"
             },
             "ttl": {
-              "description": "\"30d\", \"12h\" or ISO 8601 time; omit = never.",
+              "description": "\"30d\", \"12h\" or ISO 8601; omit = never.",
               "type": "string"
             },
             "visibility": {
-              "description": "world (default) or private (local CLI only).",
+              "description": "world (default) or private (local CLI).",
               "enum": [
                 "world",
                 "private"

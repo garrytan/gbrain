@@ -14,10 +14,15 @@
  * a `synced` ledger (conversation id → ingested updatedAt) that lets a capped
  * `--limit` run move on to older conversations, and a `failed` ledger. A
  * conversation that fails to fetch OR to ingest QUARANTINE_ATTEMPTS times at
- * the same updatedAt is quarantined: reported, no longer re-fetched, and no
- * longer holding the watermark back. An edit (new updatedAt) or `--full`
- * retries it. Ingest outcomes are attributed per conversation (session id =
- * conversation id), so one failing conversation never blocks its batch.
+ * the same updatedAt is quarantined: it no longer holds the watermark back,
+ * but its entry stays until it imports and it is retried by id on a backoff
+ * even after the watermark passes it (#6387, see failed-ledger.ts). While any
+ * entry is unresolved the run reports `partial` with `unresolved`. An edit
+ * (new updatedAt) or `--full` retries it at once; a `--full` listing that no
+ * longer contains it drops it as `gone`. Aborts and auth stops never count as
+ * a conversation's failure. Ingest outcomes are attributed per conversation
+ * (session id = conversation id), so one failing conversation never blocks
+ * its batch.
  *
  * STATE LIVES IN CONFIG SCALARS (`connectors.<p>.source.<id>.*`), NOT
  * op_checkpoint: op_checkpoint stores a completed-KEY set with no scalar since,
@@ -37,6 +42,7 @@ import { getConnectorProvider } from './registry.ts';
 import { resolveCredential } from './credentials.ts';
 import { CONNECTOR_SPOOL_BATCH, pruneSpool, removeSpool, writeSpool } from './spool.ts';
 import type { ChatHistoryProvider, ConnectorProviderName, ConversationStub } from './types.ts';
+import { QUARANTINE_ATTEMPTS, fullSyncArgv, planConnectorFetch, readFailedLedger, recordFailedAttempt } from './failed-ledger.ts';
 import {
   authErrorAtKey,
   connectorSourceKey,
@@ -47,8 +53,7 @@ import {
 } from './config-keys.ts';
 
 export const CONNECTOR_SYNC_VERSION = 1;
-/** Failed fetches or ingests at one updatedAt before a conversation is quarantined. */
-export const QUARANTINE_ATTEMPTS = 3;
+export { QUARANTINE_ATTEMPTS };
 
 export type ConnectorSyncStatus =
   | 'success'
@@ -86,8 +91,14 @@ export interface ConnectorSyncResult {
   watermarkAdvancedTo?: string;
   /** Listed conversations skipped because this source already ingested that updatedAt. */
   skippedUnchanged: number;
-  /** Conversation ids quarantined after repeated fetch or ingest failures (not re-fetched until edited). */
+  /** Conversation ids quarantined after repeated fetch or ingest failures (retried by id on a backoff). */
   quarantined: string[];
+  /** Conversations in the failed ledger after this run: not archived yet (#6387). */
+  unresolved: number;
+  /** Unresolved conversations that only a `--full` sync can retry (recorded before their org was). */
+  held: string[];
+  /** Failed conversations a complete `--full` listing no longer contains; dropped from the ledger. */
+  gone: string[];
   spoolPaths: string[];
   embedKickoff: EmbedKickoffOutcome;
   hint?: string;
@@ -183,6 +194,9 @@ export async function runConnectorSync(
     fetchErrors: 0,
     skippedUnchanged: 0,
     quarantined: [],
+    unresolved: 0,
+    held: [],
+    gone: [],
     spoolPaths: [],
     embedKickoff: 'none',
   };
@@ -223,7 +237,7 @@ export async function runConnectorSync(
   const syncedKey = connectorSourceKey(opts.provider, sourceId, 'synced');
   const failedKey = connectorSourceKey(opts.provider, sourceId, 'failed');
   const synced = await readLedger<string>(engine, syncedKey);
-  const failed = await readLedger<{ attempts: number; updatedAt: string }>(engine, failedKey);
+  const failed = await readFailedLedger(engine, opts.provider, sourceId);
   const saveLedgers = async () => {
     await engine.setConfig(syncedKey, JSON.stringify(synced));
     await engine.setConfig(failedKey, JSON.stringify(failed));
@@ -251,32 +265,38 @@ export async function runConnectorSync(
   }
   base.listed = stubs.length;
 
-  if (stubs.length === 0 && !listErrored) {
+  // A complete --full listing is the provider's whole history: a failed
+  // conversation it no longer contains cannot be archived any more.
+  if (opts.full && !listErrored && !opts.dryRun) {
+    const listedIds = new Set(stubs.map(s => s.id));
+    for (const id of Object.keys(failed)) {
+      if (listedIds.has(id)) continue;
+      delete failed[id];
+      base.gone.push(id);
+    }
+    if (base.gone.length) await saveLedgers();
+  }
+
+  if (stubs.length === 0 && !listErrored && Object.keys(failed).length === 0) {
     await writeConnectorState(engine, opts.provider, sourceId, 'last_sync_at', new Date(now()).toISOString());
     return { ...base, status: 'nothing_new' };
   }
 
-  // Skip what this source already holds and what is quarantined, BEFORE the
-  // cap, so a capped run reaches conversations earlier runs did not.
-  const quarantined: string[] = [];
-  const pending = stubs.filter(stub => {
-    if (opts.full) return true;
-    if (stub.updatedAt && synced[stub.id] === stub.updatedAt) return false;
-    const failure = failed[stub.id];
-    if (failure && failure.updatedAt === (stub.updatedAt ?? '') && failure.attempts >= QUARANTINE_ATTEMPTS) {
-      quarantined.push(stub.id);
-      return false;
-    }
-    return true;
+  // Skip what this source already holds and what waits on its retry backoff,
+  // BEFORE the cap, so a capped run reaches conversations earlier runs did
+  // not; due retained failures get reserved slots under the cap (#6387).
+  const plan = planConnectorFetch({
+    stubs, synced, failed, full: !!opts.full, limit: opts.limit, nowMs: now(), routesByOrg: !!provider.routesByOrg,
   });
-  base.skippedUnchanged = stubs.length - pending.length - quarantined.length;
-
-  // Apply the per-run fetch cap (a cap ⇒ NOT a clean run).
-  const capped = typeof opts.limit === 'number' && pending.length > opts.limit;
-  const toFetch = capped ? pending.slice(0, opts.limit) : pending;
+  const quarantined = [...plan.waiting];
+  base.skippedUnchanged = plan.skippedUnchanged;
+  base.held = plan.held;
+  const capped = plan.capped;
+  const retryIds = new Set(plan.retries.map(s => s.id));
+  const toFetch = [...plan.retries, ...plan.listed];
 
   if (opts.dryRun) {
-    return { ...base, status: 'dry_run', listed: stubs.length, hint: `${toFetch.length} conversation(s) would be fetched` };
+    return { ...base, status: 'dry_run', listed: stubs.length, unresolved: Object.keys(failed).length, hint: `${toFetch.length} conversation(s) would be fetched` };
   }
 
   // FETCH details + spool + ingest, in batches (memory-bounded; banks progress).
@@ -291,21 +311,24 @@ export async function runConnectorSync(
   let partsDeletedTotal = 0;
   let allBatchesClean = true;
   let anyDrift = false;
+  let aborted = false;
 
   const spoolFormat = provider.spoolFormat; // capture: nested closures lose narrowing
   const batches = chunk(toFetch, CONNECTOR_SPOOL_BATCH);
-  for (let bi = 0; bi < batches.length; bi++) {
+  for (let bi = 0; bi < batches.length && !aborted; bi++) {
     const batch = batches[bi];
     const convs: Array<Record<string, unknown>> = [];
     const convStubs: ConversationStub[] = [];
     for (const stub of batch) {
       if (opts.signal?.aborted) break;
       try {
-        convs.push(await provider.fetchConversation(client, stub.id, { signal: opts.signal }));
+        convs.push(await provider.fetchConversation(client, stub.id, { signal: opts.signal, orgId: stub.orgId }));
         convStubs.push(stub);
         fetched++;
         opts.onProgress?.({ phase: 'fetch', listed: stubs.length, fetched, imported: importedTotal });
       } catch (e) {
+        // A cancelled run says nothing about the conversation: no strike.
+        if (opts.signal?.aborted) { aborted = true; break; }
         const term = classifyThrow(e);
         if (term === 'auth_required') {
           await stampAuthError(engine, opts.provider, now);
@@ -327,13 +350,15 @@ export async function runConnectorSync(
     if (convs.length) await ingestBatch();
     await saveLedgers();
 
-    /** Count one failure; quarantined conversations stop blocking the watermark. */
+    /**
+     * Count one failure; quarantined conversations stop blocking the
+     * watermark, and a retry by id never blocked it (the watermark describes
+     * listed history).
+     */
     function recordFailure(stub: ConversationStub): number {
-      const updatedAt = stub.updatedAt ?? '';
-      const attempts = (failed[stub.id]?.updatedAt === updatedAt ? failed[stub.id].attempts : 0) + 1;
-      failed[stub.id] = { attempts, updatedAt };
+      const { attempts } = recordFailedAttempt(failed, stub, now());
       if (attempts >= QUARANTINE_ATTEMPTS) quarantined.push(stub.id);
-      else blockingFailures++;
+      else if (!retryIds.has(stub.id)) blockingFailures++;
       return attempts;
     }
 
@@ -398,11 +423,11 @@ export async function runConnectorSync(
   if (clean && maxUpdatedAt && maxUpdatedAt !== watermark) {
     await writeConnectorState(engine, opts.provider, sourceId, 'watermark_iso', maxUpdatedAt);
     base.watermarkAdvancedTo = maxUpdatedAt;
-    // Conversations older than the next run's list window are never listed
-    // again, so their ledger entries are dead weight.
+    // Synced conversations older than the next run's list window are never
+    // listed again, so their entries are dead weight. Failed entries stay
+    // until they import (#6387): they are the only record of the omission.
     const floor = subtractDays(maxUpdatedAt, windowDays, now);
     for (const [id, updatedAt] of Object.entries(synced)) if (updatedAt < floor) delete synced[id];
-    for (const [id, entry] of Object.entries(failed)) if (entry.updatedAt < floor) delete failed[id];
     await saveLedgers();
   }
 
@@ -429,8 +454,19 @@ export async function runConnectorSync(
   // Prune the spool dir (belt-and-suspenders; batches already removed inline).
   pruneSpool(opts.provider, 0);
 
+  base.unresolved = Object.keys(failed).length;
+  if (base.unresolved > 0) {
+    base.hint =
+      `${base.unresolved} conversation(s) not archived yet; sync retries them automatically ` +
+      `(\`gbrain connectors status ${opts.provider} --json\` lists them).` +
+      (base.held.length
+        ? ` ${base.held.length} recorded before their organization was tracked need one full re-sync, which ` +
+          `re-downloads the whole history: ask the user, then run \`${fullSyncArgv(opts.provider, sourceId).join(' ')}\`.`
+        : '');
+  }
+
   base.status =
-    fetchErrors > 0 || capped || !allBatchesClean || listErrored
+    fetchErrors > 0 || capped || !allBatchesClean || listErrored || aborted || base.unresolved > 0
       ? 'partial'
       : importedTotal === 0
         ? 'nothing_new'

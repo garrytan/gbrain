@@ -23,6 +23,12 @@ export interface DoctorEntry {
   name: string;
   /** Every check name `run` can push, categorized in src/core/doctor-categories.ts. */
   emits: readonly string[];
+  /**
+   * Names a pre-gate entry only emits with a connected engine (#6303). `--only`
+   * of one of them connects the engine; test/doctor-only-engine-checks.test.ts
+   * fails when an engine-only name is not declared.
+   */
+  engineChecks?: readonly string[];
   run(ctx: DoctorContext): Promise<Check[] | typeof STOP_DOCTOR>;
 }
 

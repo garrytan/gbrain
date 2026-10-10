@@ -180,6 +180,11 @@
                 "session_end": "extract",
                 "writeback": "retire"
               },
+              "corpus_source_holds": {
+                "legacy_unstamped": 0,
+                "sessions": 0,
+                "unresolved": 0
+              },
               "counters_note": "local, append-only, loss-tolerant observability over the last 7d — never a source of truth",
               "cross_lane_duplicates_7d": 0,
               "instruction_visibility": "world",
@@ -2185,6 +2190,17 @@
           {
             "category": "brain",
             "details": {
+              "code": "held_failed",
+              "held": 0,
+              "items": []
+            },
+            "message": "No managed atom page or transcript is held after repeated extraction failures.",
+            "name": "extract_atoms_held_failed",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
               "auto_repair": {
                 "active": false,
                 "enabled": true,
@@ -2751,7 +2767,7 @@
           },
           {
             "category": "meta",
-            "message": "5 distinct typed values (pack declares 20)",
+            "message": "5 distinct typed values (pack gbrain-base-v2 declares 20)",
             "name": "type_proliferation",
             "status": "ok"
           },
@@ -3175,6 +3191,11 @@
                 "compact": "extract",
                 "session_end": "extract",
                 "writeback": "retire"
+              },
+              "corpus_source_holds": {
+                "legacy_unstamped": 0,
+                "sessions": 0,
+                "unresolved": 0
               },
               "counters_note": "local, append-only, loss-tolerant observability over the last 7d — never a source of truth",
               "cross_lane_duplicates_7d": 0,
@@ -5181,6 +5202,17 @@
           {
             "category": "brain",
             "details": {
+              "code": "held_failed",
+              "held": 0,
+              "items": []
+            },
+            "message": "No managed atom page or transcript is held after repeated extraction failures.",
+            "name": "extract_atoms_held_failed",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
               "auto_repair": {
                 "active": false,
                 "enabled": true,
@@ -5747,7 +5779,7 @@
           },
           {
             "category": "meta",
-            "message": "5 distinct typed values (pack declares 20)",
+            "message": "5 distinct typed values (pack gbrain-base-v2 declares 20)",
             "name": "type_proliferation",
             "status": "ok"
           },
