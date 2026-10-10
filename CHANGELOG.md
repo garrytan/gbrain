@@ -10,6 +10,37 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.158.0] - 2026-10-10
+
+**Captured memory stops leaking away: failed chats retry until they import, long messages stay whole, sessions file under their own source, and fence writers refuse instead of dropping rows.**
+
+Fix wave 13 PR3 closes 26 reported gaps in capture, the dream cycle, doctor, facts and config. Most of them silently lost or misfiled memory; each now either keeps it or says exactly what is held and how to release it.
+
+### Itemized changes
+
+- Chat connectors keep a conversation that failed until it imports (backoff, up to 10 retries per sync, fair `--limit` split, Claude org routing). The sync reports `partial` with `unresolved`, and doctor warns "archive incomplete". For archives synced before this fix, ask the user, then run `gbrain connectors sync <provider> --full` once.
+- Transcript pages keep every message whole. A message over 4,000 characters continues in the next block under the same speaker instead of being cut.
+- Captured session files record the source their session started under and are filed there. Older unstamped files are held until `gbrain sweep --assign-corpus <source>` (preview, then `--apply`), and a serve refuses to reroute a session to another source.
+- Fence writers no longer drop rows they can't read. A write that would re-render a facts or takes fence with a malformed row refuses with `invalid_fence` / `target_fence_malformed`; `forget` still expires the fact in the database. Facts fences are read by header name, so an unknown, repeated or missing column is held for the fence repair. `attributed_to` is a recognized column.
+- Managed atom extraction retries a failed page up to 3 times, then holds it (doctor `extract_atoms_held_failed` lists it with the paid retry command). `dream --drain` reports a `budget` stop with spend and cap instead of `no_progress`.
+- The dream cycle reads a schema pack set in database config when it gates extract_atoms and synthesize_concepts. A paid phase that only such a pack newly declares waits for `gbrain config set cycle.<phase>.enabled true` (`consent_required`).
+- Synthesis adopts an output that only local maintenance touched after the child committed. Any other later edit is a one-time per-page warning instead of a phase failure every cycle.
+- OpenClaw 2026.9.x compaction banks checkpoint segments again, and doctor warns when a week of compactions banked nothing.
+- Doctor: `--only` for an engine-reading check connects to the brain; `queue_health` and `global_maintenance_timeouts` attribute patterns deaths correctly; `type_proliferation` grades each source against its own pack.
+- Smaller fixes:
+  - claude-cli honors the call's output cap.
+  - Small strict-output calls run with thinking off.
+  - Batch `remember` refuses a non-UUID `request_id`.
+  - An empty repair preview's printed apply succeeds.
+  - Patterns records child timeouts and counts timeline appends.
+  - Relationship-contradiction judge errors back off, then hold (`gbrain edge-proposals retry`).
+  - `propose_takes` skips the dream cycle's own pages.
+  - Database `provider_chat_options` rows apply.
+  - CRAG think escalation stays within the query's sources.
+  - The Anthropic recipe lists `claude-haiku-5-5`.
+
+Contributed by @javieraldape, @mattverlaque, @spiky02plateau, @Masashi-Ono0611, @h6y3 and @andreineacsu.
+
 ## [0.60.157.0] - 2026-10-10
 
 **A database-only `validate: false` stamp no longer refuses every write; lost memory writes are counted and replayable.**
