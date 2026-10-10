@@ -101,6 +101,12 @@ export function parseYamlMini(content: string): unknown {
     let inDouble = false;
     for (let j = 0; j < line.length; j++) {
       const c = line[j];
+      // Inside double quotes a backslash escapes the next char (`\"` does not
+      // close the string). Single quotes escape as `''`, which toggles twice.
+      if (c === '\\' && inDouble && j + 1 < line.length) {
+        result += c + line[++j];
+        continue;
+      }
       if (c === "'" && !inDouble) inSingle = !inSingle;
       else if (c === '"' && !inSingle) inDouble = !inDouble;
       else if (c === '#' && !inSingle && !inDouble) break;
@@ -125,9 +131,12 @@ export function parseYamlMini(content: string): unknown {
         return inner.split(',').map(item => parseScalar(item.trim()));
       }
     }
-    // Quoted string
-    if ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
-        (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+    // Quoted string. Single-quoted YAML has one escape: `''` is a literal `'`.
+    // Double-quoted content is returned as written (escapes are not decoded).
+    if (trimmed.startsWith("'") && trimmed.endsWith("'")) {
+      return trimmed.slice(1, -1).replace(/''/g, "'");
+    }
+    if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
       return trimmed.slice(1, -1);
     }
     // Number

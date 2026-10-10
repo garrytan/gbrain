@@ -10,6 +10,29 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.155.0] - 2026-10-10
+
+**Schema pack mutations no longer double every backslash in quoted values (#6432).**
+
+Running `gbrain schema add-alias` or `remove-alias` on a schema pack rewrote its `pack.yaml`, and any string containing a backslash, such as a link-inference regex like `\b(works? at|employed by)\b`, came back with each backslash doubled. The writer quoted strings with JSON escaping, but the loader returns quoted text as written, so every mutation fed the escaped form back in and grew it again; the bundled single-quoted regexes in `company-brain.yaml` corrupted the first time a fork mutated its copy. The writer now emits single-quoted YAML, where only `''` is special, and the loader unescapes `''`; strings with control characters keep the old double-quoted form. A double-quoted value such as `"\bfoo\b"` still loads as written. Contributed by @harjothkhara.
+
+**Say to your agent:** *"Add the alias 'colleague' to the person type in my schema pack, then show me the link-inference regex lines to confirm none of them changed."*
+
+### What you see
+
+| Where | What changed |
+|---|---|
+| `gbrain schema add-alias` and `remove-alias` | A regex or any value containing `\`, `"`, `'`, `|` or `#` comes back from `pack.yaml` exactly as it went in, however many mutations run. |
+| A `pack.yaml` already corrupted by the old writer | Not repaired: the doubled backslashes are now the stored value. Restore the original text from your pack source or version control. |
+
+## To take advantage of v0.60.155.0
+
+Nothing to migrate. If a pack you mutated before this release has doubled backslashes, correct those lines by hand once. Check a pack with:
+
+```bash
+gbrain schema lint
+```
+
 ## [0.60.154.0] - 2026-10-10
 
 **`gbrain serve` answers while a large effects backlog drains.** A big import followed by `gbrain embed --stale` left tens of thousands of queued page embedding effects whose chunks already had current vectors. The serve consumer ran each one through a claim, a guard, a projection read and a completion, and PGLite resolves its queries as one microtask chain, so stdin waited for the whole drain: on a 47k-page brain the first tool call took 432 to 489 s. It now answers in about 2 s, and the same backlog settles in about 18 s.
