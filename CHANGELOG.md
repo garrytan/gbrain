@@ -10,6 +10,32 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**Keyword search finds words glued to Chinese, Japanese or Korean text, and you choose which source a self-registered agent writes to when you approve it.**
+
+A note titled `升级PostgreSQL17` used to be invisible to a keyword search for `PostgreSQL17`, because the index stored the whole glued run as one word. The index now splits wherever CJK text meets Latin letters or digits, and upgrading rebuilds only the pages and chunks that contain such a boundary. When an agent registers itself over OAuth and asks to connect, the approval page now has a "Write source" picker, so you decide which source it reads and writes before it gets a token. On a classic self-hosted Postgres brain, an agent whose page write is refused stops retrying and tells you the real fix: write the file, commit it and run `gbrain sync`. After you upgrade, run `gbrain reindex-search-vector` only if you changed `GBRAIN_FTS_LANGUAGE`; it now rebuilds page vectors too.
+
+### Itemized changes
+
+- **CJK/Latin boundaries in keyword search** (#6370). Every indexing `to_tsvector` and the title query read through a new `gbrain_fts_input()` that inserts a space at each CJK↔ASCII letter or digit boundary; text without CJK is unchanged byte for byte. The upgrade migration rebuilds only rows containing a boundary, in checkpointed batches.
+- **`gbrain reindex-search-vector` rebuilds page vectors** (#6374). Pages now get the same vector the write path builds, so a language change reaches titles and timelines, not only chunks. A page edited during the rebuild is skipped and reindexed by its own save, and facts you withdrew stay out of the index.
+- **Choose a self-registered client's source at first consent** (#6202). Clients that registered themselves through dynamic client registration show a "Write source" picker on their first approval, listing your active sources. Approving with or without a change counts as the client's one first consent; later changes go through the Agents page or `gbrain auth rescope --client`. Clients registered before this release keep read-only consent. A migration adds the `oauth_clients.registered_via` marker.
+- **Classic Postgres write refusals ask instead of retrying** (#6277). `owner_unavailable` with `detail: unbound_source` now renders `retryable: false` and `fix.next: ask_user`, and its guidance says write, commit, `gbrain sync --source <id>`. The guide in [write-refusals](docs/guides/write-refusals.md#unbound-sources-on-postgres) and six skills cover the classic path.
+- **One JSON document on stdout** (#6386): `gbrain sync status --json`, `gbrain sync unblock --json` and `gbrain embed --facts --json` write their JSON to stdout, not stderr.
+- **Bootstrap verify waits like a normal write** (#6356): `gbrain bootstrap verify` uses the CLI write wait instead of a fixed 5 seconds, and a write still pending names its next step.
+- **Local reranker setup** (#6381): the llama-server reranker guide points at the llama.cpp maintainers' model file, the recipe's default names the `qwen3-reranker-0.6b` alias the guide uses, and `gbrain models doctor` reports `config` when the server scores a relevant and an unrelated passage the same.
+- **Codex session hooks** (#6399): a Codex rollout that has only a header ends as `empty_session`, not `parser_drift`.
+- **Link validation** (#6266): the link validator resolves relative links from the page's own directory, the same way link extraction does.
+- **Search latency budget** (#6400): the query-embedding deadline starts at the first embed request, so time spent before it no longer eats the vector search's budget.
+
+### For contributors
+
+- CONTRIBUTING warns before the `git reset --hard` in the line-ending refresh.
+- Every pglite-snapshot cache key in `e2e.yml`, `test.yml` and `stress.yml` also hashes `src/core/audit/redact-connection-info.ts`, which the schema closure now imports.
+
+Contributed by @dovstern, @javieraldape, @daveove, @benswinney and @dhruvatr.
+
 ## [0.60.152.0] - 2026-10-10
 
 **Remote fact writes apply the same visibility filter as reads.**
