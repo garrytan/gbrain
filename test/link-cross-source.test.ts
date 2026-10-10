@@ -1,5 +1,5 @@
 /**
- * #4680 — cross-source automatic links follow the source policy on every writer.
+ * #4680 / #4381 — cross-source automatic links follow the source policy on every writer.
  *
  * Protects: (1) an outbound edge the source policy approved (`link_resolution.cross_source`,
  * or a `[[source:slug]]` reference from a federated origin) is written by put_page's link
@@ -7,12 +7,14 @@
  * `skipped_cross_source` reporting the drops instead of hiding them; (2) with the flag off
  * and a non-federated origin, cross-source candidates are dropped exactly as before and
  * counted; (3) canonical attendance keeps its foreign-person exception and the endpoint
- * revision fence still refuses a stale foreign endpoint; (4) read side: a reader granted one source never sees the other
+ * revision fence still refuses a stale foreign endpoint; (4) a derived edge records whether
+ * its reference was authored qualified (`links.resolution_type`), never because a resolver
+ * picked another source; (5) read side: a reader granted one source never sees the other
  * source's endpoint through get_links, get_backlinks or the entity card, whether `remote`
  * is true or omitted, while a reader granted both sources does.
  * Fails when: the preparation gate or the sweep drops approved edges (the admitted rows
  * are then deleted by the next preserving replacement), the count is missing, the
- * attendance exception or revision fence is lost, or a
+ * attendance exception or revision fence is lost, resolution_type is not written, or a
  * link read scopes only one endpoint for an untrusted caller.
  * Seams: none (production entry points only). PGLite always, Postgres when DATABASE_URL
  * is set (test/postgres-unit-arms.txt lane).
@@ -153,6 +155,31 @@ for (const backend of testBackends()) {
       const applied = await engine.transaction(async tx => { await tx.lockPageKeys(prepared.pageKeys); return prepared.apply(tx); });
       expect(applied).toMatchObject({ created: 0, removed: 0, errors: 1 });
       expect(await edges(engine, 'alpha', 'notes/origin')).toEqual([SAME]);
+    }), 60_000);
+  });
+
+  describe(`${backend}: #4381 resolution_type records authored qualification`, () => {
+    let engine: BrainEngine; let close: () => Promise<void>;
+    beforeAll(async () => {
+      ({ engine, close } = await isolatedSharedSkillsEngine(databaseUrl));
+      await engine.executeRaw(`INSERT INTO sources(id,name,config) VALUES('alpha','alpha','{}'),('beta','beta','{}')`);
+      await page(engine, 'beta', 'topics/beta-only', 'note');
+      await page(engine, 'alpha', 'topics/own', 'note');
+      await page(engine, 'alpha', 'notes/qualified', 'note', 'See [[beta:topics/beta-only]].');
+      await page(engine, 'alpha', 'notes/unqualified', 'note', 'See [[topics/beta-only]] and [[topics/own]].');
+    }, 120_000);
+    afterAll(async () => { await close(); });
+
+    test('a [[source:slug]] reference writes qualified; a resolver picking another source for a bare reference does not', () => withEnv(ON, async () => {
+      for (const slug of ['notes/qualified', 'notes/unqualified']) expect(await derive(engine, 'alpha', slug)).toMatchObject({ errors: 0 });
+      const rows = await engine.executeRaw<{ from_slug: string; to_source_id: string; resolution_type: string | null }>(
+        `SELECT f.slug from_slug, t.source_id to_source_id, l.resolution_type FROM links l
+         JOIN pages f ON f.id=l.from_page_id JOIN pages t ON t.id=l.to_page_id WHERE f.source_id='alpha' ORDER BY 1, 2`);
+      expect(rows).toEqual([
+        { from_slug: 'notes/qualified', to_source_id: 'beta', resolution_type: 'qualified' },
+        { from_slug: 'notes/unqualified', to_source_id: 'alpha', resolution_type: 'unqualified' },
+        { from_slug: 'notes/unqualified', to_source_id: 'beta', resolution_type: 'unqualified' },
+      ]);
     }), 60_000);
   });
 

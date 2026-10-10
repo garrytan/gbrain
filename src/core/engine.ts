@@ -177,6 +177,8 @@ export interface LinkBatchInput {
    * legacy / unknown / pre-v98 semantics.
    */
   link_kind?: string;
+  /** #4381: how the authored reference named its target: `qualified` (`[[source:slug]]`) or `unqualified`. NULL for edges no reference derived. */
+  resolution_type?: 'qualified' | 'unqualified';
 }
 
 /** Input row for addTimelineEntriesBatch. Optional fields default to '' (matches NOT NULL DDL). */
