@@ -205,7 +205,8 @@ export const failedWritesRepair: RepairHandler = {
         `Preview first: ${command} — show the user the listing, then run the apply command it prints: ${command} --apply --expect <preview-hash>`,
         'docs/guides/repair.md#failed-writes');
     }
-    const approved = await loadApprovedSet<ApprovedWrite>(engine, { command: 'failed-writes', hash: opts.expect, previewCommand: command });
+    const approved = await loadApprovedSet<ApprovedWrite>(engine, { command: 'failed-writes', hash: opts.expect, previewCommand: command,
+      emptyHash: async () => previewHash({ kind: 'failed-writes-v1', brain_id: scope.brain_id, sources: (await engine.executeRaw<{ id: string; incarnation: string }>('SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids])), selection: { source_ids: scope.source_ids }, replay: [] }) });
     if (approved.items.some(write => JSON.stringify(write.selection) !== JSON.stringify(scope.source_ids))) throw previewChangedError(opts.expect, command);
     const items = approved.items.map((write, index) => item(write, opts.expect!, index === approved.items.length - 1));
     return { items: items.filter(entry => afterCursor(entry.cursor, after)), preview_hash: opts.expect, residuals: {} };
