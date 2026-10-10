@@ -124,7 +124,7 @@ class NativeManagerAcceptance(unittest.TestCase):
         old.wait(timeout=30)
         if old.stdout:
             old.stdout.close()
-        cls.server_env["GBRAIN_HERMES_FIXTURE_REOPEN"] = "1"
+        cls.server_env["GBRAIN_TEST_HERMES_FIXTURE_REOPEN"] = "1"
         cls.server = subprocess.Popen(
             [shutil.which("bun"), "test/helpers/hermes-provider-server.ts"], cwd=REPO,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=cls.stderr,

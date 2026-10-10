@@ -33,7 +33,7 @@
  *     degrades to waiting, never to dead-letters.
  */
 
-import { authorizeJobExecution, withSubmissionAuthority } from '../minions/submission-authority.ts';
+import { runWithJobAuthority } from '../minions/submission-boundary.ts';
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import { MinionQueue } from '../minions/queue.ts';
@@ -365,8 +365,7 @@ async function drainLoop(
         // work (e.g. dream synthesize) would silently absorb every child's
         // spend into the phase tag, breaking the one-ledger-per-surface rule
         // the phase telemetry depends on.
-        const authority = await authorizeJobExecution(engine, job);
-        result = await withSubmissionAuthority(authority, () => withChatPhase(`job:${job.name}`, () => handler(context)), context.signal);
+        result = await runWithJobAuthority(engine, job, () => withChatPhase(`job:${job.name}`, () => handler(context)), context.signal);
         handlerRan = true;
       } catch (e) {
         handlerErr = e;

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync, realpathSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -14,44 +14,53 @@ import { parseMarkdown } from '../src/core/markdown.ts';
 import { isFactsBackstopEligible } from '../src/core/facts/eligibility.ts';
 import type { WriteRequest } from '../src/core/persistence/model.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
+import { resetPgliteState } from './helpers/reset-pglite.ts';
+import { withEnv } from './helpers/with-env.ts';
 
+let schemaVersion: string;
 let home: string;
 let engine: PGLiteEngine;
 let queue: MinionQueue;
 let registration: Awaited<ReturnType<typeof registerLocalWriter>>;
 const sourceId = 'local-child';
-const oldHome = process.env.GBRAIN_HOME;
-const oldCeiling = process.env.GIT_CEILING_DIRECTORIES;
 const grant: LocalGrant = { sourceIds: ['*'], operations: null, scopes: ['read', 'write'], slugPrefixes: null };
 const operations = ['get_page', 'put_page'];
 const prefixes = ['wiki/originals/*'];
 const context = (): OperationContext => ({ engine, config: { engine: 'pglite', embedding_disabled: true }, dryRun: false, remote: false,
   sourceId, logger: { info() {}, warn() {}, error() {} } });
 const payload = () => ({ source_id: sourceId, prompt: 'synthetic bounded replay test', allowed_tools: [...operations], allowed_slug_prefixes: [...prefixes] });
+// GIT_CEILING_DIRECTORIES names the fixture's PARENT so git never discovers the protected agent-home .git marker.
+const fixtureEnv = () => ({ GBRAIN_HOME: home, GIT_CEILING_DIRECTORIES: dirname(realpathSync(home)) });
+// Every test body (not just setup) runs with the hermetic env, restored by withEnv even on failure.
+const homeTest = (name: string, fn: () => Promise<void>) => test(name, () => withEnv(fixtureEnv(), fn));
 const mint = async (data = payload()) => withVerifiedLocalRegistration(engine, registration, () =>
   prepareLocalSubagent(context(), randomUUID(), 'subagent', data, data.allowed_tools, data.allowed_slug_prefixes));
 
-beforeEach(async () => {
-  home = mkdtempSync(join(process.env.TMPDIR!, 'local-subagent-replay-'));
-  process.env.GBRAIN_HOME = home;
-  process.env.GIT_CEILING_DIRECTORIES = dirname(realpathSync(home));
-  // GIT_CEILING_DIRECTORIES must prevent discovery of the protected agent-home .git marker.
-  const git = Bun.spawnSync(['git', '-C', home, 'rev-parse', '--show-toplevel'], { env: process.env });
-  expect(git.exitCode).not.toBe(0);
+beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
-  queue = new MinionQueue(engine);
-  await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [sourceId]);
-  registration = await registerLocalWriter(engine, 'cli', structuredClone(grant));
-  await engine.setConfig('embedding_disabled', 'true');
-  await engine.setConfig('facts.extraction_enabled', 'true');
-});
-afterEach(async () => {
+  schemaVersion = (await engine.getConfig('version')) ?? '7';
+}, 60_000);
+afterAll(async () => {
   await engine?.disconnect();
+});
+beforeEach(async () => {
+  home = mkdtempSync(join(process.env.TMPDIR!, 'local-subagent-replay-'));
+  await withEnv(fixtureEnv(), async () => {
+    const git = Bun.spawnSync(['git', '-C', home, 'rev-parse', '--show-toplevel'], { env: process.env });
+    expect(git.exitCode).not.toBe(0);
+    await resetPgliteState(engine);
+    await engine.setConfig('version', schemaVersion); // the reset wipes the migration ledger row in config
+    queue = new MinionQueue(engine);
+    await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [sourceId]);
+    registration = await registerLocalWriter(engine, 'cli', structuredClone(grant));
+    await engine.setConfig('embedding_disabled', 'true');
+    await engine.setConfig('facts.extraction_enabled', 'true');
+  });
+});
+afterEach(() => {
   rmSync(home, { recursive: true, force: true });
-  if (oldHome === undefined) delete process.env.GBRAIN_HOME; else process.env.GBRAIN_HOME = oldHome;
-  if (oldCeiling === undefined) delete process.env.GIT_CEILING_DIRECTORIES; else process.env.GIT_CEILING_DIRECTORIES = oldCeiling;
 });
 
 async function accepted() {
@@ -81,7 +90,7 @@ async function written() {
 }
 
 describe('durable local-subagent publication, replay, and synthesis bounds', () => {
-  test('committed local_subagent receipt survives private-job cleanup and the same request replays it', async () => {
+  homeTest('committed local_subagent receipt survives private-job cleanup and the same request replays it', async () => {
     const a = await written();
     expect(a.row.authority).toMatchObject({ remote: true, localSubagent: { kind: 'local_subagent', acceptedJobId: a.job.id } });
     const cleaned = await queue.reconcilePrivateQueue(a.job.queue, 'synthetic private queue completed');
@@ -99,7 +108,7 @@ describe('durable local-subagent publication, replay, and synthesis bounds', () 
     expect(after[0].count).toBe(before[0].count);
   });
 
-  test('publication/replay authorization refuses a revoked or narrowed live CLI grant', async () => {
+  homeTest('publication/replay authorization refuses a revoked or narrowed live CLI grant', async () => {
     for (const state of ['revoked', 'narrowed'] as const) {
       const a = await written();
       if (state === 'revoked') {
@@ -113,7 +122,7 @@ describe('durable local-subagent publication, replay, and synthesis bounds', () 
     }
   });
 
-  test('receipt replay refuses source-incarnation replacement and accepted operation/prefix/parent identity edits', async () => {
+  homeTest('receipt replay refuses source-incarnation replacement and accepted operation/prefix/parent identity edits', async () => {
     const a = await written();
     await engine.executeRaw('DELETE FROM sources WHERE id=$1', [sourceId]);
     await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [sourceId]);
@@ -131,7 +140,7 @@ describe('durable local-subagent publication, replay, and synthesis bounds', () 
     await expect(authorizeStoredRequest(engine, changedParent)).rejects.toThrow();
   });
 
-  test('a broad parent does not give a confined child source-wide extraction authority', async () => {
+  homeTest('a broad parent does not give a confined child source-wide extraction authority', async () => {
     const a = await written();
     const page = parseMarkdown(a.content, a.slug);
     expect(isFactsBackstopEligible(a.slug, page)).toEqual({ ok: true });
@@ -141,7 +150,7 @@ describe('durable local-subagent publication, replay, and synthesis bounds', () 
     expect(await engine.executeRaw("SELECT id FROM minion_jobs WHERE name='facts-absorb' AND data->>'persistence_request_id'=$1", [a.row.id])).toHaveLength(0);
   });
 
-  test('dream-generated, private, opt-out and quarantined pages retain canonical exclusions', async () => {
+  homeTest('dream-generated, private, opt-out and quarantined pages retain canonical exclusions', async () => {
     const a = await written();
     const before = (await engine.readPageSnapshot(a.slug, { sourceId }))!;
     for (const [frontmatter, reason] of [

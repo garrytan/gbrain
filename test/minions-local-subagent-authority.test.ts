@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -12,36 +12,48 @@ import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { buildBrainTools } from '../src/core/minions/tools/brain-allowlist.ts';
 import type { WriteRequest } from '../src/core/persistence/model.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
+import { resetPgliteState } from './helpers/reset-pglite.ts';
+import { withEnv } from './helpers/with-env.ts';
 
-let home: string; let engine: PGLiteEngine; let queue: MinionQueue;
+let schemaVersion: string; let home: string; let engine: PGLiteEngine; let other: PGLiteEngine; let queue: MinionQueue;
 let registration: Awaited<ReturnType<typeof registerLocalWriter>>;
 const sourceId = 'local-child';
-const oldHome = process.env.GBRAIN_HOME;
-const oldCeiling = process.env.GIT_CEILING_DIRECTORIES;
 const broad: LocalGrant = { sourceIds: ['*'], operations: null, scopes: ['read', 'write'], slugPrefixes: null };
 const ops = ['get_page', 'put_page'];
 const prefixes = ['wiki/originals/*'];
 const context = (): OperationContext => ({ engine, config: { engine: 'pglite', embedding_disabled: true }, dryRun: false, remote: false, sourceId,
   logger: { info() {}, warn() {}, error() {} } });
 const data = () => ({ source_id: sourceId, prompt: 'bounded scripted task', allowed_tools: [...ops], allowed_slug_prefixes: [...prefixes] });
+// GIT_CEILING_DIRECTORIES names the fixture's PARENT so git never discovers the live agent home's ownership marker.
+const fixtureEnv = () => ({ GBRAIN_HOME: home, GIT_CEILING_DIRECTORIES: dirname(realpathSync(home)) });
+// Every test body (not just setup) runs with the hermetic env, restored by withEnv even on failure.
+const homeTest = (name: string, fn: () => Promise<void>) => test(name, () => withEnv(fixtureEnv(), fn));
 const mint = (payload = data(), ctx = context()) => withVerifiedLocalRegistration(engine, registration, () =>
   prepareLocalSubagent(ctx, randomUUID(), 'subagent', payload, payload.allowed_tools, payload.allowed_slug_prefixes));
 
+// One engine per file (plus a second, real engine for the cross-engine refusal checks); data is wiped per test.
+beforeAll(async () => {
+  engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema();
+  other = new PGLiteEngine(); await other.connect({}); await other.initSchema();
+  schemaVersion = (await engine.getConfig('version')) ?? '7';
+}, 120_000);
+afterAll(async () => {
+  try { await engine?.disconnect(); } finally { await other?.disconnect(); }
+});
 beforeEach(async () => {
   home = mkdtempSync(join(process.env.TMPDIR!, 'local-delegation-'));
-  process.env.GBRAIN_HOME = home; process.env.GIT_CEILING_DIRECTORIES = dirname(home);
-  const git = Bun.spawnSync(['git', '-C', home, 'rev-parse', '--show-toplevel'], { env: process.env });
-  expect(git.exitCode).not.toBe(0); // Never discover the live agent home's ownership marker.
-  engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); queue = new MinionQueue(engine);
-  await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [sourceId]);
-  registration = await registerLocalWriter(engine, 'cli', structuredClone(broad));
-  await engine.setConfig('embedding_disabled', 'true'); await engine.setConfig('facts.extraction_enabled', 'false');
+  await withEnv(fixtureEnv(), async () => {
+    const git = Bun.spawnSync(['git', '-C', home, 'rev-parse', '--show-toplevel'], { env: process.env });
+    expect(git.exitCode).not.toBe(0); // Never discover the live agent home's ownership marker.
+    await resetPgliteState(engine); await resetPgliteState(other);
+    await engine.setConfig('version', schemaVersion); await other.setConfig('version', schemaVersion); // the reset wipes the migration ledger row in config
+    queue = new MinionQueue(engine);
+    await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [sourceId]);
+    registration = await registerLocalWriter(engine, 'cli', structuredClone(broad));
+    await engine.setConfig('embedding_disabled', 'true'); await engine.setConfig('facts.extraction_enabled', 'false');
+  });
 });
-afterEach(async () => {
-  await engine?.disconnect(); rmSync(home, { recursive: true, force: true });
-  if (oldHome === undefined) delete process.env.GBRAIN_HOME; else process.env.GBRAIN_HOME = oldHome;
-  if (oldCeiling === undefined) delete process.env.GIT_CEILING_DIRECTORIES; else process.env.GIT_CEILING_DIRECTORIES = oldCeiling;
-});
+afterEach(() => { rmSync(home, { recursive: true, force: true }); });
 async function accepted() {
   const payload = data(); const trusted = await mint(payload);
   const job = await queue.add('subagent', payload, {}, trusted);
@@ -65,7 +77,7 @@ async function written() {
 
 describe('durable local-subagent authority', () => {
 
-  test('authenticated owner admits immutable durable work without a fake parent job', async () => {
+  homeTest('authenticated owner admits immutable durable work without a fake parent job', async () => {
     const payload = data();
     const ctx = { ...context(), auth: { token: '', clientId: registration.id, scopes: ['read', 'write'], sourceId } };
     const trusted = await mint(payload, ctx);
@@ -79,16 +91,12 @@ describe('durable local-subagent authority', () => {
     for (const fake of [{ ...trusted }, JSON.parse(JSON.stringify(trusted)), { submissionAuthority: job.submission_authority! }]) {
       await expect(queue.add('subagent', payload, {}, fake)).rejects.toThrow('Unsupported submission authority');
     }
-    const other = new PGLiteEngine();
-    try {
-      await other.connect({}); await other.initSchema();
-      await expect(new MinionQueue(other).add('subagent', payload, {}, trusted)).rejects.toThrow('another engine');
-      await expect(mint(payload, { ...ctx, engine: other })).rejects.toThrow('verified local CLI');
-      await expect(authorizeJobExecution(other, job)).rejects.toThrow();
-    } finally { await other.disconnect(); }
+    await expect(new MinionQueue(other).add('subagent', payload, {}, trusted)).rejects.toThrow('another engine');
+    await expect(mint(payload, { ...ctx, engine: other })).rejects.toThrow('verified local CLI');
+    await expect(authorizeJobExecution(other, job)).rejects.toThrow();
   });
 
-  test('unverified, mismatched authenticated, stdio and remote lanes cannot mint; fresh narrowing beats retained ALS', async () => {
+  homeTest('unverified, mismatched authenticated, stdio and remote lanes cannot mint; fresh narrowing beats retained ALS', async () => {
     const payload = data();
     await expect(prepareLocalSubagent(context(), randomUUID(), 'subagent', payload, ops, prefixes)).rejects.toThrow('verified local CLI');
     await expect(mint(payload, { ...context(), remote: true })).rejects.toThrow('verified local CLI');
@@ -101,7 +109,7 @@ describe('durable local-subagent authority', () => {
     });
   });
 
-  test('execution rejects payload, tools, prefixes, sibling job/source/principal and archived/recreated source', async () => {
+  homeTest('execution rejects payload, tools, prefixes, sibling job/source/principal and archived/recreated source', async () => {
     const payload = data(); const trusted = await mint(payload); const job = await queue.add('subagent', payload, {}, trusted);
     for (const change of [{ prompt: 'tampered' }, { source_id: 'default' }, { allowed_tools: [...ops, 'delete_page'] }, { allowed_slug_prefixes: ['wiki/sibling/*'] }]) {
       await expect(authorizeJobExecution(engine, { ...job, data: { ...payload, ...change } })).rejects.toThrow('payload changed');
@@ -117,7 +125,7 @@ describe('durable local-subagent authority', () => {
     await expect(authorizeJobExecution(engine, job)).rejects.toThrow('incarnation');
   });
 
-  test('accepted tools stay remote, source-bound and private-excluding; ordinary descendants inherit no CLI power', async () => {
+  homeTest('accepted tools stay remote, source-bound and private-excluding; ordinary descendants inherit no CLI power', async () => {
     const a = await accepted();
     const tools = buildBrainTools({ engine, config: context().config, subagentId: a.job.id, sourceId,
       allowedSlugPrefixes: prefixes, localSubagent: a.capability, deferEmbeds: true });
