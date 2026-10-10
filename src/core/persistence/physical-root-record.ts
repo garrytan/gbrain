@@ -1,14 +1,46 @@
 import { randomUUID } from 'node:crypto';
-import { closeSync, constants, existsSync, fstatSync, fsyncSync, lstatSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
-import { dirname, isAbsolute, join, relative, sep } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { appendFileSync, closeSync, constants, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { OperationError } from '../ops/contract.ts';
 import { flushDirectory } from '../fs-durable.ts';
 import { digest, sha256 } from './digest.ts';
 import { canonicalFilesystemPath } from './root-registry.ts';
-import { PHYSICAL_ROOT_MARKER } from './root-metadata.ts';
+import { OWNERSHIP_MARKER_GLOBS, PHYSICAL_ROOT_MARKER } from './root-metadata.ts';
 
-export { PHYSICAL_ROOT_MARKER, isPhysicalRootMetadata } from './root-metadata.ts';
+export { OWNERSHIP_MARKER_GLOBS, PHYSICAL_ROOT_MARKER, isPhysicalRootMetadata } from './root-metadata.ts';
 const RESERVATION_PREFIX = '.gbrain-owner-';
+/**
+ * Appends the marker globs to the exclude file of every Git checkout holding
+ * `directories` (resolved with `git rev-parse --git-path`, so a linked
+ * worktree writes its shared file). Idempotent; a repository-local file, never
+ * committed; a missing trailing newline is repaired first. Best effort: an
+ * unreadable checkout or a read-only git dir leaves the stamp in place and the
+ * push deny list as the backstop.
+ */
+export function excludeOwnershipMarkers(directories: readonly string[]): void {
+  const written = new Set<string>();
+  for (const directory of directories) {
+    let exclude: string;
+    try {
+      if (!statSync(directory).isDirectory()) continue;
+      const path = execFileSync('git', ['-C', directory, 'rev-parse', '--git-path', 'info/exclude'],
+        { stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000 }).toString().trim();
+      if (!path) continue;
+      exclude = resolve(directory, path);
+    } catch { continue; }
+    if (written.has(exclude)) continue;
+    written.add(exclude);
+    try {
+      mkdirSync(dirname(exclude), { recursive: true });
+      const body = existsSync(exclude) ? readFileSync(exclude, 'utf8') : '';
+      const present = new Set(body.split('\n').map(line => line.trim()));
+      const missing = OWNERSHIP_MARKER_GLOBS.filter(glob => !present.has(glob));
+      if (!missing.length) continue;
+      appendFileSync(exclude, `${body.length && !body.endsWith('\n') ? '\n' : ''}${missing.join('\n')}\n`);
+    } catch { /* best effort; the push deny list refuses a tracked marker */ }
+  }
+}
 export interface PhysicalRootReservation {
   version: 1; token: string; brainId: string; worktreeId: string; hostId: string;
   root: string; coordinationPath: string; initialDevice: string | null; initialInode: string | null; initialBirth: string | null;
@@ -109,6 +141,7 @@ export function writePhysicalRootStamp(directory: string, reservation: PhysicalR
     root: reservation.root, device: info.dev.toString(), inode: info.ino.toString(), birth: info.birthtimeNs.toString() };
   createPrivate(join(directory, PHYSICAL_ROOT_MARKER), stamp);
   assertPhysicalRootStamp(directory, reservation);
+  excludeOwnershipMarkers([directory, reservation.root, dirname(reservation.root)]);
 }
 /** directory may be a verified staging directory; its stamp always names the final root. */
 export function assertPhysicalRootStamp(directory: string, reservation: PhysicalRootReservation): void {
@@ -172,6 +205,7 @@ export function adoptTransferredRootStamp(directory: string, reservation: Physic
     renameSync(temporary, path); flushDirectory(directory);
   } finally { if (created) try { unlinkSync(temporary); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; } }
   assertPhysicalRootStamp(directory, reservation);
+  excludeOwnershipMarkers([directory, reservation.root, dirname(reservation.root)]);
 }
 export function assertPhysicalRoot(path: string, identity: { worktreeId: string; coordinationPath?: string | null }): void {
   try {
