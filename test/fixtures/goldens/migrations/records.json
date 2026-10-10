@@ -27,7 +27,7 @@
       "TOKEN_TTL_MAX_SECONDS": "f4a45bec6ec0bacc859dc57732ceb76cec7eb72f242b5a6c89d47190d0525ab4",
       "TOKEN_TTL_MIN_SECONDS": "441d8ce6bd21f753de90abd3013eaa9992a469ea60c590f1005533618199aa25",
       "backfillChunkVectors": "4c5dc231904e68639c19f5f5f3006b3b0fdac1cb33b82e94fa09dcb6da1822c9",
-      "backfillPageVectors": "5c5d75ed6d65fde6cfe6ab1b30c1a0c5884976839f6026a149ef6a82c9b16e46",
+      "backfillPageVectors": "295d5406304afb20bd7419187e99f3bd071725bc95f0f2ca446b77c82a46fc08",
       "buildIndexOnline": "ed5378b90f24f7d662e02865cf73af4248e348002661f8fbfd8ee1087c60a3e5",
       "checkpointKey": "337ef776b18f428542093e27c4d570249d6a5856e5a17e4499d26a22877af34b",
       "chunkSearchVectorTriggerFnSql": "93ed4e29aa058949621b4198fe1ec317218f4b9ec0db0626ec6dc7001032047d",
