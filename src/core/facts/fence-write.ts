@@ -443,8 +443,7 @@ export async function writeFactsToFence(
           );
           return { inserted: 0, ids: [], stubGuardBlocked: true, ...withdrawnSkipped };
         }
-        const dbOnly = await dbOnlyPageRoute(engine, target, facts.length);
-        if (dbOnly) return { ...dbOnly, ...withdrawnSkipped };
+        const dbOnly = await dbOnlyPageRoute(engine, target, facts.length); if (dbOnly) return { ...dbOnly, ...withdrawnSkipped };
         // Stub-create the parent directory if it doesn't exist.
         mkdirSync(dirname(filePath), { recursive: true });
         const activePack = await loadActivePackBestEffort({ engine } as never);
@@ -555,8 +554,7 @@ export async function writeFactsToFence(
       // blind to the new row forever. Never persist an EMPTY hash: a row
       // that had none gets a row-shaped hash of its pre-mirror content,
       // which the rewritten file can't match. Best-effort: the file is
-      // already committed; a stub page with no DB row is created by sync, and
-      // only a body read from a real file is mirrored (#6398).
+      // already committed; sync creates a stub's row; only a real file's body is mirrored (#6398).
       try {
         const reparsed = parseMarkdown(tmpBody, `${target.slug}.md`);
         const existing = fromFile ? await engine.getPage(target.slug, { sourceId: target.sourceId }) : null;
