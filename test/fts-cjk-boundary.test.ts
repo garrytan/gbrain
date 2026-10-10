@@ -87,6 +87,7 @@ describe('gbrain_fts_input (#6370)', () => {
 });
 
 describe('one copy of the DDL', () => {
+  // test-reads-source-ok[structural]: src/schema.sql is the generated Postgres blob; a fresh install must carry the runtime trigger bodies byte-for-byte or the upgrade replay drifts.
   const schema = readFileSync(new URL('../src/schema.sql', import.meta.url), 'utf8');
 
   test('src/schema.sql carries the helper and the runtime trigger bodies byte-for-byte', () => {

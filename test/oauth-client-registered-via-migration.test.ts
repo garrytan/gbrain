@@ -11,7 +11,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
-import { MIGRATIONS } from '../src/core/migrate.ts';
+import { MIGRATIONS, runMigrations } from '../src/core/migrate.ts';
 import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 import { TEST_PKCE_CHALLENGE } from './helpers/oauth.ts';
 
@@ -84,7 +84,7 @@ describe('oauth_client_registered_via migration (#6202)', () => {
   test('the runner applies it on an upgraded brain whose version predates it', async () => {
     await engine.executeRaw('ALTER TABLE oauth_clients DROP COLUMN registered_via');
     await engine.setConfig('version', String(migration.version - 1));
-    await engine.initSchema();
+    await runMigrations(engine);
     expect(await hasColumn()).toBe(true);
     expect(Number(await engine.getConfig('version'))).toBeGreaterThanOrEqual(migration.version);
   });
