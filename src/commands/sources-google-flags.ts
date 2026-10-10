@@ -1,18 +1,20 @@
 /**
  * The Google-kind tuning flags of the legacy `gbrain sources add` parser
  * (`--history-days`, `--future-days`, `--loops-exclude-labels`,
- * `--calendar-id`): one value each, validated the moment they are read.
+ * `--contacts-dir`, `--calendar-id`): one value each, validated the moment they are read.
  * The connected-source parser (sources-lifecycle-args.ts) validates the same
  * flags through the operation contract; this module keeps the legacy path's
  * exit-2 behaviour without growing runAdd.
  */
 import { CALENDAR_FUTURE_DAYS_MAX } from '../core/google/calendar-window.ts';
 import { parseExcludeLabelTokens } from '../core/google/loops-exclusion.ts';
+import { parseContactsDir } from '../core/google/source-config.ts';
 import { DEFAULT_CALENDAR_ID } from '../core/google/types.ts';
 
 export interface GoogleAddTuning {
   historyDays: number;
   calendarId: string;
+  contactsDir?: string;
   futureDays?: number;
   loopsExcludeLabels?: string[];
 }
@@ -43,6 +45,12 @@ export function parseGoogleAddFlag(flag: string, value: string | undefined, tuni
       const labels = parseExcludeLabelTokens(value);
       if (labels.length === 0) refuse('--loops-exclude-labels needs a comma-separated list of Gmail label names or ids.');
       tuning.loopsExcludeLabels = labels;
+      return true;
+    }
+    case '--contacts-dir': {
+      const dir = parseContactsDir(value);
+      if (!dir) refuse('--contacts-dir must be a relative directory of lower-case segments (a-z, 0-9, -, _), e.g. --contacts-dir contacts.');
+      tuning.contactsDir = dir!;
       return true;
     }
     case '--calendar-id': {

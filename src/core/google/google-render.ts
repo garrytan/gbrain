@@ -14,7 +14,7 @@ import { createHash } from 'node:crypto';
 import { renderAttachmentInspection, threadAttachmentReceipts } from './attachment-receipts.ts';
 
 import { emailCitation } from '../output/scaffold.ts';
-import type { CalendarEventData, ContactData, GmailThreadData } from './types.ts';
+import { DEFAULT_CONTACTS_DIR, type CalendarEventData, type ContactData, type GmailThreadData } from './types.ts';
 
 // ── Noise + signature rules (recipes/email-to-brain.md, now code) ───────────
 
@@ -343,7 +343,7 @@ export function renderCalendarEventPage(ev: CalendarEventData): RenderedPage | n
 
 // ── Person page (contacts) ───────────────────────────────────────────────────
 
-export function personSlugFromContact(c: ContactData, disambiguate = false): string | null {
+export function personSlugFromContact(c: ContactData, disambiguate = false, dir: string = DEFAULT_CONTACTS_DIR): string | null {
   const base = c.displayName ?? c.emails[0]?.split('@')[0] ?? null;
   if (!base) return null;
   const slug = base
@@ -355,7 +355,7 @@ export function personSlugFromContact(c: ContactData, disambiguate = false): str
   // Two different contacts named "John Smith" must not fight over one page —
   // the caller requests disambiguation when the base slug is already owned
   // by a DIFFERENT google_contact_id.
-  return disambiguate ? `people/${slug}-${sha8(c.resourceName)}` : `people/${slug}`;
+  return disambiguate ? `${dir}/${slug}-${sha8(c.resourceName)}` : `${dir}/${slug}`;
 }
 
 /**
@@ -364,8 +364,8 @@ export function personSlugFromContact(c: ContactData, disambiguate = false): str
  * marker are connector-owned and fully re-rendered; hand-authored pages at
  * the same path are skipped entirely — body AND frontmatter untouched.
  */
-export function renderPersonPage(c: ContactData, disambiguate = false): RenderedPage | null {
-  const slug = personSlugFromContact(c, disambiguate);
+export function renderPersonPage(c: ContactData, disambiguate = false, dir: string = DEFAULT_CONTACTS_DIR): RenderedPage | null {
+  const slug = personSlugFromContact(c, disambiguate, dir);
   if (!slug || c.emails.length === 0) return null;
   const name = c.displayName ?? c.emails[0];
   const aliases = [...new Set([...c.emails, ...(c.displayName ? [c.displayName] : [])])];

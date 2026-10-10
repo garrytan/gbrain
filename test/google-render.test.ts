@@ -462,6 +462,13 @@ describe('personSlugFromContact', () => {
   test('null when neither name nor email', () => {
     expect(personSlugFromContact(contact({ displayName: null, emails: [] }))).toBeNull();
   });
+
+  test('#4845: the contacts directory is a parameter, default people/', () => {
+    expect(personSlugFromContact(contact(), false, 'contacts')).toBe('contacts/alice-example');
+    expect(personSlugFromContact(contact(), true, 'google/contacts')).toMatch(/^google\/contacts\/alice-example-[0-9a-f]{8}$/);
+    expect(renderPersonPage(contact(), false, 'contacts')?.relPath).toBe('contacts/alice-example.md');
+    expect(renderPersonPage(contact())?.relPath).toBe('people/alice-example.md');
+  });
 });
 
 describe('renderPersonPage', () => {

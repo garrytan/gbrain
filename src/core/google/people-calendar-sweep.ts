@@ -52,13 +52,15 @@ export async function sweepContacts(
     const m = readFileSync(filePath, 'utf-8').match(/^google_contact_id:\s*"([^"]+)"/m);
     return m ? m[1] : 'hand-authored';
   };
+  const contactsDir = deps.cfg.contactsDir;
   for (const c of result.contacts) {
     if (deps.opts.signal?.aborted) return;
-    // DB lookup by contact id FIRST: deletion tombstones typically carry only
-    // resourceName + deleted (no names/emails — slug derivation yields null),
-    // and a renamed contact's current name derives a DIFFERENT slug than the
-    // page it owns. Both cases need the id-keyed path (mirror of the calendar
-    // sweep's event_id keying).
+    // DB lookup by contact id FIRST, in any directory: deletion tombstones
+    // typically carry only resourceName + deleted (no names/emails — slug
+    // derivation yields null), a renamed contact's current name derives a
+    // DIFFERENT slug than the page it owns, and a changed `g_contacts_dir`
+    // (#4845) moves every page. All three need the id-keyed path (mirror of
+    // the calendar sweep's event_id keying).
     const existingPath = await contactPageRelPathByContactId(deps, c.resourceName);
     if (c.deleted) {
       if (existingPath && await ownerOf(existingPath) === c.resourceName) {
@@ -66,7 +68,7 @@ export async function sweepContacts(
       } else {
         // Page not (yet) in the DB — fall back to slug candidates, guarded
         // by file ownership. Delete only the page THIS contact owns.
-        for (const slug of [personSlugFromContact(c, false), personSlugFromContact(c, true)]) {
+        for (const slug of [personSlugFromContact(c, false, contactsDir), personSlugFromContact(c, true, contactsDir)]) {
           if (slug && await ownerOf(`${slug}.md`) === c.resourceName) {
             await deletePageByRelPath(deps, `${slug}.md`, summary);
           }
@@ -74,23 +76,25 @@ export async function sweepContacts(
       }
       continue;
     }
-    const baseSlug = personSlugFromContact(c);
+    const baseSlug = personSlugFromContact(c, false, contactsDir);
     if (!baseSlug) continue;
     const baseOwner = await ownerOf(`${baseSlug}.md`);
     const collides = baseOwner !== null && baseOwner !== 'hand-authored' && baseOwner !== c.resourceName;
-    const rendered = renderPersonPage(c, collides);
+    const rendered = renderPersonPage(c, collides, contactsDir);
     if (!rendered) continue;
     const owner = await ownerOf(rendered.relPath);
     if (owner === 'hand-authored') {
       deps.log(`[google] skipping hand-authored ${rendered.relPath}`);
       continue;
     }
-    // Rename: this contact previously rendered elsewhere — remove the page it
-    // owned there, or the old slug lives on as a stale orphan.
+    // Staged rename: this contact previously rendered elsewhere (a rename, or
+    // a changed contacts directory). The new page lands first, then the page
+    // it owned at the old path is retired, so a sweep that dies in between
+    // leaves the contact with a page rather than none.
+    await importRendered(deps, rendered.relPath, rendered.markdown, activePack, summary, countedSlugs);
     if (existingPath && existingPath !== rendered.relPath && await ownerOf(existingPath) === c.resourceName) {
       await deletePageByRelPath(deps, existingPath, summary);
     }
-    await importRendered(deps, rendered.relPath, rendered.markdown, activePack, summary, countedSlugs);
     deps.tick(`contact ${c.resourceName}`);
   }
   // Cursor commits only after the whole sweep succeeded.
@@ -106,7 +110,7 @@ async function contactPageRelPathByContactId(
   try {
     const rows = await deps.engine.executeRaw<{ source_path: string | null }>(
       `SELECT source_path FROM pages
-       WHERE source_id = $1 AND deleted_at IS NULL AND slug LIKE 'people/%'
+       WHERE source_id = $1 AND deleted_at IS NULL
          AND frontmatter->>'google_contact_id' = $2
        LIMIT 1`,
       [deps.sourceId, resourceName],

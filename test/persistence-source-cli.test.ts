@@ -40,8 +40,10 @@ describe('source lifecycle CLI', () => {
       google: { tokenEnv: 'EXAMPLE_TOKEN', access: 'env', services: ['calendar'], dir: process.cwd() } } });
     // #5442 / #5445: the per-source calendar horizon and loop exclusion labels ride the same add.
     const tuned = parseSourceLifecycleArgs(['add', 'example', '--kind', 'google', '--account', 'account@example.invalid',
-      '--future-days', '365', '--loops-exclude-labels', 'Newsletters, Label_7', '--dir', '.'], id);
-    expect(tuned.params).toMatchObject({ options: { google: { futureDays: 365, loopsExcludeLabels: ['Newsletters', 'Label_7'] } } });
+      '--future-days', '365', '--loops-exclude-labels', 'Newsletters, Label_7', '--contacts-dir', '/contacts/', '--dir', '.'], id);
+    expect(tuned.params).toMatchObject({ options: { google: { futureDays: 365, loopsExcludeLabels: ['Newsletters', 'Label_7'], contactsDir: 'contacts' } } });
+    expect(google.params).not.toHaveProperty('options.google.contactsDir');
+    expect(() => parseSourceLifecycleArgs(['add', 'example', '--kind', 'google', '--account', 'account@example.invalid', '--contacts-dir', '../people'])).toThrow('contacts-dir');
     expect(google.params).not.toHaveProperty('options.google.futureDays');
     expect(() => parseSourceLifecycleArgs(['add', 'example', '--kind', 'google', '--account', 'account@example.invalid', '--future-days', '0'])).toThrow('positive integer');
     expect(() => parseSourceLifecycleArgs(['add', 'example', '--kind', 'google', '--account', 'account@example.invalid', '--future-days', '4000'])).toThrow('3650');

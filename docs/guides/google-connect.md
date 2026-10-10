@@ -99,6 +99,30 @@ Repeat `gbrain google connect --account work@yourco.com` per account; each
 account becomes its own source (`gbrain sources add gmail-work --kind google
 --account work@yourco.com`) with independent sync cursors and locks.
 
+## Contacts next to your own person pages
+
+A Google source renders each contact as a near-empty person page under
+`people/<slug>` by default, the same directory a brain repo uses for its own
+hand-written profiles. On a multi-source brain that collision has two
+costs: mentions in the Gmail source bind to the contact stub instead of the
+real profile, and `gbrain doctor` lists the stubs under `junk_entity_hubs`.
+Two remedies, independent of each other:
+
+- **Keep contacts out of `people/`.** Add the source with
+  `--contacts-dir contacts` (stored as the source's `g_contacts_dir`; any
+  relative directory of lower-case segments). Contact pages are found by
+  their `google_contact_id`, not by directory, so a source whose directory
+  changes moves every contact on its next sweep: the new page lands first,
+  then the page under the old directory is retired. The default stays
+  `people` for every existing source.
+- **Let the stub yield.** With `gbrain config set link_resolution.cross_source
+  true`, a mention in the Gmail source of a name that has a real page in
+  another source binds to that page instead of the connector's stub (one
+  canonical page, or the one sharing the stub's slug; a tie keeps the stub).
+  The next mention pass (`gbrain extract --stale`, or autopilot) re-binds
+  pages it reaches; `gbrain doctor --only junk_entity_hubs` names the
+  canonical twin of each stub and the next step.
+
 ## Secondary calendars
 
 The calendar sweep reads ONE calendar per source (so each keeps its own

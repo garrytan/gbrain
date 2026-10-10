@@ -865,6 +865,40 @@ describe('syncToken 410 recovery', () => {
     }
   });
 
+  test('contacts (#4845): g_contacts_dir moves contact pages; a page the contact owned under the old dir is retired by contact id', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gsrc-ppldir-'));
+    const fx = emptyFx();
+    const vault = makeVault();
+    fx.contacts = [{
+      resourceName: 'people/c000000001',
+      names: [{ displayName: 'Alice Example', metadata: { primary: true } }],
+      emailAddresses: [{ value: 'alice@example.com' }],
+    }];
+    const slugs = async () => (await engine.executeRaw<{ slug: string }>(
+      `SELECT slug FROM pages WHERE source_id = 'gsrc' AND deleted_at IS NULL AND type = 'person' ORDER BY slug`)).map((r) => r.slug);
+    try {
+      await insertGoogleSource(dir);
+      await withHome(async () => {
+        await sweep(dir, fx, vault, {}, 'contacts');
+        expect(await slugs()).toEqual(['people/alice-example']);
+        // The same source now renders contacts under contacts/: the old page goes, the new one lands, one page per contact.
+        const moved = await sweep(dir, fx, vault, { full: true }, 'contacts', { cfg: { g_contacts_dir: 'contacts' } });
+        expect(moved.added).toBe(1);
+        expect(moved.deleted).toBe(1);
+        expect(await slugs()).toEqual(['contacts/alice-example']);
+        expect(existsSync(join(dir, 'people/alice-example.md'))).toBe(false);
+        expect(existsSync(join(dir, 'contacts/alice-example.md'))).toBe(true);
+        // A deletion tombstone (resourceName only) still finds the page under the new dir by contact id.
+        fx.contactsDelta = [{ resourceName: 'people/c000000001', metadata: { deleted: true } }];
+        const gone = await sweep(dir, fx, vault, {}, 'contacts', { cfg: { g_contacts_dir: 'contacts' } });
+        expect(gone.deleted).toBe(1);
+        expect(await slugs()).toEqual([]);
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test('contacts: HTTP 400 expiry recovers without restarting Gmail or losing the contact', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'gsrc-ppl400-'));
     const fx = emptyFx();

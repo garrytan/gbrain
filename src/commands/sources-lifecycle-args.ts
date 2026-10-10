@@ -11,6 +11,7 @@ import { isValidRepoName } from '../core/github-source.ts';
 import { ALL_GOOGLE_SERVICES, DEFAULT_CALENDAR_ID } from '../core/google/types.ts';
 import { CALENDAR_FUTURE_DAYS_MAX, CALENDAR_HORIZON_DAYS } from '../core/google/calendar-window.ts';
 import { parseExcludeLabelTokens } from '../core/google/loops-exclusion.ts';
+import { parseContactsDir } from '../core/google/source-config.ts';
 
 export const SOURCE_LIFECYCLE_COMMANDS = ['add', 'remove', 'archive', 'restore', 'purge', 'set-path', 'reclone'] as const;
 export function isSourceLifecycleCommand(value: string): boolean {
@@ -40,7 +41,7 @@ export function parseSourceLifecycleArgs(args: string[], generatedId = randomUUI
     'federated', 'no-federated', 'no-federate', 'refederate', 'no-harden']);
   const valued = new Set(['request-id', 'expected-incarnation', 'brain', 'path', 'url', 'name', 'clone-dir',
     'pat-file', 'kind', 'account', 'access', 'token-command', 'token-env', 'services', 'history-days',
-    'future-days', 'loops-exclude-labels', 'calendar-id', 'scope', 'repos', 'dir', 'app-id', 'app-pem', 'app-install']);
+    'future-days', 'loops-exclude-labels', 'contacts-dir', 'calendar-id', 'scope', 'repos', 'dir', 'app-id', 'app-pem', 'app-install']);
   for (let i = 0; i < rest.length; i++) {
     const token = rest[i];
     if (!token.startsWith('-')) { positionals.push(token); continue; }
@@ -105,7 +106,7 @@ export function parseSourceLifecycleArgs(args: string[], generatedId = randomUUI
     'Pass --kind github or --kind google; a directory or Git remote source uses --path or --url instead of --kind.');
   if ([values.has('path'), values.has('url'), kind !== undefined].filter(Boolean).length > 1) throw invalid('--path, --url and --kind are mutually exclusive.',
     'Give exactly one of --path (a local directory), --url (an https Git remote) or --kind (github or google).');
-  const googleOnly = ['account', 'access', 'token-command', 'services', 'history-days', 'future-days', 'loops-exclude-labels', 'calendar-id'];
+  const googleOnly = ['account', 'access', 'token-command', 'services', 'history-days', 'future-days', 'loops-exclude-labels', 'contacts-dir', 'calendar-id'];
   const githubOnly = ['scope', 'repos', 'app-id', 'app-pem', 'app-install'];
   const kindOptions = [...googleOnly, ...githubOnly, 'dir', 'token-env'];
   for (const key of kindOptions) if (values.has(key) && !kind) throw invalid(`--${key} requires --kind github or google.`,
@@ -158,7 +159,11 @@ export function parseSourceLifecycleArgs(args: string[], generatedId = randomUUI
     const loopsExcludeLabels = parseExcludeLabelTokens(values.get('loops-exclude-labels'));
     if (values.has('loops-exclude-labels') && loopsExcludeLabels.length === 0) throw invalid('--loops-exclude-labels needs at least one label.',
       'Pass --loops-exclude-labels as a comma-separated list of Gmail label names or ids, e.g. --loops-exclude-labels "Newsletters,Label_7".');
+    const contactsDir = values.has('contacts-dir') ? parseContactsDir(values.get('contacts-dir')) : undefined;
+    if (contactsDir === null) throw invalid('--contacts-dir must be a relative directory of lower-case segments.',
+      'Pass --contacts-dir as one or more segments of a-z, 0-9, - and _ (e.g. --contacts-dir contacts); it is relative to the source directory.');
     opts.google = { account, services, historyDays: number('history-days', 90)!, calendarId: values.get('calendar-id') ?? DEFAULT_CALENDAR_ID,
+      ...(contactsDir ? { contactsDir } : {}),
       ...(futureDays !== undefined ? { futureDays } : {}), ...(loopsExcludeLabels.length > 0 ? { loopsExcludeLabels } : {}),
       dir: absolute(values.get('dir') ?? defaultCloneDir(`${id}-google`)), access: access as 'vault' | 'command' | 'env',
       tokenCommand: values.get('token-command'), tokenEnv: values.get('token-env') };

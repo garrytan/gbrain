@@ -100,6 +100,16 @@ describe('#5445 resolution', () => {
     expect(pageLabelIds({})).toEqual([]);
   });
 
+  test('#4845: g_contacts_dir parses onto the source config, defaults to people, and refuses an escaping path', () => {
+    const base = { kind: 'google', g_account: 'a@example.com', g_services: 'contacts', g_history_days: 90, g_dir: '/tmp/x' };
+    expect(parseGoogleSourceConfig(base, '/tmp/x').contactsDir).toBe('people');
+    expect(parseGoogleSourceConfig({ ...base, g_contacts_dir: ' /contacts/ ' }, '/tmp/x').contactsDir).toBe('contacts');
+    expect(parseGoogleSourceConfig({ ...base, g_contacts_dir: 'google/contacts' }, '/tmp/x').contactsDir).toBe('google/contacts');
+    for (const bad of ['../people', 'a/../b', '', '   ', 'People Dir', '.hidden']) {
+      expect(parseGoogleSourceConfig({ ...base, g_contacts_dir: bad }, '/tmp/x').contactsDir).toBe('people');
+    }
+  });
+
   test('g_loops_exclude_labels parses onto the source config and is absent when unset', () => {
     const base = { kind: 'google', g_account: 'a@example.com', g_services: 'gmail', g_history_days: 90, g_dir: '/tmp/x' };
     expect(parseGoogleSourceConfig(base, '/tmp/x').loopsExcludeLabels).toBeUndefined();

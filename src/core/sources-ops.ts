@@ -196,6 +196,8 @@ export interface AddSourceOpts {
     historyDays: number;
     /** Calendar swept by this source (default DEFAULT_CALENDAR_ID). */
     calendarId?: string;
+    /** #4845: directory under `dir` for contact pages (`g_contacts_dir`; default `people`). */
+    contactsDir?: string;
     /** #5442: days ahead the calendar sweep covers (`g_future_days`; default CALENDAR_HORIZON_DAYS when absent). */
     futureDays?: number;
     /** #5445: Gmail label names/ids whose threads never enter loop extraction (`g_loops_exclude_labels`). */

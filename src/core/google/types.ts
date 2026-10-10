@@ -11,6 +11,8 @@ export type GoogleService = 'gmail' | 'calendar' | 'contacts';
 export const ALL_GOOGLE_SERVICES: readonly GoogleService[] = ['gmail', 'calendar', 'contacts'];
 
 /** The account's primary calendar — the Calendar API's own alias, and the default a google source sweeps. */
+/** Where a Google source renders its contact pages unless `g_contacts_dir` says otherwise. */
+export const DEFAULT_CONTACTS_DIR = 'people';
 export const DEFAULT_CALENDAR_ID = 'primary';
 
 export interface GoogleSourceConfig {
@@ -39,6 +41,14 @@ export interface GoogleSourceConfig {
    *  source so each keeps its own sync token — point a second source at a
    *  secondary calendar id to ingest it too. */
   calendarId: string;
+  /**
+   * Directory (relative to `dir`) the contact pages render under
+   * (`g_contacts_dir`, default DEFAULT_CONTACTS_DIR = `people`; #4845). A brain
+   * that maintains its own `people/` pages points its Google source at
+   * `contacts` so the two namespaces never collide. Contact pages are found
+   * by `google_contact_id`, not by directory, so changing it moves them.
+   */
+  contactsDir: string;
   /** Managed dir where pages are materialized. */
   dir: string;
   /**

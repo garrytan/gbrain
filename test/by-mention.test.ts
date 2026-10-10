@@ -293,6 +293,36 @@ describe('findMentionedEntities — pure cases', () => {
     ]);
   });
 
+  // #6158 / #4845: a connector renders its contacts as near-empty person pages in its own source. With
+  // cross_source on, a mention in that source binds to the canonical twin elsewhere, not the stub; with it
+  // off the own-source posture is unchanged; two foreign twins (no same-slug one) keep the stub (honest tie).
+  test('17f. a connector contact stub yields to the one canonical twin under allowCrossSource only', () => {
+    const g = gazetteerFromEntries([
+      { slug: 'people/dana-example', source_id: 'gmail-a', title: 'Dana Example', connector_stub: true },
+      { slug: 'people/dana-example', source_id: 'workspace', title: 'Dana Example' },
+    ]);
+    const opts = { fromSlug: 'emails/2026/08/thread-1', fromSourceId: 'gmail-a' };
+    expect(findMentionedEntities('Call with Dana Example.', g, opts)).toEqual([expect.objectContaining({ slug: 'people/dana-example', source_id: 'gmail-a' })]);
+    expect(findMentionedEntities('Call with Dana Example.', g, { ...opts, allowCrossSource: true }))
+      .toEqual([expect.objectContaining({ slug: 'people/dana-example', source_id: 'workspace' })]);
+    const tie = gazetteerFromEntries([
+      { slug: 'people/dana-example', source_id: 'gmail-a', title: 'Dana Example', connector_stub: true },
+      { slug: 'people/dana-e', source_id: 'workspace', title: 'Dana Example' },
+      { slug: 'people/dana-example-2', source_id: 'notes', title: 'Dana Example' },
+    ]);
+    expect(findMentionedEntities('Call with Dana Example.', tie, { ...opts, allowCrossSource: true }))
+      .toEqual([expect.objectContaining({ slug: 'people/dana-example', source_id: 'gmail-a' })]);
+    // A third source's page mentioning the name binds to the canonical twin, not the stub the bucket sorts first.
+    expect(findMentionedEntities('Call with Dana Example.', g, { fromSlug: 'notes/x', fromSourceId: 'notes', allowCrossSource: true }))
+      .toEqual([expect.objectContaining({ slug: 'people/dana-example', source_id: 'workspace' })]);
+    const stubOnly = gazetteerFromEntries([
+      { slug: 'people/dana-example', source_id: 'gmail-a', title: 'Dana Example', connector_stub: true },
+      { slug: 'people/dana-example', source_id: 'gmail-b', title: 'Dana Example', connector_stub: true },
+    ]);
+    expect(findMentionedEntities('Call with Dana Example.', stubOnly, { ...opts, allowCrossSource: true }))
+      .toEqual([expect.objectContaining({ slug: 'people/dana-example', source_id: 'gmail-a' })]);
+  });
+
   test('17e. allowCrossSource — first-mention dedup keys on (source_id, slug), not bare slug', () => {
     const g = gazetteerFromEntries([
       { slug: 'entities/shared', source_id: 'team-b', title: 'Beta Entity' },
@@ -709,6 +739,17 @@ describe('buildGazetteer — engine integration', () => {
     // gazetteer presence wins per CK12 rule.
     expect(g.has('apple')).toBe(true);
     expect(g.get('apple')![0]!.slug).toBe('companies/apple');
+  });
+
+  test('#6158: a page carrying google_contact_id builds a connector_stub entry; a hand-written page does not', async () => {
+    await engine.executeRaw(`INSERT INTO sources (id, name, config) VALUES ('gmail-a', 'gmail-a', '{"kind":"google"}'::jsonb) ON CONFLICT (id) DO NOTHING`);
+    await engine.putPage('people/dana-example', { type: 'person', title: 'Dana Example', compiled_truth: 'Profile.', timeline: '', frontmatter: {} });
+    await engine.putPage('people/dana-example', { type: 'person', title: 'Dana Example', compiled_truth: 'Contact: dana@example.com.', timeline: '',
+      frontmatter: { google_contact_id: 'people/c1' } }, { sourceId: 'gmail-a' });
+    const g = await buildGazetteer(engine);
+    const bucket = g.get('dana')!.filter((e) => e.origin === 'title');
+    expect(bucket.find((e) => e.source_id === 'gmail-a')?.connector_stub).toBe(true);
+    expect(bucket.find((e) => e.source_id === 'default')?.connector_stub).toBeUndefined();
   });
 
   test('alias entries (v0.46.15, #3801): page_aliases become gazetteer entries', async () => {
