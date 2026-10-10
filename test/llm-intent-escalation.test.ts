@@ -18,6 +18,7 @@ import {
   __unconfigureGatewayForTests,
   configureGateway,
   resetGateway,
+  type ChatOpts,
 } from '../src/core/ai/gateway.ts';
 
 beforeEach(() => {
@@ -136,5 +137,23 @@ describe('classifyModalityWithLLM — fail-open', () => {
     });
     expect(await classifyModalityWithLLM('q', 'image')).toBe('image');
     expect(await classifyModalityWithLLM('q', 'both')).toBe('both');
+  });
+});
+
+function thinkingRoute(answerText: string) {
+  return async (o: ChatOpts) => ({
+    text: o.thinking === 'off' ? answerText : '',
+    blocks: [],
+    stopReason: (o.thinking === 'off' ? 'end' : 'length') as 'end' | 'length',
+    usage: { input_tokens: 10, output_tokens: 10, cache_read_tokens: 0, cache_creation_tokens: 0 },
+    model: 'anthropic:claude-haiku-5-5',
+    providerId: 'anthropic',
+  });
+}
+
+describe('classifyModalityWithLLM — thinking route (#5331)', () => {
+  test('asks with thinking off, so a reasoning model still answers inside the 16-token cap', async () => {
+    __setChatTransportForTests(thinkingRoute('image'));
+    expect(await classifyModalityWithLLM('any pictures from offsite?')).toBe('image');
   });
 });
