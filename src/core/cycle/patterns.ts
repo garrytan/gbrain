@@ -352,6 +352,7 @@ async function runPatternsPass(engine: BrainEngine, opts: PatternsPhaseOpts, con
     );
 
     let outcome: MinionJobStatus | 'timeout';
+    let errorText: string | null = null;
     try {
       const final = await waitForCompletionRenewing(queue, job.id, {
         timeoutMs: budgets.waitTimeoutMs,
@@ -363,6 +364,7 @@ async function runPatternsPass(engine: BrainEngine, opts: PatternsPhaseOpts, con
       // throwing — unwind before treating it as an outcome.
       throwIfAborted(opts.signal, '[dream] patterns completion wait');
       outcome = final.status;
+      errorText = final.error_text ?? null;
     } catch (e) {
       if (e instanceof TimeoutError) {
         outcome = 'timeout';
@@ -378,7 +380,7 @@ async function runPatternsPass(engine: BrainEngine, opts: PatternsPhaseOpts, con
       }
     }
 
-    await recordPatternsLastRun(engine, { duration_ms: Date.now() - submittedAt, reflections: submitted.length, outcome }); // #6177: every child, timed out or failed too
+    await recordPatternsLastRun(engine, { duration_ms: Date.now() - submittedAt, reflections: submitted.length, outcome, error_text: errorText }); // #6177: every child, timed out or failed too
     if (outcome === 'completed' && submitOpts.idempotency_key) await clearPatternsSourceDeaths(engine, opts.sourceId ?? 'default'); // #6236: only consecutive deaths trip
 
     if (opts.yieldDuringPhase) {

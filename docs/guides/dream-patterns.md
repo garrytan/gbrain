@@ -37,7 +37,9 @@ An in-cycle run sizes itself from that record:
 - With history, it estimates milliseconds per reflection with a 1.25× margin
   and submits the newest reflections that fit in the remaining budget. A
   timed-out run counts as a lower bound on cost, so the next run is also at
-  most half its size. A completed run after shrinking restores the estimate.
+  most half its size. A child the job queue stopped at its own timeout
+  (`timeout exceeded` or `wall-clock timeout exceeded`) counts as timed out
+  too. A completed run after shrinking restores the estimate.
 - With no history (or after a failed child), it submits a conservative first
   batch: 25 reflections, or `min_evidence` if larger.
 - When fewer than `min_evidence` reflections fit, the run is skipped with
@@ -51,8 +53,13 @@ A direct `gbrain dream --phase patterns` has no cycle deadline: it keeps its
 full size (up to 100 reflections) and records `last_run` like an in-cycle
 run. It is the skip's `fix`; it is a paid run, so ask the user first.
 
-The linear cost model has not been measured on a real paid run yet.
+The linear cost model has not been measured on a real paid run yet. It scales
+cost with the number of reflections submitted, but a child also reads the
+existing pattern pages, so on a brain with many of them the cost falls more
+slowly than the reflection count and halving may take several cycles to fit.
 
 ## Changelog
 
 - Fix wave 11: budget sizing from `dream.patterns.last_run` (#6177).
+- Fix wave 13: a child stopped at its own timeout records `timeout`, so the
+  next plan halves (#6296).
