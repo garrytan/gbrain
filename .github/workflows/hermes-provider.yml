@@ -79,7 +79,8 @@ jobs:
           HERMES_REQUIRE_PINNED_FIXTURE: '1'
           PYTHONDONTWRITEBYTECODE: '1'
         run: |
-          export HERMES_FIXTURE_PYTHON="$(command -v python)"
+          HERMES_FIXTURE_PYTHON="$(command -v python)"
+          export HERMES_FIXTURE_PYTHON
           . scripts/lib/test-env.sh
           ensure_pglite_snapshot hermes-native-contract
           bun test --timeout=60000 test/hermes-native-transcript.test.ts test/hermes-transcript-cutover.test.ts
