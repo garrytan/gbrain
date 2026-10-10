@@ -58,10 +58,9 @@ export async function overlayCanonicalBodies(query: ReadQuery, body: string, tim
  *
  * An alias-resolving read first runs the exact-slug statement: an exact match
  * outranks every alias match, so a hit is the row the alias statement would
- * pick. Only a miss runs the alias statement, whose `slug = $1 OR EXISTS
- * (alias)` disjunction scans the source's pages (23-80 ms at 50k pages, under
- * 1 ms for the exact lookup). An ambiguity check counts alias matches too, so
- * it always runs the alias statement.
+ * pick. Only a miss runs the alias statement, a UNION ALL of the exact-slug
+ * probe and an alias-join probe (#6281), both index lookups. An ambiguity check
+ * counts alias matches too, so it always runs the alias statement.
  */
 export async function readPageSnapshot(query: ReadQuery, slug: string, opts?: PageSnapshotOptions): Promise<PageSnapshot | null> {
   if (opts?.resolveAlias === true && opts.requireUnambiguous !== true) {
@@ -73,26 +72,32 @@ export async function readPageSnapshot(query: ReadQuery, slug: string, opts?: Pa
 
 async function readSnapshotStatement(query: ReadQuery, slug: string, opts?: PageSnapshotOptions): Promise<PageSnapshot | null> {
   const params: unknown[] = [slug];
-  // Alias resolution is part of the statement text, not a parameter, so a
-  // cached plan for an exact-slug read keeps using the slug index.
-  const where = [opts?.resolveAlias === true ? `(p.slug=$1 OR (
-    ${opts?.preserveExactIdentity ? 'NOT EXISTS (SELECT 1 FROM pages exact_page WHERE exact_page.source_id=p.source_id AND exact_page.slug=$1) AND' : ''}
-    EXISTS (SELECT 1 FROM slug_aliases a
-    WHERE a.alias_slug=$1 AND a.source_id=p.source_id AND a.canonical_slug=p.slug
-      AND EXISTS (SELECT 1 FROM sources alias_source WHERE alias_source.id=a.source_id ${opts?.includeDeleted ? '' : 'AND NOT alias_source.archived'}))))` : 'p.slug=$1'];
+  const filters: string[] = [];
   if (opts?.sourceIds?.length) {
     params.push(opts.sourceIds);
-    where.push(`p.source_id=ANY($${params.length}::text[])`);
+    filters.push(`p.source_id=ANY($${params.length}::text[])`);
   } else if (opts?.sourceId) {
     params.push(opts.sourceId);
-    where.push(`p.source_id=$${params.length}`);
+    filters.push(`p.source_id=$${params.length}`);
   }
-  if (!opts?.includeDeleted) where.push('p.deleted_at IS NULL');
-  if (opts?.excludePrivate) where.push(privatePagesFilterFragment('p'));
-  if (opts?.requireLiveSource) where.push('EXISTS (SELECT 1 FROM sources s WHERE s.id=p.source_id AND NOT s.archived)');
+  if (!opts?.includeDeleted) filters.push('p.deleted_at IS NULL');
+  if (opts?.excludePrivate) filters.push(privatePagesFilterFragment('p'));
+  if (opts?.requireLiveSource) filters.push('EXISTS (SELECT 1 FROM sources s WHERE s.id=p.source_id AND NOT s.archived)');
   params.push(opts?.sourceIds?.[0] ?? 'default');
+  const and = filters.map(filter => ` AND ${filter}`).join('');
+  // Alias resolution is part of the statement text, not a parameter, so a cached plan for an exact-slug read keeps
+  // using the slug index. #6281: the alias read is a UNION ALL of two indexable branches (the exact slug, and pages an
+  // alias row names), never `slug=$1 OR EXISTS(alias)`, which scans every page; `p.slug<>$1` keeps the branches disjoint
+  // so the ambiguity count still counts pages.
+  const candidates = opts?.resolveAlias === true ? `(SELECT p.* FROM pages p WHERE p.slug=$1${and}
+    UNION ALL
+    SELECT p.* FROM slug_aliases a JOIN pages p ON p.source_id=a.source_id AND p.slug=a.canonical_slug
+    WHERE a.alias_slug=$1 AND p.slug<>$1
+      AND EXISTS (SELECT 1 FROM sources alias_source WHERE alias_source.id=a.source_id ${opts?.includeDeleted ? '' : 'AND NOT alias_source.archived'})
+      ${opts?.preserveExactIdentity ? 'AND NOT EXISTS (SELECT 1 FROM pages exact_page WHERE exact_page.source_id=a.source_id AND exact_page.slug=$1)' : ''}${and}) p`
+    : `pages p WHERE p.slug=$1${and}`;
   const rows = await query<Record<string, unknown>>(`WITH chosen AS (
-    SELECT p.*${opts?.requireUnambiguous ? ', count(*) OVER () AS snapshot_matches' : ''} FROM pages p WHERE ${where.join(' AND ')}
+    SELECT p.*${opts?.requireUnambiguous ? ', count(*) OVER () AS snapshot_matches' : ''} FROM ${candidates}
     ORDER BY (p.slug=$1) DESC, (p.source_id=$${params.length}) DESC, p.source_id ASC LIMIT 1
   ) SELECT p.*,
     (SELECT s.incarnation FROM sources s WHERE s.id=p.source_id) AS source_incarnation,
