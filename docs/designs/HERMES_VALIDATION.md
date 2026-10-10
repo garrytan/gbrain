@@ -13,9 +13,15 @@ The first GitHub `verify` job ([run 38025588088](https://github.com/garrytan/gbr
 
 The first native-provider CI run exposed a separate real defect: initializing the last-wake timestamp to zero skipped the first delta on a newly booted runner whose monotonic clock had not reached the default cadence. The provider now distinguishes an unobserved wake with `None`; a deterministic zero-clock regression was red before the fix. After repair, **all 25 native-provider tests and all 4 native-manager acceptance tests pass locally**. The full local isolation scan still timed out; the targeted pass is not a claim that the entire scan ran successfully.
 
-The contributor gate is intentionally red for external PRs: upstream maintainers incorporate contributions into their fix-wave PRs. No maintainer override is requested or applied by this draft. New-head GitHub validation is still required. The local failed attempts below remain historical evidence and are not erased by these narrower successes.
+At draft head `71a1a86081066cf7a3f5769a17dee1daacadcafc`, the [native-provider workflow](https://github.com/garrytan/gbrain/actions/runs/38026605918) passed, including real loopback contracts, managed-writer reconciliation, and native MemoryManager acceptance. The [repository verify job](https://github.com/garrytan/gbrain/actions/runs/38026605833/job/114138880548) also passed. The [E2E workflow](https://github.com/garrytan/gbrain/actions/runs/38026605859) succeeded but explicitly skipped key-gated LLM tests because fork secrets were unavailable; workflow success does not establish those scenarios.
 
-## Executed evidence
+Four unit shards on that head exposed additional integration-contract failures: installer prose was parsed as a nonexistent `gbrain connection` command; two CLI dispatch goldens lacked the new Hermes route; the new capture field exceeded existing schema-size budgets; and the tools-JSON golden lacked that optional capture field. The follow-up quotes the connection name, deliberately updates the Hermes route entries and capture schema golden, and compacts schema descriptions without raising budgets or dropping consent/routing guidance. All **114 tests across the five affected contract suites pass locally (543 assertions)** using the repository's supported PGLite snapshot setup. The tools-JSON diff contains only capture metadata and its derived byte count/hash. Generated tool catalog and operation manifest were regenerated. CI on the follow-up commit is still required.
+
+The contributor gate is intentionally red for external PRs: upstream maintainers incorporate contributions into their fix-wave PRs. No maintainer override is requested or applied by this draft. The local failed attempts below remain historical evidence and are not erased by these narrower successes.
+
+## Earlier local execution evidence
+
+Failure labels in this table describe those specific attempts, not the newer CI results above.
 
 | Check | Observed result | Boundary |
 | --- | --- | --- |
