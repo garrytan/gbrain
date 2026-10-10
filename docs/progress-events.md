@@ -20,7 +20,8 @@ Any of these commands stream events when `--progress-json` is set:
 - `gbrain import`
 - `gbrain sync`
 - `gbrain migrate --to …` (graduation reports one phase per step and ticks per
-  table and batch; the legacy copier reports the `migrate.copy_*` phases below)
+  table and batch; the legacy copier reports the `migrate.copy_*` phases below,
+  then `projections.drain`)
 - `gbrain repair-jsonb`
 - `gbrain check-backlinks`
 - `gbrain lint`
@@ -153,6 +154,8 @@ Stable phase names:
 - `migrate.copy_pages`, `migrate.copy_links`
 - `migrate.copy_facts` (heartbeat-only, one tick per fact row; the facts
   table re-copies fully on every run, so the tick count is the whole table)
+- `projections.drain` (`gbrain projections drain`, and the legacy copier's rebuild
+  before the config switch; total is the rebuild backlog at the start, or `--limit`)
 - `migrate.reembed` (the re-embed pass of `gbrain migrate embeddings`; total is the
   stale-chunk backlog at the start of the pass, so it can grow slightly if a
   writer adds chunks mid-run)

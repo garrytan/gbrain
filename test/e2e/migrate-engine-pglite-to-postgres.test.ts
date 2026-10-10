@@ -29,7 +29,8 @@ import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { runMigrateEngine } from '../../src/commands/migrate-engine.ts';
-import { configureGateway, resetGateway } from '../../src/core/ai/gateway.ts';
+import { configureGateway, getEmbeddingModel, resetGateway } from '../../src/core/ai/gateway.ts';
+import { resealSafeChunks } from '../../src/core/page-state/projections.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { hasDatabase } from './helpers.ts';
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
@@ -49,6 +50,32 @@ function vec(seed: number): Float32Array {
   for (let i = 0; i < EMBED_DIMS; i++) v[i] = ((seed * 31 + i) % 97) / 97;
   v[0] = seed / 8;
   return v;
+}
+
+const CODE_BODY = [
+  '/** Synthetic ledger fixture. */',
+  'export function addEntry(total: number, amount: number): number {',
+  '  return total + amount;',
+  '}',
+  '',
+  'export class Ledger {',
+  '  balance = 0;',
+  '  credit(amount: number): void { this.balance = addEntry(this.balance, amount); }',
+  '}',
+  '',
+].join('\n');
+
+/** The page columns and code-chunk metadata the copy carries beside the body. */
+async function carriedRows(engine: BrainEngine) {
+  return {
+    pages: await engine.executeRaw(`SELECT source_id, slug, page_kind, source_path, source_kind, ingested_via,
+        floor(extract(epoch FROM ingested_at) * 1000)::bigint::text AS ingested_ms
+      FROM pages ORDER BY source_id, slug`),
+    codeChunks: await engine.executeRaw(`SELECT c.chunk_index, c.language, c.symbol_name, c.symbol_type, c.start_line,
+        c.end_line, c.symbol_name_qualified, (c.embedding IS NOT NULL) AS has_vector
+      FROM content_chunks c JOIN pages p ON p.id = c.page_id
+      WHERE p.slug = 'src/ledger-ts' AND p.source_id = 'alpha' ORDER BY c.chunk_index`),
+  };
 }
 
 interface FixtureCounts {
@@ -99,6 +126,7 @@ describePg('migrate-engine whole-brain PGLite to Postgres (D2)', () => {
   let targetUrl: string;
   const getEngine = () => targetFixture.engine;
   let seeded: FixtureCounts;
+  let seededRows: Awaited<ReturnType<typeof carriedRows>>;
   let factId1 = 0; // superseded by factId2
   let factId2 = 0;
   let factMaxId = 0;
@@ -136,7 +164,7 @@ describePg('migrate-engine whole-brain PGLite to Postgres (D2)', () => {
       VALUES ('alpha', 'Source Alpha', '{"federated":true,"note":"a"}'::jsonb),
              ('beta',  'Source Beta',  '{}'::jsonb)`);
 
-    // alpha: person page with jsonb frontmatter, 2 embedded chunks, tag,
+    // alpha: person page with jsonb frontmatter, an embedded chunk, tag,
     // timeline entry, raw data, and an outgoing link.
     await source.putPage('people/alice-example', {
       type: 'person',
@@ -152,7 +180,7 @@ describePg('migrate-engine whole-brain PGLite to Postgres (D2)', () => {
     await source.putPage('notes/plain', {
       type: 'note',
       title: 'Plain note',
-      compiled_truth: 'No chunks here.',
+      compiled_truth: 'A plain note, left without a vector.',
     }, { sourceId: 'alpha' });
     // beta: same slug as the alpha person page — multi-source collision.
     await source.putPage('people/alice-example', {
@@ -171,20 +199,18 @@ describePg('migrate-engine whole-brain PGLite to Postgres (D2)', () => {
       title: 'Index',
       compiled_truth: 'Default-source landing page.',
     }, { sourceId: 'default' });
-
-    await source.upsertChunks('people/alice-example', [
-      { chunk_index: 0, chunk_text: 'Alice founded acme-example.', chunk_source: 'compiled_truth', embedding: vec(1), model: 'test-model', token_count: 6 },
-      { chunk_index: 1, chunk_text: 'She prefers espresso.', chunk_source: 'compiled_truth', embedding: vec(2), model: 'test-model', token_count: 4 },
-    ], { sourceId: 'alpha' });
-    await source.upsertChunks('companies/acme-example', [
-      { chunk_index: 0, chunk_text: 'Acme makes widgets.', chunk_source: 'compiled_truth', embedding: vec(3), model: 'test-model', token_count: 4 },
-    ], { sourceId: 'alpha' });
-    await source.upsertChunks('people/alice-example', [
-      { chunk_index: 0, chunk_text: 'Beta-source view of Alice.', chunk_source: 'compiled_truth', embedding: vec(4), model: 'test-model', token_count: 5 },
-    ], { sourceId: 'beta' });
-    await source.upsertChunks('notes/beta-only', [
-      { chunk_index: 0, chunk_text: 'Beta note with an unembedded chunk.', chunk_source: 'compiled_truth' },
-    ], { sourceId: 'beta' });
+    // alpha: a code page with provenance, so the Postgres side receives
+    // page_kind, source_path, the provenance columns and code-chunk metadata.
+    await source.putPage('src/ledger-ts', {
+      type: 'code',
+      page_kind: 'code',
+      title: 'src/ledger.ts (typescript)',
+      compiled_truth: CODE_BODY,
+      frontmatter: { language: 'typescript', file: 'src/ledger.ts' },
+      source_path: 'src/ledger.ts',
+      source_kind: 'file-watcher',
+      ingested_via: 'inbox-folder',
+    }, { sourceId: 'alpha' });
 
     await source.addTag('people/alice-example', 'person', { sourceId: 'alpha' });
     await source.addTimelineEntry('people/alice-example', {
@@ -193,6 +219,26 @@ describePg('migrate-engine whole-brain PGLite to Postgres (D2)', () => {
     await source.putRawData('people/alice-example', 'crm', { stage: 'seed' }, { sourceId: 'alpha' });
     await source.addLink('people/alice-example', 'companies/acme-example', 'founder of', 'manual',
       undefined, undefined, undefined, { fromSourceId: 'alpha', toSourceId: 'alpha' });
+
+    // #6286: the migration ends by rebuilding the target's projections, so the
+    // fixture holds what a real source brain holds: each page's own sealed
+    // projection (built last, after the writes above), five of them embedded
+    // under the brain's model. A stored chunk that is not a verified projection
+    // is copied and then replaced by that rebuild; that case is pinned in
+    // test/migrate-engine-projection-seal.serial.test.ts.
+    const projections: Array<[sourceId: string, slug: string, seed: number | null]> = [
+      ['alpha', 'people/alice-example', 1], ['alpha', 'companies/acme-example', 3], ['alpha', 'notes/plain', null],
+      ['beta', 'people/alice-example', 4], ['beta', 'notes/beta-only', null], ['default', 'index', 2],
+      ['alpha', 'src/ledger-ts', 5],
+    ];
+    for (const [sourceId, slug, seed] of projections) {
+      await resealSafeChunks(source, slug, sourceId);
+      if (seed === null) continue;
+      await source.executeRaw(`UPDATE content_chunks SET embedding=$1::vector, model=$2, embedded_at=now(),
+          embedded_text_hash=md5(chunk_text)
+        WHERE page_id=(SELECT id FROM pages WHERE source_id=$3 AND slug=$4)`,
+      [`[${Array.from(vec(seed)).join(',')}]`, getEmbeddingModel(), sourceId, slug]);
+    }
 
     // Facts chain: f1 superseded by f2, plus a standalone f3 on another source.
     const f1 = await source.insertFact(
@@ -217,9 +263,14 @@ describePg('migrate-engine whole-brain PGLite to Postgres (D2)', () => {
     await source.setConfig('search.mode', 'balanced');
 
     seeded = await tableCounts(source);
-    expect(seeded.pages).toBe(6);
-    expect(seeded.chunks).toBe(5);
-    expect(seeded.chunks_embedded).toBe(4);
+    seededRows = await carriedRows(source);
+    // The code page holds one chunk per symbol; every other page holds one chunk.
+    const codeChunks = seededRows.codeChunks.length;
+    expect(codeChunks).toBeGreaterThanOrEqual(2);
+    expect(seededRows.codeChunks.every(c => (c as { symbol_name: string | null }).symbol_name !== null)).toBe(true);
+    expect(seeded.pages).toBe(7);
+    expect(seeded.chunks).toBe(6 + codeChunks);
+    expect(seeded.chunks_embedded).toBe(4 + codeChunks);
     expect(seeded.facts).toBe(3);
     expect(seeded.sources).toBe(3); // default + alpha + beta
     expect(seeded.links).toBe(1);
@@ -289,6 +340,16 @@ describePg('migrate-engine whole-brain PGLite to Postgres (D2)', () => {
     const target = getEngine();
     expect(await tableCounts(target)).toEqual(seeded);
 
+    // #6286: handed over sealed, with nothing left to rebuild, so retrieval
+    // works before any sync or resident drain runs.
+    expect(await target.executeRaw(`SELECT slug FROM pages
+      WHERE text_projection_revision IS DISTINCT FROM knowledge_revision`)).toEqual([]);
+    expect(await target.executeRaw('SELECT slug FROM page_projection_jobs')).toEqual([]);
+    expect((await target.searchKeyword('widgets')).map(r => r.slug)).toEqual(['companies/acme-example']);
+
+    // #6286: page kind, path, provenance and code-chunk metadata arrive as stored.
+    expect(await carriedRows(target)).toEqual(seededRows);
+
     // Local config flipped to the postgres engine, preserving non-engine keys.
     const cfg = JSON.parse(readFileSync(configFile, 'utf-8'));
     expect(cfg.engine).toBe('postgres');
@@ -339,7 +400,7 @@ describePg('migrate-engine whole-brain PGLite to Postgres (D2)', () => {
        WHERE p.slug = 'people/alice-example' AND p.source_id = 'alpha' AND c.chunk_index = 0`);
     expect(spot[0]?.e.startsWith('[0.125,')).toBe(true);
 
-    // The deliberately unembedded chunk stayed NULL.
+    // The two chunks left without a vector (notes/plain, notes/beta-only) stayed NULL.
     const nulls = await target.executeRaw<{ n: number | string }>(`
       SELECT count(*)::int AS n FROM content_chunks WHERE embedding IS NULL`);
     expect(Number(nulls[0].n)).toBe(seeded.chunks - seeded.chunks_embedded);

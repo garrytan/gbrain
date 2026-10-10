@@ -12,7 +12,7 @@ import { opError } from '../core/ops/contract.ts';
 import { createEngine } from '../core/engine-factory.ts';
 import { loadConfig, saveConfig, toEngineConfig, gbrainPath, effectiveEnvDatabaseUrl, type GBrainConfig } from '../core/config.ts';
 import type { BrainEngine } from '../core/engine.ts';
-import type { EngineConfig, Page } from '../core/types.ts';
+import type { EngineConfig, Page, PageKind } from '../core/types.ts';
 import { writeFileSync, readFileSync, existsSync, unlinkSync, statSync, mkdirSync, renameSync } from 'fs';
 import { createHash } from 'crypto';
 import { resolve, dirname } from 'path';
@@ -26,7 +26,9 @@ import { registerCleanup } from '../core/process-cleanup.ts';
 import { autopilotPausedMarkerPath, autopilotLockPath, markerHolderAlive, MIGRATE_PAUSE_MARKER_PREFIX } from '../core/autopilot-paths.ts';
 export { MIGRATE_PAUSE_MARKER_PREFIX };
 import { listLiveLocks } from '../core/db-lock.ts';
-import { queuePageProjection } from '../core/page-state/projections.ts';
+import { drainProjections, queuePageProjection, type ProjectionDrainResult } from '../core/page-state/projections.ts';
+import { carryChunkMetadata } from '../core/embed-stale.ts';
+import { normalizeAliasList } from '../core/search/alias-normalize.ts';
 
 interface MigrateOpts {
   targetEngine: 'postgres' | 'pglite';
@@ -490,6 +492,11 @@ export async function copyPageToTarget(
   page: Page,
 ): Promise<PageCopyCounts> {
   const sourceOpts = { sourceId: page.source_id };
+  // #6286: Page carries no page_kind, so read it from the source row. Without
+  // it a code page lands as markdown and its projection rebuild uses the
+  // markdown chunker, which the code importer then skips as unchanged.
+  const [kind] = await source.executeRaw<{ page_kind: PageKind }>(
+    'SELECT page_kind FROM pages WHERE source_id=$1 AND slug=$2', [page.source_id ?? 'default', page.slug]);
 
   // Copy page (preserve source_id). v0.32.8 F8: thread source_id end-to-end
   // so multi-source pages migrate intact.
@@ -503,6 +510,17 @@ export async function copyPageToTarget(
     timeline: page.timeline,
     frontmatter: page.frontmatter,
     content_hash: page.content_hash,
+    // #6286: the rest of the page row. Once the target's projections are
+    // rebuilt below, a sync skips the unchanged file instead of re-importing
+    // it, so nothing would restore a column the copy leaves out.
+    page_kind: kind?.page_kind,
+    source_path: page.source_path,
+    effective_date: page.effective_date,
+    effective_date_source: page.effective_date_source,
+    import_filename: page.import_filename,
+    source_kind: page.source_kind,
+    source_uri: page.source_uri,
+    ingested_via: page.ingested_via,
   }), { ...sourceOpts, allowEmptyOverwrite: true });
 
   // #4527: putPage stamps created_at/updated_at with now() (PageInput has no
@@ -511,22 +529,29 @@ export async function copyPageToTarget(
   // all silently reset to the migration date. Restore the source row's
   // timestamps directly; COALESCE keeps the putPage-stamped value if the
   // source engine ever hands back a NULL (never expected, but a copy must
-  // not null out a NOT NULL column).
-  if (page.created_at != null || page.updated_at != null) {
+  // not null out a NOT NULL column). #6286: ingested_at too, which putPage
+  // stamps with now() whenever it writes provenance.
+  if (page.created_at != null || page.updated_at != null || page.ingested_at != null) {
     await target.executeRaw(
       `UPDATE pages
           SET created_at = COALESCE($1, created_at),
-              updated_at = COALESCE($2, updated_at)
+              updated_at = COALESCE($2, updated_at),
+              ingested_at = COALESCE($5, ingested_at)
         WHERE slug = $3 AND source_id = $4`,
-      [page.created_at ?? null, page.updated_at ?? null, page.slug, page.source_id ?? 'default'],
+      [page.created_at ?? null, page.updated_at ?? null, page.slug, page.source_id ?? 'default', page.ingested_at ?? null],
     );
   }
+
+  // #6286: frontmatter aliases are rows only a full import writes.
+  await target.setPageAliases(page.slug, page.source_id ?? 'default', normalizeAliasList(page.frontmatter?.aliases));
 
   // Migration preserves stored data even when it is not a verified search
   // projection. The target rebuilds sanitized text under its new revision.
   const chunks = await source.getChunksWithEmbeddings(page.slug, { ...sourceOpts, includeUnsealed: true });
   if (chunks.length > 0) {
-    await target.upsertChunks(page.slug, chunks.map(c => ({
+    // #6286: carryChunkMetadata adds the code-chunk identity and modality, so
+    // the rebuild recognises a copied chunk as the page's own and keeps its vector.
+    await target.upsertChunks(page.slug, chunks.map(c => carryChunkMetadata(c, {
       chunk_index: c.chunk_index,
       chunk_text: c.chunk_text,
       chunk_source: c.chunk_source,
@@ -571,6 +596,42 @@ export async function copyPageToTarget(
     timeline_entries: timeline.length,
     raw_data: rawData.length,
   };
+}
+
+/**
+ * #6286: rebuild the target's queued text projections before the brain
+ * switches to it. Every copied page carries an `engine_migration` rebuild job
+ * (the target rebuilds sanitized text under its own revision); while it waits
+ * the page is unsealed, and the first `gbrain sync` re-chunks every such
+ * file-backed page although its file is unchanged, without vectors under
+ * --no-embed. This is the keyless drain `gbrain projections drain` runs, for
+ * Markdown and code pages: it keeps each vector whose chunk and embedding
+ * input are unchanged. Called after the config rows are copied: with an
+ * unconfigured gateway the rebuild compares vector labels to the copied
+ * `embedding_model` row (the embedding-column registry keys are engine-local
+ * and stay the target's). A page that fails stays queued and its copy is
+ * intact, so failures warn with the next step instead of failing the run.
+ */
+export async function drainMigratedProjections(target: BrainEngine, progress?: ProgressReporter): Promise<ProjectionDrainResult | null> {
+  console.log('Rebuilding search projections on the target (one more pass over every copied page; no provider calls)...');
+  const nextStep = 'run `gbrain projections drain` before the first `gbrain sync`, or that sync re-chunks them';
+  let result: ProjectionDrainResult;
+  let uncovered = 0;
+  try {
+    result = await drainProjections(target, { progress });
+    // The rebuild and its `remaining` count cover live Markdown and code pages only.
+    const [row] = await target.executeRaw<{ queued: number }>('SELECT COUNT(*)::int AS queued FROM page_projection_jobs');
+    uncovered = Math.max(0, Number(row?.queued ?? 0) - result.remaining);
+  } catch (e) {
+    console.warn(`  WARN projections: the rebuild stopped (${e instanceof Error ? e.message : String(e)}); the copied pages stay queued: ${nextStep}.`);
+    return null;
+  }
+  console.log(`  projections: ${result.rebuilt} rebuilt${result.failed.length > 0 ? `, ${result.failed.length} FAILED` : ''}`);
+  for (const f of result.failed.slice(0, 10)) console.warn(`  - ${f.source_id}::${f.slug}: ${f.reason}`);
+  if (result.failed.length > 10) console.warn(`  ... and ${result.failed.length - 10} more`);
+  if (result.remaining > 0) console.warn(`  ${result.remaining} page(s) still queued for a rebuild: ${nextStep}.`);
+  if (uncovered > 0) console.warn(`  ${uncovered} page(s) the keyless rebuild does not cover (image pages, pages of an archived source) stay queued: the next sync of their source re-imports them.`);
+  return result;
 }
 
 /** A page's identity: what the copy lists before it reads each page body. */
@@ -1154,6 +1215,8 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
     // active engine, so a retry (which resumes via the still-intact manifest)
     // is a same-shaped command, not a special case.
     if (failures.length === 0 && factsResult.failed.length === 0) {
+      // #6286: while the daemon is still paused and before the flip.
+      await drainMigratedProjections(targetEngine, progress);
       const existingFile = (await import('../core/config.ts')).loadConfigFileOnly() ?? ({} as GBrainConfig);
       const newConfig: GBrainConfig = {
         ...existingFile,

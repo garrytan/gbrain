@@ -247,6 +247,7 @@ test/migrate-embeddings-recovery-cli.serial.test.ts	global-state	global-state: R
 test/migrate-engine-completeness.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, DATABASE_URL, GBRAIN_DATABASE_URL)
 test/migrate-engine-page-copy-failure.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, DATABASE_URL, GBRAIN_DATABASE_URL)
 test/migrate-engine-pagination.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, DATABASE_URL, GBRAIN_DATABASE_URL)
+test/migrate-engine-projection-seal.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, DATABASE_URL, GBRAIN_DATABASE_URL); replaces console.log and reads the CLI exit verdict
 test/migrate-graduation-cli.serial.test.ts	global-state	global-state: withEnv holds GBRAIN_HOME at a temp dir (withEnv) across awaited runMigrateGraduation calls that read the file-plane opt-out
 test/migrate-quiet-replay.serial.test.ts	R1	R1: mutates process.env (GBRAIN_MIGRATE_VERBOSE, GBRAIN_PGLITE_SNAPSHOT)
 test/migration-in-process.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll; R4: PGLiteEngine without an afterAll disconnect

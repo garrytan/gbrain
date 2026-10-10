@@ -1,5 +1,6 @@
 import type { BrainEngine } from '../engine.ts';
 import type { Chunk, ChunkInput, ResolvedColumn, PageKind } from '../types.ts';
+import type { ProgressReporter } from '../progress.ts';
 import { MARKDOWN_CHUNKER_VERSION } from '../chunkers/recursive.ts';
 import { CHUNKER_VERSION } from '../chunkers/code.ts';
 import { prepareMarkdownChunks } from '../markdown-chunks.ts';
@@ -443,4 +444,52 @@ export async function rebuildPendingPageProjections(engine: BrainEngine, limit =
     }
   }
   return { rebuilt, superseded };
+}
+
+/** Pages a drain rebuilds per rebuildPendingPageProjections call. */
+const DRAIN_BATCH = 100;
+
+export interface ProjectionDrainResult {
+  rebuilt: number;
+  superseded: number;
+  failed: ProjectionRebuildFailure[];
+  remaining: number;
+  limited: boolean;
+}
+
+/**
+ * #5401: rebuild queued Markdown and code projections in batches until every
+ * row queued before the call started has been tried once (`gbrain projections
+ * drain`, and the legacy engine migration before it hands the target over).
+ */
+export async function drainProjections(engine: BrainEngine, opts: { limit?: number; progress?: ProgressReporter } = {}): Promise<ProjectionDrainResult> {
+  const [{ runStart }] = await engine.executeRaw<{ runStart: string }>('SELECT now()::text AS "runStart"');
+  // PGLite's clock can be coarse: wait until it passes the run start, so a page
+  // that fails in this run is stamped after it and is not tried again.
+  while (!(await engine.executeRaw<{ passed: boolean }>('SELECT now()>$1::text::timestamptz AS passed', [runStart]))[0]?.passed) {
+    await new Promise(resolve => setTimeout(resolve, 1));
+  }
+  const total = (await projectionBacklog(engine)).pending;
+  opts.progress?.start('projections.drain', opts.limit === undefined ? total : Math.min(total, opts.limit));
+  const failed: ProjectionRebuildFailure[] = [];
+  let rebuilt = 0;
+  let superseded = 0;
+  let tried = 0;
+  try {
+    while (opts.limit === undefined || tried < opts.limit) {
+      const failuresBefore = failed.length;
+      const batch = await rebuildPendingPageProjections(engine, Math.min(DRAIN_BATCH, (opts.limit ?? Infinity) - tried),
+        { notAfter: runStart, onFailure: failure => failed.push(failure) });
+      const attempted = batch.rebuilt + batch.superseded + failed.length - failuresBefore;
+      if (attempted === 0) break;
+      rebuilt += batch.rebuilt;
+      superseded += batch.superseded;
+      tried += attempted;
+      opts.progress?.tick(attempted, `${rebuilt} rebuilt, ${failed.length} failed`);
+    }
+  } finally {
+    opts.progress?.finish();
+  }
+  const remaining = (await projectionBacklog(engine)).pending;
+  return { rebuilt, superseded, failed, remaining, limited: opts.limit !== undefined && tried >= opts.limit && remaining > 0 };
 }

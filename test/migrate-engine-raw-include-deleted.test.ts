@@ -35,6 +35,7 @@ describe('copyPageToTarget — raw_data read opts', () => {
       { source: 'feed', data: { a: 1 }, fetched_at: new Date() },
     ];
     const source = {
+      executeRaw: async () => [],
       getChunksWithEmbeddings: async () => [],
       getTags: async () => [],
       getTimeline: async () => [],
@@ -46,6 +47,7 @@ describe('copyPageToTarget — raw_data read opts', () => {
     const target = {
       putPage: async () => fakePage(),
       executeRaw: async () => [],
+      setPageAliases: async () => {},
       putRawData: async (slug: string, rawSource: string, data: unknown, opts: unknown) => {
         putRawDataCalls.push({ slug, rawSource, data, opts });
       },

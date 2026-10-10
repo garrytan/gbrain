@@ -56,8 +56,11 @@ describe('copyPageToTarget — undefined-column normalization (#3194)', () => {
       // #4527: copyPageToTarget restores the source row's timestamps via a
       // raw UPDATE right after putPage.
       executeRaw: async () => [],
+      setPageAliases: async () => {},
     } as unknown as BrainEngine;
     const source = {
+      // #6286: the page_kind read finds no row, so putPage gets an explicit null.
+      executeRaw: async () => [],
       getChunksWithEmbeddings: async () => [],
       getTags: async () => [],
       getTimeline: async () => [],
@@ -72,6 +75,7 @@ describe('copyPageToTarget — undefined-column normalization (#3194)', () => {
       type: undefined as unknown as string,
       compiled_truth: undefined as unknown as string,
       content_hash: undefined,
+      source_path: undefined,
     });
 
     await copyPageToTarget(source, target, page);
@@ -83,6 +87,8 @@ describe('copyPageToTarget — undefined-column normalization (#3194)', () => {
     expect(call.page.type).toBeNull();
     expect(call.page.compiled_truth).toBeNull();
     expect(call.page.content_hash).toBeNull();
+    expect(call.page.source_path).toBeNull();
+    expect(call.page.page_kind).toBeNull();
     // ...while legitimately-populated fields pass through untouched.
     expect(call.page.title).toBe('a title');
     // Verbatim copy: the source row is authoritative, so the copy carries
@@ -101,20 +107,25 @@ describe('copyPageToTarget — undefined-column normalization (#3194)', () => {
       // #4527: copyPageToTarget restores the source row's timestamps via a
       // raw UPDATE right after putPage.
       executeRaw: async () => [],
+      setPageAliases: async () => {},
     } as unknown as BrainEngine;
     const source = {
+      // #6286: page_kind is read from the source row.
+      executeRaw: async () => [{ page_kind: 'code' }],
       getChunksWithEmbeddings: async () => [],
       getTags: async () => [],
       getTimeline: async () => [],
       getRawData: async () => [],
     } as unknown as BrainEngine;
 
-    const page = fakePage({ content_hash: 'abc123' });
+    const page = fakePage({ content_hash: 'abc123', source_path: 'src/ledger.ts' });
     await copyPageToTarget(source, target, page);
 
     const call = putPageCalls[0] as { page: Record<string, unknown> };
     expect(call.page.content_hash).toBe('abc123');
     expect(call.page.type).toBe('note');
+    expect(call.page.source_path).toBe('src/ledger.ts');
+    expect(call.page.page_kind).toBe('code');
   });
 });
 
