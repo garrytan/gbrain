@@ -35,6 +35,18 @@ A note titled `升级PostgreSQL17` used to be invisible to a keyword search for 
 - Every pglite-snapshot cache key in `e2e.yml`, `test.yml` and `stress.yml` also hashes `src/core/audit/redact-connection-info.ts`, which the schema closure now imports.
 
 Contributed by @dovstern, @javieraldape, @daveove, @benswinney and @dhruvatr.
+## [0.60.158.0] - 2026-10-10
+
+**`engine.transaction(fn, { signal })` and `engine.transactionDirect(fn, { signal })`: an `AbortSignal` that cancels a running Postgres transaction. No behavior changes for callers that pass no signal.**
+
+The publication deadline planned in #6288 / #6352 needs to end a specific publish transaction when its ceiling passes, so that its promise rejects and the caller's `finally` releases the request-row lock, page locks, worktree lock and capacity. Until now nothing could cancel one transaction's connection.
+
+### Itemized changes
+
+- **`TransactionOptions.signal`** (`src/core/engine.ts`, `src/core/postgres-engine.ts`, `src/core/postgres-engine/transaction-abort.ts`). On Postgres an abort discards the transaction's connection through the begin handle's `discard()` (the connection-ownership hunk from #5466 / #5560): the socket closes, the server rolls the transaction back on its own whether a statement is in flight or not, directly or through a transaction-mode pooler, and the pool reconnects on its next checkout. The transaction rejects with an `AbortError` whose `message` is the signal's reason and whose `cause` is the driver's `CONNECTION_CLOSED` error; every `finally` on the way out runs and the `tx` gauge is released. An already-aborted signal rejects before `BEGIN` is sent. An abort after `COMMIT` returned changes nothing. A nested transaction shares its parent's connection, so aborting it aborts the parent too.
+- **PGLite** (`src/core/pglite-engine.ts`): one in-process connection cannot interrupt a statement, so only the pre-`BEGIN` check applies; a mid-flight abort is ignored and the transaction commits.
+- Tests: `test/e2e/postgres-transaction-abort-postgres.test.ts` (5 cases: mid-flight abort on `transaction` and `transactionDirect` with `finally`, rollback checked again after the in-flight statement would have finished, pool and gauge freed; pre-aborted signal sends no `BEGIN`; abort after `COMMIT`; no signal), 3 of 5 fail on master (the option is ignored and the transaction commits); `test/transaction-abort.test.ts` (8 cases: the abort-before-and-after-attach paths, error mapping, listener removal, and PGLite's two behaviors).
+
 ## [0.60.157.0] - 2026-10-10
 
 **A database-only `validate: false` stamp no longer refuses every write; lost memory writes are counted and replayable.**
