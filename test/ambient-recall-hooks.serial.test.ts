@@ -468,6 +468,22 @@ describe('hook session-start pack arm', () => {
     expect(handlerHit).toBe(false);
   });
 
+  test('no GBRAIN_SOURCE: the .gbrain-source walk from the payload cwd sets sourceId (#5941)', async () => {
+    const dataDir = join(tmp, 'data');
+    let seen: ContextPackRequest | undefined;
+    await startPackServer({ dataDir, blockText: null, onRequest: (r) => { seen = r; } });
+    writePgliteConfig(dataDir);
+    const repo = join(tmp, 'repo');
+    mkdirSync(join(repo, 'sub'), { recursive: true });
+    writeFileSync(join(repo, '.gbrain-source'), 'wiki\n');
+    const out = collectStdout();
+    await runHook(['session-start', '--harness', 'codex'], {
+      ...out.io,
+      stdin: JSON.stringify({ session_id: 'sess-src', source: 'startup', cwd: join(repo, 'sub') }),
+    });
+    expect(seen?.sourceId).toBe('wiki');
+  });
+
   test('trigger carries the SessionStart source discriminator', async () => {
     const dataDir = join(tmp, 'data');
     let seen: ContextPackRequest | undefined;
