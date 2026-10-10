@@ -5,9 +5,11 @@
  * keeps them, and both engines re-sort after pooling. The fixture amplifies
  * the effect with a sparse HNSW graph (m = 4, ef_construction = 8) over 20k
  * clustered 32-dim vectors, a 10% source filter and exact truth computed in
- * process. HNSW construction is randomized, so the bounds sit about 0.1 away
- * from the measured ranges (strict 0.44-0.49, relaxed 0.68-0.75 over four
- * builds).
+ * process. pgvector draws each element's graph level from the server's own
+ * unseeded PRNG, so every build is a different graph: over 200 builds one
+ * build's default recall had mean 0.714 and sd 0.037 (CI saw 0.5825). The
+ * test averages BUILDS fresh builds, which halves the sd (0.018 over 50
+ * groups of four, minimum 0.674), so the bounds keep their margin.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { hasDatabase, setupDB, teardownDB } from './helpers.ts';
@@ -15,7 +17,7 @@ import { refreshProjectionStatistics } from '../../src/core/search/projection-st
 import type { PostgresEngine } from '../../src/core/postgres-engine.ts';
 
 const RUN = hasDatabase();
-const D = 32, N = 20_000, K = 20, Q = 40;
+const D = 32, N = 20_000, K = 20, Q = 40, BUILDS = 4;
 const column = { name: 'embedding_iterative_fixture', type: 'vector' as const, dimensions: D, embeddingModel: '' };
 let engine: PostgresEngine;
 let seed = 42;
@@ -47,6 +49,14 @@ async function meanRecall(mode?: 'strict_order' | 'relaxed_order'): Promise<numb
   return total / Q;
 }
 
+async function buildIndex(): Promise<void> {
+  await engine.transaction(async (tx) => {
+    await tx.executeRaw('SET LOCAL max_parallel_maintenance_workers = 0');
+    await tx.executeRaw('DROP INDEX IF EXISTS idx_chunks_iterative_fixture');
+    await tx.executeRaw(`CREATE INDEX idx_chunks_iterative_fixture ON content_chunks USING hnsw (embedding_iterative_fixture vector_cosine_ops) WITH (m = 4, ef_construction = 8)`);
+  });
+}
+
 describe.skipIf(!RUN)('filtered HNSW recall under iterative scan modes (Postgres, #6132)', () => {
   beforeAll(async () => {
     engine = await setupDB();
@@ -67,10 +77,7 @@ describe.skipIf(!RUN)('filtered HNSW recall under iterative scan modes (Postgres
     }
     await engine.executeRaw(`INSERT INTO content_chunks (page_id, chunk_index, chunk_text, chunk_source, embedding_iterative_fixture)
       SELECT p, 0, 'fixture', 'compiled_truth', e::vector FROM unnest($1::int[], $2::text[]) u(p, e)`, [pageIds, embeddings]);
-    await engine.transaction(async (tx) => {
-      await tx.executeRaw('SET LOCAL max_parallel_maintenance_workers = 0');
-      await tx.executeRaw(`CREATE INDEX idx_chunks_iterative_fixture ON content_chunks USING hnsw (embedding_iterative_fixture vector_cosine_ops) WITH (m = 4, ef_construction = 8)`);
-    });
+    await buildIndex();
     await engine.executeRaw('ANALYZE content_chunks');
     await engine.executeRaw('ANALYZE pages');
     await refreshProjectionStatistics(engine);
@@ -83,8 +90,12 @@ describe.skipIf(!RUN)('filtered HNSW recall under iterative scan modes (Postgres
   }, 120_000);
 
   test('the default keeps the late, closer in-filter neighbours strict order drops', async () => {
-    const byDefault = await meanRecall();
-    const strict = await meanRecall('strict_order');
+    let byDefault = 0, strict = 0;
+    for (let b = 0; b < BUILDS; b++) {
+      if (b > 0) await buildIndex();
+      byDefault += await meanRecall() / BUILDS;
+      strict += await meanRecall('strict_order') / BUILDS;
+    }
     expect(byDefault).toBeGreaterThanOrEqual(0.6);
     expect(byDefault - strict).toBeGreaterThanOrEqual(0.1);
   }, 300_000);
