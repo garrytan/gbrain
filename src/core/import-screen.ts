@@ -18,6 +18,7 @@ import { buildEmbedSkipMarker, EMBED_SKIP_KEY } from './embed-skip.ts';
 import { buildContentFlagMarker, buildQuarantineMarker, CONTENT_FLAG_KEY, QUARANTINE_KEY } from './quarantine.ts';
 import { ATOMS_SCAN_HASH_KEY } from './utils.ts';
 import { applyTrustAllowRules } from './trust/allow-rules.ts';
+import { compareTrust, isTrustTier, OWNER_TIER_FLOOR } from './trust/tier.ts';
 import {
   assessPageForGate, DEFAULT_WRITE_GATE_CONFIG, parseWriteGateConfig, writeGateDetail, writeGateRejectedError,
   type WriteGateAssessment, type WriteGateConfig, type WriteGateInput,
@@ -278,13 +279,20 @@ export const GATE_OWNED_FRONTMATTER_KEYS = [QUARANTINE_KEY, CONTENT_FLAG_KEY, EM
  * mining (`atoms_scan_hash`) or forge a cleared state (`quarantine_override`).
  * A preserving path keeps its own override only while it binds the content,
  * and a current override drops classifier markers the content still carries.
+ * The override's binding is a public hash anyone can compute, so a preserving
+ * file import that carries a write gate (owner sync and file import, managed
+ * sync and import) keeps it only when that gate's tier is owner-tier; a
+ * mirror, connector or lowered source can't clear its own page (CSO T1). An
+ * unreadable tier fails closed.
  */
-export function stripGateOwnedMarkers(parsed: Pick<ParsedMarkdown, 'frontmatter' | 'title' | 'type' | 'compiled_truth' | 'timeline'>, opts: { preserveGateMarkers?: boolean }): void {
+export function stripGateOwnedMarkers(parsed: Pick<ParsedMarkdown, 'frontmatter' | 'title' | 'type' | 'compiled_truth' | 'timeline'>,
+  opts: { preserveGateMarkers?: boolean; writeGate?: { tier?: unknown } }): void {
   if (opts.preserveGateMarkers !== true) {
     for (const key of GATE_OWNED_FRONTMATTER_KEYS) delete parsed.frontmatter[key];
     return;
   }
-  if (Object.hasOwn(parsed.frontmatter, QUARANTINE_OVERRIDE_KEY) && !hasCurrentQuarantineOverride(parsed)) delete parsed.frontmatter[QUARANTINE_OVERRIDE_KEY];
+  const ownerGate = !opts.writeGate || isTrustTier(opts.writeGate.tier) && compareTrust(opts.writeGate.tier, OWNER_TIER_FLOOR) >= 0;
+  if (Object.hasOwn(parsed.frontmatter, QUARANTINE_OVERRIDE_KEY) && (!ownerGate || !hasCurrentQuarantineOverride(parsed))) delete parsed.frontmatter[QUARANTINE_OVERRIDE_KEY];
   dropClassifierMarkers(parsed as ParsedMarkdown);
 }
 
