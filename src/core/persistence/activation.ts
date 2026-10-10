@@ -15,6 +15,7 @@ import { inspectLegacyWriterLocks } from './legacy-locks.ts';
 import { deleteLockRowExact } from '../db-lock.ts';
 import { catalogueError } from '../error-catalogue.ts';
 import { isConnectorSourceKind } from './connector-identity.ts';
+import { gitDurabilityState } from './git-durability-policy.ts';
 
 export interface ActivationReport {
   enabled: boolean;
@@ -23,7 +24,18 @@ export interface ActivationReport {
   native_lock: { target: string; napi: 3 };
   drift_audit?: { sources: Array<Record<string, unknown>>; complete: boolean; snapshot_only: true };
   legacy_locks?: Awaited<ReturnType<typeof inspectLegacyWriterLocks>>;
+  /**
+   * #5182: each filesystem source's recorded Git-durability setting on this host
+   * (`off` = disabled, `unknown` = not recorded: the legacy hook decides). A
+   * source listed `off` or `unknown` without a hook has its Git effects skipped
+   * until `gbrain sources writer git-durability <source> --enable` runs.
+   */
+  git_durability?: Array<{ source_id: string; state: 'on' | 'off' | 'unknown'; enable_command: string | null }>;
 }
+const gitDurabilityListing = (bindings: WorktreeBinding[]): NonNullable<ActivationReport['git_durability']> => bindings.map(binding => {
+  const state = gitDurabilityState(binding);
+  return { source_id: binding.source_id, state, enable_command: state === 'on' ? null : `gbrain sources writer git-durability ${binding.source_id} --enable --dry-run` };
+});
 interface SourceRoot { id: string; incarnation: string; root: string | null; connector: boolean; }
 const quiescence = () => new OperationError('writer_not_quiesced', 'Managed activation requires all older writers and maintenance jobs to be stopped.',
   WRITER_INSPECTION_HINT);
@@ -153,7 +165,7 @@ export async function activatePersistence(engine: BrainEngine, opts: { confirmQu
       if (legacyLocks.some(row => !opts.cleanupDeadLocalLocks || row.liveness !== 'dead_eligible')) throw quiescence();
       if ((await tx.executeRaw(`SELECT id FROM persistence_requests WHERE state IN ('queued','running','recovering') OR recovery IS NOT NULL LIMIT 1`)).length
         || (await tx.executeRaw('SELECT id FROM persistence_effects WHERE recovery IS NOT NULL LIMIT 1')).length) throw await notQuiescedError(tx, quiescence().message, { queuedEffects: false });
-      if (opts.dryRun) return { enabled: false, activated: false, filesystem_sources: bindings.length, native_lock: native, legacy_locks: legacyLocks, drift_audit: driftAudit };
+      if (opts.dryRun) return { enabled: false, activated: false, filesystem_sources: bindings.length, native_lock: native, legacy_locks: legacyLocks, drift_audit: driftAudit, git_durability: gitDurabilityListing(bindings) };
       for (const row of legacyLocks) {
         if (!(await deleteLockRowExact(tx, row.id, row.holder_pid, row.acquisition_token)).deleted) throw quiescence();
       }
@@ -163,7 +175,7 @@ export async function activatePersistence(engine: BrainEngine, opts: { confirmQu
       // Any fsync/marker failure rolls back enabled=true. A conservative stale
       // refusal record after rollback is safe and cannot grant writer authority.
       await refreshManagedFilesystemRoots(tx, managedFilesystemDatastorePath(engine));
-      return { enabled: true, activated: true, filesystem_sources: bindings.length, native_lock: native, legacy_locks: legacyLocks };
+      return { enabled: true, activated: true, filesystem_sources: bindings.length, native_lock: native, legacy_locks: legacyLocks, git_durability: gitDurabilityListing(bindings) };
     });
   } finally { for (const lock of locks.reverse()) await lock.release(); }
 }
