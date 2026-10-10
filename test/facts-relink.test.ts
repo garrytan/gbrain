@@ -267,6 +267,15 @@ describe('relink model tier', () => {
     expect(calls.length).toBe(1);
   });
 
+  test('the model tier asks for thinking off, so a small cap is not spent on reasoning (#6419)', async () => {
+    await unlinked('the apollo example launch slipped two weeks');
+    const seen: ChatOpts[] = [];
+    __setChatTransportForTests(async (o: ChatOpts) => { seen.push(o); return answer([null]); });
+    await relink({ llm: true });
+    expect(seen.length).toBeGreaterThan(0);
+    for (const o of seen) expect(o.thinking).toBe('off');
+  });
+
   test('an answer that does not quote the fact never links', async () => {
     await unlinked('the launch slipped two weeks');
     __setChatTransportForTests(async () => answer(['Acme Example']));

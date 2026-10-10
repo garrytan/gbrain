@@ -94,6 +94,9 @@ export async function judgeBatch(engine: BrainEngine, sourceId: string, model: s
   const result = await chat({
     model, system: SYSTEM, messages: [{ role: 'user', content: render(batch) }],
     maxTokens: 64 + batch.length * 40, temperature: 0, abortSignal: signal, responseSchema: RESPONSE_SCHEMA,
+    // A strict JSON answer under a small cap: on a default-thinking model, reasoning would spend the cap and return
+    // empty text (stopReason 'length'), which parses as model_unparseable for the whole batch (#6419, as #5331).
+    thinking: 'off',
   });
   const subjects = result.stopReason === 'refusal' || result.stopReason === 'content_filter' ? null : parseSubjects(result.text, batch.length);
   if (!subjects) return batch.map(f => ({ id: f.id, slug: null, reason: 'model_unparseable' as const }));
