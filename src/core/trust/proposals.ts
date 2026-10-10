@@ -199,6 +199,17 @@ export function registerTrustProposalHandler(action: TrustProposalAction, handle
   handlers.set(action, handler);
 }
 
+/**
+ * Load every module that registers a proposal handler and return the actions
+ * now registered. The registering modules import this one, so they cannot be
+ * static imports here; loading them at the read point keeps a decision from
+ * depending on which modules the calling command happened to load first.
+ */
+export async function ensureTrustProposalHandlers(): Promise<TrustProposalAction[]> {
+  await Promise.all([import('./page-handlers.ts'), import('./supersede-handlers.ts')]);
+  return [...handlers.keys()];
+}
+
 export function decisionResult(proposal: Pick<TrustProposalRow, 'id' | 'action'>, decision: TrustDecision,
   status: TrustDecisionResult['status'], extra: { reason?: string; detail?: Record<string, unknown> } = {}): TrustDecisionResult {
   return { id: proposal.id, ref: trustProposalRef(proposal.id), action: proposal.action, decision, status, ...extra };
@@ -221,6 +232,7 @@ export async function decideTrustProposal(engine: BrainEngine, id: number, decis
   if (!proposal) return { id, ref: trustProposalRef(id), action: 'confirm', decision, status: 'not_found' };
   const want = decision === 'undo' ? 'accepted' : 'pending';
   if (proposal.status !== want) return decisionResult(proposal, decision, 'refused', { reason: proposal.status });
+  await ensureTrustProposalHandlers();
   const handler = handlers.get(proposal.action);
   if (decision === 'reject') return (handler?.reject ?? rejectOnly)(engine, proposal, ctx);
   if (!handler) return decisionResult(proposal, decision, 'refused', { reason: 'no_handler' });

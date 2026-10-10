@@ -23,6 +23,7 @@ import { contentRefusalFromReceipt } from '../import-screen.ts';
 import { fenceIssuesFromDetail, fenceLocationFromDetail } from '../fence-repair/refusal.ts';
 import { heldFileDiagnostic } from './verb-errors.ts';
 import { isMissingPageMessage } from './page-identity.ts';
+import { registerPersistenceConsumerConfig } from '../embedding-disabled.ts';
 
 interface Service { consumer: PersistenceConsumerLike; heartbeat?: ConsumerHeartbeat; stopping: boolean; unregisterStop?: () => void; unregisterReopen?: () => void; }
 const services = new WeakMap<BrainEngine, Service>();
@@ -184,6 +185,7 @@ export function persistenceConsumerConfig(engine: BrainEngine): GBrainConfig | u
   const service = services.get(engine);
   return service && !service.stopping ? service.consumer.config : undefined;
 }
+registerPersistenceConsumerConfig(persistenceConsumerConfig);
 export function persistenceConsumerStatus(engine: BrainEngine) {
   const service = services.get(engine);
   return service ? { state: service.stopping ? 'closing' : 'open', ...service.consumer.status() }
