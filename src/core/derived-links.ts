@@ -1,5 +1,5 @@
 import type { BrainEngine, LinkBatchInput } from './engine.ts';
-import { assertPageRevision, type PageSnapshot } from './page-state/types.ts';
+import { assertPageRevision, PageRevisionConflictError, RevisionBackfillPendingError, type PageSnapshot } from './page-state/types.ts';
 import { pipelined } from './page-state/transactions.ts';
 import { executeRawJsonb } from './sql-query.ts';
 import { pageSnapshotKey } from './page-snapshot-batch.ts';
@@ -64,9 +64,32 @@ export async function replaceDerivedLinksUnlessSettingsChanged(engine: Pick<Brai
   catch (error) { if (error instanceof DerivedLinkSettingsChangedError) return null; throw error; }
 }
 
+/**
+ * #6272: a concurrent writer moved a link endpoint after type resolution, or the origin itself after its snapshot
+ * read. Instance checks only: settings changes, backfill-pending revisions and every other error stay fatal.
+ */
+export function isConcurrentLinkWriteConflict(error: unknown): boolean {
+  return (error instanceof DerivedLinkEndpointChangedError && !(error instanceof DerivedLinkSettingsChangedError))
+    || (error instanceof PageRevisionConflictError && !(error instanceof RevisionBackfillPendingError));
+}
+
+/** A deferring caller's outcome for one origin: written, left stale by a settings change, or by a concurrent write. */
+export type DeferredDerivedLinkOutcome = { created: number; removed: number } | 'settings_changed' | 'concurrent_write';
+
+/** replaceDerivedLinksUnlessSettingsChanged for a run that defers (and counts) pages a concurrent writer moved. */
+export async function replaceDerivedLinksDeferringConflicts(engine: Pick<BrainEngine, 'replaceDerivedLinks'>,
+  ...args: Parameters<BrainEngine['replaceDerivedLinks']>): Promise<DeferredDerivedLinkOutcome> {
+  try { return await replaceDerivedLinksUnlessSettingsChanged(engine, ...args) ?? 'settings_changed'; }
+  catch (error) { if (isConcurrentLinkWriteConflict(error)) return 'concurrent_write'; throw error; }
+}
+
 /** The operator line for pages a settings change left stale mid-run. */
 export const settingsChangedSkipLine = (n: number) =>
   `Skipped ${n} page(s) because the line-grammar settings changed during this run; they stay stale. Run \`gbrain extract --stale\` to finish them.`;
+
+/** The operator line for pages a concurrent write left stale mid-run. */
+export const concurrentWriteSkipLine = (n: number) =>
+  `Skipped ${n} page(s) another writer changed during this run (the page or a link target); their links and watermark were kept, so they stay stale. Run \`gbrain extract --stale\` to finish them.`;
 
 export async function applyAttendanceDelta(tx: Pick<BrainEngine, 'executeRaw' | 'addLinksBatch'>,
   origin: { id: string; slug: string; source_id: string; type: string }, remove: string[], additions: LinkBatchInput[]) {
@@ -178,18 +201,19 @@ export async function replaceDerivedLinksBatch(
 
 /**
  * Publish through replaceDerivedLinksBatch; when that transaction fails,
- * replay the origins one by one so every outcome is the unbatched one: null
- * for a settings-changed skip, and the first failing origin's error thrown
- * (after `onError`) with the origins before it committed.
+ * replay the origins one by one so every outcome is the unbatched one:
+ * `settings_changed` for a settings-changed skip, `concurrent_write` for an
+ * origin a concurrent writer moved (#6272), and any other failing origin's
+ * error thrown (after `onError`) with the origins before it committed.
  */
 export async function replaceDerivedLinksBatchOrReplay(engine: Pick<BrainEngine, 'replaceDerivedLinks' | 'replaceDerivedLinksBatch'>,
-  items: readonly DerivedLinkBatchItem[], onError?: (item: DerivedLinkBatchItem) => void): Promise<Array<{ created: number; removed: number } | null>> {
+  items: readonly DerivedLinkBatchItem[], onError?: (item: DerivedLinkBatchItem) => void): Promise<DeferredDerivedLinkOutcome[]> {
   if (!items.length) return [];
   try { return await engine.replaceDerivedLinksBatch(items); }
   catch {
-    const results: Array<{ created: number; removed: number } | null> = [];
+    const results: DeferredDerivedLinkOutcome[] = [];
     for (const item of items) {
-      try { results.push(await replaceDerivedLinksUnlessSettingsChanged(engine, item.origin, item.links, item.opts)); }
+      try { results.push(await replaceDerivedLinksDeferringConflicts(engine, item.origin, item.links, item.opts)); }
       catch (error) { onError?.(item); throw error; }
     }
     return results;
