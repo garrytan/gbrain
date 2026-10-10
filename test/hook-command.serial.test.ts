@@ -123,6 +123,45 @@ async function startServer(opts: {
 
 // ── Dispatch + kill switch ──────────────────────────────────────────────────
 
+describe('user-prompt source routing (#5941)', () => {
+  // Codex hooks.json is machine-global, so its context hooks bake no
+  // GBRAIN_SOURCE; the hook resolves the source from the payload cwd.
+  function repoWithDotfile(source: string): string {
+    const repo = join(tmp, 'repo');
+    mkdirSync(join(repo, 'sub'), { recursive: true });
+    writeFileSync(join(repo, '.gbrain-source'), `${source}\n`);
+    return join(repo, 'sub');
+  }
+
+  test('no GBRAIN_SOURCE: the .gbrain-source walk from the payload cwd sets sourceId', async () => {
+    const dataDir = join(tmp, 'data');
+    writePgliteConfig(dataDir);
+    const seen: TurnContextRequest[] = [];
+    await startServer({ dataDir, blockText: 'ok', onRequest: (r) => { seen.push(r); } });
+    const out = collectStdout();
+    await runHook(['user-prompt', '--harness', 'codex'], {
+      ...out.io,
+      stdin: JSON.stringify({ prompt: 'hello Acme', cwd: repoWithDotfile('wiki') }),
+    });
+    expect(seen).toHaveLength(1);
+    expect(seen[0].sourceId).toBe('wiki');
+  });
+
+  test('GBRAIN_SOURCE still wins over the dotfile', async () => {
+    const dataDir = join(tmp, 'data');
+    writePgliteConfig(dataDir);
+    const seen: TurnContextRequest[] = [];
+    await startServer({ dataDir, blockText: 'ok', onRequest: (r) => { seen.push(r); } });
+    process.env.GBRAIN_SOURCE = 'pinned';
+    const out = collectStdout();
+    await runHook(['user-prompt'], {
+      ...out.io,
+      stdin: JSON.stringify({ prompt: 'hello Acme', cwd: repoWithDotfile('wiki') }),
+    });
+    expect(seen[0].sourceId).toBe('pinned');
+  });
+});
+
 describe('dispatch', () => {
   test('GBRAIN_HOOKS=0 short-circuits every event: exit 0, no output, no heartbeat', async () => {
     process.env.GBRAIN_HOOKS = '0';
