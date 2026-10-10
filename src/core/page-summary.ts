@@ -162,7 +162,7 @@ export type GeneratePerChunkSynopsisResult =
 export async function generatePerChunkSynopsis(
   args: GeneratePerChunkSynopsisArgs,
 ): Promise<GeneratePerChunkSynopsisResult> {
-  const userPrompt = buildUserPrompt(args.pageTitle, args.documentText, args.chunkText);
+  const { page, chunk } = buildUserPrompt(args.pageTitle, args.documentText, args.chunkText);
   const maxTokens = args.maxTokens ?? SYNOPSIS_MAX_TOKENS;
 
   const chatOpts: ChatOpts = {
@@ -170,7 +170,16 @@ export async function generatePerChunkSynopsis(
     // an OPENAI_API_KEY-only install must not route to Anthropic.
     model: args.model ?? resolveTierDefault('utility'),
     system: SYSTEM_PROMPT,
-    messages: [{ role: 'user', content: userPrompt }],
+    // Every chunk of a page shares the title and document, so that block is
+    // cached and later chunks of the same page read it instead of paying for
+    // it again; the chunk goes after it.
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'text', text: page, cache: true },
+        { type: 'text', text: chunk },
+      ],
+    }],
     maxTokens,
     abortSignal: args.abortSignal,
     cacheSystem: true,
@@ -250,11 +259,17 @@ export async function generatePerChunkSynopsis(
   return { kind: 'success', synopsis, usage: result.usage };
 }
 
+/**
+ * The synopsis user prompt as two blocks: `page` (title and document, the same
+ * for every chunk of a page) and `chunk`. Joined with a newline they are the
+ * single-string prompt of SYNOPSIS_PROMPT_VERSION 1, which is how the
+ * claude-cli adapter renders them.
+ */
 function buildUserPrompt(
   pageTitle: string,
   documentText: string,
   chunkText: string,
-): string {
+): { page: string; chunk: string } {
   // Tail-truncate `documentText` to `SYNOPSIS_DOC_MAX_CHARS` so small local
   // chat models don't stall on >100KB pages. Head preserved (title block,
   // frontmatter, intro paragraphs carry the document-level anchor).
@@ -264,19 +279,22 @@ function buildUserPrompt(
     trimmedDoc = documentText.slice(0, cut) +
       `\n\n[... ${documentText.length - cut} chars truncated for synopsis budget ...]`;
   }
-  return [
+  const page = [
     `<page_title>${pageTitle}</page_title>`,
     '',
     '<full_document>',
     trimmedDoc,
     '</full_document>',
     '',
+  ].join('\n');
+  const chunk = [
     '<chunk>',
     chunkText,
     '</chunk>',
     '',
     'Write the one-sentence synopsis for <chunk>:',
   ].join('\n');
+  return { page, chunk };
 }
 
 const TIMEOUT_ERROR_NAMES = new Set(['AbortError', 'TimeoutError']);

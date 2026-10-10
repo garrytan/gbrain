@@ -2723,7 +2723,7 @@ export type ChatRole = 'system' | 'user' | 'assistant' | 'tool';
  * on turn 2 without this: `chat()` previously never captured the part at all.
  */
 export type ChatBlock =
-  | { type: 'text'; text: string; providerMetadata?: Record<string, unknown> }
+  | { type: 'text'; text: string; cache?: boolean; providerMetadata?: Record<string, unknown> }
   | { type: 'reasoning'; text: string; providerMetadata?: Record<string, unknown> }
   | { type: 'tool-call'; toolCallId: string; toolName: string; input: unknown; providerMetadata?: Record<string, unknown> }
   | { type: 'tool-result'; toolCallId: string; toolName: string; output: unknown; isError?: boolean; providerMetadata?: Record<string, unknown> };
@@ -2856,7 +2856,7 @@ function ensureToolCallId(id: unknown, toolName: string): string {
   return `glmfix-${toolName}-${randomUUID()}`;
 }
 
-export function toModelMessages(messages: ChatMessage[]): unknown[] {
+export function toModelMessages(messages: ChatMessage[], cacheControl?: { type: 'ephemeral'; ttl?: '5m' | '1h' }): unknown[] {
   return messages.map((m) => {
     if (typeof m.content === 'string') return { role: m.role, content: m.content };
     const blocks = m.content;
@@ -2893,10 +2893,11 @@ export function toModelMessages(messages: ChatMessage[]): unknown[] {
           // Gemini 3.x thoughtSignature, OpenAI reasoning-item id) — attached
           // only when captured.
           if (b.type === 'text') {
+            const providerOptions = b.cache && cacheControl ? deepMergeRecords(b.providerMetadata, { anthropic: { cacheControl } }) : b.providerMetadata;
             return {
               type: 'text' as const,
               text: b.text,
-              ...(b.providerMetadata ? { providerOptions: b.providerMetadata } : {}),
+              ...(providerOptions ? { providerOptions } : {}),
             };
           }
           if (b.type === 'reasoning') {
@@ -3041,7 +3042,8 @@ export interface ChatOpts {
    */
   providerOptions?: Record<string, Record<string, unknown>>;
   /**
-   * Ask for the stable prefix (system prompt + last tool def) to be cached.
+   * Ask for the stable prefix (system prompt + last tool def) to be cached, and
+   * end a cached prefix at each text block marked `cache` (a page shared by calls).
    * Silently ignored on providers whose recipe declares no prompt caching.
    *
    * Only Anthropic reads the resulting `cache_control` markers. Providers that
@@ -3649,7 +3651,7 @@ async function chatAdmitted(opts: ChatOpts, admitted: {
   const generate = (out: typeof output) => guardedGeneration(modelStr, _generateTextTransport, {
     model,
     system: systemParam,
-    messages: toModelMessages(repairToolPairing(opts.messages)) as any,
+    messages: toModelMessages(repairToolPairing(opts.messages), cacheControlValue) as any,
     tools: opts.tools && opts.tools.length > 0 ? tools : undefined,
     maxOutputTokens,
     ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
