@@ -164,10 +164,11 @@ describe('cycle and synthesis writers on an unmanaged brain', () => {
       const brain = await unmanagedBrain(engine);
       const page = await creatorPage(brain, 'people/hana-example', { type: 'person' });
       const old = new Date(Date.now() - 30 * 60 * 60 * 1000).toISOString();
+      // #6023: untyped facts differing by a number token no longer cluster; vary by a word.
       for (let i = 0; i < 4; i++) {
         await asCreator(engine, tx => tx.executeRaw(`INSERT INTO facts (source_id, entity_slug, fact, kind, source, valid_from, confidence, embedding, embedded_at, embedding_model, embedded_text_hash)
           VALUES ($1, 'people/hana-example', $2, 'fact', 'test', $3::timestamptz, 0.9, $4::vector, $3::timestamptz, 'openai:text-embedding-3-large', md5($2))`,
-        [brain.sourceId, `hana fact ${i}`, new Date(Date.parse(old) + i * 1000).toISOString(), VECTOR_TEXT]));
+        [brain.sourceId, `hana fact ${['alpha', 'beta', 'gamma', 'delta'][i]}`, new Date(Date.parse(old) + i * 1000).toISOString(), VECTOR_TEXT]));
       }
       const result = await runPhaseConsolidate(engine, { sourceId: brain.sourceId });
       expect(result.details.takes_written).toBe(1);

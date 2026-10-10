@@ -26,6 +26,7 @@
 import type { BrainEngine, FactRow } from '../../engine.ts';
 import type { PhaseResult } from '../../cycle.ts';
 import { cosineSimilarity } from '../../facts/classify.ts';
+import { claimsDiverge, EXPLICIT_DUPLICATE_THRESHOLD } from '../../facts/capture-dedup.ts';
 import { createHash } from 'node:crypto';
 import { isAborted } from '../../abort-check.ts';
 import { maintenancePreflight, submitMaintenanceConsolidation } from '../../persistence/prepared-maintenance.ts';
@@ -46,8 +47,18 @@ export interface ConsolidatePhaseOpts {
    * force-evict instead of running to completion after cancellation.
    */
   signal?: AbortSignal;
-  /** Cosine cluster threshold. Overrides `cycle.consolidate.cluster_threshold`; default 0.85. */
+  /**
+   * Cosine cluster threshold for typed (metric) facts. Overrides
+   * `cycle.consolidate.cluster_threshold`; default 0.85. Untyped facts cluster
+   * at `max(threshold, EXPLICIT_DUPLICATE_THRESHOLD)` (#6023).
+   */
   clusterThreshold?: number;
+  /**
+   * Trust of the caller reading a dry-run preview. Fail-closed: only
+   * `remote === false` (the local CLI) sees the text of private facts in
+   * `details.clusters`; anything else sees their ids and visibility only.
+   */
+  remote?: boolean;
   /** Minimum facts per (source, entity) bucket before consolidation. Default 3. */
   minFactsPerBucket?: number;
   /** Minimum age (ms) of the OLDEST fact in a bucket before consolidation. Default 24h. */
@@ -77,19 +88,7 @@ export async function runPhaseConsolidate(
 ): Promise<PhaseResult> {
   const dryRun = opts.dryRun === true;
   const managed = await managedPersistenceEnabled(engine);
-  // #5363: the knob was unreachable (cycle.ts never passed it); the phase now
-  // reads its own config key. A malformed stored value keeps the default and
-  // is reported in details instead of failing the cycle.
-  let thresholdInvalid: string | undefined;
-  let threshold = opts.clusterThreshold;
-  if (threshold === undefined) {
-    const configured = await engine.getConfig(CLUSTER_THRESHOLD_KEY);
-    threshold = DEFAULT_CLUSTER_THRESHOLD;
-    if (configured != null && configured.trim() !== '') {
-      try { threshold = parseClusterThreshold(configured); }
-      catch { thresholdInvalid = configured; }
-    }
-  }
+  const { threshold, thresholdInvalid } = await resolveClusterThreshold(engine, opts.clusterThreshold);
   const minPerBucket = opts.minFactsPerBucket ?? 3;
   const minOldestAgeMs = opts.minOldestAgeMs ?? 24 * 60 * 60 * 1000;
 
@@ -100,6 +99,10 @@ export async function runPhaseConsolidate(
   let clustersSkippedRetired = 0;
   let clustersGateHeld = 0;
   let clustersGateRejected = 0;
+  // #6023: a dry run lists the clusters it would write so an operator can
+  // inspect them before `--yes`; capped so the envelope stays bounded.
+  const preview: ConsolidateClusterPreview[] = [];
+  const showPrivate = opts.remote === false;
   // #5575 write gate: unmanaged takes are gated here (managed ones in takes-prepare); read once per run.
   let gateConfig: WriteGateConfig | undefined;
 
@@ -215,6 +218,11 @@ export async function runPhaseConsolidate(
         takesWritten += 1;
         factsConsolidated += cluster.length;
         nextRowNum += 1;
+        if (preview.length < DRY_RUN_CLUSTER_CAP) {
+          const text = (f: FactRow) => (showPrivate || f.visibility === 'world' ? f.fact : null);
+          preview.push({ source_id: b.source_id, entity_slug: b.entity_slug, claim: text(best),
+            members: cluster.map(f => ({ id: f.id, visibility: f.visibility, fact: text(f) })) });
+        }
         continue;
       }
 
@@ -357,7 +365,9 @@ export async function runPhaseConsolidate(
     details: {
       dryRun,
       cluster_threshold: threshold,
+      untyped_cluster_threshold: untypedClusterThreshold(threshold),
       ...(thresholdInvalid !== undefined ? { cluster_threshold_invalid: thresholdInvalid } : {}),
+      ...(dryRun ? { clusters: preview } : {}),
       facts_consolidated: factsConsolidated,
       takes_written: takesWritten,
       buckets_processed: bucketsProcessed,
@@ -414,10 +424,53 @@ export function claimsCompatible(a: ClaimShape | undefined, b: ClaimShape | unde
 }
 
 /**
+ * #5363: the knob was unreachable (cycle.ts never passed it); the phase reads
+ * its own config key. A malformed stored value keeps the default and is
+ * reported in details (`cluster_threshold_invalid`) instead of failing the cycle.
+ */
+async function resolveClusterThreshold(
+  engine: BrainEngine,
+  override: number | undefined,
+): Promise<{ threshold: number; thresholdInvalid?: string }> {
+  if (override !== undefined) return { threshold: override };
+  const configured = await engine.getConfig(CLUSTER_THRESHOLD_KEY);
+  if (configured == null || configured.trim() === '') return { threshold: DEFAULT_CLUSTER_THRESHOLD };
+  try { return { threshold: parseClusterThreshold(configured) }; }
+  catch { return { threshold: DEFAULT_CLUSTER_THRESHOLD, thresholdInvalid: configured }; }
+}
+
+/** One cluster a dry run would promote (`details.clusters`, capped at DRY_RUN_CLUSTER_CAP). */
+export interface ConsolidateClusterPreview {
+  source_id: string;
+  entity_slug: string;
+  /** The would-be take claim; null when the fact is private and the caller is not the local CLI. */
+  claim: string | null;
+  members: Array<{ id: number; visibility: string; fact: string | null }>;
+}
+export const DRY_RUN_CLUSTER_CAP = 50;
+
+/**
+ * #6023: untyped facts have no metric/unit/period guard, so two event facts
+ * that differ only in an identifier, date or amount could cluster on a 0.85
+ * embedding and the writeback would expire the older one. They cluster only
+ * at the explicit-duplicate bar (never below the configured threshold).
+ */
+export function untypedClusterThreshold(threshold: number): number {
+  return Math.max(threshold, EXPLICIT_DUPLICATE_THRESHOLD);
+}
+
+/**
  * Greedy cosine clustering. Iterate facts sorted by valid_from DESC; each
  * fact joins the first cluster whose centroid (the first member, for
  * simplicity) is within `threshold` cosine and whose typed claim is
  * compatible (#5363). Otherwise starts a new cluster.
+ *
+ * #6023: an untyped pair additionally needs cosine ≥ the explicit-duplicate
+ * bar (`untypedClusterThreshold`) and must not diverge in a negation, number,
+ * date or amount token (`claimsDiverge`): "Invoice A due Monday" and
+ * "Invoice B due Tuesday" stay two facts. Typed facts keep the configured
+ * threshold and no token guard, because a metric series is expected to
+ * differ in its values (that is the trajectory the writeback records).
  *
  * Facts with no embedding cluster on their own (single-element cluster);
  * the consolidate phase only writes takes from clusters of size ≥ 2, so
@@ -439,7 +492,9 @@ export function clusterFacts(facts: FactRow[], threshold: number, claims: Map<nu
         || head.embedded_text_hash !== createHash('md5').update(head.fact).digest('hex')
         || f.embedding.length !== head.embedding.length
         || !claimsCompatible(claims.get(f.id), claims.get(head.id))) continue;
-      if (cosineSimilarity(f.embedding, head.embedding) >= threshold) {
+      const untyped = (claims.get(f.id)?.metric ?? null) === null;
+      if (untyped && claimsDiverge(f.fact, head.fact)) continue;
+      if (cosineSimilarity(f.embedding, head.embedding) >= (untyped ? untypedClusterThreshold(threshold) : threshold)) {
         c.push(f);
         placed = true;
         break;
