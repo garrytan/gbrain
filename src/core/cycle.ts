@@ -58,6 +58,7 @@ import { PHASE_SCOPE, SOURCE_FRESHNESS_PHASES, type PhaseScope } from './cycle/p
 import { acquireLeaseSet, maintenanceLockBusySkip, MAINTENANCE_LEASE_ID } from './cycle/lock-set.ts';
 import { assertEmbedNotStalled } from './embed-stall.ts'; import { embedBackfillFix } from './embed-consent.ts';
 import { anyAbortSignal } from './abort-signals.ts';
+import { skipNoBrainDir } from './cycle/phase-skips.ts';
 import { maybeRefreshPlannerStats } from './planner-stats.ts';
 
 export { PHASE_SCOPE, SOURCE_FRESHNESS_PHASES, type PhaseScope } from './cycle/phase-scope.ts';
@@ -1916,16 +1917,6 @@ export async function runCycle(
   // the per-phase `if (brainDir === null)` guards, even within async closures
   // (const bindings narrow across closures; property accesses don't).
   const brainDir = opts.brainDir;
-
-  // Skip result for a filesystem phase when the brain has no on-disk checkout.
-  const skipNoBrainDir = (phase: CyclePhase): PhaseResult => ({
-    phase,
-    status: 'skipped',
-    duration_ms: 0,
-    summary: 'requires a local brain directory; this brain has no on-disk checkout '
-      + '(postgres/remote engine); pass --dir <path> to run filesystem phases',
-    details: { reason: 'no_brain_dir' },
-  });
 
   // A1: canonical per-source scope for the DB-capable per-source phases
   // (extract_facts, extract_atoms, the calibration trio). Explicit --source

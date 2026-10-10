@@ -16,7 +16,7 @@ const readOnlyToken = await (await import('../../src/core/token-mint.ts')).mintL
 });
 
 // Synthetic-only fixtures; do not reseed durable rows when reopening after restart.
-if (!process.env.GBRAIN_HERMES_FIXTURE_REOPEN) {
+if (!process.env.GBRAIN_TEST_HERMES_FIXTURE_REOPEN) {
 await callTool(server.base, token, 'put_page', {
   slug: 'hermes-acceptance/world-synthetic', title: 'Synthetic world fixture',
   content: `---
@@ -43,7 +43,7 @@ for (const sourceId of ['hermes-profile-a', 'hermes-profile-b']) {
     name: sourceId, scopes: ['read', 'write'], takesHolders: ['world'], sourceGrant: [sourceId],
   });
   const marker = sourceId === 'hermes-profile-a' ? 'amber telescope orchard' : 'violet compass meadow';
-  if (!process.env.GBRAIN_HERMES_FIXTURE_REOPEN) {
+  if (!process.env.GBRAIN_TEST_HERMES_FIXTURE_REOPEN) {
   const result = await callTool(server.base, minted.token, 'put_page', {
     source_id: sourceId, slug: 'notes/profile-fixture',
     content: `---\ntitle: Synthetic profile fixture\nvisibility: world\n---\n\n${marker}`,

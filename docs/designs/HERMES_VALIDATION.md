@@ -25,16 +25,22 @@ Local validation: macOS arm64, Bun 1.4.2, Python 3.12; isolated homes, synthetic
 | Gate | State |
 | --- | --- |
 | Rebase onto the target | **Done, clean.** 4 commits replayed; the latest implementation follow-up touched 38 files. A pre-rebase backup ref was kept. Generated assets were regenerated fresh; the locked dependency install was unchanged |
-| Official `bun run typecheck` | **Passed (exit 0, 211.03 s)** on the *pre-rebase* candidate; no repository guard relaxed. **Rebased-tree typecheck: pending** |
-| Repository and native-provider/manager checks on the rebased tree | **Pending (not passed).** Results below were obtained on the pre-rebase tree |
+| Official `bun run typecheck` | **Passed pre-rebase** (exit 0, 211.03 s) and **passed on the rebased source** inside repository verification (585 s). Structural guard repairs made afterward still require final-tree verification |
+| Repository and native-provider/manager checks on the rebased tree | **Repository verify on the rebased source: 73 passed, 4 failed**; all four failing guards were then repaired without raising limits or baselines and rerun green individually (full test-isolation scan over 3069 files, module size, function size, test-env opt-ins, `regen:all --check`). The repaired tree passed typecheck (266 s) and a 372-test focused batch with only the four baseline-classified ancestor-marker fixtures failing. **Rebased native lanes passed: 96 focused TypeScript, 26 provider and 6 MemoryManager tests** |
 | Changed-head GitHub CI (native provider incl. fixture regeneration, `marketplace-validation`, verify, Test, E2E) | **Pending** until pushed. Green CI on `1db67090d` does not carry over |
-| Independent review | Final Sol review of the pre-rebase candidate **closed all 5 findings and found no blocker** in its bounded, read-only scope. It is not merge, security or marketplace approval. A strong review of the *rebase composition* is **pending** |
+| Independent review | Final Sol review of the pre-rebase candidate **closed all 5 findings and found no blocker** in its bounded, read-only scope. It is not merge, security or marketplace approval. The strong rebase-composition review also found **no concrete new blocker** at source tip `1cd1ad309`; it did not run tests or certify subsequent guard repairs |
 | Secret scan | Gitleaks over a 101-file index snapshot: clean, after replacing a fake AWS redaction fixture with a constructed public example |
 | Native-model smoke (real Hermes host, synthetic backend) | **Observed, bounded** on `1db67090d`; see below |
 | Catalog submission/acceptance | **Not submitted, not accepted.** See "Catalog admission" |
 | `runtimeTestedAt` | Remains `null`; see "Registry evidence field" |
 
-## Rebased PostgreSQL evidence
+## Rebased native and PostgreSQL evidence
+
+The rebased source passed 96 focused TypeScript tests across 13 files, 26 native-provider tests and 6 native MemoryManager tests. Optional unrelated-plugin dependency warnings were retained. These are real native host/backend tests, not new model conversations. The later guard repairs require their own final-tree rerun.
+
+The complete local repository verification finished with **73 passing checks and 4 failing checks**; typecheck and the timed guard self-test passed. The failures identify three noncanonical engine/environment fixtures, a fixture restart flag outside the preserved test namespace, and added plumbing exceeding module/function size ceilings. No failing check is waived. The restart flag was renamed into the existing test namespace, with explicit old-name guidance: the guard passed, and a new regression was red before that guidance and green afterward (9 preload tests, 45 assertions). The three local-subagent fixtures now follow the canonical `beforeAll`/`afterAll` engine lifecycle with `withEnv`, and the added delegation plumbing moved into four cohesive helper modules (`cycle/phase-skips.ts`, `cycle/synthesize-child-submit.ts`, `minions/submission-boundary.ts`, `minions/handlers/subagent-job-tools.ts`) with no baseline edits.
+
+### PostgreSQL
 
 At source tip `1cd1ad309`, a fresh disposable PostgreSQL instance passed **14 tests, 0 failures, 126 assertions** across the ambient-capture consent, existing queued-authority parity, and local-subagent PostgreSQL suites. This includes actual commits, batch admission, forged-capability rejection, receipt replay after job deletion, live-grant revocation locking and admission-time capture-consent locking. The labelled loopback-only container was removed and its absence verified; the live database was untouched. This is focused evidence, not the complete E2E suite.
 
@@ -83,8 +89,8 @@ The adapter registry's `runtimeTestedAt` remains `null`, and its existing tests 
 
 ## Remaining gates
 
-1. Rebased-tree typecheck, repository verification, focused native-provider/manager and PGLite/PostgreSQL suites; changed-head GitHub CI. Investigate failures rather than raising limits.
-2. Strong independent review of the rebase composition.
+1. Push the repaired tree to this PR branch and verify changed-head GitHub CI. Investigate any failure rather than raising limits.
+2. The guard refactor was parent-reviewed for preserved check order, in-transaction liveness, job binding, replay refusal and tool-registry options, and the four fixture failures were shown identical with the refactor stashed; this is review-by-diff plus regression, not a new independent security review.
 3. Read back a published pin and match its plugin bytes to the successful install-validation manifest. Any subsequent catalog submission needs an eligible submitter and Hermes maintainer review; this source draft does not claim a listing.
 4. Model-driven versions of compression/resume, credential renewal, native MCP multiplex and backend restart remain unproven, along with canonical write-through and embedding deduplication.
 5. Contributor-policy checks are red by policy for an external PR; no maintainer override is requested or applied. Release-version allocation is a pre-landing step; this candidate is not a release.

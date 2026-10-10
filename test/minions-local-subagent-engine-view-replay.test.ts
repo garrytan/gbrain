@@ -6,7 +6,7 @@
  * a Postgres read view by overriding `kind` on PGLite only for proxy-construction/refusal checks.
  * No emulated PostgreSQL publication runs here. Native PG commits and replay are in the E2E suite.
  */
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync, realpathSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -21,13 +21,12 @@ import { preadmitReads, dropPreadmitCache } from '../src/core/persistence/preadm
 import { resetWriteSwitches } from '../src/core/persistence/switches.ts';
 import type { WriteRequest } from '../src/core/persistence/model.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
+import { resetPgliteState } from './helpers/reset-pglite.ts';
+import { withEnv } from './helpers/with-env.ts';
 
-let home: string; let engine: PGLiteEngine; let queue: MinionQueue;
+let schemaVersion: string; let home: string; let engine: PGLiteEngine; let other: PGLiteEngine; let queue: MinionQueue;
 let registration: Awaited<ReturnType<typeof registerLocalWriter>>;
 const sourceId = 'local-child';
-const oldHome = process.env.GBRAIN_HOME;
-const oldCeiling = process.env.GIT_CEILING_DIRECTORIES;
-const oldCache = process.env.GBRAIN_PREADMIT_CACHE;
 const grant: LocalGrant = { sourceIds: ['*'], operations: null, scopes: ['read', 'write'], slugPrefixes: null };
 const ops = ['get_page', 'put_page'];
 const prefixes = ['wiki/originals/*'];
@@ -37,25 +36,38 @@ const payload = () => ({ source_id: sourceId, prompt: 'bounded engine-view test'
 const mint = async (data = payload()) => withVerifiedLocalRegistration(engine, registration, () =>
   prepareLocalSubagent(context(), randomUUID(), 'subagent', data, data.allowed_tools, data.allowed_slug_prefixes));
 const emulatePostgres = (e: PGLiteEngine) => Object.defineProperty(e, 'kind', { value: 'postgres', configurable: true });
+// The engine is shared across the file, so the emulated kind must never outlive its test.
+const restoreKind = (e: PGLiteEngine) => Object.defineProperty(e, 'kind', { value: 'pglite', configurable: true });
+// GIT_CEILING_DIRECTORIES names the fixture's PARENT (never the cwd itself) so git never finds the live agent home marker.
+// GBRAIN_PREADMIT_CACHE stays unset (default-enabled switch; never disable it to hide the issue).
+const fixtureEnv = () => ({ GBRAIN_HOME: home, GIT_CEILING_DIRECTORIES: dirname(realpathSync(home)), GBRAIN_PREADMIT_CACHE: undefined });
+// Every test body (not just setup) runs with the hermetic env, restored by withEnv even on failure.
+const homeTest = (name: string, fn: () => Promise<void>) => test(name, () => withEnv(fixtureEnv(), fn));
 
+// One engine per file (plus a second, real engine for the wrong-engine refusal check); data is wiped per test.
+beforeAll(async () => {
+  engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema();
+  other = new PGLiteEngine(); await other.connect({}); await other.initSchema();
+  schemaVersion = (await engine.getConfig('version')) ?? '7';
+}, 120_000);
+afterAll(async () => {
+  try { await engine?.disconnect(); } finally { await other?.disconnect(); }
+});
 beforeEach(async () => {
   home = mkdtempSync(join(process.env.TMPDIR!, 'local-engine-view-'));
-  process.env.GBRAIN_HOME = home;
-  process.env.GIT_CEILING_DIRECTORIES = dirname(realpathSync(home)); // parent of the fixture cwd, never the cwd itself
-  expect(Bun.spawnSync(['git', '-C', home, 'rev-parse', '--show-toplevel'], { env: process.env }).exitCode).not.toBe(0);
-  delete process.env.GBRAIN_PREADMIT_CACHE; // default-enabled switch; never disable it to hide the issue
-  resetWriteSwitches();
-  engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); queue = new MinionQueue(engine);
-  await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [sourceId]);
-  registration = await registerLocalWriter(engine, 'cli', structuredClone(grant));
-  await engine.setConfig('embedding_disabled', 'true'); await engine.setConfig('facts.extraction_enabled', 'false');
+  await withEnv(fixtureEnv(), async () => {
+    expect(Bun.spawnSync(['git', '-C', home, 'rev-parse', '--show-toplevel'], { env: process.env }).exitCode).not.toBe(0);
+    restoreKind(engine); dropPreadmitCache(engine); resetWriteSwitches();
+    await resetPgliteState(engine); await resetPgliteState(other);
+    await engine.setConfig('version', schemaVersion); await other.setConfig('version', schemaVersion); // the reset wipes the migration ledger row in config
+    queue = new MinionQueue(engine);
+    await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [sourceId]);
+    registration = await registerLocalWriter(engine, 'cli', structuredClone(grant));
+    await engine.setConfig('embedding_disabled', 'true'); await engine.setConfig('facts.extraction_enabled', 'false');
+  });
 });
-afterEach(async () => {
-  dropPreadmitCache(engine);
-  await engine?.disconnect(); rmSync(home, { recursive: true, force: true });
-  if (oldHome === undefined) delete process.env.GBRAIN_HOME; else process.env.GBRAIN_HOME = oldHome;
-  if (oldCeiling === undefined) delete process.env.GIT_CEILING_DIRECTORIES; else process.env.GIT_CEILING_DIRECTORIES = oldCeiling;
-  if (oldCache === undefined) delete process.env.GBRAIN_PREADMIT_CACHE; else process.env.GBRAIN_PREADMIT_CACHE = oldCache;
+afterEach(() => {
+  restoreKind(engine); dropPreadmitCache(engine); rmSync(home, { recursive: true, force: true });
   resetWriteSwitches();
 });
 
@@ -78,7 +90,7 @@ const receipt = async (requestId: string) =>
   (await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE request_id=$1::uuid', [requestId]))[0]!;
 
 describe('local-subagent capability keeps its original engine through Postgres read views', () => {
-  test('the default preadmit_cache really produces an unregistered-to-capability proxy (premise check)', async () => {
+  homeTest('the default preadmit_cache really produces an unregistered-to-capability proxy (premise check)', async () => {
     emulatePostgres(engine);
     const view = await preadmitReads(engine);
     expect(view).not.toBeNull();
@@ -88,7 +100,7 @@ describe('local-subagent capability keeps its original engine through Postgres r
   // Native cached admission through commit and replay is exercised in
   // test/e2e/hermes-local-subagent-postgres.test.ts; never fake the PG publication engine.
 
-  test('receipt access: ownRequestAccessible allows the owning child for a public page and still excludes a private one', async () => {
+  homeTest('receipt access: ownRequestAccessible allows the owning child for a public page and still excludes a private one', async () => {
     const a = await accepted();
     const publicId = randomUUID(); const privateId = randomUUID();
     await put(a.ctx, `wiki/originals/pub-${publicId.slice(0, 8)}`, publicId);
@@ -103,7 +115,7 @@ describe('local-subagent capability keeps its original engine through Postgres r
     expect(await ownRequestAccessible({ ...context(), remote: true, viaSubagent: true, subagentId: a.job.id, allowedSlugPrefixes: prefixes }, pub)).toBe(false);
   });
 
-  test('fake, unregistered, and wrong-engine views still refuse (no global identity relaxation)', async () => {
+  homeTest('fake, unregistered, and wrong-engine views still refuse (no global identity relaxation)', async () => {
     emulatePostgres(engine);
     const a = await accepted();
     const fakeProxy = new Proxy(engine, {});
@@ -112,11 +124,7 @@ describe('local-subagent capability keeps its original engine through Postgres r
     const view = (await preadmitReads(engine))!;
     await expect(preparePageAdmission({ ...a.ctx, engine: view }, { operation: 'put_page',
       params: { slug: `wiki/originals/view-${randomUUID().slice(0, 8)}`, content: '---\ntype: note\ntitle: x\n---\n\nbody body body' } })).rejects.toThrow('binding');
-    const other = new PGLiteEngine();
-    try {
-      await other.connect({}); await other.initSchema();
-      await expect(put({ ...a.ctx, engine: other }, `wiki/originals/other-${randomUUID().slice(0, 8)}`)).rejects.toThrow();
-    } finally { await other.disconnect(); }
+    await expect(put({ ...a.ctx, engine: other }, `wiki/originals/other-${randomUUID().slice(0, 8)}`)).rejects.toThrow();
     const rows = await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM persistence_requests WHERE slug LIKE 'wiki/originals/fake-%' OR slug LIKE 'wiki/originals/view-%' OR slug LIKE 'wiki/originals/other-%'");
     expect(rows[0]!.n).toBe(0);
   });
@@ -128,7 +136,7 @@ describe('replay of stored local_subagent jobs', () => {
     requests: (await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM persistence_requests'))[0]!.n,
   });
   for (const terminal of ['completed', 'failed', 'dead'] as const) {
-    test(`${terminal} local job: replay refuses with owner-rerun guidance before any new job or mutation`, async () => {
+    homeTest(`${terminal} local job: replay refuses with owner-rerun guidance before any new job or mutation`, async () => {
       const a = await accepted();
       if (terminal === 'completed') await queue.completeJob(a.job.id, a.lock, { ok: true });
       else await queue.failJob(a.job.id, a.lock, 'synthetic failure', terminal);
@@ -150,7 +158,7 @@ describe('replay of stored local_subagent jobs', () => {
     });
   }
 
-  test('non-terminal local job is unchanged (null, no error); application job replay still works', async () => {
+  homeTest('non-terminal local job is unchanged (null, no error); application job replay still works', async () => {
     const a = await accepted();
     expect(await queue.replayJob(a.job.id)).toBeNull();
     const app = await queue.add('research', { topic: 'AI' }, { priority: 5 });
