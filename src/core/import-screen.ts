@@ -282,16 +282,19 @@ export const GATE_OWNED_FRONTMATTER_KEYS = [QUARANTINE_KEY, CONTENT_FLAG_KEY, EM
  * The override's binding is a public hash anyone can compute, so a preserving
  * file import that carries a write gate (owner sync and file import, managed
  * sync and import) keeps it only when that gate's tier is owner-tier; a
- * mirror, connector or lowered source can't clear its own page (CSO T1). An
- * unreadable tier fails closed.
+ * mirror, connector or lowered source can't clear its own page (CSO T1). File
+ * repair and reconcile pass no gate, so they pass the source's owner tier as
+ * `overrideTier` and the same rule applies. An unreadable tier fails closed.
  */
 export function stripGateOwnedMarkers(parsed: Pick<ParsedMarkdown, 'frontmatter' | 'title' | 'type' | 'compiled_truth' | 'timeline'>,
-  opts: { preserveGateMarkers?: boolean; writeGate?: { tier?: unknown } }): void {
+  opts: { preserveGateMarkers?: boolean; writeGate?: { tier?: unknown }; overrideTier?: unknown }): void {
   if (opts.preserveGateMarkers !== true) {
     for (const key of GATE_OWNED_FRONTMATTER_KEYS) delete parsed.frontmatter[key];
     return;
   }
-  const ownerGate = !opts.writeGate || isTrustTier(opts.writeGate.tier) && compareTrust(opts.writeGate.tier, OWNER_TIER_FLOOR) >= 0;
+  const tiered = opts.writeGate !== undefined || Object.hasOwn(opts, 'overrideTier');
+  const tier = opts.writeGate !== undefined ? opts.writeGate.tier : opts.overrideTier;
+  const ownerGate = !tiered || isTrustTier(tier) && compareTrust(tier, OWNER_TIER_FLOOR) >= 0;
   if (Object.hasOwn(parsed.frontmatter, QUARANTINE_OVERRIDE_KEY) && (!ownerGate || !hasCurrentQuarantineOverride(parsed))) delete parsed.frontmatter[QUARANTINE_OVERRIDE_KEY];
   dropClassifierMarkers(parsed as ParsedMarkdown);
 }
