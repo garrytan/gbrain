@@ -210,8 +210,8 @@
           "supersedeTake: (pageId: number, oldRow: number, newRow: Omit<TakeBatchInput, \"page_id\" | \"row_num\" | \"superseded_by\">) => Promise<{ oldRow: number; newRow: number; }>",
           "sweepContradictionCache: () => Promise<number>",
           "sweepDreamVerdicts: () => Promise<number>",
-          "transaction: <T>(fn: (engine: BrainEngine) => Promise<T>) => Promise<T>",
-          "transactionDirect: <T>(fn: (engine: BrainEngine) => Promise<T>) => Promise<T>",
+          "transaction: <T>(fn: (engine: BrainEngine) => Promise<T>, opts?: TransactionOptions) => Promise<T>",
+          "transactionDirect: <T>(fn: (engine: BrainEngine) => Promise<T>, opts?: TransactionOptions) => Promise<T>",
           "traverseGraph: (slug: string, depth?: number, opts?: TraverseGraphOpts) => Promise<GraphNode[]>",
           "traversePaths: (slug: string, opts?: PageReadScope & { depth?: number; linkType?: string; direction?: \"in\" | \"out\" | \"both\"; }) => Promise<GraphPath[]>",
           "traversePathsDetailed: (slug: string, opts?: LinkReadScope & { depth?: number; linkType?: string; direction?: \"in\" | \"out\" | \"both\"; }) => Promise<{ paths: GraphPath[]; truncated: boolean; }>",
@@ -1213,8 +1213,8 @@
           "supersedeTake: (pageId: number, oldRow: number, newRow: Omit<TakeBatchInput, \"page_id\" | \"row_num\" | \"superseded_by\">) => Promise<{ oldRow: number; newRow: number; }>",
           "sweepContradictionCache: () => Promise<number>",
           "sweepDreamVerdicts: () => Promise<number>",
-          "transaction: <T>(fn: (engine: BrainEngine) => Promise<T>) => Promise<T>",
-          "transactionDirect: <T>(fn: (engine: BrainEngine) => Promise<T>) => Promise<T>",
+          "transaction: <T>(fn: (engine: BrainEngine) => Promise<T>, opts?: TransactionOptions) => Promise<T>",
+          "transactionDirect: <T>(fn: (engine: BrainEngine) => Promise<T>, opts?: TransactionOptions) => Promise<T>",
           "traverseGraph: (slug: string, depth?: number, opts?: TraverseGraphOpts) => Promise<GraphNode[]>",
           "traversePaths: (slug: string, opts?: { depth?: number; linkType?: string; direction?: \"in\" | \"out\" | \"both\"; sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean; }) => Promise<GraphPath[]>",
           "traversePathsDetailed: (slug: string, opts?: { depth?: number; linkType?: string; direction?: \"in\" | \"out\" | \"both\"; sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean; }) => Promise<{ paths: GraphPath[]; truncated: boolean; }>",
@@ -3399,8 +3399,8 @@
           "supersedeTake: (pageId: number, oldRow: number, newRow: Omit<TakeBatchInput, \"page_id\" | \"row_num\" | \"superseded_by\">) => Promise<{ oldRow: number; newRow: number; }>",
           "sweepContradictionCache: () => Promise<number>",
           "sweepDreamVerdicts: () => Promise<number>",
-          "transaction: <T>(fn: (engine: BrainEngine) => Promise<T>) => Promise<T>",
-          "transactionDirect: <T>(fn: (engine: BrainEngine) => Promise<T>) => Promise<T>",
+          "transaction: <T>(fn: (engine: BrainEngine) => Promise<T>, opts?: TransactionOptions) => Promise<T>",
+          "transactionDirect: <T>(fn: (engine: BrainEngine) => Promise<T>, opts?: TransactionOptions) => Promise<T>",
           "traverseGraph: (slug: string, depth?: number, opts?: TraverseGraphOpts) => Promise<GraphNode[]>",
           "traversePaths: (slug: string, opts?: PageReadScope & { depth?: number; linkType?: string; direction?: \"in\" | \"out\" | \"both\"; }) => Promise<GraphPath[]>",
           "traversePathsDetailed: (slug: string, opts?: LinkReadScope & { depth?: number; linkType?: string; direction?: \"in\" | \"out\" | \"both\"; }) => Promise<{ paths: GraphPath[]; truncated: boolean; }>",
@@ -3967,6 +3967,13 @@
           "value: number | null"
         ],
         "name": "TrajectoryPoint"
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "signal?: AbortSignal | undefined"
+        ],
+        "name": "TransactionOptions"
       },
       {
         "kind": "interface",
@@ -6419,8 +6426,8 @@
           "supersedeTake: (pageId: number, oldRow: number, newRow: Omit<TakeBatchInput, \"page_id\" | \"row_num\" | \"superseded_by\">) => Promise<{ oldRow: number; newRow: number; }>",
           "sweepContradictionCache: () => Promise<number>",
           "sweepDreamVerdicts: () => Promise<number>",
-          "transaction: <T>(fn: (engine: BrainEngine) => Promise<T>) => Promise<T>",
-          "transactionDirect: <T>(fn: (engine: BrainEngine) => Promise<T>) => Promise<T>",
+          "transaction: <T>(fn: (engine: BrainEngine) => Promise<T>, opts?: TransactionOptions) => Promise<T>",
+          "transactionDirect: <T>(fn: (engine: BrainEngine) => Promise<T>, opts?: TransactionOptions) => Promise<T>",
           "traverseGraph: (slug: string, depth?: number, opts?: TraverseGraphOpts) => Promise<GraphNode[]>",
           "traversePaths: (slug: string, opts?: { depth?: number; linkType?: string; direction?: \"in\" | \"out\" | \"both\"; sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean; }) => Promise<GraphPath[]>",
           "traversePathsDetailed: (slug: string, opts?: { depth?: number; linkType?: string; direction?: \"in\" | \"out\" | \"both\"; sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean; }) => Promise<{ paths: GraphPath[]; truncated: boolean; }>",
