@@ -10,6 +10,63 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.149.0] - 2026-10-10
+
+**A keyword search from an MCP or other remote caller that hits a common term now takes about 0.2 s of database time on a 50k-page Postgres brain instead of about 1 s. Full `gbrain doctor` is 1.4–1.6 s faster at 50k on both engines. Import issues about 6% fewer statements per page. Results, doctor output and imported content are unchanged.**
+
+Efficiency wave 10 (GBRA-75). Base is master at wave 9 (3f960312a). Measured on 4-vCPU AMD EPYC / 16 GiB machines with Bun 1.4.2 and synthetic brains, base and branch interleaved in one session, p50 / p95.
+
+| Path | Engine, brain, N | Before | After |
+|---|---|---|---|
+| keyword arm, common single term (~10% of chunks), remote caller | Postgres 50k, N=10 per query | 127 / 973 ms (that query: 954 ms) | 127 / 204 ms (192 ms) |
+| same | Postgres 5k | 33 / 126 ms | 27 / 50 ms |
+| phrase, natural-language, rare-term and local keyword queries (guards) | Postgres 5k and 50k | | unchanged within noise, same plans |
+| `gbrain doctor --json`, cold | Postgres 50k, N=5 | 13,683 / 14,035 ms | 12,324 / 12,809 ms |
+| same | PGLite 50k, N=5 | 15,622 / 15,802 ms | 14,017 / 14,148 ms |
+| same | PGLite 5k, N=5 | 5,662 / 8,060 ms | 4,551 / 4,655 ms |
+| fence census pass on a 37k-page source | PGLite / Postgres 50k | 2,903 / 1,970 ms | 80 / 66 ms |
+| import of every source, statements per page, `--no-embed` | Postgres 5k, N=2 | 54.3 | 50.9 |
+| same | PGLite 5k, N=2 | 60.7 | 57.3 |
+
+Import wall time is flat (Postgres 180.5 → 177.0 s, PGLite 149.1 → 148.8 s); publication transactions dominate it, not the reads this wave batched. Fewer statements matter most on a networked database, where each one costs a round trip.
+
+### Itemized changes
+
+- **Keyword search for remote callers plans its match on its own** (`search/keyword-chunk-match.ts`, `PostgresEngine.searchKeyword`). For remote callers, the private-page filters add correlated subplans that inflate every join plan's cost. That put the cheap bitmap scan within the planner's 1% fuzz of a serial seq scan, and the seq scan won on startup cost. It then read every chunk's out-of-line `search_vector` (1.19M buffers, about 1.1 s for a common term at 250k chunks). For callers that set `excludePrivate`, the full-text match now runs in an `OFFSET 0` subquery. Local callers keep the unfenced join and its parallel plans. Rows, order and scores are identical, and ranking is untouched.
+  - **Why keyword queries can run twice:** both the keyword and the title arms run a strict AND query first. Only hybrid's recall arm, and only when the strict query returns nothing, re-runs with `term OR term`. The two runs have different parameters, so there is nothing to cache. The empty strict pass costs 2–3 ms at 50k.
+- **Doctor hot checks** (`brain-writer.ts`, `repair/timeline.ts`, `fence-repair/census.ts`, `git-visible-files.ts`, `sync-git.ts`):
+  - **frontmatter_integrity:** validates only the frontmatter head of a plainly shaped file, behind a scan option that only doctor passes. Any other shape gets the full parse. Write and import paths are unchanged.
+  - **timeline_history:** reads stored timeline rows once per 200-page batch instead of once per page.
+  - **Git verdict memo:** inside one `withGitListingCache` scope, the "not a git repository" verdict is remembered per directory. Any repository-changing `sync-git` command, or `invalidateGitListingCache()`, drops the scope's memo.
+- **Fix: the doctor fence census no longer skips pages across a DST fallback** (`fence-repair/census.ts`). Its incremental pass ordered by the text form of `updated_at`. In a non-UTC session that order could skip stored pages updated in the repeated hour, and it forced a full sort of the source's pages on every batch. The pass now orders by the timestamp, which also lets it use `idx_pages_updated_at_desc`.
+- **Import reads per group** (`persistence/import-reads.ts`, `persistence/group-publish.ts`, `persistence/import-mutations.ts`, `page-snapshot-batch.ts`, `engine-sql/pages.ts`). Design agreed with GBRA-58.
+  - **Duplicate checks:** an import group's duplicate checks run as one `findDuplicatePages` statement, with the same predicate and ranking as the single-page query.
+  - **Snapshot reads:** each member's first deleted-inclusive snapshot read, and the admission screen's snapshot reads for two or more new members, come from one batch. A lone member keeps its single read.
+  - **Config:** preparation config comes from one `getAllConfig` per group.
+  - **Path screen:** a group's preparation runs inside one path-screening scope. Validation, the apply-time read and the checks under the publication lock stay per page and are not memoized.
+  - **Fallback:** if a batch read fails, every member falls back to its own single read.
+- Tests:
+  - **Keyword ranking:** `search/keyword-arm-ranking.test.ts` and its Postgres twin pin ranked lists (slug, chunk_id, exact score, text hash) for 24 queries. They cover raw keyword search (local and remote), hybrid search, query and recall, against one golden recorded from base code. A ×1.0000001 score change or an order change fails it. The twin also pins the statement shape.
+  - **Doctor golden:** `doctor-hot-checks-golden.test.ts` and its Postgres twin pin the full `doctor --json` output. The fixture covers every frontmatter validation code, held and unsynced files, every fence tier, database-only timeline rows, a non-Git source and a second run after edits. The golden passes on base and branch.
+  - **Frontmatter head scan:** `brain-writer-frontmatter-scan-head.test.ts` checks it against the full parse over 48 hand cases and 10,000 generated documents.
+  - **Git memo:** `git-listing-memo.serial.test.ts` fails with invalidation disabled.
+  - **DST census:** the new case in `fence-census.test.ts` fails on base.
+  - **Import reads:** `import-reads.test.ts` and its Postgres arm check batch-versus-single parity, including soft-deleted pages, withdrawals, global purges and quoted ids. Normalized table hashes of a 5k import match base on both engines, with and without tombstones.
+  - **Crash robot:** 600 s on each engine, with PgBouncer and `pooler_disconnect` on Postgres.
+
+## [0.60.148.0] - 2026-10-10
+
+**The nightly E2E and Heavy Tests runs are green again.**
+
+Both failures came from this week's migrations meeting older tests, and gbrain itself behaves the same.
+
+- **E2E:** v225 drops `idx_chunks_embedding_null`, a duplicate of `content_chunks_stale_idx`. The invalid-index recovery test replays v66, which re-creates that index on a brain already at the latest version, and left it behind. The nightly shard runs files one after another on one database without replaying migrations, so `embed-stale-pagination`, several files later, found the duplicate. The recovery test now runs v225 again when it finishes, putting the schema back where the latest version leaves it.
+- **Heavy:** the Postgres upgrade test builds a pre-v0.18 brain by dropping `pages.source_id` from a current one. v230's trust-generation triggers depend on that column, so the drop failed. The fixture now drops those triggers first; the walk forward re-creates them when v230 runs again (checked: every trigger is back at the latest version).
+
+## To take advantage of v0.60.148.0
+
+`gbrain upgrade` installs the binary. There are no schema migrations.
+
 ## [0.60.147.0] - 2026-10-10
 
 **A write that arrives while a brain folder with the Git durability hook is committing a backlog of Git effects now publishes after the group in flight, inside its 5 s wait. Before, it waited out the whole backlog and came back pending. On Postgres, a first sync of an already-imported source now issues 40 statements per unchanged file instead of 82.**

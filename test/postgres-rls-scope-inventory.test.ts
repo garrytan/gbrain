@@ -152,8 +152,8 @@ describe('EO4 RLS scope inventory (master)', () => {
     const scoping = astScoping(capture.ast);
 
     const callSites = Object.values(capture.ast).reduce((a, m) => a + m.directCallSites, 0);
-    expect(callSites).toBe(24);
-    expect(Object.values(capture.ast).filter((m) => m.directCallSites > 0).length).toBe(24);
+    expect(callSites).toBe(25);
+    expect(Object.values(capture.ast).filter((m) => m.directCallSites > 0).length).toBe(25);
 
     const byMethod = new Map<string, RuntimeObservation[]>();
     for (const [key, obs] of Object.entries(capture.runtime)) {

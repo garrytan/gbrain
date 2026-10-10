@@ -5,13 +5,13 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import { normalizeLoweredClaim } from '../../src/core/facts/withdrawal-schema.ts';
 import { pageSnapshotKey } from '../../src/core/page-snapshot-batch.ts';
 
-const OTHER = 'snapshot-batch-example';
-const FENCE = '<!--- gbrain:facts:begin -->\n| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |\n'
+export const OTHER = 'snapshot-batch-example';
+export const FENCE = '<!--- gbrain:facts:begin -->\n| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |\n'
   + '|---|-------|------|------------|------------|------------|------------|-------------|--------|---------|\n'
   + '| 1 | Ships  Weekly | fact | 1.0 | world | high | 2026-01-01 |  | remember |  |\n'
   + '| 2 | Hires slowly | fact | 1.0 | world | high | 2026-01-01 |  | remember |  |\n<!--- gbrain:facts:end -->';
 
-async function seed(engine: BrainEngine) {
+export async function seed(engine: BrainEngine) {
   if ((await engine.executeRaw('SELECT 1 FROM sources WHERE id=$1', [OTHER])).length) return;
   await engine.executeRaw('INSERT INTO sources(id,name) VALUES ($1,$1)', [OTHER]);
   await engine.putPage('people/alice-example', { type: 'person', title: 'Alice', compiled_truth: `Alice.\n\n${FENCE}`, timeline: '- **2026-01-02** | call — Met' });
@@ -25,7 +25,7 @@ async function seed(engine: BrainEngine) {
     [createHash('sha256').update(normalizeLoweredClaim('ships weekly')).digest('hex')]);
 }
 
-const REFS = [
+export const REFS = [
   { slug: 'people/alice-example', sourceId: 'default' },
   { slug: 'companies/acme-example', sourceId: 'default' },
   { slug: 'people/alice-example', sourceId: OTHER },
@@ -67,11 +67,11 @@ export async function pageSnapshotBatchRespectsByteBudget(engine: BrainEngine) {
   expect((await engine.readPageSnapshotsBatch([])).covered).toBe(0);
 }
 
-const PURGED = 'snapshot-batch-purge-example';
+export const PURGED = 'snapshot-batch-purge-example';
 const claimHash = (claim: string) => createHash('sha256').update(normalizeLoweredClaim(claim)).digest('hex');
 
 /** Page-subject purges and the source's '*' purge marker overlay batched bodies exactly as the per-page read does. */
-export async function pageSnapshotBatchMatchesPurgedReads(engine: BrainEngine) {
+export async function seedPurged(engine: BrainEngine) {
   if (!(await engine.executeRaw('SELECT 1 FROM sources WHERE id=$1', [PURGED])).length) {
     await engine.executeRaw('INSERT INTO sources(id,name) VALUES ($1,$1)', [PURGED]);
     await engine.putPage('people/carol-example', { type: 'person', title: 'Carol', compiled_truth: `Carol.\n\n${FENCE}`, timeline: '' }, { sourceId: PURGED });
@@ -81,6 +81,10 @@ export async function pageSnapshotBatchMatchesPurgedReads(engine: BrainEngine) {
     await engine.executeRaw(purge, [PURGED, 'people/carol-example', claimHash('hires slowly'), '00000000-0000-4000-8000-000000000001']);
     await engine.executeRaw(purge, [PURGED, '*', claimHash('ships weekly'), '00000000-0000-4000-8000-000000000002']);
   }
+}
+
+export async function pageSnapshotBatchMatchesPurgedReads(engine: BrainEngine) {
+  await seedPurged(engine);
   const refs = ['people/carol-example', 'people/dave-example', 'notes/plain-example'].map(slug => ({ slug, sourceId: PURGED }));
   const { snapshots, covered } = await engine.readPageSnapshotsBatch(refs);
   expect(covered).toBe(refs.length);

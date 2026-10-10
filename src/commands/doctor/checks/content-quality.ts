@@ -346,6 +346,7 @@ async function runFrontmatter(ctx: DoctorContext): Promise<Check[]> {
       signal: fmAbort,
       deadline: fmDeadline,
       dbPageCountForSource,
+      frontmatterOnly: true,
     });
 
     if (report.total === 0 && !report.partial) {

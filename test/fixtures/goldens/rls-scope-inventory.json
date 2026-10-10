@@ -500,6 +500,19 @@
           "src-a"
         ]
       },
+      "findDuplicatePages#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "scoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": [
+          "src-a"
+        ]
+      },
       "findOntologyConflicts#default": {
         "flagOffLanes": [
           "pool"
@@ -3367,13 +3380,14 @@
       }
     },
     "static": {
-      "callSites": 24,
+      "callSites": 25,
       "directMethods": {
         "_searchKeywordCJK": 1,
         "countChunklessPagesWithContent": 1,
         "countStaleChunks": 1,
         "countStalePagesForExtraction": 1,
         "findDuplicatePage": 1,
+        "findDuplicatePages": 1,
         "getAllSlugs": 1,
         "getBacklinks": 1,
         "getChunkWindows": 1,
@@ -3438,6 +3452,7 @@
         "findByTitleFuzzy": "none",
         "findCandidateDuplicates": "none",
         "findDuplicatePage": "direct",
+        "findDuplicatePages": "direct",
         "findOntologyConflicts": "none",
         "findOrphanPages": "none",
         "findTrajectory": "none",

@@ -19,6 +19,8 @@ import { assertImportPaths, managedImportContent, prepareManagedImportMutation, 
 import { submissionAuthority } from './authority.ts';
 import { inspectUnchanged, screeningRequest } from './noop-kernel.ts';
 import { withScreeningPaths } from './screening-paths.ts';
+import { readImportSnapshots } from './import-reads.ts';
+import { pageSnapshotKey } from '../page-snapshot-batch.ts';
 import type { WorktreeBinding } from './ownership.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { readFix, trustedCliRequired } from '../ops/op-fix.ts';
@@ -166,11 +168,14 @@ async function importPlanned(ctx: OperationContext, binding: WorktreeBinding,
   try {
     const pending = await readPending(members.map(member => member.key));
     const fresh: typeof members = [];
+    // GBRA-75 wave 10: the screen reads its new members' pages in one batch; a lone member or a failed batch keeps each member's own read.
+    const unscreened = members.filter(member => !pending.has(member.key)).map(member => ({ slug: member.slug, sourceId }));
+    const screened = unscreened.length > 1 ? await readImportSnapshots(engine, unscreened).catch(() => null) : null;
     await withScreeningPaths(async () => { for (const member of members) {
       try {
         const stored = pending.get(member.key);
         if (stored) { resume(member, stored); continue; }
-        const snapshot = await engine.readPageSnapshot(member.slug, { sourceId, includeDeleted: true });
+        const snapshot = screened ? screened.get(pageSnapshotKey(sourceId, member.slug)) ?? null : await engine.readPageSnapshot(member.slug, { sourceId, includeDeleted: true });
         // The input is the canonical file itself (the common case): its hash was taken from the bytes just read.
         const targetHash = member.target === member.inputPath ? member.inputHash : existsSync(member.target) ? sha256(readImportBytes(member.target)) : null;
         const intent: ManagedImportIntent = { kind: 'managed_file_import', slug: member.slug, content: member.content, sourcePath: member.sourcePath, path: member.path,

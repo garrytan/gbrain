@@ -80,7 +80,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'vectorIterativeScanSupported': OOS.helper,
 
   // pages
-  'getPage': 'pages', 'readPageSnapshot': 'pages', 'readPageSnapshotsBatch': 'pages', 'lockPageKeys': 'pages', 'findDuplicatePage': 'pages',
+  'getPage': 'pages', 'readPageSnapshot': 'pages', 'readPageSnapshotsBatch': 'pages', 'lockPageKeys': 'pages', 'findDuplicatePage': 'pages', 'findDuplicatePages': 'pages',
   'putPage': 'pages', 'deletePage': 'pages', 'deletePages': 'pages', 'resolveSlugsByPaths': 'pages',
   'softDeletePage': 'pages', 'softDeletePages': 'pages', 'restorePage': 'pages', 'purgeDeletedPages': 'pages',
   'refreshPageBody': 'pages', 'updatePageContextualRetrievalState': 'pages', 'listPages': 'pages',
@@ -284,6 +284,9 @@ export const SQL_CASES: SqlCase[] = [
   ]),
   ...variants('findDuplicatePage', [
     ['default', (e) => e.findDuplicatePage(SRC, { hash: 'hash-1' }), [[/FROM pages/, [{ id: 1, slug: SLUG }]]]],
+  ]),
+  ...variants('findDuplicatePages', [
+    ['default', (e) => e.findDuplicatePages(SRC, [{ hash: 'hash-1' }, { hash: 'hash-2', frontmatterId: 'fm-1', excludeSlug: SLUG }])],
   ]),
   ...variants('putPage', [
     ['default', (e) => e.putPage(SLUG, page), [pageRet]],

@@ -51,6 +51,6 @@ export function frontmatterRepairableFromReport(report: AuditReport, timeoutMs: 
 export async function frontmatterRepairableCheck(engine: BrainEngine, sourceId?: string): Promise<Check> {
   const { scanBrainSources } = await import('../../../core/brain-writer.ts');
   const timeoutMs = frontmatterScanTimeoutMs();
-  const report = await scanBrainSources(engine, { sourceId, deadline: Date.now() + timeoutMs, signal: AbortSignal.timeout(timeoutMs) });
+  const report = await scanBrainSources(engine, { sourceId, deadline: Date.now() + timeoutMs, signal: AbortSignal.timeout(timeoutMs), frontmatterOnly: true });
   return frontmatterRepairableFromReport(report, timeoutMs);
 }

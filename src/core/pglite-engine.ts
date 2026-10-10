@@ -1196,7 +1196,7 @@ export class PGLiteEngine implements BrainEngine {
     return readCanonicalPageSnapshot(this.executeRaw.bind(this), slug, opts);
   }
 
-  async readPageSnapshotsBatch(refs: ReadonlyArray<{ slug: string; sourceId: string }>, opts?: { maxBytes?: number }) {
+  async readPageSnapshotsBatch(refs: ReadonlyArray<{ slug: string; sourceId: string }>, opts?: { maxBytes?: number; includeDeleted?: boolean; absentIsNull?: boolean }) {
     return readPageSnapshotsBatch(this.executeRaw.bind(this), refs, opts);
   }
 
@@ -1216,6 +1216,7 @@ export class PGLiteEngine implements BrainEngine {
   ): Promise<{ slug: string; id: number } | null> {
     return pagesImpl.findDuplicatePage(scopedRead(this.engineSql), sourceId, opts);
   }
+  async findDuplicatePages(sourceId: string, inputs: Parameters<typeof pagesImpl.findDuplicatePages>[2]) { return pagesImpl.findDuplicatePages(scopedRead(this.engineSql), sourceId, inputs); }
 
   private _pageTransaction = false;
 

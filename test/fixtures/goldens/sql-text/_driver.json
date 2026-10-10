@@ -2271,7 +2271,7 @@
             "via": "tagged"
           },
           {
-            "paramCount": 3,
+            "paramCount": 4,
             "unsafeOptions": {
               "prepare": true,
               "simple": false
@@ -2653,6 +2653,19 @@
         "default": [
           {
             "paramCount": 7,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
+      "findDuplicatePages": {
+        "default": [
+          {
+            "paramCount": 2,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
@@ -3321,7 +3334,7 @@
       "readPageSnapshotsBatch": {
         "default": [
           {
-            "paramCount": 3,
+            "paramCount": 4,
             "unsafeOptions": {
               "prepare": true,
               "simple": false

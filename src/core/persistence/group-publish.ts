@@ -66,6 +66,8 @@ import { recordPublicationFenceTrend } from '../fence-repair/census-store.ts';
 import { faultPoint, type PublicationBoundary } from './fault-points.ts';
 import { assertMutationProtocol } from './protocol.ts';
 import { writeSwitchOn } from './switches.ts';
+import { importGroupReads, type ImportGroupReads } from './import-reads.ts';
+import { withScreeningPaths } from './screening-paths.ts';
 
 /** A `put_pages` or managed import group publishes at most this many pages per transaction, so one commit stays a few seconds long. */
 export const PAGE_BATCH_GROUP_MAX = 8;
@@ -87,7 +89,17 @@ export function groupable(row: WriteRequest, prepared: PreparedMutation): boolea
   return independentGroup(publicationGroupKey(row)) || singleWrite(row);
 }
 
-const flat = (sql: string) => sql.replace(/\s+/g, ' ').trim();
+const flattened = new Map<string, string>();
+/** A statement's whitespace-normalized text, remembered for the (bounded) set of statements the memos see. */
+const flat = (sql: string) => {
+  let text = flattened.get(sql);
+  if (text === undefined) {
+    if (flattened.size >= 1024) flattened.clear();
+    text = sql.replace(/\s+/g, ' ').trim();
+    flattened.set(sql, text);
+  }
+  return text;
+};
 /**
  * Reads a group transaction repeats for every member and whose answer cannot
  * change before it commits: the source's local path (its source row is held
@@ -145,7 +157,7 @@ const STABLE_IN_PREPARATION = new Set([
  * publication re-checks what it relies on under its locks. It lives only for
  * one group's preparation; a failed read is not kept.
  */
-export function preparationReads(engine: BrainEngine): BrainEngine {
+export function preparationReads(engine: BrainEngine, imports?: ImportGroupReads): BrainEngine {
   const reads = new Map<string, Promise<unknown>>();
   const once = <T>(id: string, read: () => Promise<T>): Promise<T> => {
     let value = reads.get(id) as Promise<T> | undefined;
@@ -158,8 +170,12 @@ export function preparationReads(engine: BrainEngine): BrainEngine {
     if (key === 'executeRaw') return (sql: string, params?: unknown[], opts?: { signal?: AbortSignal; timeoutMs?: number }) =>
       STABLE_IN_PREPARATION.has(flat(sql)) && (!opts?.signal || opts.timeoutMs !== undefined)
         ? once(JSON.stringify([flat(sql), params ?? null]), () => target.executeRaw(sql, params)) : target.executeRaw(sql, params, opts);
-    if (key === 'getConfig') return (name: string) => once(`config:${name}`, () => target.getConfig(name));
+    // GBRA-75 wave 10: every config key a member reads comes from one config read for the group (the same value per key).
+    if (key === 'getConfig') return (name: string) => once('config:*', () => target.getAllConfig()).then(all => Object.hasOwn(all, name) ? all[name]! : null);
     if (key === 'getAllConfig') return () => once('config:*', () => target.getAllConfig()).then(all => ({ ...all }));
+    if (imports && key === 'readPageSnapshot') return (slug: string, opts?: Parameters<BrainEngine['readPageSnapshot']>[1]) =>
+      imports.snapshot(slug, opts) ?? target.readPageSnapshot(slug, opts);
+    if (imports && key === 'findDuplicatePage') return (sourceId: string, opts: Parameters<NonNullable<BrainEngine['findDuplicatePage']>>[1]) => imports.findDuplicate(sourceId, opts);
     const value = Reflect.get(target, key, target);
     return typeof value === 'function' ? value.bind(target) : value;
   } });
@@ -549,10 +565,12 @@ export async function executeClaimedGroup(engine: BrainEngine, rows: WriteReques
   let cut: number | null = null;
   const abandon = (i: number, work: Promise<unknown>) => run.leftRunning?.(work, true, { row: rows[i]!, clock: clocks[i]! });
   try {
-    const reads = preparationReads(engine);
+    // GBRA-75 wave 10: an import group's members read their pages and duplicate candidates through one batch each (import-reads.ts).
+    const reads = preparationReads(engine, publicationGroupKey(rows[0]!)?.startsWith('import:') ? importGroupReads(engine, rows) : undefined);
     // A put_pages or import group prepares all of its (at most PAGE_BATCH_GROUP_MAX) pages at once.
     const width = independent ? PAGE_BATCH_GROUP_MAX : 4;
-    const preparing = (async () => {
+    // GBRA-75 wave 10: the members' preparations share one memo of root-level path facts; publication re-checks every path.
+    const preparing = withScreeningPaths(async () => {
       for (let start = 0; start < rows.length && (independent || cut === null); start += width) {
         const wave = rows.slice(start, start + width);
         const now = Date.now();
@@ -590,7 +608,7 @@ export async function executeClaimedGroup(engine: BrainEngine, rows: WriteReques
           } finally { inFlight.delete(i); }
         }));
       }
-    })();
+    });
     if (await lease.whileHeld(preparing) === CLAIM_LOST) {
       run.leftRunning?.(preparing, true, { row: rows[0]!, clock: groupClock });
       await endLostLease(lease);

@@ -377,3 +377,4 @@ test/write-path-no-egress.serial.test.ts	global-state	global-state: binds a loca
 test/write-path-zero-llm.serial.test.ts	R1	R1: mutates process.env (ANTHROPIC_API_KEY, OPENAI_API_KEY) so gated chat and embedding paths are live
 test/writeback-nudge.serial.test.ts	global-state	global-state: patches process stdout/stderr/console
 test/writeback-review-fixes.serial.test.ts	global-state	global-state: process-wide test seams __resetCheckpointHarvestForTests; patches process stdout/stderr/console
+test/git-listing-memo.serial.test.ts	R1	R1: puts a git-counting shim on process.env.PATH for every spawn in the process (git child processes inherit it, so withEnv cannot scope it)

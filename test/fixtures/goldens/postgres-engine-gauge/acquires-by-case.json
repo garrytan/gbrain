@@ -64,6 +64,7 @@
     "findCandidateDuplicates#default": {},
     "findCandidateDuplicates#embedding": {},
     "findDuplicatePage#default": {},
+    "findDuplicatePages#default": {},
     "findOntologyConflicts#default": {},
     "findOntologyConflicts#sourceIds+excludePrivate": {},
     "findOrphanPages#default": {},
