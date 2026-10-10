@@ -10,6 +10,28 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**`embed --max-usd` is enforced, a fence write no longer wipes a database-only page, and synced quarantine overrides and Git children are locked down.**
+
+An approved `gbrain embed --max-usd` cap was never metered, so a run could spend past it; it is now enforced on every paid call, and `--yes` with no cost estimate runs under the default $5.00 cap. A facts fence write to a page with no file wrote a stub that overwrote the stored body (#6398); it is refused now. A file's own `quarantine_override` is kept only for an owner-tier source, and Git children no longer follow an inherited `GIT_DIR`. Nothing needs doing after you upgrade; to let an embed run spend more than $5.00 without an estimate, pass `--max-usd <usd>`.
+
+### Itemized changes
+
+- `gbrain embed` meters an approved `--max-usd` while it spends, for text, `--slugs`, `--images` (multimodal and OCR) and `--background` runs. A run that reaches its cap keeps what it wrote, exits 11 with reason `cost_cap` and prints the shell-quoted resume command; rerun it with `--max-usd <usd>` to raise the cap. `--yes` with no cost estimate is now capped at the default $5.00. Consent counts a paid multimodal or OCR model when `--images` is set, and `--slugs` stops at the next flag.
+- A facts fence write to a database-only or soft-deleted page is refused with `db_only_page` instead of writing a stub over it (#6398). Doctor `stub_guard_24h` counts these separately and they do not raise its warning.
+- A synced or imported file's `quarantine_override` is kept only when the source's write-gate tier is owner-tier; file repairs and reconcile apply the same rule, and an unreadable tier strips it (CSO T1).
+- Git children drop inherited repository-locating variables (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and the rest Git lists), checkout discovery stops at a world-writable ancestor owned by someone else, hardened Git calls take literal pathspecs and only the exact options callers use, and `eval drift-watch` runs Git without a shell (CSO G1 to G4).
+- `pollCommand` output is shell-quoted and `LLMS_REPO_BASE` is normalized; the paid-consent skill lint says it is a documentation check, not enforcement.
+
+### For contributors
+
+- Flake fixes: the facts drain scheduler returns its tick promise (#6348); the capture-log weight fixture hand-shakes with its artifact (#6312); connector tests run on the production wait budget, with `withPausedOwnerBudget` where a test expects `writer_pending`.
+- Failure-only diagnostics, issues left open: the write-gate p95 check dumps every round's raw samples (#6430); the history fixture dumps effect, lock and request state (#6345); a shared source-row dump wraps managed connector recovery and every managed-extract-atoms scenario (#6427).
+- The shard-weight miner fetches unit capture artifacts and serial job logs per job; shard weights refreshed.
+- `test/git-env-guard.test.ts` fails on a new Git spawn that inherits `process.env` unfiltered.
+- New probes: `test/quarantine-override-tier.test.ts`, `test/quarantine-override-repair-reconcile.test.ts`, `test/fence-write-db-only.test.ts`, `test/doctor-stub-guard.test.ts`, `test/embed-max-usd-metered.serial.test.ts`, `test/embed-consent-multimodal.test.ts`, `test/gateway-ocr-reserve.test.ts`, `test/e2e/embed-background-cap.test.ts`, `test/persistence-effect-git-env.test.ts`, `test/drift-watch-args.test.ts`, `test/w13-small-hardening.test.ts`.
+
 ## [0.60.157.0] - 2026-10-10
 
 **A database-only `validate: false` stamp no longer refuses every write; lost memory writes are counted and replayable.**
