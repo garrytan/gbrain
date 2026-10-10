@@ -14,7 +14,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "name": "remember",
     "idempotent": true,
     "outputRedaction": "no_stored_text",
-    "description": "MEMORY VERB (v1): save facts with provenance. Set `entity` to the subject or entity recall misses it. Branch on `status` (inserted|duplicate|superseded); write_pending: poll get_write_request.",
+    "description": "MEMORY VERB (v1): save facts with provenance. Set `entity` or entity recall misses it. Branch on `status` (inserted|duplicate|superseded); write_pending: poll get_write_request.",
     "params": {
       "source_id": {
         "type": "string",
@@ -48,9 +48,63 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "items": {
         "type": "array",
-        "description": "≤20 facts: [{fact, provenance}]",
+        "description": "≤20 of {fact, entity, provenance, kind, ttl, visibility}",
         "items": {
-          "type": "object"
+          "type": "object",
+          "properties": {
+            "fact": {
+              "type": "string",
+              "required": true,
+              "description": "One claim.",
+              "fullSurfaceOnly": true
+            },
+            "entity": {
+              "type": "string",
+              "description": "Subject (name or slug).",
+              "fullSurfaceOnly": true
+            },
+            "provenance": {
+              "type": "string",
+              "description": "Fact source (max 500 chars); defaults to the top-level provenance.",
+              "fullSurfaceOnly": true
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "event",
+                "preference",
+                "commitment",
+                "belief",
+                "fact"
+              ],
+              "description": "Default: the top-level kind, else fact.",
+              "fullSurfaceOnly": true
+            },
+            "ttl": {
+              "type": "string",
+              "description": "\"30d\", \"12h\" or ISO 8601; omit = never.",
+              "fullSurfaceOnly": true
+            },
+            "visibility": {
+              "type": "string",
+              "enum": [
+                "world",
+                "private"
+              ],
+              "description": "world (default) or private (local CLI).",
+              "fullSurfaceOnly": true
+            },
+            "infer_entity": {
+              "type": "boolean",
+              "description": "Default true.",
+              "fullSurfaceOnly": true
+            },
+            "replaces": {
+              "type": "string",
+              "description": "fact_id this item replaces (same entity).",
+              "fullSurfaceOnly": true
+            }
+          }
         }
       },
       "provenance": {
@@ -59,7 +113,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "ttl": {
         "type": "string",
-        "description": "\"30d\", \"12h\" or ISO 8601 time; omit = never."
+        "description": "\"30d\", \"12h\" or ISO 8601; omit = never."
       },
       "entity": {
         "type": "string",
@@ -86,7 +140,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
           "world",
           "private"
         ],
-        "description": "world (default) or private (local CLI only)."
+        "description": "world (default) or private (local CLI)."
       },
       "replaces": {
         "type": "string",

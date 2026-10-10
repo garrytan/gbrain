@@ -62,14 +62,31 @@ const remember: Operation = {
   name: 'remember',
   idempotent: true,
   outputRedaction: 'no_stored_text',
-  description: 'MEMORY VERB (v1): save facts with provenance. Set `entity` to the subject or entity recall misses it. Branch on `status` (inserted|duplicate|superseded); write_pending: poll get_write_request.',
+  description: 'MEMORY VERB (v1): save facts with provenance. Set `entity` or entity recall misses it. Branch on `status` (inserted|duplicate|superseded); write_pending: poll get_write_request.',
   params: {
     ...AGENT_CONTENT_PARAMS,
     fact: { type: 'string', description: 'One claim.' },
     items: {
       type: 'array',
-      description: '≤20 facts: [{fact, provenance}]',
-      items: { type: 'object' },
+      description: '≤20 of {fact, entity, provenance, kind, ttl, visibility}',
+      // The per-item schema (#6363) is advertised on the full surface; the
+      // starter surface keeps the item an open object and names the fields in
+      // the description above so the tool stays inside its budget
+      // (test/mcp-schema-budget.test.ts). The set of members is pinned to the
+      // handler's REMEMBER_ITEM_KEYS by test/remember-items-schema-6363.test.ts.
+      items: {
+        type: 'object',
+        properties: {
+          fact: { type: 'string', required: true, description: 'One claim.', fullSurfaceOnly: true },
+          entity: { type: 'string', description: 'Subject (name or slug).', fullSurfaceOnly: true },
+          provenance: { type: 'string', description: 'Fact source (max 500 chars); defaults to the top-level provenance.', fullSurfaceOnly: true },
+          kind: { type: 'string', enum: [...FACT_KINDS], description: 'Default: the top-level kind, else fact.', fullSurfaceOnly: true },
+          ttl: { type: 'string', description: '"30d", "12h" or ISO 8601; omit = never.', fullSurfaceOnly: true },
+          visibility: { type: 'string', enum: ['world', 'private'], description: 'world (default) or private (local CLI).', fullSurfaceOnly: true },
+          infer_entity: { type: 'boolean', description: 'Default true.', fullSurfaceOnly: true },
+          replaces: { type: 'string', description: 'fact_id this item replaces (same entity).', fullSurfaceOnly: true },
+        },
+      },
     },
     provenance: {
       type: 'string',
@@ -78,7 +95,7 @@ const remember: Operation = {
     },
     ttl: {
       type: 'string',
-      description: '"30d", "12h" or ISO 8601 time; omit = never.',
+      description: '"30d", "12h" or ISO 8601; omit = never.',
     },
     entity: {
       type: 'string',
@@ -95,7 +112,7 @@ const remember: Operation = {
     visibility: {
       type: 'string',
       enum: ['world', 'private'],
-      description: 'world (default) or private (local CLI only).',
+      description: 'world (default) or private (local CLI).',
     },
     replaces: { type: 'string', description: 'fact_id this fact replaces (same entity).', fullSurfaceOnly: true },
   },

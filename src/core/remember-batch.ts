@@ -23,7 +23,13 @@ import type { OperationContext } from './operations.ts';
 import { OperationError } from './ops/contract.ts';
 
 export const REMEMBER_BATCH_MAX = 20;
-const ITEM_KEYS = new Set(['fact', 'provenance', 'entity', 'infer_entity', 'kind', 'ttl', 'visibility', 'replaces']);
+/**
+ * Every field a batch item accepts. The advertised item schema in
+ * `src/core/verbs.ts` (`remember.params.items.items.properties`) declares
+ * exactly this set; test/remember-items-schema-6363.test.ts pins the two together.
+ */
+export const REMEMBER_ITEM_KEYS: ReadonlySet<string> = new Set(['fact', 'provenance', 'entity', 'infer_entity', 'kind', 'ttl', 'visibility', 'replaces']);
+const ITEM_KEYS = REMEMBER_ITEM_KEYS;
 
 /** Deterministic UUID for child `index` of a batch request (stable across replays). */
 export function childRequestId(requestId: string, index: number): string {

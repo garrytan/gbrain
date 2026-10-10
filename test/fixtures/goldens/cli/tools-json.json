@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 222258,
-    "stdoutSha256": "c57b5a6ee1354ed3411589becdcc087ea6d74b14101affa2869bbbb0ce20ce94",
+    "stdoutBytes": 223866,
+    "stdoutSha256": "384545953bf16090ec7c86f03ce2f78aa8b474cc9b46d24f0128cdaa072645d5",
     "toolNames": [
       "remember",
       "entity",
@@ -173,7 +173,7 @@
     ],
     "tools": [
       {
-        "description": "MEMORY VERB (v1): save facts with provenance. Set `entity` to the subject or entity recall misses it. Branch on `status` (inserted|duplicate|superseded); write_pending: poll get_write_request.",
+        "description": "MEMORY VERB (v1): save facts with provenance. Set `entity` or entity recall misses it. Branch on `status` (inserted|duplicate|superseded); write_pending: poll get_write_request.",
         "idempotent": true,
         "local_only": false,
         "mutating": true,
@@ -227,8 +227,57 @@
               "type": "boolean"
             },
             "items": {
-              "description": "≤20 facts: [{fact, provenance}]",
+              "description": "≤20 of {fact, entity, provenance, kind, ttl, visibility}",
               "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "entity": {
+                    "description": "Subject (name or slug).",
+                    "type": "string"
+                  },
+                  "fact": {
+                    "description": "One claim.",
+                    "type": "string"
+                  },
+                  "infer_entity": {
+                    "description": "Default true.",
+                    "type": "boolean"
+                  },
+                  "kind": {
+                    "description": "Default: the top-level kind, else fact.",
+                    "enum": [
+                      "event",
+                      "preference",
+                      "commitment",
+                      "belief",
+                      "fact"
+                    ],
+                    "type": "string"
+                  },
+                  "provenance": {
+                    "description": "Fact source (max 500 chars); defaults to the top-level provenance.",
+                    "type": "string"
+                  },
+                  "replaces": {
+                    "description": "fact_id this item replaces (same entity).",
+                    "type": "string"
+                  },
+                  "ttl": {
+                    "description": "\"30d\", \"12h\" or ISO 8601; omit = never.",
+                    "type": "string"
+                  },
+                  "visibility": {
+                    "description": "world (default) or private (local CLI).",
+                    "enum": [
+                      "world",
+                      "private"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "fact"
+                ],
                 "type": "object"
               },
               "type": "array"
@@ -261,11 +310,11 @@
               "type": "string"
             },
             "ttl": {
-              "description": "\"30d\", \"12h\" or ISO 8601 time; omit = never.",
+              "description": "\"30d\", \"12h\" or ISO 8601; omit = never.",
               "type": "string"
             },
             "visibility": {
-              "description": "world (default) or private (local CLI only).",
+              "description": "world (default) or private (local CLI).",
               "enum": [
                 "world",
                 "private"

@@ -31,7 +31,7 @@
  * an explicit `--surface` restart.
  */
 
-import type { OperationMeta } from '../core/ops/contract.ts';
+import type { OperationMeta, ParamDef } from '../core/ops/contract.ts';
 import type { Notice } from '../core/agent-output.ts';
 import type { GBrainConfig } from '../core/config.ts';
 import type { BrainEngine } from '../core/engine.ts';
@@ -222,10 +222,39 @@ export function filterOpsForSurface<T extends OperationMeta>(ops: T[], surface: 
   return ops.filter(op => STARTER_OPS.has(op.name)).map(starterParams);
 }
 
-/** Starter ops advertise every param except the full-surface-only ones. */
+/**
+ * Starter ops advertise every param except the full-surface-only ones, at
+ * every depth: a nested object member (`properties`) or an array item's
+ * member (`items.properties`) marked `fullSurfaceOnly` is dropped too, and a
+ * `properties` map that empties is removed so the item stays an open object
+ * rather than a closed empty one (#6363: `remember.items` carries its
+ * per-item schema on the full surface and names the fields in its
+ * description on starter, inside the budget test/mcp-schema-budget.test.ts pins).
+ */
 function starterParams<T extends OperationMeta>(op: T): T {
-  if (!Object.values(op.params).some(p => p.fullSurfaceOnly)) return op;
-  return { ...op, params: Object.fromEntries(Object.entries(op.params).filter(([, p]) => !p.fullSurfaceOnly)) };
+  if (!hasFullSurfaceOnly(Object.values(op.params))) return op;
+  return { ...op, params: starterProperties(op.params) ?? {} };
+}
+
+function hasFullSurfaceOnly(defs: ParamDef[]): boolean {
+  return defs.some(p => p.fullSurfaceOnly || (p.items ? hasFullSurfaceOnly([p.items]) : false) || (p.properties ? hasFullSurfaceOnly(Object.values(p.properties)) : false));
+}
+
+function starterProperties(props: Record<string, ParamDef>): Record<string, ParamDef> | undefined {
+  const kept = Object.entries(props).filter(([, p]) => !p.fullSurfaceOnly).map(([k, p]) => [k, starterParamDef(p)] as const);
+  return kept.length ? Object.fromEntries(kept) : undefined;
+}
+
+function starterParamDef(p: ParamDef): ParamDef {
+  if (!hasFullSurfaceOnly([p])) return p;
+  const { items, properties, ...rest } = p;
+  const out: ParamDef = { ...rest };
+  if (items) out.items = starterParamDef(items);
+  if (properties) {
+    const kept = starterProperties(properties);
+    if (kept) out.properties = kept;
+  }
+  return out;
 }
 
 /** The fail-closed allow-set handed to dispatchToolCall. */

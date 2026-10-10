@@ -50,6 +50,10 @@ notice). User guide: [core memory](../../guides/core-memory.md).
   hook and OpenClaw `assemble()`.
 - `src/core/remember-batch.ts`: `remember` with `items[]` (all-or-none
   validation, deterministic child request ids, per-item status).
+  `REMEMBER_ITEM_KEYS` is the per-item field set; the advertised item schema
+  in `src/core/verbs.ts` (full surface) declares exactly it, and the starter
+  surface names the fields in the `items` description instead. Pinned by
+  `test/remember-items-schema-6363.test.ts`.
 - `src/commands/core.ts` (`gbrain core`), `src/commands/doctor/checks/core-memory.ts`
   (`core_memory`), schema `src/core/core-memory-schema.ts` + migration v213.
 - Tests: `test/core-memory.test.ts`, `test/core-guard.test.ts`,
