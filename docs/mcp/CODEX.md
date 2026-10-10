@@ -220,7 +220,15 @@ codex mcp remove gbrain
   paths above), or migrate to the Postgres/Supabase engine, which tolerates
   concurrent connections. Details:
   [serve ↔ sync concurrency](../architecture/serve-sync-concurrency.md).
-- **Ambient recall (Codex has no lifecycle hooks — use the pull path).** At the
+- **Ambient recall.** `gbrain bootstrap hooks --harness codex` (and the
+  `bootstrap harness` lane) wires three trust-gated hooks into
+  `$CODEX_HOME/hooks.json`: `SessionEnd` captures the session, and
+  `SessionStart` / `UserPromptSubmit` run `gbrain hook session-start` /
+  `gbrain hook user-prompt --harness codex`, whose output Codex injects as
+  brain context. The commands bake no `GBRAIN_SOURCE` (the file is
+  machine-global). Each hook has a `[hooks.state."<hooks.json>:<event>:<group>:0"]`
+  trust entry in a gbrain-managed block of `config.toml`; Codex silently skips
+  an untrusted hook. With hooks declined, use the pull path: at the
   start of a topical thread and after a compaction, call
   `context_pack(entities, budget_tokens)` to warm the standing entities; on a
   periodic wake call `delta(session_id, budget_tokens)` for "what changed since

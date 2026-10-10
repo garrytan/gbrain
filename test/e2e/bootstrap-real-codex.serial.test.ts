@@ -8,9 +8,10 @@
  *      ~/.codex/config.toml). Asserts the registration landed (real `codex mcp
  *      get gbrain` + the temp config.toml carry our server + GBRAIN_SOURCE),
  *      `gbrain bootstrap verify` exits 0, and the rendered AGENTS.md carries the
- *      Gate-3 brain-first pull protocol — Codex's ONLY per-turn mechanism
- *      (gbrain wires SessionEnd capture only; per-turn stays pull). Also
- *      asserts the trust-gated hooks.json + config.toml pair landed in the
+ *      Gate-3 brain-first pull protocol (the fallback when hooks are off;
+ *      gbrain wires SessionEnd capture + SessionStart/UserPromptSubmit
+ *      context, #5941). Also
+ *      asserts the trust-gated hooks.json + config.toml pairs landed in the
  *      hermetic CODEX_HOME.
  *
  *   2. SMOKE — a live `codex exec` turn. gbrain is registered as a Codex stdio
@@ -328,11 +329,13 @@ describe.skipIf(!CAN_RUN)('bootstrap real-codex door (serial e2e)', () => {
         }),
       );
       expect(hooksCode).toBe(0);
-      // SessionEnd capture is wired (trust-gated pair); per-turn stays pull.
-      expect(hooksOut).toContain('codex SessionEnd hook installed');
-      expect(hooksOut).toContain('per-turn context on codex stays the AGENTS.md pull protocol');
+      // SessionEnd capture + SessionStart/UserPromptSubmit context are wired
+      // (trust-gated pairs, #5941).
+      expect(hooksOut).toContain('codex SessionEnd + SessionStart + UserPromptSubmit hooks installed');
       const hooksJson = readFileSync(join(codexHost, '.codex', 'hooks.json'), 'utf8');
       expect(hooksJson).toContain('hook session-end --harness codex');
+      expect(hooksJson).toContain('hook session-start --harness codex');
+      expect(hooksJson).toContain('hook user-prompt --harness codex');
       expect(hooksJson).not.toContain('GBRAIN_SOURCE'); // machine-global file: runtime payload resolution only
 
       // Real `codex mcp get gbrain` shows our server (env values are masked in
