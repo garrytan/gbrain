@@ -28,6 +28,7 @@
  */
 
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
+import { managedFilesystemRootFor } from '../persistence/filesystem-guard.ts';
 import { submitPageMutation } from '../persistence/page-mutations.ts';
 import { withCoordinatedWrite } from '../persistence/context.ts';
 import { maintenanceAttribution } from '../persistence/attribution.ts';
@@ -1010,9 +1011,16 @@ async function checkHooksSmoke(engine: BrainEngine, ws: string, sourceId: string
   }
 }
 
-function checkPushProbe(ws: string): VerifyCheck {
+export function checkPushProbe(ws: string): VerifyCheck {
   const id = 'push_probe';
   try {
+    // #5606: a managed canonical worktree is pushed by the persistence owner's Git effect; sources push is refused there, so never recommend it.
+    const managed = managedFilesystemRootFor(ws);
+    if (managed) {
+      const source = managed.sourceId ?? '<source>';
+      return { id, ok: true, detail: `managed canonical worktree${managed.sourceId ? ` (source ${managed.sourceId})` : ''} — page writes are committed and pushed by the persistence owner's Git effect, not by sources push; `
+        + `check \`gbrain sources writer status ${source} --json\` (git_durability) and enable with \`gbrain sources writer git-durability ${source} --enable --dry-run\` if it is off` };
+    }
     // Read through the shared per-root reader [D8/D13] — a v0.45.8+ push
     // writes push-status-<roothash>.json, not the legacy single file, so the
     // old direct read reported "no push recorded" on every fresh install.
