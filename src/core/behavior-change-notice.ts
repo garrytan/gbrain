@@ -373,6 +373,7 @@ export const BEHAVIOR_CHANGES: ReadonlyArray<{ since: string; text: ChangeText }
   { since: '0.60.147.0', text: 'In a brain folder with the Git durability hook, a write that arrives while the effect worker commits a backlog of Git effects now publishes after the group in flight, inside its 5 s wait, instead of returning pending after the whole backlog; Git effects still commit in order. A write waiting on a busy worktree is reported as `writer_busy` without a stale preparing phase.' },
   // `since` is a placeholder equal to the branch's VERSION until the merge-slot stamp.
   { since: '0.60.151.0', text: '`delta` and `context_pack` called without `include_private`, and the per-turn context block that harness hooks inject, now apply to their facts the same page-visibility rule they already apply to their pages. With `include_private` from the local CLI, `delta` and `context_pack` output is unchanged.' },
+  { since: '0.60.157.0', text: 'A page whose database frontmatter carries the v0.13.1 grandfather `validate: false` while its canonical file does not is no longer refused `source_changed` on write; the next coordinated write publishes the stamp to the file. `remember` and other caller writes that were refused that way are counted by doctor (`lost_caller_writes`) and replayed by `gbrain repair failed-writes --source <id>` on the brain host, after the user agrees to the previewed set.' },
 ];
 
 /** The newest disclosed change's release: the notice id moves only when a release adds rows. */

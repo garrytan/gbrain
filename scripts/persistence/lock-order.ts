@@ -110,11 +110,11 @@ export function installLockOrderTrace(): void {
     const proto = Engine.prototype as unknown as Record<string, (...args: unknown[]) => Promise<unknown>>;
     for (const method of ['transaction', 'transactionDirect']) {
       const original = proto[method];
-      proto[method] = function (this: unknown, fn: unknown) {
-        if (!enabled || store.getStore()) return original.call(this, fn);
+      proto[method] = function (this: unknown, ...args: unknown[]) {
+        if (!enabled || store.getStore()) return original.apply(this, args);
         const trace: Trace = { locks: [], publication: false };
         return store.run(trace, async () => {
-          try { return await original.call(this, fn); } finally { check(trace); }
+          try { return await original.apply(this, args); } finally { check(trace); }
         });
       };
     }

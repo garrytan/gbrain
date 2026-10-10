@@ -1,6 +1,6 @@
 import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { BrainEngine } from '../../src/core/engine.ts';
+import type { BrainEngine, TransactionOptions } from '../../src/core/engine.ts';
 
 const root = process.env.REINDEX_FIXTURE_ROOT!;
 const checkout = process.env.REINDEX_FIXTURE_CHECKOUT!;
@@ -20,8 +20,8 @@ if (mode === 'trace') {
   const trace = process.env.REINDEX_FIXTURE_TRACE!;
   let count = 0;
   let pageCount = 0;
-  PGLiteEngine.prototype.transaction = async function<T>(fn: (engine: BrainEngine) => Promise<T>): Promise<T> {
-    if ((this as unknown as { _pageTransaction: boolean })._pageTransaction) return transaction.call(this, fn);
+  PGLiteEngine.prototype.transaction = async function<T>(fn: (engine: BrainEngine) => Promise<T>, opts?: TransactionOptions): Promise<T> {
+    if ((this as unknown as { _pageTransaction: boolean })._pageTransaction) return transaction.call(this, fn, opts);
     const id = ++count;
     const started = performance.now();
     let bodyDone = started;
@@ -48,7 +48,7 @@ if (mode === 'trace') {
       appendFileSync(trace, JSON.stringify({ phase: 'body_done', id, ms: bodyDone, kind, pageSequence, pageKeys: [...pageKeys] }) + '\n');
       if (pageSequence === Number(process.env.REINDEX_FIXTURE_KILL_AT)) process.kill(process.pid, 'SIGKILL');
       return result;
-    });
+    }, opts);
     appendFileSync(trace, JSON.stringify({ phase: 'committed', id, kind, pageSequence, pageKeys: [...pageKeys], bodyMs: bodyDone - started, commitMs: performance.now() - bodyDone }) + '\n');
     return result;
   };

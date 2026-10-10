@@ -10,6 +10,33 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.158.0] - 2026-10-10
+
+**`engine.transaction(fn, { signal })` and `engine.transactionDirect(fn, { signal })`: an `AbortSignal` that cancels a running Postgres transaction. No behavior changes for callers that pass no signal.**
+
+The publication deadline planned in #6288 / #6352 needs to end a specific publish transaction when its ceiling passes, so that its promise rejects and the caller's `finally` releases the request-row lock, page locks, worktree lock and capacity. Until now nothing could cancel one transaction's connection.
+
+### Itemized changes
+
+- **`TransactionOptions.signal`** (`src/core/engine.ts`, `src/core/postgres-engine.ts`, `src/core/postgres-engine/transaction-abort.ts`). On Postgres an abort discards the transaction's connection through the begin handle's `discard()` (the connection-ownership hunk from #5466 / #5560): the socket closes, the server rolls the transaction back on its own whether a statement is in flight or not, directly or through a transaction-mode pooler, and the pool reconnects on its next checkout. The transaction rejects with an `AbortError` whose `message` is the signal's reason and whose `cause` is the driver's `CONNECTION_CLOSED` error; every `finally` on the way out runs and the `tx` gauge is released. An already-aborted signal rejects before `BEGIN` is sent. An abort after `COMMIT` returned changes nothing. A nested transaction shares its parent's connection, so aborting it aborts the parent too.
+- **PGLite** (`src/core/pglite-engine.ts`): one in-process connection cannot interrupt a statement, so only the pre-`BEGIN` check applies; a mid-flight abort is ignored and the transaction commits.
+- Tests: `test/e2e/postgres-transaction-abort-postgres.test.ts` (5 cases: mid-flight abort on `transaction` and `transactionDirect` with `finally`, rollback checked again after the in-flight statement would have finished, pool and gauge freed; pre-aborted signal sends no `BEGIN`; abort after `COMMIT`; no signal), 3 of 5 fail on master (the option is ignored and the transaction commits); `test/transaction-abort.test.ts` (8 cases: the abort-before-and-after-attach paths, error mapping, listener removal, and PGLite's two behaviors).
+
+## [0.60.157.0] - 2026-10-10
+
+**A database-only `validate: false` stamp no longer refuses every write; lost memory writes are counted and replayable.**
+
+The v0.13.1 grandfather stamped `validate: false` into the database. On an unmanaged brain that migration never wrote the file (by design), so once the brain was managed every page with the stamp looked hand-edited and every coordinated write on it, `remember` included, was refused `source_changed` (#6429: 209k of 304k pages on one brain, 68 facts dropped silently). The stamp is now read as what it is, a mechanical database-side annotation, and the next write publishes it to the file. Nothing needs doing after you upgrade; to recover facts that were refused, run `gbrain repair failed-writes --source <id>` on the brain host and apply the set it prints after you agree.
+
+### Itemized changes
+
+- `prepareFileTarget` (`fileMatchesSnapshot`) treats a stored `validate: false` the way #5943 treats a pack-inferred `subtype`: a canonical file without a `validate:` key keeps the stored stamp instead of counting as an uncoordinated local edit. A file that records its own `validate:` decision is still compared as written. `put_page`, `remember`, maintenance pages, lint and `sources reconcile --audit` all route through it.
+- `gbrain repair failed-writes` also lists and replays caller writes (`remember`, `put_page`, `add_timeline_entry`) that ended `conflict` with `source_changed`, with the same dispositions. A replay refused `source_changed` is classified `file_database_drift` only while the file still differs from the database: a reconcile that rewrites only the file makes the write a candidate again (before, only a change to the page row did).
+- Doctor `lost_caller_writes` (ops) counts, per source, the caller writes whose receipt still holds an intent that never landed and names the `repair failed-writes` preview; a write whose replay or retry committed, or whose page was later deleted, is not counted.
+
+### For contributors
+
+- `test/ingestion/put-page-write-through.test.ts` (#6429 case) proves the stamp carry on PGLite (fails before the fix with `source_changed`); `test/repair-failed-writes-conflict-6429.test.ts` covers the conflict replay and the doctor check on PGLite and Postgres; `test/doctor-lost-caller-writes.test.ts` pins the registry wiring. Doctor goldens were regenerated for the new check.
 ## [0.60.156.0] - 2026-10-10
 
 **`gbrain setup claude-code` gives Claude Code memory in one command.** It finds or creates your brain, wires the MCP server and the read-context hooks, and checks that they answer. A second run changes nothing, and `--remove` takes out only what setup wrote.
