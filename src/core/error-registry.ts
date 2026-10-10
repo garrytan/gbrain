@@ -373,7 +373,7 @@ export const CODES = {
   skill_retention_capacity: { class: 'caller', summary: "Retained skill revisions exceed this source storage budget." },
   skill_unavailable: { class: 'caller', summary: "The qualified shared skill is not in this installation's current authorized view.", docs: 'docs/guides/shared-brain-skills.md#troubleshoot-leave-and-recover' },
   source_binding_required: { class: 'caller', summary: "A write needs an explicit source binding on this MCP server (--source-guard)." },
-  source_changed: { class: 'caller', summary: "The source changed during the operation; nothing was committed." },
+  source_changed: { class: 'caller', summary: "The source changed during the operation; nothing was committed.", why: "Covers a replaced, archived or re-bound source and a canonical file that differs from the page's database copy (detail file_database_drift). A page that records no file of its own reconciles against the file at its slug path only with gbrain sources reconcile <source> <slug> --preview --adopt-slug-path." },
   source_id_taken: { class: 'caller', summary: "This source already exists and does not match this exact admitted request." },
   source_not_ready: { class: 'caller', summary: "A committed source and approved schema are required." },
   source_profile_no_backfill: { class: 'unavailable', summary: "This source profile disables automatic embedding backfill." },

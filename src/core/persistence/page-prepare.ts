@@ -202,10 +202,12 @@ export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequ
     if (!await fileMatchesSnapshot(engine, row.slug, before.toString('utf8'), snapshot, options.activePack)) {
       const held = await heldFileRefusal(engine, row, root, path, 'drift', options.remote === true);
       if (held) throw held;
+      // #6394: a page that never recorded its file reconciles against the file at its slug path only when adopted explicitly.
+      const adopt = !snapshot.page.source_path && !snapshot.page.source_uri ? ['--adopt-slug-path'] : [];
       throw opError('source_changed', 'The canonical file contains an uncoordinated local edit.',
-        `On the brain host, run gbrain sources reconcile ${row.source_id} ${row.slug} --brain <brain id, host by default> --preview, review and apply the resolved preview, then retry this write with a new request_id. Neither copy was overwritten.`,
+        `On the brain host, run gbrain sources reconcile ${row.source_id} ${row.slug} --brain <brain id, host by default> --preview${adopt.length ? ' --adopt-slug-path (the page records no file of its own, so the preview adopts the file at its slug path)' : ''}, review and apply the resolved preview, then retry this write with a new request_id. Neither copy was overwritten.`,
         { detail: 'file_database_drift', fix: readFix(`Previews how page ${row.slug}'s canonical file and database copy reconcile; a preview never changes canonical content.`,
-          { argv: ['gbrain', 'sources', 'reconcile', row.source_id, row.slug, '--brain', 'host', '--preview'] }) });
+          { argv: ['gbrain', 'sources', 'reconcile', row.source_id, row.slug, '--brain', 'host', '--preview', ...adopt] }) });
     }
   } else if (before && !snapshot && content !== null && sha256(before) !== sha256(content)
     && !(options.capture && sha256(before) === options.capture.hash)) {

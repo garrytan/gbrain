@@ -21,6 +21,7 @@ import { registerLocalWriter, withVerifiedLocalRegistration } from '../src/core/
 import { runReconcileApply, runReconcilePreview } from '../src/core/persistence/reconcile.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { operations } from '../src/core/operations.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
 
@@ -147,6 +148,54 @@ test('a Git subfolder page never matches a source-relative file whose scanned sl
         await expect(runReconcilePreview(engine, { source_id: id, slug: 'architecture/topologies' })).rejects.toMatchObject({ code: 'source_changed' });
       });
       expect(readFileSync(join(root, 'architecture/topologies.md'), 'utf8')).toBe(fileSide);
+    }
+  });
+}, 180_000);
+
+// #6394: an unmarked page with no recorded origin and a file at its slug path refused every write, and reconcile (the remedy
+// the refusal named) could not adopt it. --adopt-slug-path adopts that file explicitly; the default stays unchanged above.
+test('--adopt-slug-path previews an unmarked null-origin page against its slug file, apply records the origin, and a later write commits', async () => {
+  await withEnv({ GBRAIN_HOME: home, OPENAI_API_KEY: undefined, ANTHROPIC_API_KEY: undefined }, async () => {
+    for (const engine of engines) {
+      const f = await collision(engine, { marked: false });
+      await withVerifiedLocalRegistration(engine, f.registration, async () => {
+        const refused = await runReconcilePreview(engine, { source_id: f.id, slug: f.slug }).catch((error: { suggestion?: string; message: string }) => error);
+        expect(String((refused as { suggestion?: string }).suggestion ?? '')).toContain('--adopt-slug-path');
+        const preview = await runReconcilePreview(engine, { source_id: f.id, slug: f.slug, adopt_slug_path: true });
+        expect(preview.relative_path).toBe('notes/example.md');
+        expect(preview.status).toBe('needs_resolution');
+        const resolved = await runReconcilePreview(engine, { source_id: f.id, slug: f.slug, from: preview.preview,
+          decisions: (preview.conflict_paths as string[]).map(path => ({ path, action: 'take_file' })) });
+        expect(resolved.status).toBe('ready');
+        const receipt = await runReconcileApply(engine, { source_id: f.id, slug: f.slug, preview: resolved.preview, request_id: randomUUID() });
+        expect(receipt.state).toBe('committed');
+        const [page] = await engine.executeRaw<{ source_path: string | null }>('SELECT source_path FROM pages WHERE source_id=$1 AND slug=$2', [f.id, f.slug]);
+        expect(page!.source_path).toBe('notes/example.md');
+        const adopted = (await engine.readPageSnapshot(f.slug, { sourceId: f.id }))!;
+        expect(adopted.page.compiled_truth).toContain('another host');
+        const put = operations.find(o => o.name === 'put_page')!;
+        const written = await put.handler({ engine, config: { engine: engine.kind, embedding_disabled: true } as never, logger: { info() {}, warn() {}, error() {} }, dryRun: false, remote: false, sourceId: f.id },
+          { slug: f.slug, content: '---\ntype: note\ntitle: Example\n---\nWritten after adoption.\n', expected_revision: adopted.revision, request_id: randomUUID() }) as { state?: string };
+        expect(written.state).toBe('committed');
+        expect(readFileSync(f.file, 'utf8')).toContain('Written after adoption.');
+      });
+    }
+  });
+}, 180_000);
+
+test('--adopt-slug-path refuses a page that is database-only by design (a never-filed derive-phase atom)', async () => {
+  await withEnv({ GBRAIN_HOME: home, OPENAI_API_KEY: undefined, ANTHROPIC_API_KEY: undefined }, async () => {
+    for (const engine of engines) {
+      const f = await collision(engine, { marked: false });
+      await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+      await importFromContent(engine, 'atoms/example', databaseSide, { sourceId: f.id, noEmbed: true });
+      await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+      mkdirSync(join(home, f.id, 'atoms'), { recursive: true });
+      writeFileSync(join(home, f.id, 'atoms/example.md'), fileSide);
+      await withVerifiedLocalRegistration(engine, f.registration, async () => {
+        await expect(runReconcilePreview(engine, { source_id: f.id, slug: 'atoms/example', adopt_slug_path: true })).rejects.toMatchObject({ code: 'source_changed' });
+      });
+      expect(readFileSync(join(home, f.id, 'atoms/example.md'), 'utf8')).toBe(fileSide);
     }
   });
 }, 180_000);
