@@ -10,6 +10,30 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**`query` now answers with the facts you corrected, and gbrain can keep a question answered for you.**
+
+A fact you save with `remember` used to lose to the stale page text it corrected, because page search never ranked saved facts. `query` now brings matching saved facts in as their own rows, in space the pages left free. Pinned questions are a new opt-in: pin a question once, and gbrain keeps its answer current with a citation behind every sentence.
+
+### Itemized changes
+
+- `query` adds up to 3 saved facts that match the question as rows of their own (`result_type: "fact"`, with `fact_id` and a `follow_up` recall call). They use only rows and tokens the pages left free, so no page is pushed out, and a page row whose claim a newer fact replaced is marked `superseded_claim`. It costs up to three database lookups and no model call. Remote callers see only facts whose source pages they could read. On by default; `gbrain config set search.query_facts_arm false` turns it off.
+- `remember` takes `valid_from`, so a correction can carry the date it became true instead of the day it was saved.
+- Fact supersession uses a threshold measured for the brain's embedding model. The default voyage-4 at 1024 dimensions keeps 0.95 and decides as before. Any other model no longer replaces a similar fact by cosine: both stay active and conflict review judges the pair, and exact-text duplicates still merge. Doctor `supersession_calibration` names a command that measures a threshold on synthetic text (about a cent), and `facts.supersession_thresholds` registers one.
+- Pinned questions: `gbrain questions pin|list|status|refresh|unpin` and MCP `questions_*`. Answers live in their own private tables with per-sentence evidence, never in search results, exports or git. A sentence whose evidence changed is flagged stale when you read it, and `context_pack` gains optional `pinned_questions` and `withheld` fields. A pin made over MCP stays inactive until the owner activates it. The dream cycle's `standing_questions` phase refreshes active pins under `cycle.standing_questions.budget_usd` (default $1.00 per run). Guide: `docs/guides/pinned-questions.md`.
+- Pinned questions replace `dream.auto_think`. On upgrade, its questions become pins with their budget, cooldown, model and commit setting, inactive when auto_think was off or its budget was 0. `gbrain config get|set dream.auto_think.*` names where each key went.
+- Opt-in retrieval settings, each off by default: `search.evidence_date_header` (each delivered evidence block starts with its observation date), `search.entity_anchoring` (a current-state question that names one entity puts that entity's page and the pages about it first), `search.temporal_fact_reserve` (a question about when things happened reserves part of the token budget for dated facts) and `facts.candidate_fusion interleave` (a keyword arm for supersession candidates).
+- `search.reranker.gate` (off by default) grades search candidates before the cross-encoder. `shadow` records how often the reranker was paying for an answer retrieval already found, in the response's `rerank_gate` metadata, on `--explain` and in a new `rerank_gate` section of `gbrain search stats`, and leaves results unchanged. `on` skips the cross-encoder when the top result is a strong vector match (cosine at least `search.evidence_cosine_floor` and `search.reranker.gate_min_gap` ahead of every other page); that skip is reported as `rerank_gate.skipped`, not as a degradation. The cache key now includes the gate keys and `search.evidence_cosine_floor`.
+- `scripts/bench-rerank-gate-latency.ts` measures the gate's latency: recall plus query per question with the gate off and on, warm-up, alternating arm order and fixed concurrency, reporting the mean saving per skipped query and the p95 change.
+- `GOOGLE_GENERATIVE_AI_BASE_URL` (or `provider_base_urls.google`) routes Gemini chat, expansion and embeddings through a proxy.
+- Fixes:
+  - `put_pages` accepts a byte-identical repeated slug as one write; differing repeats are refused page by page instead of failing the batch. Slow fenced code no longer stalls a batch.
+  - `query` skips the image arm on brains with no image embeddings.
+  - `query` returning whole pages with a `token_budget` sizes its hit list to the budget instead of stopping at the default row count with budget unused.
+  - `gbrain extract-conversation-facts` reads plain `user:` / `assistant:` transcripts, and exits 0 on partial success with a summary of the pages that failed.
+- Migration v232 adds the pinned-question tables.
+
 ## [0.60.159.0] - 2026-10-10
 
 **Captured memory stops leaking away: failed chats retry until they import, long messages stay whole, sessions file under their own source, and fence writers refuse instead of dropping rows.**
