@@ -5,7 +5,7 @@
  * cap, and the per-request input ceiling a guard reserves before dispatch.
  */
 import type { Recipe } from './types.ts';
-import { resolveRecipe } from './model-resolver.ts';
+import { formatEmbeddingInput, resolveRecipe, type EmbeddingInputOptions } from './model-resolver.ts';
 import { truncateUtf8 } from '../text-safe.ts';
 import { sendableEmbeddingInputs } from './embedding-guard.ts';
 
@@ -34,6 +34,14 @@ export const NO_BATCH_CAP_SUB_BATCH_ITEMS = 16;
 
 export function truncateEmbedInputs(texts: ReadonlyArray<string | null | undefined>): string[] {
   return texts.map(t => truncateUtf8(t ?? '', EMBED_MAX_CHARS));
+}
+
+export function prepareEmbedInputs(
+  texts: ReadonlyArray<string | null | undefined>,
+  modelStr: string,
+  opts?: EmbeddingInputOptions,
+): string[] {
+  return truncateEmbedInputs(texts.map(text => formatEmbeddingInput(text ?? '', modelStr, opts)));
 }
 
 /**
@@ -122,10 +130,15 @@ export function embedRequestMaxInputTokens(texts: string[], recipe: Recipe, mode
 }
 
 /** Per-request input ceilings `embed()` would reserve for these texts on `modelStr`, at the declared safety factor (empty inputs are never sent, #4616). */
-export function embedRequestCeilings(texts: ReadonlyArray<string>, modelStr: string, envMaxBatchTokens?: number): number[] {
+export function embedRequestCeilings(
+  texts: ReadonlyArray<string>,
+  modelStr: string,
+  envMaxBatchTokens?: number,
+  opts?: EmbeddingInputOptions,
+): number[] {
   const { parsed, recipe } = resolveRecipe(modelStr);
   const safety = recipe.touchpoints?.embedding?.safety_factor ?? DEFAULT_SAFETY_FACTOR;
-  const truncated = truncateEmbedInputs(texts);
+  const truncated = prepareEmbedInputs(texts, modelStr, opts);
   const sent = sendableEmbeddingInputs(truncated);
   if (!sent.length) return [];
   return planEmbedRequests(sent.map(i => truncated[i]!), recipe, safety, envMaxBatchTokens)
