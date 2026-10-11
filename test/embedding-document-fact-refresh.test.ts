@@ -3,6 +3,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from 'bun:te
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import { saveConfig } from '../src/core/config.ts';
@@ -159,24 +160,17 @@ test('source incarnation is rechecked inside the invalidation transaction', () =
   const id = await seed('incarnation protected');
   await embedExisting(id);
   const before = await state();
+  const [sourceBefore] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text FROM sources WHERE id=$1', [sourceId]);
   let ownershipChecked = false;
-  const sourceChangedAtCommit = new Proxy(engine, { get(target, key) {
-    if (key === 'transaction') return (run: (tx: PGLiteEngine) => Promise<unknown>) => target.transaction(tx => run(new Proxy(tx, {
-      get(inner, method) {
-        if (method === 'executeRaw') return (query: string, params?: unknown[]) => query.includes('incarnation=$2::uuid') && query.includes('FOR SHARE')
-          ? Promise.resolve([]) : inner.executeRaw(query, params);
-        const value = Reflect.get(inner, method, inner);
-        return typeof value === 'function' ? value.bind(inner) : value;
-      },
-    }) as PGLiteEngine));
-    const value = Reflect.get(target, key, target);
-    return typeof value === 'function' ? value.bind(target) : value;
-  } }) as PGLiteEngine;
-  await expect(embedStaleFacts(sourceChangedAtCommit, { sourceId, all: true, yes: true, maxCostUsd: 1,
-    assertOwned: async () => { ownershipChecked = true; } })).rejects.toThrow('Source identity changed');
+  await expect(embedStaleFacts(engine, { sourceId, all: true, yes: true, maxCostUsd: 1, assertOwned: async tx => {
+    ownershipChecked = true;
+    await tx.executeRaw('DELETE FROM page_write_guards WHERE source_incarnation=$1::uuid', [sourceBefore.incarnation]);
+    await tx.executeRaw('UPDATE sources SET incarnation=$2::uuid WHERE id=$1', [sourceId, randomUUID()]);
+  } })).rejects.toThrow('Source identity changed');
   expect(ownershipChecked).toBe(true);
   expect(wire).toEqual([]);
   expect(await state()).toEqual(before);
+  expect(await engine.executeRaw('SELECT incarnation::text FROM sources WHERE id=$1', [sourceId])).toEqual([sourceBefore]);
 }));
 
 test('invalidation stays within the census ceiling for the bounded drain', () => inHome(async () => {
@@ -184,6 +178,7 @@ test('invalidation stays within the census ceiling for the bounded drain', () =>
   await embedExisting(originalId);
   let lateId: number | undefined;
   const result = await embedStaleFacts(engine, { sourceId, all: true, yes: true, maxCostUsd: 1, assertOwned: async tx => {
+    if (lateId !== undefined) return;
     const late = await tx.insertFact({ fact: 'inserted after the census', source: 'notes', visibility: 'world', kind: 'fact', confidence: 1,
       embedding: new Float32Array(768).fill(0.25), embedding_model: 'ollama:EmbeddingGemma:latest' }, { source_id: sourceId });
     lateId = late.id;
