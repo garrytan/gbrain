@@ -21,6 +21,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { OperationContext } from './operations.ts';
 import { OperationError } from './ops/contract.ts';
+import { isWriteRequestId } from './persistence/types.ts';
 
 export const REMEMBER_BATCH_MAX = 20;
 const ITEM_KEYS = new Set(['fact', 'provenance', 'entity', 'infer_entity', 'kind', 'ttl', 'visibility', 'replaces']);
@@ -56,6 +57,10 @@ export async function runRememberBatch(ctx: OperationContext, p: Record<string, 
     throw verbError('invalid_params', 'replaces names one fact, so it cannot apply to a whole batch.',
       'Put replaces on the item it belongs to: items: [{ "fact": "...", "replaces": "<fact_id>" }].');
   }
+  if (p.request_id !== undefined && !isWriteRequestId(p.request_id)) {
+    throw verbError('invalid_params', 'request_id must be a UUID.',
+      'Generate a UUID before submitting the write and reuse it for retries of the same request.');
+  }
   const shared: Record<string, unknown> = {};
   for (const key of ['provenance', 'source_id', 'kind', 'ttl', 'visibility', 'infer_entity']) if (p[key] !== undefined) shared[key] = p[key];
   const normalized = items.map((raw, index) => {
@@ -76,7 +81,7 @@ export async function runRememberBatch(ctx: OperationContext, p: Record<string, 
     }
   }
   if (ctx.dryRun) return { dry_run: true, action: 'remember', items: normalized.length, protocol_version: 1 };
-  const requestId = typeof p.request_id === 'string' && p.request_id ? p.request_id : randomUUID();
+  const requestId = typeof p.request_id === 'string' ? p.request_id : randomUUID();
   const results: BatchItemResult[] = [];
   const hints = new Set<string>();
   for (const [index, item] of normalized.entries()) {

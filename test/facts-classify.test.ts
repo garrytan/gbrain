@@ -14,7 +14,7 @@ import {
   cosineSimilarity,
   classifyAgainstCandidates,
 } from '../src/core/facts/classify.ts';
-import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
+import { __setChatTransportForTests, configureGateway, resetGateway, type ChatOpts } from '../src/core/ai/gateway.ts';
 import { LEGACY_EMBEDDING_CONFIG } from './helpers/legacy-embedding-config.ts';
 import type { FactRow } from '../src/core/engine.ts';
 
@@ -164,5 +164,30 @@ describe('classify gate — key-aware, engine-free (CX10)', () => {
       expect(r.decision).toBe('duplicate');
       if (r.decision === 'duplicate') expect(r.matched_id).toBe(1);
     });
+  });
+});
+
+describe('classifier on a thinking route (#5331)', () => {
+  test('asks with thinking off, so a reasoning model returns its verdict inside the 200-token cap', async () => {
+    configureGateway({ ...LEGACY_EMBEDDING_CONFIG, env: { ANTHROPIC_API_KEY: 'sk-test' } });
+    __setChatTransportForTests(async (o: ChatOpts) => ({
+      text: o.thinking === 'off' ? '{"decision":"supersede","matched_id":7}' : '',
+      blocks: [],
+      stopReason: o.thinking === 'off' ? 'end' : 'length',
+      usage: { input_tokens: 10, output_tokens: 10, cache_read_tokens: 0, cache_creation_tokens: 0 },
+      model: 'anthropic:claude-haiku-5-5',
+      providerId: 'anthropic',
+    }));
+    try {
+      const result = await classifyAgainstCandidates(
+        { fact: 'Alice works at Widget Co now', kind: 'fact', embedding: vec(1, 0) },
+        [makeFact({ id: 7, fact: 'Alice works at Acme Example', embedding: vec(0, 1) })],
+        { model: 'anthropic:claude-haiku-5-5' },
+      );
+      expect(result).toMatchObject({ decision: 'supersede', supersedes_id: 7, reason: 'classifier' });
+    } finally {
+      __setChatTransportForTests(null);
+      configureGateway({ ...LEGACY_EMBEDDING_CONFIG, env: {} });
+    }
   });
 });

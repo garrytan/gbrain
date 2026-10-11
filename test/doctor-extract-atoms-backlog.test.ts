@@ -127,6 +127,16 @@ describe('computeExtractAtomsBacklogCheck (issue #1678)', () => {
     expect((check.details as { known_approximation: string }).known_approximation).toContain('page backlog only');
   });
 
+  it('a DB-config pack that newly declares the phase WARNs with the consent command (#6393)', async () => {
+    for (let i = 0; i < 12; i++) await seedArticle(`article-${i}`);
+    await engine.setConfig('schema_pack', 'gbrain-creator');
+    const check = await withEnv({ GBRAIN_HOME: EMPTY_HOME, GBRAIN_SCHEMA_PACK: undefined }, () =>
+      computeExtractAtomsBacklogCheck(engine));
+    expect(check.status).toBe('warn');
+    expect(check.message).toContain('gbrain config set cycle.extract_atoms.enabled true');
+    expect(check.details?.pack_declares_phase).toBe(false);
+  });
+
   it('includes the source in the drain hint when backlog lives outside default', async () => {
     await addSource(engine, { id: 'gbrain-raw' });
     for (let i = 0; i < 11; i++) await seedArticle(`raw-article-${i}`, 'gbrain-raw');

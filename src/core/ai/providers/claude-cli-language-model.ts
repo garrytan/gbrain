@@ -337,8 +337,17 @@ function runClaude(
   userPrompt: string,
   model: string,
   signal?: AbortSignal,
+  maxOutputTokens?: number,
 ): Promise<ClaudeJsonResult> {
   return new Promise((resolve, reject) => {
+    // #6424: forward the call's output cap. The inline --settings env sits
+    // above the user's settings.json env block, so both carry it.
+    const outputCap = typeof maxOutputTokens === 'number' && Number.isInteger(maxOutputTokens) && maxOutputTokens > 0
+      ? String(maxOutputTokens)
+      : undefined;
+    const settings = outputCap
+      ? JSON.stringify({ disableAllHooks: true, env: { CLAUDE_CODE_MAX_OUTPUT_TOKENS: outputCap } })
+      : '{"disableAllHooks":true}';
     const args = [
       '--print',
       '--output-format', 'json',
@@ -357,7 +366,7 @@ function runClaude(
       // extracting it spawns another call. Unlike --bare this keeps the
       // subscription login (credentials are not settings). Accepted by every
       // CLI that accepts the flags above.
-      '--settings', '{"disableAllHooks":true}',
+      '--settings', settings,
     ];
     if (systemPrompt) {
       args.push('--system-prompt', systemPrompt);
@@ -390,6 +399,7 @@ function runClaude(
     // see resolveHermeticConfigDir for the auth caveat that makes it opt-in.
     const hermeticConfigDir = resolveHermeticConfigDir();
     if (hermeticConfigDir) env.CLAUDE_CONFIG_DIR = hermeticConfigDir;
+    if (outputCap) env.CLAUDE_CODE_MAX_OUTPUT_TOKENS = outputCap;
     const child = spawn(claudeBin(), args, {
       stdio: ['pipe', 'pipe', 'pipe'],
       cwd: ensureCleanCwd(),
@@ -661,7 +671,7 @@ export class ClaudeCliLanguageModel implements LanguageModelV2 {
     const toolInstructions = buildToolUseInstructions(options.tools);
     const systemPrompt = [systemText, toolInstructions].filter(s => s.length > 0).join('\n');
 
-    const result = await runClaude(systemPrompt, userPrompt, this.modelId, options.abortSignal);
+    const result = await runClaude(systemPrompt, userPrompt, this.modelId, options.abortSignal, options.maxOutputTokens);
     const { toolCalls, beforeText, afterText } = extractToolCalls(result.result);
 
     const content: LanguageModelV2Content[] = [];

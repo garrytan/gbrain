@@ -48,7 +48,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "items": {
         "type": "array",
-        "description": "≤20 facts: [{fact, provenance}]",
+        "description": "≤20 of {fact,entity,provenance,kind,ttl,visibility}",
         "items": {
           "type": "object"
         }
@@ -59,7 +59,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "ttl": {
         "type": "string",
-        "description": "\"30d\", \"12h\" or ISO 8601 time; omit = never."
+        "description": "\"30d\", \"12h\" or ISO 8601; omit = never."
       },
       "entity": {
         "type": "string",
@@ -86,7 +86,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
           "world",
           "private"
         ],
-        "description": "world (default) or private (local CLI only)."
+        "description": "world (default) or private (local CLI)."
       },
       "replaces": {
         "type": "string",

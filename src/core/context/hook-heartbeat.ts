@@ -20,6 +20,9 @@ import type { ToolCallRecord } from '../transcripts/claude-code-jsonl.ts';
 import { ensureGbrainHome, resolveGbrainHome } from '../gbrain-home.ts';
 import { seatReasonHint } from './seat.ts';
 
+/** #6316: the OpenClaw context engine's per-compaction checkpoint event. */
+export const OPENCLAW_COMPACT_EVENT = 'openclaw-compact';
+
 /** Heartbeat file line cap [S3#7]. */
 export const HEARTBEAT_MAX_LINES = 5000;
 

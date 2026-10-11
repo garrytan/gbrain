@@ -236,6 +236,7 @@ export async function writeSingleFact(
     );
 
     if (result.fenceWriteFailed) {
+      if (result.fenceRefusal) throw result.fenceRefusal;
       // Parse-validate rejected the .tmp (quarantined). Hard failure — do NOT
       // fall through to a DB row whose fence is broken (pipeline policy).
       throw new Error(

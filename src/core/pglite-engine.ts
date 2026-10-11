@@ -53,7 +53,8 @@ import type {
   NewFact, FactListOpts, FactsHealth,
   SourceRow,
 } from './engine.ts';
-import { DREAM_VERDICT_TTL_SECONDS, clampSearchLimit } from './engine.ts';
+import { DREAM_VERDICT_TTL_SECONDS, clampSearchLimit, type TransactionOptions } from './engine.ts';
+import { transactionAborted } from './postgres-engine/transaction-abort.ts';
 import { searchLimitCap } from './search/eval-pool-depth.ts';
 // Engine-path imports stay static unless a call site carries an explicit
 // engine-dynamic-import-ok justification. The gateway is the only current
@@ -1169,7 +1170,8 @@ export class PGLiteEngine implements BrainEngine {
     return fn(conn);
   }
 
-  async transaction<T>(fn: (engine: BrainEngine) => Promise<T>): Promise<T> {
+  async transaction<T>(fn: (engine: BrainEngine) => Promise<T>, opts?: TransactionOptions): Promise<T> {
+    if (opts?.signal?.aborted) throw transactionAborted(opts.signal);
     const run = (db = this.db) => withHeldPageKeys(this._pageTransaction ? this._heldPageKeys : null, held => db.transaction(async handle => {
       const tx = composablePgliteTransaction(this._statements?.attach(handle, true) ?? handle);
       const txEngine = Object.create(this) as PGLiteEngine;
@@ -1184,8 +1186,8 @@ export class PGLiteEngine implements BrainEngine {
     return this._dbWork.admit(db => guard.runOutermost(sql => db.query(sql), () => run(db)));
   }
 
-  async transactionDirect<T>(fn: (engine: BrainEngine) => Promise<T>): Promise<T> {
-    return this.transaction(fn);
+  async transactionDirect<T>(fn: (engine: BrainEngine) => Promise<T>, opts?: TransactionOptions): Promise<T> {
+    return this.transaction(fn, opts);
   }
 
   // Pages CRUD

@@ -16,6 +16,7 @@
 import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, parseFactsFence, type ParsedFact } from '../facts-fence.ts';
 import { TAKES_FENCE_BEGIN, TAKES_FENCE_END, parseTakesFence, type ParsedTake } from '../takes-fence.ts';
 import { codeEndAt, indexOfOutsideCode, scanMarkdownCode, type MarkdownCodeMap } from '../fence-scan.ts';
+import { FenceRewriteRefusal } from '../fence-shared.ts';
 import { opError, type OperationError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { FENCE_REASONS, fenceMessage, issueLocation, renderFenceFix, type FenceMessageLocation } from './reasons.ts';
@@ -61,7 +62,7 @@ const at = (reason: FenceReason, fence: FenceKind, section: FenceSection, line: 
 
 /** The column a data row is refused for, in the strict parser's check order, and the reason it carries. */
 const CELL_CHECKS: Record<FenceKind, ReadonlyArray<readonly [column: string, reason: FenceReason]>> = {
-  facts: [['kind', 'enum_unmapped'], ['visibility', 'enum_unmapped'], ['notability', 'enum_unmapped'], ['confidence', 'confidence_out_of_range'], ['claim_value', 'claim_value_invalid']],
+  facts: [['kind', 'enum_unmapped'], ['visibility', 'enum_unmapped'], ['notability', 'enum_unmapped'], ['confidence', 'confidence_out_of_range'], ['claim_value', 'claim_value_invalid'], ['attributed_to', 'enum_unmapped']],
   takes: [['kind', 'takes_kind_unsupported'], ['weight', 'weight_missing']],
 };
 
@@ -110,6 +111,8 @@ function warningReasons(warning: string): readonly FenceReason[] {
   if (rest.startsWith('row before header')) return ['row_before_header'];
   if (rest.startsWith('pipe-rows present but no recognizable header')) return ['no_header'];
   if (rest.startsWith('only ')) return ['short_row'];
+  if (/^\d+ cells in row /.test(rest)) return ['extra_cells'];
+  if (/^(unsupported|duplicate) header column |^header has no /.test(rest)) return ['header_unmapped', 'takes_in_facts'];
   if (rest.startsWith('unknown kind')) return ['enum_unmapped', 'takes_kind_unsupported'];
   if (rest.startsWith('unknown visibility') || rest.startsWith('unknown notability')) return ['enum_unmapped'];
   if (rest.startsWith('non-numeric confidence') || rest.startsWith('confidence ')) return ['confidence_out_of_range'];
@@ -328,4 +331,25 @@ export function targetFenceRefusal(location: FenceMessageLocation, slug: string,
     + 'which normalizes what it can and names every row it cannot), then retry with a new request_id.';
   if (issues.length) error.fenceIssues = issues.slice(0, 20);
   return error;
+}
+
+/**
+ * #6385 R12: the refusal of a write whose target page's `fence` does not
+ * parse cleanly, so the fence rewrite it needs would drop the rows the parser
+ * skipped. Typed `invalid_fence` / `target_fence_malformed`, located from the
+ * page like every other fence refusal.
+ */
+export function unparsedFenceRefusal(page: { compiled_truth: string; timeline?: string | null }, fence: FenceKind, slug: string, sourceId: string): OperationError {
+  const defect = scanCanonicalFences(page).defects.find(d => d.fence === fence) ?? at('unparseable', fence, 'body', null);
+  return targetFenceRefusal(defect, slug, sourceId);
+}
+
+/** Run a fence rewrite for a coordinated writer: a `FenceRewriteRefusal` becomes `unparsedFenceRefusal` for `page`. */
+export function refuseUnparsedRewrite<T>(page: { compiled_truth: string; timeline?: string | null }, slug: string, sourceId: string, rewrite: () => T): T {
+  try {
+    return rewrite();
+  } catch (error) {
+    if (error instanceof FenceRewriteRefusal) throw unparsedFenceRefusal(page, error.fence, slug, sourceId);
+    throw error;
+  }
 }

@@ -364,6 +364,7 @@ export const extractionBacklogsEntry: DoctorEntry = {
     'progressive_batch_audit_health',
     'conversation_parser_probe_health',
   ],
+  engineChecks: ['malformed_path_pages', 'extract_health', 'conversation_facts_backlog', 'extract_atoms_backlog', 'atom_provenance_drift', 'conversation_format_coverage'],
   run: runExtractionBacklogs,
 };
 
@@ -596,5 +597,6 @@ async function runDefaultSourcePath(ctx: DoctorContext): Promise<Check[]> {
 export const defaultSourcePathEntry: DoctorEntry = {
   name: 'default_source_local_path',
   emits: ['default_source_local_path', 'fts_reindex_incomplete', 'multi_source_drift', 'orphan_clones'],
+  engineChecks: ['default_source_local_path', 'fts_reindex_incomplete', 'multi_source_drift'],
   run: runDefaultSourcePath,
 };
