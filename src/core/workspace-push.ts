@@ -1,4 +1,4 @@
-import { assertManagedFilesystemWrite } from './persistence/filesystem-guard.ts';
+import { assertManagedFilesystemWrite, isManagedFilesystemPath } from './persistence/filesystem-guard.ts';
 import { OperationError } from './ops/contract.ts';
 /**
  * workspace-push.ts — the `gbrain sources push` core: scan-gated
@@ -625,6 +625,32 @@ export function formatBlockedSecrets(findings: readonly PushSecretFinding[]): st
     `Docs: ${first.docs}`,
   );
   return lines;
+}
+
+/**
+ * #5799: a recorded push status that no longer describes a live legacy push.
+ * On a managed canonical worktree the legacy push is fenced
+ * (`writer_coordinator_required`) and the coordinator's git effect publishes
+ * page writes without ever writing push-status, so the refusal record (or a
+ * success from before the worktree was claimed) would feed the FAILING
+ * banner and the staleness note forever. True for a refusal record (its
+ * `code`, or the `reason` prefix an older record carries) and for any record
+ * whose root is a managed worktree now. A root whose marker cannot be read
+ * is not assumed managed.
+ */
+export function isSupersededPushStatus(entry: Pick<PushStatusEntry, 'code' | 'reason' | 'repoRoot'>): boolean {
+  if (entry.code === 'writer_coordinator_required' || entry.reason?.startsWith('writer_coordinator_required:')) return true;
+  if (entry.repoRoot === undefined) return false;
+  try {
+    return isManagedFilesystemPath(entry.repoRoot);
+  } catch {
+    return false;
+  }
+}
+
+/** The recorded statuses that still describe a live legacy push (#5799); the status surfaces read these. */
+export function livePushStatuses(entries: readonly PushStatusEntry[]): PushStatusEntry[] {
+  return entries.filter((e) => !isSupersededPushStatus(e));
 }
 
 export function summarizePushStatuses(entries: PushStatusEntry[]): {
