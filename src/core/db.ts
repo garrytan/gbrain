@@ -39,9 +39,13 @@ export async function endPoolBounded(
   pool: { end: (opts?: { timeout?: number }) => Promise<void> },
 ): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  // The guard timer stays ref'd while the race is pending (#5332): an unref'd
+  // timer is dropped by a runtime with nothing else to wait on (and parked
+  // under `bun test` on Windows), so the never-settling .end() it exists for
+  // was the one case it did not bound. The finally clears it, so a healthy
+  // drain never holds the process open past the race.
   const guard = new Promise<void>((resolve) => {
     timer = setTimeout(resolve, POOL_END_TIMEOUT_SECONDS * 1000 + 500);
-    timer.unref?.();
   });
   try {
     await Promise.race([
