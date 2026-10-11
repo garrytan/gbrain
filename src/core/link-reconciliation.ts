@@ -7,7 +7,7 @@ import { isValidSourceId } from './source-id.ts';
 import { buildSourceLocalReferenceIndex } from './source-local-reference-index.ts';
 import { collectWantedLinks, isWantedPagesEnabled } from './wanted-links.ts';
 import { readLineGrammarSettings } from './line-grammar.ts';
-import { DerivedLinkSettingsChangedError } from './derived-links.ts';
+import { DerivedLinkSettingsChangedError, type DerivedLinkOrigin } from './derived-links.ts';
 
 export interface LinkPageMetadata {
   slug: string;
@@ -274,10 +274,14 @@ export function makeLinkSourceResolver(pageSlug: string, pageSourceId: string,
   };
 }
 
-export function capturedLinkEndpoints(links: LinkBatchInput[], metadata: ReadonlyMap<string, Pick<LinkPageMetadata, 'slug' | 'source_id' | 'knowledge_revision'>>) {
+export function capturedLinkEndpoints(links: LinkBatchInput[], metadata: ReadonlyMap<string, Pick<LinkPageMetadata, 'slug' | 'source_id' | 'knowledge_revision'>>,
+  origin?: Pick<DerivedLinkOrigin, 'slug' | 'sourceId'>) {
   const keys = new Set(links.flatMap(link => [
     `${link.from_source_id ?? 'default'}\0${link.from_slug}`, `${link.to_source_id ?? 'default'}\0${link.to_slug}`,
   ]));
+  // A snapshot-bound origin is checked by expectedRevision at publication. Its body/type
+  // came from that snapshot, not this older resolver census. Other sources' same slug stays fenced.
+  if (origin) keys.delete(`${origin.sourceId}\0${origin.slug}`);
   return [...keys].map(key => {
     const endpoint = metadata.get(key);
     if (!endpoint) throw new Error('A derived link endpoint was not captured during type resolution');

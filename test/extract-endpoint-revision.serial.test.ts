@@ -6,11 +6,22 @@ import { PageRevisionConflictError, RevisionBackfillPendingError } from '../src/
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runExtract, extractStaleFromDB } from '../src/commands/extract.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
+import { capturedLinkEndpoints } from '../src/core/link-reconciliation.ts';
 
 const sourceId = 'revision-origin';
 const otherSourceId = 'revision-target';
 const originSlug = 'meetings/weekly';
 const targetSlug = 'people/alice-example';
+
+test('live origin exclusion is source-qualified and does not require an old origin census row', () => {
+  const metadata = new Map([[`${otherSourceId}\0${originSlug}`, { slug: originSlug, source_id: otherSourceId, knowledge_revision: 'foreign-revision' }]]);
+  const links: LinkBatchInput[] = [{ from_slug: originSlug, from_source_id: sourceId,
+    to_slug: originSlug, to_source_id: otherSourceId, link_type: 'related', context: '' }];
+  expect(capturedLinkEndpoints(links, metadata, { slug: originSlug, sourceId })).toEqual([
+    { slug: originSlug, sourceId: otherSourceId, revision: 'foreign-revision' },
+  ]);
+  expect(() => capturedLinkEndpoints(links, metadata)).toThrow('not captured');
+});
 
 for (const kind of ['pglite', ...(process.env.DATABASE_URL ? ['postgres'] : [])]) {
   describe(`DB extraction endpoint fences (${kind})`, () => {
@@ -176,6 +187,53 @@ for (const kind of ['pglite', ...(process.env.DATABASE_URL ? ['postgres'] : [])]
         else await runExtract(engine, [mode, '--source', 'db', '--source-id', sourceId, '--json']);
         expect(await outgoing('notes/b')).toEqual(['notes/a']);
         for (const slug of slugs) await engine.executeRaw('DELETE FROM pages WHERE source_id=$1 AND slug=$2', [sourceId, slug]);
+      });
+    }
+
+    for (const mode of ['links', 'all', 'stale']) {
+      test(`${mode}: an origin rewritten before its snapshot read uses the live origin revision (#6474)`, async () => {
+        await engine.putPage(targetSlug, { type: 'person', title: 'Alice Example', compiled_truth: 'A person.' }, { sourceId });
+        await engine.putPage(originSlug, { type: 'note', title: 'Weekly', compiled_truth: 'Old prose.' }, { sourceId });
+        await engine.executeRaw('UPDATE pages SET links_extracted_at=NULL WHERE source_id=$1', [sourceId]);
+        const staleRead = engine.listStalePagesForExtraction;
+        const batchRead = engine.readPageSnapshotsBatch;
+        const replace = engine.replaceDerivedLinks;
+        const replaceBatch = engine.replaceDerivedLinksBatch;
+        let edited = false;
+        const fences: NonNullable<DerivedLinkReplacementOptions['expectedEndpoints']> = [];
+        const updateBeforeRead = async () => {
+          if (edited) return;
+          edited = true;
+          await engine.putPage(originSlug, { type: 'meeting', title: 'Weekly', compiled_truth: `Attendees: [[${targetSlug}]].` }, { sourceId });
+        };
+        engine.listStalePagesForExtraction = async function(opts) { await updateBeforeRead(); return staleRead.call(this, opts); };
+        engine.readPageSnapshotsBatch = async function(refs) { await updateBeforeRead(); return batchRead.call(this, refs); };
+        engine.replaceDerivedLinks = async function(origin, links, opts) {
+          if (origin.slug === originSlug) fences.push(...opts?.expectedEndpoints ?? []);
+          return replace.call(this, origin, links, opts);
+        };
+        engine.replaceDerivedLinksBatch = async function(items) {
+          for (const item of items) if (item.origin.slug === originSlug) fences.push(...item.opts?.expectedEndpoints ?? []);
+          return replaceBatch.call(this, items);
+        };
+        try {
+          if (mode === 'stale') {
+            const result = await extractStaleFromDB(engine, { dryRun: false, jsonMode: true, quiet: true,
+              sourceIdFilter: sourceId, includeFrontmatter: false, catchUp: false });
+            expect(result.skippedConcurrentWrite ?? 0).toBe(0);
+          } else await runExtract(engine, [mode, '--source', 'db', '--source-id', sourceId, '--json']);
+        } finally {
+          engine.listStalePagesForExtraction = staleRead;
+          engine.readPageSnapshotsBatch = batchRead;
+          engine.replaceDerivedLinks = replace;
+          engine.replaceDerivedLinksBatch = replaceBatch;
+        }
+        expect(edited).toBe(true);
+        expect((await graph()).filter(row => row.link_source === 'markdown').map(row => row.link_type)).toEqual(['attended']);
+        // The origin is already fenced by the snapshot that supplied its body/type.
+        expect(fences.some(endpoint => endpoint.slug === originSlug && endpoint.sourceId === sourceId)).toBe(false);
+        expect(fences.some(endpoint => endpoint.slug === targetSlug && endpoint.sourceId === sourceId)).toBe(true);
+        if (mode !== 'links') expect(await stamp()).not.toBeNull();
       });
     }
 
