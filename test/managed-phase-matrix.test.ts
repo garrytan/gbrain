@@ -109,8 +109,8 @@ async function seedFacts(engine: BrainEngine, sourceId: string, slug: string) {
 
 const MATRIX: Record<CyclePhase, Entry> = {
   lint: {
-    seed: async ({ engine, sourceId }) => put(engine, sourceId, 'notes/lint-example', page('note', 'Lint example', 'Body with a trailing space. \n\n\n\nToo many blank lines.')),
-    // #5180: the seeded page has a fixable issue (missing-created, promotable from its capture timestamp);
+    seed: async ({ engine, sourceId }) => put(engine, sourceId, 'notes/lint-example', page('note', 'Lint example', 'Of course. Here is a detailed brain page.\n\n# Lint example\n\nBody.')),
+    // #5180: the seeded page has a fixable issue (an LLM preamble; #5433 took the capture-timestamp promotion out);
     // the repair is admitted and committed by the coordinator, never written to the worktree by lint itself.
     assert: async ({ engine, sourceId, result }) => {
       expect(await committed(engine, sourceId, 'notes/lint-example')).not.toHaveLength(0);
