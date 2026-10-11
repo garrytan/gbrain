@@ -1,5 +1,5 @@
 /**
- * CSO T1 follow-up (wave 13 PR1): file repair and reconcile import with
+ * Wave 13 PR1: file repair and reconcile import with
  * `preserveGateMarkers` and no write gate, so before this fix they kept a file's
  * own `quarantine_override` whatever the source's tier. Protects: both paths keep
  * the override only when the source's owner tier is owner-tier; a lowered source

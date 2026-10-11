@@ -1,6 +1,6 @@
 /**
- * CSO G4 guard (wave 13): every Git child process under `src/core` builds its env
- * through a helper that drops Git's repository-locating variables (`gitChildEnv`,
+ * Wave 13 guard: every Git child process under `src/core` builds its env
+ * through a helper that sanitizes the inherited Git environment (`gitChildEnv`,
  * or the stricter `backupGitEnv` / `hardenedGitEnvironment`). A new spawn that
  * inherits `process.env` (implicitly or with `...process.env`) fails here.
  * PENDING lists files owned by another lane that still need the helper (empty:

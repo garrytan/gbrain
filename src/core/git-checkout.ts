@@ -11,10 +11,9 @@
  *
  * - `not_git`: no `.git` entry (directory or gitdir file) at the directory or
  *   any ancestor below the first world-writable ancestor owned by someone else
- *   (POSIX). Git refuses a repository found there ("dubious ownership"), and
- *   any local user can plant one in a shared directory such as `/tmp` (CSO G3).
- *   An inherited `GIT_DIR` is not trusted: every Git spawn drops it
- *   (`git-env.ts`, CSO G4), so it can't make a plain directory a checkout.
+ *   (POSIX). Git refuses a repository found there ("dubious ownership").
+ *   The inherited Git environment is not trusted: every Git spawn sanitizes it
+ *   (`git-env.ts`), so it can't make a plain directory a checkout.
  * - `git`: a `.git` entry exists at or above the directory, within that
  *   boundary; whether Git can use it is the Git probe's question.
  * - `unknown`: the directory itself is missing or not a directory, or a

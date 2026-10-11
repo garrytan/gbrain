@@ -1,6 +1,5 @@
 /**
- * CSO T1 (wave 13, Tier A): `quarantine_override` binds a public hash of title,
- * type and body, so a synced file's author can compute one for their own page.
+ * Wave 13: which files can carry a `quarantine_override`.
  * Protects: a preserving import that carries a write gate keeps the override only
  * when the gate's tier is owner-tier. An unmanaged sync of an owner source keeps
  * it; a lowered (`trust_tier` below operator_curated) or connector source loses it

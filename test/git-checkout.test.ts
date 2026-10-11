@@ -25,14 +25,14 @@ test('a .git directory or gitdir file at or above the directory makes it a check
   expect(classifyGitCheckout(linked)).toBe('git');
 });
 
-test('CSO G4: an inherited GIT_DIR does not make a plain directory a checkout', async () => {
+test('an inherited Git environment does not make a plain directory a checkout', async () => {
   const other = scratch();
   mkdirSync(join(other, '.git'));
   const plain = scratch();
   await withEnv({ GIT_DIR: join(other, '.git') }, async () => { expect(classifyGitCheckout(plain)).toBe('not_git'); });
 });
 
-test.skipIf(process.platform === 'win32')('CSO G3: discovery stops at a world-writable ancestor owned by someone else', () => {
+test.skipIf(process.platform === 'win32')('discovery stops at an untrusted shared ancestor', () => {
   const shared = scratch();
   mkdirSync(join(shared, '.git'));
   mkdirSync(join(shared, 'brain', 'notes'), { recursive: true });
@@ -55,7 +55,7 @@ test.skipIf(process.platform === 'win32')('CSO G3: discovery stops at a world-wr
 });
 
 const sudo = process.platform !== 'win32' && process.getuid?.() !== 0 && spawnSync('sudo', ['-n', 'true']).status === 0;
-test.skipIf(!sudo)('CSO G3 on the real filesystem: a root-owned .git in a 1777 directory above a user directory is not this checkout', () => {
+test.skipIf(!sudo)('on the real filesystem: a .git above an untrusted shared ancestor is not this checkout', () => {
   const user = scratch();
   const shared = join(user, 'shared');
   mkdirSync(shared);

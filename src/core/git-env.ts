@@ -1,9 +1,7 @@
 /**
- * The environment for a Git child process (CSO G4, wave 13). A gbrain started
- * from a Git hook, or under a shell that exported `GIT_DIR`, inherits Git's
- * repository-locating variables; passed on, they make `git -C <root>` read and
- * write the repository they name instead of `<root>`, so a commit meant for a
- * brain checkout can land in another repository. Every Git spawn under
+ * The sanitized environment for a Git child process (wave 13): Git's
+ * repository-locating variables are dropped so `git -C <root>` always works on
+ * `<root>`. Every Git spawn under
  * `src/core` builds its env here (guarded by `test/git-env-guard.test.ts`).
  * Transport and credential variables (`GIT_SSH_COMMAND`, `GIT_ASKPASS`,
  * `SSH_AUTH_SOCK`, proxies) pass through; `extra` wins over both.

@@ -134,8 +134,8 @@ describe('W4.3: hardenedPathDirty matches git status without running it', () => 
   });
 });
 
-describe('wave 13 CSO G1/G2: exact options and literal pathspecs', () => {
-  test('G1: abbreviated converting options and unknown options refuse; every current call shape passes', () => {
+describe('wave 13: exact options and literal pathspecs', () => {
+  test('options outside the allow-list refuse; every current call shape passes', () => {
     for (const args of [['cat-file', '--textc', 'HEAD:note.md'], ['cat-file', '--filt', 'HEAD:note.md'], ['cat-file', '-p', 'HEAD:note.md'],
       ['ls-files', '--with-tree=HEAD'], ['rev-parse', '--git-path', 'hooks'], ['ls-tree', '--format=%(objectname)', 'HEAD'],
       ['hash-object', '--no-filters', '--path=x', '--', 'note.md'], ['diff-index', '--cached', '--ext', 'HEAD']]) {
@@ -152,7 +152,7 @@ describe('wave 13 CSO G1/G2: exact options and literal pathspecs', () => {
     }
   });
 
-  test('G1: an abbreviated --textconv never reaches git, so a repository textconv cannot run', () => {
+  test('a refused option never reaches git, so repository config cannot run', () => {
     const root = repo(r => writeFileSync(join(r, '.gitattributes'), 'note.md diff=evil\n'));
     const marker = join(root, '..', `${root.split('/').pop()}-textconv-ran`);
     git(root, 'config', 'diff.evil.textconv', `sh -c 'touch ${marker}; cat "$1"' -`);

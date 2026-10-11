@@ -1,11 +1,10 @@
 /**
- * CSO G4 (wave 13): a gbrain started from a Git hook or a shell that exported Git's
- * repository-locating variables must still read and write only the checkout it was
- * asked about.
+ * Wave 13: Git work must read and write only the checkout it was asked about,
+ * whatever Git environment the process inherited.
  * Protects: the Git effect (`commitGitTargets`), the classic write-through commit
  * (`commitWriteThroughFile`) and git-remote probes build their env through
- * `gitChildEnv`, so an inherited `GIT_DIR`/`GIT_WORK_TREE`/`GIT_INDEX_FILE` aimed at
- * another repository leaves that repository's HEAD and index untouched.
+ * `gitChildEnv`, so an inherited environment naming another repository leaves
+ * that repository's HEAD and index untouched.
  * Seams: none; real repositories, the variables set on process.env for the test.
  */
 import { afterEach, expect, test } from 'bun:test';
@@ -43,7 +42,7 @@ test('gitChildEnv drops every repository-locating variable and keeps transport o
   expect(gitChildEnv({ GIT_TERMINAL_PROMPT: '0' }, source)).toEqual({ GIT_SSH_COMMAND: 'ssh -i key', GIT_ASKPASS: '/bin/askpass', SSH_AUTH_SOCK: '/run/agent', PATH: '/usr/bin', GIT_TERMINAL_PROMPT: '0' });
 });
 
-test('the Git effect commits into its own root under an inherited GIT_DIR, GIT_WORK_TREE and GIT_INDEX_FILE', async () => {
+test('the Git effect commits into its own root under an inherited Git environment naming another repository', async () => {
   const brain = repo('brain', 'main');
   const other = repo('other', 'trunk');
   writeFileSync(join(brain, 'a.md'), 'brain second\n');

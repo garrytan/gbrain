@@ -315,7 +315,7 @@ export async function importFromContent(
      * and reindex leave it unset so the guard stays armed.
      */
     allowEmptyOverwrite?: boolean;
-    /** CSO T1: with no writeGate, the tier that decides whether a preserved `quarantine_override` is kept (owner tier only; present but unreadable strips it). */
+    /** With no writeGate, the tier that decides whether a preserved `quarantine_override` is kept (owner tier only; present but unreadable strips it). */
     overrideTier?: unknown;
     /** #5575: the caller's trust tier and origin for this write; absent skips the write gate (owner paths). */
     writeGate?: WriteGateInput;

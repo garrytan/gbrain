@@ -1,5 +1,5 @@
 /**
- * Fix wave 13 P1.14-P1.16 (CSO lows, lane E).
+ * Fix wave 13 P1.14-P1.16 (lane E).
  * Protects: the paid-consent skill lint names itself a documentation tripwire
  * (the runtime consent check is the gate); `pollCommand` renders a server-supplied
  * `fix.argv` shell-quoted, so `$(…)` and spaces paste inert; `parseRepoBase` emits

@@ -33,9 +33,8 @@ export function hardenedGitEnvironment(): NodeJS.ProcessEnv {
 export type HardenedGitResult = { ok: true; stdout: Buffer } | { ok: false; reason: 'exit' | 'timeout' | 'too_large' | 'unavailable'; status?: number };
 
 /**
- * The exact options each allowed plumbing subcommand may take (CSO G1): Git
- * accepts unambiguous abbreviations (`--textc` is `--textconv`), so a blocklist
- * of converting options can't hold; anything not listed here refuses.
+ * The exact options each allowed plumbing subcommand may take; anything not
+ * listed here refuses.
  */
 const ALLOWED_OPTIONS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
   ['rev-parse', new Set(['--show-toplevel', '--absolute-git-dir', '--verify', '--quiet', '--show-object-format'])],

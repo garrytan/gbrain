@@ -279,12 +279,10 @@ export const GATE_OWNED_FRONTMATTER_KEYS = [QUARANTINE_KEY, CONTENT_FLAG_KEY, EM
  * mining (`atoms_scan_hash`) or forge a cleared state (`quarantine_override`).
  * A preserving path keeps its own override only while it binds the content,
  * and a current override drops classifier markers the content still carries.
- * The override's binding is a public hash anyone can compute, so a preserving
- * file import that carries a write gate (owner sync and file import, managed
- * sync and import) keeps it only when that gate's tier is owner-tier; a
- * mirror, connector or lowered source can't clear its own page (CSO T1). File
- * repair and reconcile pass no gate, so they pass the source's owner tier as
- * `overrideTier` and the same rule applies. An unreadable tier fails closed.
+ * A preserving file import that carries a write gate (owner sync and file
+ * import, managed sync and import) keeps it only when that gate's tier is
+ * owner-tier (wave 13). File repair and reconcile pass no gate, so they pass
+ * the source's owner tier as `overrideTier` and the same rule applies. An unreadable tier fails closed.
  */
 export function stripGateOwnedMarkers(parsed: Pick<ParsedMarkdown, 'frontmatter' | 'title' | 'type' | 'compiled_truth' | 'timeline'>,
   opts: { preserveGateMarkers?: boolean; writeGate?: { tier?: unknown }; overrideTier?: unknown }): void {

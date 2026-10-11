@@ -12,16 +12,16 @@ identifiers and attribution are available in the pre-removal Git revision
 
 ## [Unreleased]
 
-**`embed --max-usd` is enforced, a fence write no longer wipes a database-only page, and synced quarantine overrides and Git children are locked down.**
+**`embed --max-usd` is enforced, a fence write no longer wipes a database-only page, and write-gate overrides and Git child processes are hardened.**
 
-An approved `gbrain embed --max-usd` cap was never metered, so a run could spend past it; it is now enforced on every paid call, and `--yes` with no cost estimate runs under the default $5.00 cap. A facts fence write to a page with no file wrote a stub that overwrote the stored body (#6398); it is refused now. A file's own `quarantine_override` is kept only for an owner-tier source, and Git children no longer follow an inherited `GIT_DIR`. Nothing needs doing after you upgrade; to let an embed run spend more than $5.00 without an estimate, pass `--max-usd <usd>`.
+An approved `gbrain embed --max-usd` cap was never metered, so a run could spend past it; it is now enforced on every paid call, and `--yes` with no cost estimate runs under the default $5.00 cap. A facts fence write to a page with no file wrote a stub that overwrote the stored body (#6398); it is refused now. Which files can carry a write-gate override is hardened, and Git child processes now get a sanitized environment. Nothing needs doing after you upgrade; to let an embed run spend more than $5.00 without an estimate, pass `--max-usd <usd>`.
 
 ### Itemized changes
 
 - `gbrain embed` meters an approved `--max-usd` while it spends, for text, `--slugs`, `--images` (multimodal and OCR) and `--background` runs. A run that reaches its cap keeps what it wrote, exits 11 with reason `cost_cap` and prints the shell-quoted resume command; rerun it with `--max-usd <usd>` to raise the cap. `--yes` with no cost estimate is now capped at the default $5.00. Consent counts a paid multimodal or OCR model when `--images` is set, and `--slugs` stops at the next flag.
 - A facts fence write to a database-only or soft-deleted page is refused with `db_only_page` instead of writing a stub over it (#6398). Doctor `stub_guard_24h` counts these separately and they do not raise its warning.
-- A synced or imported file's `quarantine_override` is kept only when the source's write-gate tier is owner-tier; file repairs and reconcile apply the same rule, and an unreadable tier strips it (CSO T1).
-- Git children drop inherited repository-locating variables (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and the rest Git lists), checkout discovery stops at a world-writable ancestor owned by someone else, hardened Git calls take literal pathspecs and only the exact options callers use, and `eval drift-watch` runs Git without a shell (CSO G1 to G4).
+- Hardened which files can carry a write-gate override; sync, import, file repairs and reconcile apply the same rule.
+- Git child processes now get a sanitized environment, checkout discovery is stricter, gbrain's hardened Git calls accept a narrower set of arguments, and `eval drift-watch` runs Git without a shell.
 - `pollCommand` output is shell-quoted and `LLMS_REPO_BASE` is normalized; the paid-consent skill lint says it is a documentation check, not enforcement.
 
 ### For contributors
