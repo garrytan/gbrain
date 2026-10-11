@@ -29,6 +29,9 @@ An approved `gbrain embed --max-usd` cap was never metered, so a run could spend
 - Flake fixes: the facts drain scheduler returns its tick promise (#6348); the capture-log weight fixture hand-shakes with its artifact (#6312); connector tests run on the production wait budget, with `withPausedOwnerBudget` where a test expects `writer_pending`.
 - Failure-only diagnostics, issues left open: the write-gate p95 check dumps every round's raw samples (#6430); the history fixture dumps effect, lock and request state (#6345); a shared source-row dump wraps managed connector recovery and every managed-extract-atoms scenario (#6427).
 - The shard-weight miner fetches unit capture artifacts and serial job logs per job; shard weights refreshed.
+- `bun run release:restamp` stamps a branch entry headed `## [Unreleased]` to the target version instead of throwing, and `--dry-run` runs the same CHANGELOG rebuild.
+- The doctor hot-check goldens normalize the UTC day buckets their fixture records at capture time, so they no longer fail after midnight UTC.
+- Takes test fixtures use placeholder holder names; assertions unchanged.
 - `test/git-env-guard.test.ts` fails on a new Git spawn that inherits `process.env` unfiltered.
 - New probes: `test/quarantine-override-tier.test.ts`, `test/quarantine-override-repair-reconcile.test.ts`, `test/fence-write-db-only.test.ts`, `test/doctor-stub-guard.test.ts`, `test/embed-max-usd-metered.serial.test.ts`, `test/embed-consent-multimodal.test.ts`, `test/gateway-ocr-reserve.test.ts`, `test/e2e/embed-background-cap.test.ts`, `test/persistence-effect-git-env.test.ts`, `test/drift-watch-args.test.ts`, `test/w13-small-hardening.test.ts`.
 
