@@ -220,9 +220,14 @@ quarter, on a scratch machine or empty directory:
    a separate backup on an isolated destination.
 
 Windows directory-descriptor fsync portability is covered by Linux fault
-injection and restore drills, not a native Windows full backup/restore test. A
-separate Windows PGLite `dumpDataDir` failure remains unresolved; do not infer
-full Windows restore support from the Git check.
+injection and restore drills, and the archive layer's write → read →
+cluster-extract round trip runs natively on the `windows-latest` CI row
+(`test/backup-archive-roundtrip-5312.test.ts`). A separate Windows PGLite
+`dumpDataDir` failure remains unresolved; do not infer full Windows restore
+support from the Git check. If you copy a brain by hand instead, copy the
+tree, not just the files: the PGLite data directory needs its empty
+directories (`pg_tblspc`, `pg_wal/archive_status`, `pg_notify`, …), and a
+file-only copy fails to open with a message that reads like corruption.
 
 If a drill fails, fix the gap while the original disk still works. This check
 does not itself certify the database or full agent recovery.

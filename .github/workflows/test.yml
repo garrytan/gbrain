@@ -211,6 +211,8 @@ jobs:
         run: bun test --timeout 60000 test/fs-durable.test.ts test/persistence-windows-flush-5595.test.ts test/bundle-files-windows-5475.test.ts test/init-packaged-skills-native.test.ts test/auth-local-writer-dry-run.test.ts test/scripts/durable-flush-guard.test.ts test/binary-self-update-durable-download.test.ts
       - name: Teardown bounds that used to park bun test on Windows (#5332)
         run: bun test --timeout 120000 test/postgres-disconnect-bounded.test.ts test/persistence-administration.test.ts
+      - name: Backup archive round trip on this host (#5312)
+        run: bun test --timeout 60000 test/backup-archive-roundtrip-5312.test.ts
 
   # bun audit blocks on pushes, schedules, manual runs, and pull requests or
   # merge-queue entries that change bun.lock, admin/bun.lock, patches/ or a
