@@ -11,6 +11,7 @@ import { resolveSlugForPath, DEFAULT_SOURCE_ID } from './sync.ts';
 import { DELETE_BATCH_SIZE } from './engine-constants.ts';
 import { invalidateGitListingCache, knownOutsideGitRepo, noteGitFailure } from './git-visible-files.ts';
 import { hasUnresolvedDbOnlyDeclaration, loadStorageConfig } from './storage-config.ts';
+import { gitChildEnv } from './git-env.ts';
 
 /**
  * v0.32.7 CJK wave (codex post-merge F4): resolve a slug by `pages.source_path`
@@ -318,6 +319,7 @@ export function git(
 ): string {
   noteGitCommand(args);
   return execFileSync('git', buildGitInvocation(repoPath, args, configs), {
+    env: gitChildEnv(),
     encoding: 'utf-8',
     timeout: timeoutMs,
     maxBuffer: 100 * 1024 * 1024,
@@ -335,6 +337,7 @@ export function git(
 export function gitRawOutput(repoPath: string, args: string[]): string {
   noteGitCommand(args);
   return execFileSync('git', buildGitInvocation(repoPath, args, []), {
+    env: gitChildEnv(),
     encoding: 'utf-8',
     timeout: 30000,
     maxBuffer: 100 * 1024 * 1024,
@@ -627,6 +630,7 @@ export function isPathSafe(filePath: string, gitRoot: string): boolean {
 export function hasOriginRemote(repoPath: string): boolean {
   try {
     execFileSync('git', buildGitInvocation(repoPath, ['remote', 'get-url', 'origin']), {
+      env: gitChildEnv(),
       encoding: 'utf-8',
       timeout: 30000,
       stdio: ['ignore', 'ignore', 'ignore'],

@@ -23,6 +23,7 @@ import { assertManagedSyncActive } from './sync-authority.ts';
 import { isReservedSkillBundlePath } from '../skill-reserved-paths.ts';
 import { holdRescreenDue, readGitHoldRetryPaths, readGitSourceHolds } from './sync-holds.ts';
 import { readBlobContents, readTreeBlobs } from './sync-blobs.ts';
+import { gitChildEnv } from '../git-env.ts';
 
 /** The page an import takes over from its previous origin: a Git rename, or a file that replaced a vanished origin at the same slug. */
 export interface SyncRename { sourcePath: string; slug: string; pageId: number; revision: string; }
@@ -49,7 +50,7 @@ export interface ManagedSyncContext { binding: WorktreeBinding; root: string; gi
   source: { last_commit: string | null; config: Record<string, unknown> }; }
 export function syncGit(root: string, args: string[]): string {
   return execFileSync('git', ['-c', 'core.quotepath=false', '-C', root, ...args],
-    { encoding: 'utf8', timeout: 30_000, maxBuffer: 32 * 1024 ** 2, stdio: ['ignore', 'pipe', 'pipe'] });
+    { env: gitChildEnv(), encoding: 'utf8', timeout: 30_000, maxBuffer: 32 * 1024 ** 2, stdio: ['ignore', 'pipe', 'pipe'] });
 }
 /**
  * A sync file or root failed a confinement or identity check. These helpers

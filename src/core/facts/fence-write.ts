@@ -50,6 +50,8 @@ import { gbrainPath } from '../config.ts';
 import { isWriteThroughDisabled, resolvePageWriteTarget } from '../write-through.ts';
 import { isDurabilityHardened, commitWriteThroughFile } from '../brain-repo-durability.ts';
 import { upsertFactRow, parseFactsFence, formatFenceDate } from '../facts-fence.ts';
+import { unparsedFenceRefusal } from '../fence-repair/refusal.ts';
+import type { OperationError } from '../ops/contract.ts';
 import { contentHash } from '../utils.ts';
 import { extractFactsFromFenceText } from './extract-from-fence.ts';
 import { logStubGuardEvent } from './stub-guard-audit.ts';
@@ -60,6 +62,7 @@ import { withPageTierKept } from '../trust/fence-append.ts';
 import { recordTaintEdges } from '../trust/taint.ts';
 import { recordFlaggedRow, type GatedRowDecision } from '../write-gate-store.ts';
 import type { TaintInput, WriteTrust } from '../trust/tier.ts';
+import { gitChildEnv } from '../git-env.ts';
 
 /** Resolved source binding for the entity page. */
 export interface FenceTarget {
@@ -117,6 +120,13 @@ export interface FenceWriteResult {
   /** True when fence parse-validate failed; rows were NOT inserted, .tmp quarantined. */
   fenceWriteFailed?: true;
   /**
+   * #6385 R12: set with `fenceWriteFailed` when the page's existing facts
+   * fence does not parse cleanly, so appending (a re-render) would drop the
+   * rows the parser skipped. Nothing was written (no .tmp); this is the typed
+   * `invalid_fence` / `target_fence_malformed` refusal for the caller to throw.
+   */
+  fenceRefusal?: OperationError;
+  /**
    * True when the stub-creation guard refused to spawn a phantom entity
    * page — either for an unprefixed bare slug (e.g. `jared` with no
    * `people/` directory), or (#4108) for a slug whose resolutionSource is
@@ -170,6 +180,19 @@ function recordWriteFailure(slug: string, sourceId: string, warnings: string[], 
   }
 }
 
+/**
+ * #6385 R12: rows are appended by re-rendering the fence, which would drop
+ * every row the parser skipped, so a fence that parses with warnings is
+ * refused before anything is written (file, rows and DB stay as they are).
+ * Returns the typed refusal (recorded to the failure log), or null.
+ */
+function refuseUnparsedFence(body: string, target: FenceTarget, filePath: string): OperationError | null {
+  if (parseFactsFence(body).warnings.length === 0) return null;
+  const refusal = unparsedFenceRefusal(parseMarkdown(body, `${target.slug}.md`), 'facts', target.slug, target.sourceId);
+  recordWriteFailure(target.slug, target.sourceId, [`fence_input_unparsed: ${refusal.message}`], filePath);
+  return refusal;
+}
+
 export type FactFenceGitPathState = 'clean' | 'self_dirty' | 'foreign_dirty' | 'unknown';
 
 export function gitPathState(repoPath: string, filePath: string): FactFenceGitPathState {
@@ -179,7 +202,7 @@ export function gitPathState(repoPath: string, filePath: string): FactFenceGitPa
     const status = execFileSync(
       'git',
       ['-C', repoPath, 'status', '--porcelain=v1', '--untracked-files=all', '--', rel],
-      { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, env: process.env },
+      { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, env: gitChildEnv() },
     );
     const lines = status.split('\n').filter((l) => l.length > 0);
     if (lines.length === 0) return 'clean';
@@ -288,7 +311,8 @@ export function stubEntityPage(
  * quarantine evidence, the JSONL failure log records the warnings,
  * and the DB is NOT touched. The caller treats this as a hard
  * failure on the page (no rows inserted, no duplicate count, no
- * fact_ids).
+ * fact_ids). The same flag, with `fenceRefusal` and no .tmp, means the
+ * page's existing fence does not parse cleanly (#6385 R12).
  */
 export async function writeFactsToFence(
   engine: BrainEngine,
@@ -363,7 +387,8 @@ export async function writeFactsToFence(
 
       // 1. Read existing body or stub-create.
       let body: string;
-      if (existsSync(filePath)) {
+      const fromFile = existsSync(filePath);
+      if (fromFile) {
         body = readFileSync(filePath, 'utf-8');
       } else {
         // Stub-creation guard, two arms:
@@ -418,6 +443,7 @@ export async function writeFactsToFence(
           );
           return { inserted: 0, ids: [], stubGuardBlocked: true, ...withdrawnSkipped };
         }
+        const dbOnly = await dbOnlyPageRoute(engine, target, facts.length); if (dbOnly) return { ...dbOnly, ...withdrawnSkipped };
         // Stub-create the parent directory if it doesn't exist.
         mkdirSync(dirname(filePath), { recursive: true });
         const activePack = await loadActivePackBestEffort({ engine } as never);
@@ -461,6 +487,8 @@ export async function writeFactsToFence(
       } catch (err) {
         console.warn(`[facts.fence] FACTS_ROW_NUM_HINT_UNAVAILABLE: ${target.slug} (source ${target.sourceId}): ${err instanceof Error ? err.message : String(err)}; numbering from the file alone`);
       }
+      const fenceRefusal = refuseUnparsedFence(body, target, filePath);
+      if (fenceRefusal) return { inserted: 0, ids: [], fenceWriteFailed: true, fenceRefusal, ...withdrawnSkipped };
       const { facts: existingFenceFacts } = parseFactsFence(body);
       const fileMaxRowNum = existingFenceFacts.length > 0
         ? Math.max(...existingFenceFacts.map(f => f.rowNum))
@@ -526,10 +554,10 @@ export async function writeFactsToFence(
       // blind to the new row forever. Never persist an EMPTY hash: a row
       // that had none gets a row-shaped hash of its pre-mirror content,
       // which the rewritten file can't match. Best-effort: the file is
-      // already committed; a stub page with no DB row is created by sync.
+      // already committed; sync creates a stub's row; only a real file's body is mirrored (#6398).
       try {
         const reparsed = parseMarkdown(tmpBody, `${target.slug}.md`);
-        const existing = await engine.getPage(target.slug, { sourceId: target.sourceId });
+        const existing = fromFile ? await engine.getPage(target.slug, { sourceId: target.sourceId }) : null;
         if (existing) {
           // #5575 ENG-1: the appended rows carry their own tier; the page keeps its tier.
           await maintenanceTransaction(engine, tx => withPageTierKept(tx, target, () => tx.refreshPageBody(target.slug, target.sourceId,
@@ -602,6 +630,27 @@ async function insertFenceRows(engine: BrainEngine, sourceId: string, rows: Para
     }
     return inserted;
   }, derivation?.trust);
+}
+
+/**
+ * #6398: no file is not no page. A DB-only page (a row with no file, a row
+ * whose recorded source_path file vanished, or a tombstoned row) takes the
+ * DB-only route: a stub would be mirrored over the DB body and timeline, or
+ * resurrect a deleted page. An unreadable row writes nothing. Null: no row,
+ * the stub may be created.
+ */
+async function dbOnlyPageRoute(engine: BrainEngine, target: FenceTarget, factCount: number): Promise<FenceWriteResult | null> {
+  let live: Awaited<ReturnType<BrainEngine['getPage']>>;
+  try {
+    live = await engine.getPage(target.slug, { sourceId: target.sourceId, includeDeleted: true });
+  } catch (err) {
+    console.warn(`[facts.fence] FACTS_PAGE_READ_FAILED: ${target.slug} (source ${target.sourceId}): ${err instanceof Error ? err.message : String(err)}; nothing written`);
+    return { inserted: 0, ids: [], fenceWriteFailed: true };
+  }
+  if (!live) return null;
+  logStubGuardEvent({ slug: target.slug, source_id: target.sourceId, fact_count: factCount, reason: 'db_only_page' });
+  console.warn(`[facts] page ${target.slug} (source ${target.sourceId}) has no file${live.deleted_at ? ' and is deleted' : ''} — routing facts to the legacy DB-only path instead of creating a stub that would overwrite it.`);
+  return { inserted: 0, ids: [], stubGuardBlocked: true };
 }
 
 /**

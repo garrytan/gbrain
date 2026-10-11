@@ -28,6 +28,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import { randomUUID } from 'node:crypto';
 import { importFromContent } from '../import-file.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
@@ -431,7 +432,10 @@ export async function runTranscriptsIngest(
               const m = /^-p(\d+)$/.exec(suffix);
               const num = m ? Number(m[1]) : NaN;
               if (Number.isFinite(num) && num > rendered.parts.length) {
-                await engine.deletePage(row.slug, { sourceId: opts.sourceId });
+                // #5235: on a managed brain the stale part goes through the coordinator like the parts
+                // themselves, bound to its revision; the direct delete is refused there.
+                if (coordinator) await deleteStaleTranscriptPart(coordinator, engine, opts.sourceId, row.slug);
+                else await engine.deletePage(row.slug, { sourceId: opts.sourceId });
                 result.partsDeleted++;
               }
             }
@@ -487,6 +491,16 @@ async function submitTranscriptPart(
   const slug = typeof receipt.slug === 'string' && receipt.slug ? receipt.slug : part.slug;
   if (receipt.state !== 'committed') return { slug, status: 'error' };
   return { slug, status: receipt.noop === true || receipt.status === 'skipped' ? 'skipped' : 'imported' };
+}
+
+/** A stale higher-numbered part on a managed brain: a revision-bound `delete_page` write request (soft delete, recoverable). */
+async function deleteStaleTranscriptPart(ctx: OperationContext, engine: BrainEngine, sourceId: string, slug: string): Promise<void> {
+  const snapshot = await engine.readPageSnapshot(slug, { sourceId });
+  if (!snapshot) return;
+  const receipt = await submitPageMutation(ctx, { operation: 'delete_page', params: { slug, source_id: sourceId, expected_revision: snapshot.revision, request_id: randomUUID() } });
+  if (receipt.state !== 'committed') {
+    throw new Error(`stale part ${slug} was not deleted: the coordinator returned ${String(receipt.state)}${receipt.error_code ? ` (${String(receipt.error_code)})` : ''}`);
+  }
 }
 
 /**

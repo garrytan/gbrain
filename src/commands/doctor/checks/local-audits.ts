@@ -38,7 +38,9 @@ async function runStubGuard(ctx: DoctorContext): Promise<Check[]> {
   // no live page backs. Fires append per-arm `reason` lines to
   // ~/.gbrain/audit/stub-guard-YYYY-Www.jsonl (pre-#4108 lines lack one and
   // count as unprefixed). The v0.36 sunset criterion covers 'unprefixed'
-  // ONLY; the fallback_resolution arm never sunsets.
+  // ONLY; the fallback_resolution arm never sunsets. 'db_only_page' (#6398)
+  // records facts routed DB-only for a page with no file; it is counted on
+  // its own and never feeds the resolver WARN threshold or the sunset count.
   //
   // WARN at >10 fires/24h — at that rate the resolver is probably missing
   // a case (typo prefix, alias, non-Latin script). Operators should grep
@@ -46,9 +48,11 @@ async function runStubGuard(ctx: DoctorContext): Promise<Check[]> {
   // resolver branch or document them as legitimate bare-slug ingestion.
   try {
     const { readRecentStubGuardEvents } = await import('../../../core/facts/stub-guard-audit.ts');
-    const events = readRecentStubGuardEvents({ sinceMs: 24 * 60 * 60 * 1000 });
+    const all = readRecentStubGuardEvents({ sinceMs: 24 * 60 * 60 * 1000 });
+    const dbOnlyCount = all.filter((e) => e.reason === 'db_only_page').length;
+    const events = all.filter((e) => e.reason !== 'db_only_page');
     const fallbackCount = events.filter((e) => e.reason === 'fallback_resolution').length;
-    const reasonSplit = `unprefixed=${events.length - fallbackCount}, fallback_resolution=${fallbackCount}`;
+    const reasonSplit = `unprefixed=${events.length - fallbackCount}, fallback_resolution=${fallbackCount}, db_only_page=${dbOnlyCount}`;
     if (events.length > 10) {
       // Surface the top 3 slugs that hit it so operators have somewhere to start.
       const slugCounts = new Map<string, number>();
@@ -60,16 +64,16 @@ async function runStubGuard(ctx: DoctorContext): Promise<Check[]> {
         name: 'stub_guard_24h',
         status: 'warn',
         message:
-          `Stub guard fired ${events.length}x in last 24h (${reasonSplit}; top: ${topSlugs}). ` +
+          `Stub guard fired ${all.length}x in last 24h (${reasonSplit}; top: ${topSlugs}). ` +
           `If this stays elevated, the prefix-expansion in resolveEntitySlug is ` +
           `missing a case. Check ~/.gbrain/audit/stub-guard-*.jsonl for the slugs ` +
           `that hit it.`,
       });
-    } else if (events.length > 0) {
+    } else if (all.length > 0) {
       checks.push({
         name: 'stub_guard_24h',
         status: 'ok',
-        message: `Stub guard fired ${events.length}x in last 24h (${reasonSplit}; below WARN threshold of 10).`,
+        message: `Stub guard fired ${all.length}x in last 24h (${reasonSplit}; ${events.length} resolver hits, below WARN threshold of 10).`,
       });
     }
     // Zero hits is the goal — emit no check at all so the doctor output stays clean.
@@ -364,6 +368,7 @@ export const extractionBacklogsEntry: DoctorEntry = {
     'progressive_batch_audit_health',
     'conversation_parser_probe_health',
   ],
+  engineChecks: ['malformed_path_pages', 'extract_health', 'conversation_facts_backlog', 'extract_atoms_backlog', 'atom_provenance_drift', 'conversation_format_coverage'],
   run: runExtractionBacklogs,
 };
 
@@ -596,5 +601,6 @@ async function runDefaultSourcePath(ctx: DoctorContext): Promise<Check[]> {
 export const defaultSourcePathEntry: DoctorEntry = {
   name: 'default_source_local_path',
   emits: ['default_source_local_path', 'fts_reindex_incomplete', 'multi_source_drift', 'orphan_clones'],
+  engineChecks: ['default_source_local_path', 'fts_reindex_incomplete', 'multi_source_drift'],
   run: runDefaultSourcePath,
 };

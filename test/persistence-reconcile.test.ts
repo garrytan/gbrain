@@ -460,8 +460,9 @@ test('public warn-mode put_page rejects reserved reconciliation fields for local
     }, { remote, sourceId: f.id, config: { engine: engine.kind }, auth: { token: 'fixture', clientId: 'fixture-client', scopes: ['read', 'write'], sourceId: f.id },
       logger: { info() {}, warn() {}, error() {} } }));
     expect(result.isError).toBe(true);
-    expect(JSON.parse((result.content[0] as { text: string }).text)).toMatchObject({ error: 'invalid_params' });
-    expect((result.content[0] as { text: string }).text).toContain('Reserved persistence fields');
+    // #5970: a write refuses every undeclared parameter at dispatch, in warn mode too, so the reserved field is
+    // named as unknown before admission's own reserved-field refusal would run; nothing is admitted either way.
+    expect(JSON.parse((result.content[0] as { text: string }).text)).toMatchObject({ error: 'invalid_params', suggestion: `Unknown parameter "${Object.keys(extra)[0]}".` });
   }
   expect(await engine.executeRaw('SELECT id FROM persistence_requests WHERE source_id=$1', [f.id])).toHaveLength(0);
 }), 120_000);

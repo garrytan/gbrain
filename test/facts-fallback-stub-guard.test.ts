@@ -19,7 +19,7 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
-import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -34,8 +34,10 @@ beforeAll(async () => {
   await engine.connect({});
   await engine.initSchema();
 
-  // Live pages for the resolvable arms of the matrix (no on-disk files —
-  // the fence write stub-creates them, exercising DB→file drift repair).
+  // Live pages for the resolvable arms of the matrix. Each beforeEach also
+  // writes their files: since #6398 a page that exists only in the DB takes
+  // the DB-only route (test/fence-write-db-only.test.ts) instead of a stub
+  // that would overwrite its body.
   await engine.putPage('companies/acme-example', {
     type: 'company',
     title: 'Acme Example',
@@ -64,6 +66,10 @@ afterAll(async () => {
 beforeEach(async () => {
   // Fresh tree per test so file-existence assertions are hermetic.
   brainDir = mkdtempSync(join(tmpdir(), 'facts-fallback-stub-guard-'));
+  for (const [slug, type, title] of [['companies/acme-example', 'company', 'Acme Example'], ['people/felicia-example', 'person', 'Felicia Example'], ['people/star-example', 'person', 'Star Example']]) {
+    mkdirSync(join(brainDir, slug, '..'), { recursive: true });
+    writeFileSync(join(brainDir, `${slug}.md`), `---\ntype: ${type}\ntitle: ${title}\n---\n\n# ${title}\n`);
+  }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   await (engine as any).db.query('DELETE FROM facts');
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -99,7 +105,9 @@ describe('writeSingleFact × resolution provenance (#4108 matrix)', () => {
     });
 
     expect(r.status).toBe('inserted');
-    expect(r.entity_slug).toBe('companies/zeta-widgets-nonexistent');
+    // #5504: a slug the resolver could only invent is not an entity; the row
+    // carries NULL (the backstop convention) instead of the fallback slug.
+    expect(r.entity_slug).toBeNull();
 
     // The pre-#4108 bug: this exact write minted
     // companies/zeta-widgets-nonexistent.md as a canonical stub page that a
@@ -107,7 +115,7 @@ describe('writeSingleFact × resolution provenance (#4108 matrix)', () => {
     expect(existsSync(join(brainDir, 'companies/zeta-widgets-nonexistent.md'))).toBe(false);
 
     const row = await factRow(r.id);
-    expect(row.entity_slug).toBe('companies/zeta-widgets-nonexistent');
+    expect(row.entity_slug).toBeNull();
     // DB-only insert — no fence file backs the row.
     expect(row.source_markdown_slug).toBeNull();
   });
@@ -120,7 +128,8 @@ describe('writeSingleFact × resolution provenance (#4108 matrix)', () => {
     });
 
     expect(r.status).toBe('inserted');
-    expect(r.entity_slug).toBe('zetaperson');
+    // #5504: no unprefixed holding slug; the stub guard has nothing to refuse.
+    expect(r.entity_slug).toBeNull();
     expect(existsSync(join(brainDir, 'zetaperson.md'))).toBe(false);
 
     const row = await factRow(r.id);

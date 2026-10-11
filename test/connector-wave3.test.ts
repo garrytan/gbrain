@@ -25,7 +25,7 @@ import { ALL_SOURCES } from '../src/core/source-id.ts';
 import type { WriteRequest } from '../src/core/persistence/model.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { withEnv } from './helpers/with-env.ts';
-import { createConnectorFixture, options, json, googleConfig, githubConfig, contact, issueFixture, githubFetch, withGoogleAccount, connectorPendingSet, withHealthyOwnerBudget } from './helpers/connector-fixture.ts';
+import { createConnectorFixture, options, json, googleConfig, githubConfig, contact, issueFixture, githubFetch, withGoogleAccount, connectorPendingSet, withPausedOwnerBudget } from './helpers/connector-fixture.ts';
 
 const { home, engines, env, source, boundSource, setup, teardown } = createConnectorFixture();
 beforeAll(setup, 120_000);
@@ -215,7 +215,7 @@ test('pending set: a pending write that later fails is re-fetched under a new re
     const f = await boundSource(engine, githubConfig);
     await engine.executeRaw("UPDATE persistence_worktrees SET state='draining' WHERE id=$1::uuid", [f.binding.worktree_id]);
     const run = () => runGitHubSync(engine, f.id, parseGitHubSourceConfig(githubConfig, f.dir), { ...options, githubItem: { repo: 'acme-example/app', number: 1, kind: 'issue' } }, githubFetch());
-    expect(await run()).toMatchObject({ status: 'partial', reason: 'writer_pending' });
+    expect(await withPausedOwnerBudget(() => run())).toMatchObject({ status: 'partial', reason: 'writer_pending' });
     const [entry] = await connectorPendingSet(engine, f.id);
     const [accepted] = await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE source_id=$1 AND request_id=$2::uuid', [f.id, entry.requestId]);
     await disposePersistenceConsumer(engine);
@@ -253,7 +253,7 @@ test('pending set: a committed-then-compacted pending receipt and a crash before
     await engine.executeRaw("UPDATE persistence_worktrees SET state='draining' WHERE id=$1::uuid", [f.binding.worktree_id]);
     const dup = async (url: string) => url.includes('/settings/sendAs') ? json({ sendAs: [] })
       : json({ connections: [contact('first', 'First Example'), contact('first', 'First Example')], nextSyncToken: 'contacts-dup' });
-    expect(await google(engine, f, dup)).toMatchObject({ status: 'partial', reason: 'writer_pending' });
+    expect(await withPausedOwnerBudget(() => google(engine, f, dup))).toMatchObject({ status: 'partial', reason: 'writer_pending' });
     const imports = await engine.executeRaw<WriteRequest>("SELECT * FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='connector_v2_import'", [f.id]);
     expect(imports).toHaveLength(1);
     await disposePersistenceConsumer(engine);
@@ -507,22 +507,22 @@ test('pending set: a checkpoint still pending at the end of a run is recorded an
     const f = await boundSource(engine, googleConfig);
     let token = 0;
     const { fetcher } = people(() => [contact('first', 'First Example')], { token: () => `contacts-${++token}` });
-    await withHealthyOwnerBudget(() => google(engine, f, fetcher));
+    await google(engine, f, fetcher);
     await engine.executeRaw("UPDATE persistence_worktrees SET state='draining' WHERE id=$1::uuid", [f.binding.worktree_id]);
     await disposePersistenceConsumer(engine);
-    expect(await google(engine, f, fetcher)).toMatchObject({ status: 'partial', reason: 'writer_pending' });
+    expect(await withPausedOwnerBudget(() => google(engine, f, fetcher))).toMatchObject({ status: 'partial', reason: 'writer_pending' });
     const [checkpoint] = await connectorPendingSet(engine, f.id);
     expect(checkpoint).toMatchObject({ itemRef: '__managed_connector_checkpoint__' });
     await disposePersistenceConsumer(engine);
     await engine.executeRaw("UPDATE persistence_worktrees SET state='active' WHERE id=$1::uuid", [f.binding.worktree_id]);
-    expect((await withHealthyOwnerBudget(() => google(engine, f, fetcher))).status).not.toBe('partial');
+    expect((await google(engine, f, fetcher)).status).not.toBe('partial');
     expect(await connectorPendingSet(engine, f.id)).toEqual([]);
   }
   for (const engine of engines) {
     const f = await boundSource(engine, githubConfig);
     await engine.executeRaw("UPDATE persistence_worktrees SET state='draining' WHERE id=$1::uuid", [f.binding.worktree_id]);
     const run = (fetch: ReturnType<typeof githubFetch>, extra: object = {}) => runGitHubSync(engine, f.id, parseGitHubSourceConfig(githubConfig, f.dir), { ...options, ...extra }, fetch);
-    expect(await run(githubFetch())).toMatchObject({ status: 'partial', reason: 'writer_pending' });
+    expect(await withPausedOwnerBudget(() => run(githubFetch()))).toMatchObject({ status: 'partial', reason: 'writer_pending' });
     const [entry] = await connectorPendingSet(engine, f.id);
     const [accepted] = await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE request_id=$1::uuid', [entry.requestId]);
     await disposePersistenceConsumer(engine);
@@ -535,10 +535,10 @@ test('pending set: a checkpoint still pending at the end of a run is recorded an
     rmSync(path);
     await disposePersistenceConsumer(engine);
     // The provider no longer lists the item: a delta run cannot tell deletion from absence, so it keeps the entry.
-    expect((await withHealthyOwnerBudget(() => run(githubFetch({ deleted: true })))).status).not.toBe('partial');
+    expect((await run(githubFetch({ deleted: true }))).status).not.toBe('partial');
     expect((await connectorPendingSet(engine, f.id)).map(pending => pending.requestId)).toEqual([accepted.request_id]);
     await disposePersistenceConsumer(engine);
-    await withHealthyOwnerBudget(() => run(githubFetch({ deleted: true }), { full: true }));
+    await run(githubFetch({ deleted: true }), { full: true });
     expect(await connectorPendingSet(engine, f.id)).toEqual([]);
     expect((await readConnectorSourceStatuses(engine)).get(f.id)!.last_run).toMatchObject({ dropped_upstream: 1 });
   }

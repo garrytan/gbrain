@@ -1,6 +1,6 @@
 import type { BrainEngine } from '../engine.ts';
 import { throwIfAborted } from '../abort-check.ts';
-import { serializePageToMarkdown } from '../markdown.ts';
+import { parseMarkdown, serializePageToMarkdown } from '../markdown.ts';
 import type { Action } from '../agent-output.ts';
 import { opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
@@ -16,9 +16,32 @@ import type { DiscoveredTranscript } from './transcript-discovery.ts';
 import { transcriptDerivation } from './dream-taint.ts';
 import { declareDerivation, readDerivationDeclaration } from '../trust/taint.ts';
 import { emptyQuoteVerifyStats, groundSource, isDreamOwnedPage, resolveVerifyPrior, verifyDreamPage, type GroundedSource, type GroundingPass } from './synthesize-verify.ts';
+import { attributionChecksEnabled } from './attribution-checks.ts';
 
 interface OutputRef { slug: string; source_id: string; raw_source?: string; seat?: string; first_write_at?: Date; }
 interface RetainedOutput { job_id: number | bigint; job_key: string; request: WriteRequest; }
+/** #6360: a retained output a later non-maintenance write moved; it is left alone and reported once. */
+export interface PostprocessConflict { slug: string; source_id: string; request_id: string; message: string; fix: Action; }
+
+export const POSTPROCESS_CONFLICTS_KEY = 'dream.synthesize.postprocess_conflicts';
+const CONFLICT_MEMORY_MS = 30 * 86_400_000;
+
+const sameBody = (content: unknown, page: { compiled_truth: string; timeline?: string | null }, slug: string) => {
+  if (typeof content !== 'string') return false;
+  const child = parseMarkdown(content, slug);
+  return child.compiled_truth.trim() === page.compiled_truth.trim() && (child.timeline ?? '').trim() === (page.timeline ?? '').trim();
+};
+
+/** Committed-or-pending requests on the output page after the child's put_page, oldest first. */
+async function laterRequests(engine: BrainEngine, output: WriteRequest): Promise<WriteRequest[]> {
+  return engine.executeRaw<WriteRequest>(
+    `SELECT * FROM persistence_requests
+      WHERE source_id=$1 AND source_incarnation=$2 AND slug=$3 AND sequence > $4
+        AND state IN ('queued','running','recovering','committed')
+      ORDER BY sequence`, [output.source_id, output.source_incarnation, output.slug, output.sequence]);
+}
+
+const localMaintenance = (r: WriteRequest) => r.operation === 'submit_job' && r.intent?.kind === 'managed_maintenance_page' && r.authority?.remote === false;
 
 const writerStatusFix = (sourceId: string, why: string): Action => readFix(why, { argv: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'] });
 
@@ -36,8 +59,11 @@ export async function postprocessManagedSynthesis(
   const stats = emptyQuoteVerifyStats();
   const writtenRefs: OutputRef[] = [];
   const finalizedRefs: OutputRef[] = [];
+  const conflicts: PostprocessConflict[] = [];
   let pending = 0;
-  if (!refs.length) return { writtenRefs, finalizedRefs, stats, pending };
+  if (!refs.length) return { writtenRefs, finalizedRefs, stats, pending, conflicts };
+  const reported = await readReportedConflicts(engine);
+  const supersession = opts.quoteVerify ? await attributionChecksEnabled(engine) : false; // #5425 [UC4], default off
   const outputs = await engine.executeRaw<RetainedOutput>(
     `SELECT t.job_id,j.idempotency_key AS job_key,row_to_json(p) AS request
        FROM subagent_tool_executions t JOIN minion_jobs j ON j.id=t.job_id
@@ -66,10 +92,37 @@ export async function postprocessManagedSynthesis(
         { fix: writerStatusFix(ref.source_id, `Shows source ${ref.source_id}'s committed and pending maintenance requests, read-only.`) });
     }
     const finalizedRef = { ...ref, raw_source: path };
-    const key = digest({ kind: 'synthesis-postprocess-v1', source: authority.writer.sourceIncarnation,
-      slug: ref.slug, job: output.job_key, output: output.request.id, revision, transcript: transcript.contentHash });
-    const requestId = `${key.slice(0, 8)}-${key.slice(8, 12)}-4${key.slice(13, 16)}-a${key.slice(17, 20)}-${key.slice(20, 32)}`;
-    const prior = await getWriteRequest(engine, authority.writer.principal, requestId);
+    // #6360: a postprocess adopted onto a maintenance-only drift binds its base revision too.
+    const postprocessId = (base: string) => {
+      const key = digest({ kind: 'synthesis-postprocess-v1', source: authority.writer.sourceIncarnation,
+        slug: ref.slug, job: output.job_key, output: output.request.id, revision, transcript: transcript.contentHash, ...(base === revision ? {} : { base }) });
+      return `${key.slice(0, 8)}-${key.slice(8, 12)}-4${key.slice(13, 16)}-a${key.slice(17, 20)}-${key.slice(20, 32)}`;
+    };
+    let base = revision;
+    let requestId = postprocessId(base);
+    let prior = await getWriteRequest(engine, authority.writer.principal, requestId);
+    let snapshot: Awaited<ReturnType<BrainEngine['readPageSnapshot']>> = null;
+    if (!prior) {
+      snapshot = await engine.readPageSnapshot(ref.slug, { sourceId: ref.source_id });
+      if (!snapshot || snapshot.revision !== revision) {
+        const later = await laterRequests(engine, output.request);
+        const ours = later.find(r => localMaintenance(r) && typeof r.intent?.expected_revision === 'string'
+          && r.request_id === postprocessId(r.intent.expected_revision as string));
+        if (ours) {
+          base = ours.intent!.expected_revision as string;
+          requestId = ours.request_id;
+          prior = await getWriteRequest(engine, authority.writer.principal, requestId);
+        } else if (snapshot && later.filter(r => r.state === 'committed').every(localMaintenance) && sameBody(output.request.intent?.content, snapshot.page, ref.slug)) {
+          base = snapshot.revision;
+          requestId = postprocessId(base);
+        } else {
+          if (!reported.has(requestId)) conflicts.push({ slug: ref.slug, source_id: ref.source_id, request_id: requestId,
+            message: `Page ${ref.slug} in source ${ref.source_id} changed after the synthesis child committed revision ${revision}, so postprocessing left it alone and did not verify or stamp it. Review the page; this output is not retried.`,
+            fix: readFix(`Shows page ${ref.slug} as it is now, read-only.`, { argv: ['gbrain', 'get', '--source', ref.source_id, '--', ref.slug] }) });
+          continue;
+        }
+      }
+    }
     if (prior) {
       await authorizeStoredRequest(engine, prior);
       if (prior.state === 'committed') { finalizedRefs.push(finalizedRef); continue; }
@@ -78,19 +131,14 @@ export async function postprocessManagedSynthesis(
     await authorizeStoredRequest(engine, output.request);
     let content: string;
     if (prior) {
-      if (prior.intent?.kind !== 'managed_maintenance_page' || prior.intent.expected_revision !== revision || typeof prior.intent.content !== 'string') {
+      if (prior.intent?.kind !== 'managed_maintenance_page' || prior.intent.expected_revision !== base || typeof prior.intent.content !== 'string') {
         throw opError('recovery_required', 'The retained synthesis postprocessing intent is unavailable.',
-          `Postprocess request ${prior.request_id} for ${ref.slug} in source ${ref.source_id} exists, but its retained intent does not match revision ${revision}. Inspect it in writer status; do not resubmit under a new request.`,
+          `Postprocess request ${prior.request_id} for ${ref.slug} in source ${ref.source_id} exists, but its retained intent does not match revision ${base}. Inspect it in writer status; do not resubmit under a new request.`,
           { fix: writerStatusFix(ref.source_id, `Shows request ${prior.request_id} and any recovery it holds, read-only.`) });
       }
       content = prior.intent.content;
     } else {
-      const snapshot = await engine.readPageSnapshot(ref.slug, { sourceId: ref.source_id });
-      if (!snapshot || snapshot.revision !== revision) {
-        throw opError('revision_conflict', 'The synthesis output changed after the child committed.',
-          `Page ${ref.slug} in source ${ref.source_id} changed after the synthesis child committed revision ${revision}, so postprocessing left it alone. Review the page; the next synthesis run processes fresh output.`,
-          { fix: readFix(`Shows page ${ref.slug} as it is now, read-only.`, { argv: ['gbrain', 'get', '--source', ref.source_id, '--', ref.slug] }) });
-      }
+      if (!snapshot) throw new Error(`synthesis postprocess: no snapshot for ${ref.slug}`);
       const firstDate = snapshot.page.frontmatter.dream_created_cycle_date || snapshot.page.frontmatter.dream_cycle_date || opts.cycleDate;
       const since = ref.first_write_at ?? opts.sinceByTranscript.get(transcript.filePath);
       let page = isDreamOwnedPage(snapshot.page, since) ? { ...snapshot.page, frontmatter: { ...snapshot.page.frontmatter, dream_generated: true,
@@ -101,7 +149,7 @@ export async function postprocessManagedSynthesis(
         else {
           if (prior) stats.preexisting_diffed++;
           const source = grounded?.path === transcript.filePath ? grounded : (grounded = groundSource(transcript.filePath, transcript.content));
-          const mechanical = verifyDreamPage(page, [source], { prior, checkedAt: opts.cycleDate }, stats);
+          const mechanical = verifyDreamPage(page, [source], { prior, checkedAt: opts.cycleDate, supersession }, stats);
           const verified = opts.grounding ? await opts.grounding.apply(mechanical, [source], `page:${ref.source_id}:${ref.slug}`, opts.cycleDate) : mechanical;
           if (verified.changed) stats.pages_repaired++;
           page = { ...page, compiled_truth: verified.compiled_truth, timeline: verified.timeline, frontmatter: verified.frontmatter as typeof page.frontmatter };
@@ -115,7 +163,7 @@ export async function postprocessManagedSynthesis(
     const derivation = prior ? readDerivationDeclaration(prior.intent?.derivation) ?? undefined
       : await transcriptDerivation(engine, transcript, opts.meetingTranscriptsDir).then(d => declareDerivation(d.trust, d.inputs));
     try {
-      await publishMaintenancePage(engine, authority, ref.slug, content, { requestId, expectedRevision: revision, derivation });
+      await publishMaintenancePage(engine, authority, ref.slug, content, { requestId, expectedRevision: base, derivation });
     } catch (error) {
       deferPublishOrThrow(error, `${ref.slug} (request ${requestId})`);
       pending++;
@@ -125,7 +173,34 @@ export async function postprocessManagedSynthesis(
     finalizedRefs.push(finalizedRef);
     await new Promise(resolve => setTimeout(resolve, 0));
   }
-  return { writtenRefs, finalizedRefs, stats, pending };
+  if (conflicts.length) await rememberConflicts(engine, reported, conflicts);
+  return { writtenRefs, finalizedRefs, stats, pending, conflicts };
+}
+
+async function readReportedConflicts(engine: BrainEngine): Promise<Map<string, string>> {
+  try {
+    const parsed = JSON.parse(await engine.getConfig(POSTPROCESS_CONFLICTS_KEY) ?? '{}') as Record<string, unknown>;
+    const cutoff = Date.now() - CONFLICT_MEMORY_MS;
+    return new Map(Object.entries(parsed).filter((e): e is [string, string] => typeof e[1] === 'string' && Date.parse(e[1]) > cutoff));
+  } catch { return new Map(); }
+}
+
+async function rememberConflicts(engine: BrainEngine, reported: Map<string, string>, conflicts: PostprocessConflict[]): Promise<void> {
+  const at = new Date().toISOString();
+  for (const c of conflicts) reported.set(c.request_id, at);
+  await engine.setConfig(POSTPROCESS_CONFLICTS_KEY, JSON.stringify(Object.fromEntries(reported)));
+}
+
+/**
+ * #6360: outputs a later non-maintenance write moved are terminal (retrying
+ * cannot help), so the phase warns once per output instead of failing every
+ * cycle, and the cooldown still stamps.
+ */
+export function withPostprocessConflicts(conflicts: PostprocessConflict[], result: PhaseResult): PhaseResult {
+  if (!conflicts.length) return result;
+  return { ...result, status: result.status === 'fail' ? 'fail' : 'warn',
+    summary: `${result.summary}; ${conflicts.length} output page(s) changed after the child committed and were left alone`,
+    details: { ...result.details, postprocess_conflicts: conflicts } };
 }
 
 /**

@@ -92,7 +92,7 @@ import { effectiveVisibility } from '../search/private-visibility.ts';
 import { OperationError } from '../ops/contract.ts';
 import type { WriteReceipt } from '../persistence/types.ts';
 import { acceptedPendingReceipt } from '../persistence/accepted-pending.ts';
-import { AtomPageStateError, completeAtomReceipts, readAtomPageIdentity, writeAtomPageState, type AtomPageInput } from './extract-atoms-page-state.ts';
+import { AtomPageStateError, completeAtomReceipts, MAX_DETERMINISTIC_FAILURES, readAtomPageIdentity, writeAtomPageState, type AtomPageInput } from './extract-atoms-page-state.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { deriveTrust, lowerDerivedPage } from '../trust/taint.ts';
 import { derivedGateInput } from '../trust/derived-gate.ts';
@@ -108,12 +108,7 @@ const DEFAULT_BUDGET_USD = 0.3;
 export const DEFAULT_EXTRACT_MAX_INPUT_CHARS = 50_000;
 export const DEFAULT_EXTRACT_MAX_OUTPUT_TOKENS = 4096;
 
-/**
- * gbrain#4148: consecutive same-content failures of a content-deterministic
- * class (malformed model output or provider content block) before the page is tombstoned so the
- * backlog floor can clear. A content edit resets the streak.
- */
-export const MAX_DETERMINISTIC_FAILURES = 3;
+export { MAX_DETERMINISTIC_FAILURES };
 
 /**
  * Transient provider/infra failure shapes — retryable, never counted.
@@ -1000,6 +995,7 @@ export async function runPhaseExtractAtoms(
   // say are "retryable, never counted" — see that regex's doc comment.
   let hardFailureCount = 0;
   let writesPending = 0; // #5601: accepted atom batches still publishing (progress, not failures)
+  let heldFailed = 0;
 
   async function stampAtomsScanHash(item: AtomPageInput): Promise<void> {
     await writeAtomPageState(engine, sourceId, item, 'complete');
@@ -1114,10 +1110,10 @@ export async function runPhaseExtractAtoms(
       const visibility = origin?.visibility ?? effectiveVisibility(item.kind === 'transcript' ? { kind: 'transcript' } // #5525
         : { kind: 'page', page: await engine.getPage(item.slug, { sourceId }) });
       throwIfAborted(opts.signal, 'extract_atoms');
-      if (!opts.dryRun && managed && origin && await resumeManagedAtoms(engine, managed, origin)) {
-        duplicatesSkipped++;
-        continue;
-      }
+      const resumed = !opts.dryRun && managed && origin ? await resumeManagedAtoms(engine, managed, origin) : 'run';
+      if (resumed === 'done') { duplicatesSkipped++; continue; }
+      if (resumed === 'held') { heldFailed++; continue; } // #6325: settled after repeated failures; doctor lists it
+
       const result = await chat({
         model: extractModel,
         ...atomsPrompt(dateGrounding, originLabel, promptContent),
@@ -1256,6 +1252,7 @@ export async function runPhaseExtractAtoms(
               ...(atom.emotional_register && { emotional_register: atom.emotional_register }),
               extracted_at: new Date().toISOString(),
               extracted_by: 'extract_atoms-v0.41.2.1',
+              dream_generated: true, // #5211: the flag every anti-loop guard keys on
             },
             atom.body,
             '',
@@ -1457,6 +1454,7 @@ export async function runPhaseExtractAtoms(
       pages_skipped_budget: pagesSkipped,
       duplicates_skipped: duplicatesSkipped,
       write_pending: writesPending,
+      held_failed: heldFailed,
       failures,
       ...(managed ? { write_requests: writeRequests } : {}),
       ...(abortedGlobalError ? { aborted_global_error: abortedGlobalError } : {}),

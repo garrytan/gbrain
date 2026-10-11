@@ -1,4 +1,4 @@
-import { assertManagedFilesystemWrite } from './persistence/filesystem-guard.ts';
+import { assertManagedFilesystemWrite, managedFilesystemRootFor } from './persistence/filesystem-guard.ts';
 import { OWNERSHIP_MARKER_GLOBS } from './persistence/root-metadata.ts';
 import { OperationError } from './ops/contract.ts';
 /**
@@ -76,6 +76,7 @@ import {
   type SecretFinding,
 } from './secret-scan.ts';
 import { shellQuote } from './mcp-registration.ts';
+import { gitChildEnv } from './git-env.ts';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -297,7 +298,7 @@ function git(
     stdio: ['ignore', 'pipe', 'pipe'],
     timeout: opts.timeoutMs ?? 60_000,
     maxBuffer: 64 * 1024 * 1024,
-    env: { ...process.env, ...(opts.auth ? GIT_ENV_AUTH : GIT_ENV) },
+    env: gitChildEnv({ ...(opts.auth ? GIT_ENV_AUTH : GIT_ENV) }),
   }).toString();
 }
 
@@ -315,7 +316,7 @@ function gitBuffer(root: string, args: string[], timeoutMs = 60_000): Buffer {
     stdio: ['ignore', 'pipe', 'pipe'],
     timeout: timeoutMs,
     maxBuffer: 64 * 1024 * 1024,
-    env: { ...process.env, ...GIT_ENV },
+    env: gitChildEnv({ ...GIT_ENV }),
   });
 }
 
@@ -670,6 +671,27 @@ export function aheadCount(root: string, branch: string): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
+/**
+ * #5606: `sources push` on a managed canonical worktree is refused with the
+ * managed equivalent named, not a bare "submit through the coordinator": the
+ * persistence owner's Git effect is the writer for page files, the writer
+ * verbs check and enable it, and files that are not pages are the operator's
+ * to push with plain git. Same code, so every surface that keys on it still does.
+ */
+export function managedPushRefusal(dir: string, root: string | null | undefined, cause: OperationError): OperationError {
+  const managed = managedFilesystemRootFor(root ?? dir) ?? managedFilesystemRootFor(dir);
+  const source = managed?.sourceId;
+  const name = source ?? '<source>';
+  const error = new OperationError('writer_coordinator_required',
+    `${managed?.root ?? root ?? dir} is the managed canonical worktree${source ? ` of source ${source}` : ''}; gbrain sources push is not its Git writer.`,
+    `Page writes there are committed and pushed by the persistence owner's Git effect, not by sources push. Check it with gbrain sources writer status${source ? ` ${source}` : ''} --json `
+    + `(git_durability, parked effects). If git_durability is off or unknown, enable it with gbrain sources writer git-durability ${name} --enable --dry-run, then the apply command it prints; `
+    + `after a push credential change, gbrain sources writer git-durability ${name} --pat-file <path> re-wires it and retries the parked pushes. `
+    + 'Files that are not gbrain pages (MEMORY.md, daily notes) are not published by the owner: review the diff and push them with plain git; the sources push secret scan does not run then.');
+  error.detail = cause.detail;
+  return error;
+}
+
 export async function workspacePush(opts: WorkspacePushOpts): Promise<WorkspacePushResult> {
   const log = (line: string) => opts.logger?.(line);
 
@@ -683,10 +705,11 @@ export async function workspacePush(opts: WorkspacePushOpts): Promise<WorkspaceP
     // status surface calls a push that can never run "stale" instead of failing.
     // No lock winner can be in flight here: the same guard refuses every legacy
     // push of this root.
-    if (root && e instanceof OperationError) {
-      writePushStatus({ ts: new Date().toISOString(), ok: false, code: e.code, reason: `${e.code}: ${e.message}`, repoRoot: root });
+    const refusal = e instanceof OperationError && e.code === 'writer_coordinator_required' ? managedPushRefusal(opts.dir, root, e) : e;
+    if (root && refusal instanceof OperationError) {
+      writePushStatus({ ts: new Date().toISOString(), ok: false, code: refusal.code, reason: `${refusal.code}: ${refusal.message}`, repoRoot: root });
     }
-    throw e;
+    throw refusal;
   }
   if (!root) {
     return { ok: false, status: 'error', reason: `not a git repository: ${opts.dir}` };

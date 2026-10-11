@@ -16,11 +16,12 @@
  *
  * Runs on PGLite; also on Postgres when DATABASE_URL is set (testBackends).
  */
+import { spoolPath } from './helpers/corpus-spool.ts';
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
@@ -107,7 +108,8 @@ async function managedCorpus(engine: BrainEngine, dir: string, opts: { drifted?:
   const pristine = readFileSync(pageFile);
   if (opts.drifted) appendFileSync(pageFile, '\nA local edit nobody imported.\n');
   const raw = transcript();
-  writeFileSync(join(corpusDir, SESSION), raw);
+  const sessionFile = spoolPath(corpusDir, SESSION, sourceId);
+  writeFileSync(sessionFile, raw);
   const quiet = () => waitFor(async () => (await engine.executeRaw<{ n: number }>(
     `SELECT COUNT(*)::int AS n FROM persistence_requests WHERE source_id=$1 AND state IN ('queued','running','recovering')`, [sourceId]))[0].n === 0,
   { timeoutMs: 30_000, label: 'fact requests settled' });
@@ -120,7 +122,7 @@ async function managedCorpus(engine: BrainEngine, dir: string, opts: { drifted?:
   const facts = async () => (await engine.executeRaw<{ n: number }>(
     `SELECT COUNT(*)::int AS n FROM facts WHERE source_id=$1 AND source='sweep:corpus' AND expired_at IS NULL`, [sourceId]))[0].n;
   // The sweep's own window, for a worker that passed its gate before off landed.
-  const pipelineCtx: FactsBackstopCtx = { engine, sourceId, sessionId: `sweep:corpus:${SESSION}`, source: 'sweep:corpus', mode: 'inline',
+  const pipelineCtx: FactsBackstopCtx = { engine, sourceId, sessionId: `sweep:corpus:${basename(sessionFile)}`, source: 'sweep:corpus', mode: 'inline',
     remote: false, reAdmitFileRefusals: true };
   const firstWindow = planCorpusWindows(parseCorpusTurns(raw), { turn: 0, offset: 0 })[0].text;
   const replay = () => runFactsPipeline(firstWindow, pipelineCtx);

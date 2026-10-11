@@ -11,6 +11,7 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach, spyOn } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { serializePageToMarkdown } from '../src/core/markdown.ts';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -123,9 +124,12 @@ async function enableFenceWrites(): Promise<string> {
 describe('post-compaction recall (the done criterion)', () => {
   test('segment → harvest → truthful manifest → link re-pull via trusted get_page', async () => {
     const brainDir = await enableFenceWrites();
-    await engine.putPage('people/alice-example', {
+    const alice = await engine.putPage('people/alice-example', {
       type: 'person', title: 'Alice Example', compiled_truth: 'Alice Example is a synthetic fixture person.',
     }, { sourceId: 'default' });
+    // The page has its file, as a local_path brain's pages do (#6398: a DB-only page takes the DB-only fact route).
+    mkdirSync(join(brainDir, 'people'), { recursive: true });
+    writeFileSync(join(brainDir, 'people/alice-example.md'), serializePageToMarkdown(alice, []));
     chatStub([
       { fact: 'decided to move the auth check into the middleware', entity: 'people/alice-example' },
       { fact: 'unparented aside that produces no link', entity: null },

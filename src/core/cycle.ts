@@ -52,6 +52,7 @@ import { getCliOptions, cliOptsToProgressOptions } from './cli-options.ts';
 import { tryAcquireDbLock, reapDeadHolderLocks, inspectLock, LockStolenError, type DbLockHandle } from './db-lock.ts';
 import { timeContainedPhase } from './cycle/phase-containment.ts';
 import { isManagedBrain } from './cycle/phase-table.ts';
+import { packGateSkip, resolvePackPhaseGate } from './cycle/pack-phase-gate.ts';
 import { managedPullWarning, type UpstreamRefresh } from './sync-upstream.ts';
 import { assertValidSourceId } from './source-id.ts';
 import { PHASE_SCOPE, SOURCE_FRESHNESS_PHASES, type PhaseScope } from './cycle/phase-scope.ts';
@@ -489,6 +490,12 @@ export interface CycleReport {
 export interface CycleOpts {
   /** If true, no writes to filesystem or DB. All phases honor this. */
   dryRun?: boolean;
+  /**
+   * #6023: caller trust for the consolidate dry-run preview. Only the local
+   * CLI (`remote: false`) sees private fact text in `details.clusters`;
+   * minion handlers and anything else leave it unset (fail-closed).
+   */
+  remote?: boolean;
   /** Defaults to ALL_PHASES. Pass a subset for --phase lint etc. */
   phases?: CyclePhase[];
   /**
@@ -1238,18 +1245,12 @@ export async function resolveSourceForDir(
 export async function packDeclaresPhase(
   engine: BrainEngine,
   phase: CyclePhase,
+  sourceId?: string,
 ): Promise<boolean> {
-  try {
-    const { loadActivePack } = await import('./schema-pack/load-active.ts');
-    const { loadConfig } = await import('./config.ts');
-    const cfg = loadConfig();
-    const resolved = await loadActivePack({ cfg, remote: false });
-    const phases = resolved.manifest.phases ?? [];
-    return phases.includes(phase);
-  } catch {
-    return false;
-  }
+  return (await resolvePackPhaseGate(engine, phase, sourceId)).declared;
 }
+
+export { resolvePackPhaseGate, type PackPhaseGate } from './cycle/pack-phase-gate.ts';
 
 async function runPhaseSync(
   engine: BrainEngine,
@@ -2408,6 +2409,7 @@ export async function runCycle(
     // or borrow_from targets.
     if (phases.includes('extract_atoms')) {
       checkAborted(cycleSignal);
+      const xaSkip = engine ? await packGateSkip(engine, 'extract_atoms', cycleSourceId) : null;
       if (!engine) {
         phaseResults.push({
           phase: 'extract_atoms',
@@ -2416,19 +2418,13 @@ export async function runCycle(
           summary: 'no database connected',
           details: { reason: 'no_database' },
         });
-      } else if (!(await packDeclaresPhase(engine, 'extract_atoms'))) {
+      } else if (xaSkip) {
         // issue #1678: the routine cycle skip stays cheap (no per-tick backlog
         // count), but the detail is greppable — `pack_gated: true` lets the
         // `extract_atoms_backlog` doctor check / log scrapers tell a
         // deliberately-off phase apart from a phase that ran with no work. The
         // backlog signal itself lives in doctor (one count, on demand).
-        phaseResults.push({
-          phase: 'extract_atoms',
-          status: 'skipped',
-          duration_ms: 0,
-          summary: 'extract_atoms: active pack does not declare this phase in its phases: list — add it or activate a lens pack that ships it (gbrain-creator / gbrain-everything); run `gbrain dream --phase extract_atoms --drain` to drain a backlog',
-          details: { reason: 'not_in_active_pack', pack_gated: true },
-        });
+        phaseResults.push(xaSkip);
       } else {
         progress.start('cycle.extract_atoms');
         const { runPhaseExtractAtomsStamped: runPhaseExtractAtoms } = await import('./cycle/extract-atoms-stamp.ts');
@@ -2544,6 +2540,7 @@ export async function runCycle(
     // declared. Real body in T6 — synthesize-concepts.ts is a stub today.
     if (phases.includes('synthesize_concepts')) {
       checkAborted(cycleSignal);
+      const scSkip = engine ? await packGateSkip(engine, 'synthesize_concepts', cycleSourceId) : null;
       if (!engine) {
         phaseResults.push({
           phase: 'synthesize_concepts',
@@ -2552,18 +2549,12 @@ export async function runCycle(
           summary: 'no database connected',
           details: { reason: 'no_database' },
         });
-      } else if (!(await packDeclaresPhase(engine, 'synthesize_concepts'))) {
+      } else if (scSkip) {
         // issue #1678: same greppable marker as extract_atoms. (No doctor
         // backlog check for synthesize_concepts this wave — Codex #12: that
         // phase has no real eligibility predicate yet, so a check would be a
         // fake signal. Filed as a follow-up.)
-        phaseResults.push({
-          phase: 'synthesize_concepts',
-          status: 'skipped',
-          duration_ms: 0,
-          summary: 'synthesize_concepts: active pack does not declare this phase in its phases: list — add it or activate a lens pack that ships it (gbrain-creator / gbrain-everything)',
-          details: { reason: 'not_in_active_pack', pack_gated: true },
-        });
+        phaseResults.push(scSkip);
       } else {
         progress.start('cycle.synthesize_concepts');
         const { runPhaseSynthesizeConcepts } = await import('./cycle/synthesize-concepts.ts');
@@ -2652,6 +2643,7 @@ export async function runCycle(
         const { runPhaseConsolidate } = await import('./cycle/phases/consolidate.ts');
         const { result, duration_ms } = await racedTimePhase(() => runPhaseConsolidate(engine, {
           dryRun,
+          remote: opts.remote,
           sourceId: cycleSourceId,
           // W0 (Tier-1 #1): wrap the caller hook so this phase ALSO refreshes
           // the cycle lock (pre-fix these sites passed the raw — in production

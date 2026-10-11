@@ -13,6 +13,7 @@
 import { execFileSync } from 'child_process';
 import { realpathSync } from 'fs';
 import { relative } from 'path';
+import { gitChildEnv } from './git-env.ts';
 
 export interface GitFirstCommitDates {
   /** The first-commit date for a file under the repo, if git recorded one. */
@@ -22,7 +23,7 @@ export interface GitFirstCommitDates {
 export function gitFirstCommitDates(dir: string): GitFirstCommitDates | null {
   try {
     const git = (args: string[], cwd: string) => execFileSync('git', ['-C', cwd, ...args],
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 256 * 1024 * 1024, timeout: 120_000 });
+      { env: gitChildEnv(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 256 * 1024 * 1024, timeout: 120_000 });
     const top = git(['rev-parse', '--show-toplevel'], dir).trim();
     if (git(['rev-parse', '--is-shallow-repository'], top).trim() === 'true') return null;
     const dates = new Map<string, Date>();

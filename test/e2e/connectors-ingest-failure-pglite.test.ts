@@ -103,6 +103,8 @@ describe('connector ingest failures', () => {
     expect(results[2].quarantined).toEqual(['c-1']);
     expect(results[2].watermarkAdvancedTo).toBe(new Date((T0 + 30) * 1000).toISOString());
     expect(results[3].fetched).toBe(0);
-    expect(results[3].status).toBe('nothing_new');
+    // #6387: the quarantined conversation is still unresolved, so the run is partial.
+    expect(results[3].status).toBe('partial');
+    expect(results[3].unresolved).toBe(1);
   });
 });

@@ -161,6 +161,12 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
   }
   if (operation === 'writer_reindex_code') return (await import('./reindex-administration.ts')).runAuthenticatedCodeReindex(engine, params);
   if (operation === 'writer_embed_facts') return (await import('./embed-facts-administration.ts')).runAuthenticatedFactEmbedding(engine, params, config);
+  if (operation === 'writer_git_durability') {
+    const { GIT_DURABILITY_PARAMS, runGitDurabilityAdministration } = await import('./git-durability-administration.ts');
+    keys(params, [...GIT_DURABILITY_PARAMS]);
+    source(params.source_id);
+    return runGitDurabilityAdministration(engine, params);
+  }
   if (operation === 'writer_retry_effects') {
     keys(params, ['source_id', 'request_id', 'dry_run']);
     if (!isWriteRequestId(params.request_id)) throw invalid('A valid original write request UUID is required.',
@@ -205,7 +211,8 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
     const adminState = await writerAdminState(engine);
     const diagnostics = await writerDiagnostics(engine);
     const bindings = await engine.executeRaw(`SELECT b.source_id,b.source_incarnation,b.worktree_id,b.relative_path,b.topology_generation::text AS topology_generation,
-      w.owner_host_id,w.owner_epoch::text AS owner_epoch,w.state,w.manifest->>'digest' AS manifest_digest,h.local_path FROM persistence_source_bindings b
+      w.owner_host_id,w.owner_epoch::text AS owner_epoch,w.state,w.manifest->>'digest' AS manifest_digest,h.local_path,h.git_durability,
+      CASE h.git_durability WHEN 'enabled' THEN 'on' WHEN 'disabled' THEN 'off' ELSE 'unknown' END AS git_durability_state FROM persistence_source_bindings b
       JOIN persistence_worktrees w ON w.id=b.worktree_id
       LEFT JOIN persistence_host_bindings h ON h.worktree_id=b.worktree_id AND h.host_id=$1::uuid
       WHERE ($2::text IS NULL OR b.source_id=$2) ORDER BY b.source_id`, [existingLocalHostId(), params.source_id === undefined ? null : source(params.source_id)]);

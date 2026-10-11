@@ -74,6 +74,7 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'loop_facts_drift',
   'ontology_facts_fenced',
   'orphan_persistence_bindings',
+  'foreign_ownership_marker',
   'safe_index_pending',
   'self_capture',
   'brain_score',
@@ -114,6 +115,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'entity_link_coverage',
   'eval_drift',
   'extract_atoms_backlog',
+  // #6325: managed atom origins held after repeated extraction failures.
+  'extract_atoms_held_failed',
   'extract_health',
   'facts_embedding_width_consistency',
   'facts_extraction_health',
@@ -254,6 +257,7 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'persistence_request_growth',
   'persistence_request_indexes',
   'persistence_write_stall',
+  'lost_caller_writes',
   'managed_sync_not_moving',
   'persistence_session_timeouts',
   // #6317: consumer heartbeat rows and host identity (doctor/checks/persistence-consumers.ts).

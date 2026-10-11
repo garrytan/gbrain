@@ -1,4 +1,4 @@
-import { assertManagedFilesystemWrite } from './persistence/filesystem-guard.ts';
+import { assertManagedFilesystemWrite, hasFilesystemPublication, managedFilesystemRootFor } from './persistence/filesystem-guard.ts';
 /**
  * brain-repo-durability.ts — auto-harden a brain's git working tree (v0.42.44).
  *
@@ -50,6 +50,7 @@ import { readFix } from './ops/op-fix.ts';
 // Bundled into the --compile binary as the fallback taxonomy for repos that
 // don't ship their own — see resolveFilingRules().
 import filingRulesDoc from '../../skills/_brain-filing-rules.json';
+import { gitChildEnv } from './git-env.ts';
 
 export { execFileBounded, type BoundedExecOptions } from './bounded-child-exec.ts';
 
@@ -392,7 +393,7 @@ function patchResolverFile(repoPath: string, dryRun: boolean): { status: StepSta
 function gitDirPath(repoPath: string, rel: string): string {
   try {
     const p = execFileSync('git', ['-C', repoPath, 'rev-parse', '--git-path', rel], {
-      stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, env: { ...process.env, ...GIT_ENV },
+      stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, env: gitChildEnv({ ...GIT_ENV }),
     }).toString().trim();
     if (p) return isAbsolute(p) ? p : join(repoPath, p);
   } catch { /* fall through to the classic layout */ }
@@ -408,7 +409,7 @@ function resolveHooksDir(repoPath: string): { dir: string; tracked: boolean } {
   let hooksPath = '';
   try {
     hooksPath = execFileSync('git', ['-C', repoPath, 'config', '--get', 'core.hooksPath'], {
-      stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, env: { ...process.env, ...GIT_ENV },
+      stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, env: gitChildEnv({ ...GIT_ENV }),
     }).toString().trim();
   } catch { /* unset — normal */ }
   if (hooksPath) {
@@ -503,7 +504,7 @@ function durabilityProbeFailure(detail: string): OperationError {
 /** A git probe that does not block the event loop. Exit 1 is an unset key for `config --get`; every other failure throws. */
 async function gitProbe(repoPath: string, args: string[]): Promise<string> {
   const { error, stdout } = await execFileBounded('git', ['-C', repoPath, ...args],
-    { timeout: 10_000, env: { ...process.env, ...GIT_ENV, LC_ALL: 'C', LANGUAGE: 'C' } });
+    { timeout: 10_000, env: gitChildEnv({ ...GIT_ENV, LC_ALL: 'C', LANGUAGE: 'C' }) });
   if (!error) return stdout.trim();
   if (error.code === 1 && args[0] === 'config' && args[1] === '--get') return '';
   const status = typeof error.code === 'number' ? `exit ${error.code}` : typeof error.code === 'string' && /^[A-Z_]+$/.test(error.code) ? error.code : 'no exit status';
@@ -562,7 +563,7 @@ export function commitWriteThroughFile(
   try {
     const rel = relative(repoPath, absPath);
     if (!rel || rel.startsWith('..') || isAbsolute(rel)) return false;
-    const gitOpts = { stdio: 'ignore', timeout: 30_000, env: { ...process.env, ...GIT_ENV } } as const;
+    const gitOpts = { stdio: 'ignore', timeout: 30_000, env: gitChildEnv({ ...GIT_ENV }) } as const;
     execFileSync('git', ['-C', repoPath, 'add', '--', rel], gitOpts);
     execFileSync('git', ['-C', repoPath, 'commit', '-m', `gbrain: ${action} ${slug}`, '--', rel], gitOpts);
     return true;
@@ -646,19 +647,19 @@ function gitConfigGet(repoPath: string, key: string, localOnly = false): string 
   try {
     const scope = localOnly ? ['--local'] : [];
     return execFileSync('git', ['-C', repoPath, 'config', ...scope, '--get', key], {
-      stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, env: { ...process.env, ...GIT_ENV },
+      stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, env: gitChildEnv({ ...GIT_ENV }),
     }).toString().trim();
   } catch { return ''; }
 }
 function gitConfigSet(repoPath: string, key: string, value: string): void {
   execFileSync('git', ['-C', repoPath, 'config', key, value], {
-    stdio: 'ignore', timeout: 10_000, env: { ...process.env, ...GIT_ENV },
+    stdio: 'ignore', timeout: 10_000, env: gitChildEnv({ ...GIT_ENV }),
   });
 }
 function gitConfigUnset(repoPath: string, key: string): void {
   try {
     execFileSync('git', ['-C', repoPath, 'config', '--unset-all', key], {
-      stdio: 'ignore', timeout: 10_000, env: { ...process.env, ...GIT_ENV },
+      stdio: 'ignore', timeout: 10_000, env: gitChildEnv({ ...GIT_ENV }),
     });
   } catch { /* not set */ }
 }
@@ -666,7 +667,7 @@ function gitConfigUnset(repoPath: string, key: string): void {
 function remoteHost(repoPath: string): string {
   try {
     const url = execFileSync('git', ['-C', repoPath, 'remote', 'get-url', 'origin'], {
-      stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, env: { ...process.env, ...GIT_ENV },
+      stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, env: gitChildEnv({ ...GIT_ENV }),
     }).toString().trim();
     return new URL(url).hostname || 'github.com';
   } catch { return 'github.com'; }
@@ -950,7 +951,7 @@ function isGitRepo(repoPath: string): boolean {
 function resolveRepoRoot(path: string): string {
   try {
     return execFileSync('git', ['-C', path, 'rev-parse', '--show-toplevel'], {
-      stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, env: { ...process.env, ...GIT_ENV },
+      stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, env: gitChildEnv({ ...GIT_ENV }),
     }).toString().trim();
   } catch {
     throw new Error(`not a git repo: ${path}`);
@@ -960,7 +961,7 @@ function resolveRepoRoot(path: string): string {
 export function currentBranch(repoPath: string): string {
   try {
     return execFileSync('git', ['-C', repoPath, 'rev-parse', '--abbrev-ref', 'HEAD'], {
-      stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, env: { ...process.env, ...GIT_ENV },
+      stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, env: gitChildEnv({ ...GIT_ENV }),
     }).toString().trim();
   } catch { return 'HEAD'; }
 }
@@ -968,7 +969,7 @@ export function currentBranch(repoPath: string): string {
 function headSha(repoPath: string): string {
   try {
     return execFileSync('git', ['-C', repoPath, 'rev-parse', 'HEAD'], {
-      stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, env: { ...process.env, ...GIT_ENV },
+      stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, env: gitChildEnv({ ...GIT_ENV }),
     }).toString().trim();
   } catch { return ''; }
 }
@@ -987,6 +988,17 @@ function pullDetail(o: PullOutcome): { status: StepStatus; detail: string } {
  * already-hardened repo produces all ok/skipped and NO new commit.
  */
 export async function hardenBrainRepo(opts: HardenOpts): Promise<DurabilityReport> {
+  // #5182: a managed canonical worktree gets no hook, cron or helper here — the
+  // owner's recorded git_durability setting decides, and its verb installs
+  // the credential. Name that verb instead of the bare coordinator refusal.
+  const managed = managedFilesystemRootFor(opts.repoPath);
+  if (managed && !hasFilesystemPublication(opts.repoPath)) {
+    const sourceId = managed.sourceId ?? opts.sourceId;
+    throw opError('writer_coordinator_required',
+      `${opts.repoPath} is the managed canonical worktree of source ${sourceId}; its Git durability is an owner setting, not a hook.`,
+      `Run gbrain sources writer git-durability ${sourceId} --enable${opts.pat ? ' --pat-file <path>' : ''} (add --dry-run to preview). The owner commits and pushes page writes itself; no pull cron or post-commit hook is installed on a managed root.`,
+      { fix: readFix('Shows the owner and whether it commits and pushes page writes, read-only.', { argv: ['gbrain', 'sources', 'writer', 'status', sourceId, '--json'] }) });
+  }
   if (!opts.dryRun) assertManagedFilesystemWrite(opts.repoPath);
   const { sourceId } = opts;
   const dryRun = !!opts.dryRun;
@@ -1066,9 +1078,9 @@ function commitScaffolding(repoPath: string, branch: string, redact: (s: string)
   const resolver = findResolverFile(repoPath);
   if (resolver) paths.push(relative(repoPath, resolver));
   try {
-    execFileSync('git', ['-C', repoPath, 'add', '--', ...paths], { stdio: 'ignore', timeout: 30_000, env: { ...process.env, ...GIT_ENV } });
+    execFileSync('git', ['-C', repoPath, 'add', '--', ...paths], { stdio: 'ignore', timeout: 30_000, env: gitChildEnv({ ...GIT_ENV }) });
     const staged = execFileSync('git', ['-C', repoPath, 'diff', '--cached', '--name-only'], {
-      stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, env: { ...process.env, ...GIT_ENV },
+      stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, env: gitChildEnv({ ...GIT_ENV }),
     }).toString().trim();
     if (!staged) return { status: 'ok', detail: 'scaffolding already committed' };
     // #3925: suppress hooks on THIS commit. Step 3 already installed the
@@ -1080,10 +1092,10 @@ function commitScaffolding(repoPath: string, branch: string, redact: (s: string)
     // push below the ONLY push for the scaffolding commit; every later
     // operator/agent commit still fires the hook normally.
     execFileSync('git', ['-C', repoPath, '-c', 'core.hooksPath=/dev/null', 'commit', '-m', 'chore(gbrain): install brain durability scaffolding'], {
-      stdio: 'ignore', timeout: 30_000, env: { ...process.env, ...GIT_ENV },
+      stdio: 'ignore', timeout: 30_000, env: gitChildEnv({ ...GIT_ENV }),
     });
     execFileSync('git', ['-C', repoPath, ...['-c', 'http.followRedirects=false'], 'push', 'origin', `HEAD:${branch}`], {
-      stdio: ['ignore', 'pipe', 'pipe'], timeout: 120_000, env: { ...process.env, ...GIT_ENV_AUTH },
+      stdio: ['ignore', 'pipe', 'pipe'], timeout: 120_000, env: gitChildEnv({ ...GIT_ENV_AUTH }),
     });
     return { status: 'fixed', detail: 'committed + pushed durability scaffolding' };
   } catch (e) {
@@ -1095,7 +1107,7 @@ function headMatchesOrigin(repoPath: string, branch: string): boolean {
   try {
     const local = headSha(repoPath);
     const remote = execFileSync('git', ['-C', repoPath, 'rev-parse', `origin/${branch}`], {
-      stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, env: { ...process.env, ...GIT_ENV },
+      stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, env: gitChildEnv({ ...GIT_ENV }),
     }).toString().trim();
     return !!local && local === remote;
   } catch { return false; }

@@ -211,6 +211,15 @@ Every read + write path consults the active pack at runtime:
 - **`extract_facts`** runs only on `extractable: true` types.
 - **`enrichment-service`** routes person/company enrichment based on the
   pack's primitive declarations.
+- **Entity counters** (`get_health` / `gbrain health` `entity_page_count`,
+  `link_coverage`, `timeline_coverage`, `most_connected`; doctor
+  `graph_coverage` and `orphan_ratio`) count the types the pack declares with
+  `primitive: entity`, resolved per source when sources carry their own pack.
+  The legacy names (`entity`, `person`, `company`, `organization`) still count
+  while a pack leaves them undeclared; a pack that declares one under another
+  primitive wins. A pack that does not load empties the filter and the result
+  says `entity_types_status: pack_unavailable` (doctor: a `graph_coverage`
+  warn) instead of counting a hardcoded list.
 - **Search hybrid cache** (`knobsHash`) folds in pack name + version.
   A cache row written under pack A is unreachable when pack
   B is active. Cross-pack contamination is structurally impossible.

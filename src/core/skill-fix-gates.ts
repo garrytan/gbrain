@@ -28,6 +28,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { dirname } from 'node:path';
+import { gitChildEnv } from './git-env.ts';
 
 // ---------------------------------------------------------------------------
 // Code-fence guard
@@ -76,6 +77,7 @@ export type WorkingTreeStatus = 'clean' | 'dirty' | 'not_a_repo';
 export function getWorkingTreeStatus(skillPath: string): WorkingTreeStatus {
   try {
     const out = execFileSync('git', ['status', '--porcelain', '--', skillPath], {
+      env: gitChildEnv(),
       encoding: 'utf-8',
       stdio: ['ignore', 'pipe', 'ignore'],
       cwd: dirname(skillPath),

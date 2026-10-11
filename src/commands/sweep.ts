@@ -17,12 +17,15 @@
 
 import type { BrainEngine } from '../core/engine.ts';
 import { runMaintenanceSweep, type SweepReport } from '../core/sweep.ts';
-import { setCliExitVerdict } from '../core/cli-force-exit.ts';
+import { jsonRequested, setCliExitVerdict } from '../core/cli-force-exit.ts';
+import { opError } from '../core/ops/contract.ts';
+import { writeCliRefusal } from '../cli/cli-error.ts';
 
 export const SWEEP_HELP = `gbrain sweep — run the serve-resident maintenance sweep once, locally
 
 Usage:
   gbrain sweep --once [--source <id>] [--budget-ms <n>] [--batch-limit <n>] [--json]
+  gbrain sweep --assign-corpus <source> [--session <id>] [--apply] [--json]
 
 Runs the three bounded sweep passes against the connected brain:
   1. facts-fence reconciliation (zero-LLM): recently-modified pages with a
@@ -40,6 +43,14 @@ Flags:
   --budget-ms <n>    Wall-clock budget; sweep stops between items (default 5000).
   --batch-limit <n>  Max pages / corpus files per pass (default 20).
   --json             Print the SweepReport as JSON on stdout.
+
+Held session files (#6268): a captured session file is extracted into the
+source its name or its session record carries. Files written before session
+files recorded their source (on a brain with more than one source), and
+sessions whose source never resolved, are held. --assign-corpus previews
+which held sessions would be mapped to <source>; --apply records the
+mapping (a session that already names a source is never changed), and the
+next sweep extracts them there. --session limits it to one session.
 
 Exit codes: 0 = success or partial (see "skipped" in the report);
 1 = total failure (every pass errored). Local-only; never runs over MCP.
@@ -70,6 +81,10 @@ export function isTotalFailure(report: SweepReport): boolean {
 export async function runSweep(engine: BrainEngine, args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(SWEEP_HELP);
+    return;
+  }
+  if (args.includes('--assign-corpus')) {
+    await runAssignCorpus(engine, args);
     return;
   }
   if (!args.includes('--once')) {
@@ -128,5 +143,49 @@ export async function runSweep(engine: BrainEngine, args: string[]): Promise<voi
   if (isTotalFailure(report)) {
     console.error('gbrain sweep: total failure — every pass errored. See skipped reasons above.');
     setCliExitVerdict(1);
+  }
+}
+
+/** #6268: preview (default) or apply the operator's source mapping for held session files. */
+async function runAssignCorpus(engine: BrainEngine, args: string[]): Promise<void> {
+  const json = jsonRequested(args);
+  const sourceId = args[args.indexOf('--assign-corpus') + 1];
+  const sessionIdx = args.indexOf('--session');
+  const onlySession = sessionIdx >= 0 ? args[sessionIdx + 1] : undefined;
+  const { isValidSourceId } = await import('../core/source-id.ts');
+  const rows = isValidSourceId(sourceId)
+    ? await engine.executeRaw<{ archived: boolean }>('SELECT archived FROM sources WHERE id = $1', [sourceId])
+    : [];
+  if (!rows.length || rows[0].archived) {
+    setCliExitVerdict(writeCliRefusal(opError('invalid_source',
+      `gbrain sweep --assign-corpus: ${JSON.stringify(sourceId ?? '')} is not an active source of this brain`,
+      'Ask the user which source the held session files belong to; `gbrain sources list` shows the active sources.',
+      { why: 'Held session files are mapped only to a source that exists and is not archived.',
+        fix: { argv: ['gbrain', 'sources', 'list'], consent: [], actor: 'agent', requires_exclusive: false,
+          why: 'Lists the active sources to choose from.', verify: { argv: ['gbrain', 'doctor', '--only', 'memory_writeback', '--json'] } } }),
+      'sweep', { json }));
+    return;
+  }
+  let dir = await engine.getConfig('dream.synthesize.session_corpus_dir');
+  if (!dir) {
+    const { configDir } = await import('../core/config.ts');
+    const { join } = await import('node:path');
+    dir = join(configDir(), 'transcripts', 'corpus');
+  }
+  const { assignCorpusSessions, listCorpusSourceHolds } = await import('../core/context/corpus-source.ts');
+  const sources = await engine.executeRaw<{ id: string }>('SELECT id FROM sources ORDER BY id LIMIT 2');
+  const holds = listCorpusSourceHolds(dir, sources.length === 1);
+  const sessions = holds.sessions.filter(s => onlySession === undefined || s === onlySession);
+  const apply = args.includes('--apply');
+  const assigned = apply ? assignCorpusSessions(dir, sessions, sourceId) : [];
+  const out = { source: sourceId, applied: apply, held_sessions: sessions, assigned_sessions: assigned };
+  if (json) {
+    console.log(JSON.stringify(out, null, 2));
+  } else if (!apply) {
+    console.log(`${sessions.length} held session(s) would be mapped to source ${sourceId}:`);
+    for (const s of sessions) console.log(`  ${s}`);
+    if (sessions.length) console.log(`Apply: gbrain sweep --assign-corpus ${sourceId}${onlySession ? ` --session ${onlySession}` : ''} --apply`);
+  } else {
+    console.log(`Mapped ${assigned.length} held session(s) to source ${sourceId}; the next sweep extracts them (gbrain sweep --once).`);
   }
 }

@@ -437,7 +437,7 @@ describe('bootstrap hook under a live serve (serial e2e) [A7]', () => {
     expect(hb.outcome).toBe('ok'); // IPC round trip reached the serve
     expect(hb.segment).toBe('segment_banked');
     // Durability artifacts on disk, content-addressed, since-boundary only.
-    const corpusDir = join(tmpParent, '.gbrain', 'transcripts', 'corpus');
+    const corpusDir = join(tmpParent, '.gbrain', 'transcripts', 'corpus', 'sourced'); // #6268: the spool
     const segs = readdirSync(corpusDir).filter((f) => f.startsWith('e2e-seg-sess.seg-') && f.endsWith('.txt'));
     expect(segs).toHaveLength(1);
     const body = readFileSync(join(corpusDir, segs[0]), 'utf8');

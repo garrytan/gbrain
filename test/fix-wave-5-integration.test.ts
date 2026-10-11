@@ -195,7 +195,7 @@ for (const backend of testBackends()) {
         const untouched = async () => { expect(await liveAtoms()).toBe(30); expect(await activeFacts()).toBe(0); };
         const previews = { 'google-file-modes': 'gbrain repair google-file-modes', 'stale-atoms': 'gbrain repair stale-atoms', 'extractor-facts': 'gbrain repair extractor-facts',
           'conversation-labels': 'gbrain repair conversation-labels', 'captured-facts': 'gbrain repair captured-facts', 'loop-facts': 'gbrain repair loop-facts', 'ontology-facts': 'gbrain repair ontology-facts', 'orphan-children': 'gbrain repair orphan-children', 'failed-writes': 'gbrain repair failed-writes',
-          frontmatter: 'gbrain repair frontmatter', 'timeline-comments': 'gbrain repair timeline-comments' };
+          frontmatter: 'gbrain repair frontmatter', 'timeline-comments': 'gbrain repair timeline-comments', 'managed-sync-orphans': 'gbrain repair managed-sync-orphans' };
 
         // The post-upgrade banner names both findings with the kind's read-only preview.
         const banner = await postUpgradeRecoveryBanner(engine, 'host');
@@ -275,11 +275,13 @@ for (const backend of testBackends()) {
           }
 
           // Session capture: session-end wrote A's transcript to the corpus, and the sweep ingests it.
-          const corpus = join(hookHome, '.gbrain', 'transcripts', 'corpus');
+          // #6268: session files land in the corpus spool, the session's source stamped in the name.
+          const corpusRoot = join(hookHome, '.gbrain', 'transcripts', 'corpus');
+          const corpus = join(corpusRoot, 'sourced');
           const files = readdirSync(corpus).filter(name => name.endsWith('.txt'));
           expect(files.some(name => name.startsWith('sess-a'))).toBe(true);
           for (const name of files) for (const secret of secrets) expect(readFileSync(join(corpus, name), 'utf8')).not.toContain(secret);
-          await engine.setConfig('dream.synthesize.session_corpus_dir', corpus);
+          await engine.setConfig('dream.synthesize.session_corpus_dir', corpusRoot);
           const prompts: string[] = [];
           __setChatTransportForTests(async (req: unknown): Promise<ChatResult> => {
             const prompt = JSON.stringify(req);

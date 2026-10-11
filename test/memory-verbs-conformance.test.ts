@@ -690,6 +690,9 @@ describe('writeSingleFact — supersession rule [X1] + degraded dedup', () => {
 
   it('near-duplicate with changed text and same kind SUPERSEDES; identical text is a duplicate', async () => {
     installDeterministicEmbedder();
+    // #5504: an entity the resolver can only slugify is stored with entity_slug NULL, and a NULL-entity fact dedups
+    // by exact fingerprint only (candidate lookup is entity-keyed), so the supersession rule needs a live entity page.
+    await seedEntityPage('people/supersede-test', 'Supersede Test');
     const a = await writeSingleFact(engine, 'default', {
       fact: 'SUPERSEDE-PAIR alice works at acme-example',
       provenance: 'test', entity: 'people/supersede-test', kind: 'fact',

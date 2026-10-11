@@ -149,7 +149,10 @@ clients with an explicit `rescope-client --surface full` before flipping it.
 `warn` (default) accepts the call, surfaces `_meta.warnings` + a
 model-visible notice block, and logs the success as
 `status='success_with_warnings'`; `reject` returns `invalid_params` with
-did-you-mean suggestions.
+did-you-mean suggestions. The mode governs reads only: a write
+(`mutating: true`, such as `add_timeline_entry`, `put_page`, `remember`)
+rejects an unknown parameter in every mode, because the warn grace period
+would commit the row with the misnamed field dropped.
 
 **Flip criterion (evidence-based):** near-zero
 `success_with_warnings` rows over 30 days of production traffic —

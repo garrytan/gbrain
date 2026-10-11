@@ -57,6 +57,202 @@ Eleven reports from large brains, managed checkouts and the schema tooling. Each
 
 Contributed by @andreineacsu (#5517 diagnosis of #5491).
 
+## [0.60.163.0] - 2026-10-11
+
+**A managed brain's Git durability is now a recorded owner setting, and the managed-worktree refusals name the command to run instead of a dead end.**
+
+On a managed brain the persistence owner commits and pushes page writes through its Git effect, but until now that depended on a post-commit hook the owner probed for on every pass, and nothing told an operator how to turn it on (#5182). `gbrain sources writer git-durability <source> --enable|--disable [--pat-file <path>]` records the setting on the host binding (migration v234 adds the nullable `git_durability` column; nothing recorded keeps today's probe), `--enable` runs a read-only push probe first and re-queues the Git effects skipped while it was off, and `--pat-file` wires the repo-scoped push credential and retries the parked pushes. `sources push`, `bootstrap verify`'s `push_probe` and the skill-pack writer guard now name that route on a managed worktree instead of a bare `writer_coordinator_required` (#5606). Doctor's new `foreign_ownership_marker` names the stale ownership stamp that blocks a claim (#5808), `writer activate` on an already-managed brain answers `already_enabled` with the owner process to check (#5514), `gbrain repair managed-sync-orphans` retires sync bookkeeping nothing current can resume (#5459), transcript re-ingest deletes a stale part through the coordinator instead of refusing (#5235), `gbrain sources set-strategy <id> <strategy>` persists a code source's sync strategy and refuses under an unfinished managed run (contributed by @rokas-tarasevicius, supersedes #5955), and `bootstrap status` tells a project-scoped Codex MCP connection you manage yourself apart from "nothing wired" (#4082).
+
+### To take advantage of this release
+
+`gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor`
+warns about a partial migration:
+
+```bash
+gbrain apply-migrations --yes --no-autopilot-install   # v234: persistence_host_bindings.git_durability
+gbrain doctor --json | grep -E 'schema_version|foreign_ownership_marker|sync_failures'
+```
+
+On a managed brain, `gbrain sources writer status <source> --json` now reports `git_durability` (`on`, `off` or `unknown`); `gbrain sources writer git-durability <source> --enable --dry-run` previews the switch.
+
+### Itemized changes
+
+- **Git durability as an owner setting (#5182, [R7i]/[R7ii]).** `persistence_host_bindings.git_durability` (`enabled` | `disabled` | NULL) via migration v234 on PGLite, Postgres and PgBouncer transaction mode; `gitDurabilityPolicy` resolves `enabled`/`disabled` from the binding and consults the legacy hook probe only when nothing is recorded (fail-closed on probe error). The effect worker's per-root probe routes through it. New verb `writer git-durability` (`writer_git_durability` admin operation; `--enable`, `--disable`, `--pat-file`, `--dry-run`, the usual `--admin-intent`/`--expected-state`) with error codes `git_branch_unborn`, `git_checkout_required`, `git_detached_head`, `pat_file_unreadable`. `writer activate` and `writer status` list `git_durability` per binding. Catch-up re-queues `durability_not_enabled` Git effects without inserting under `UNIQUE(request_id, kind)`.
+- **Managed-worktree refusals name the route (#5606).** `gbrain sources push` on a managed canonical worktree refuses with the owner's `writer status` and `writer git-durability` commands; `bootstrap verify`'s `push_probe` reports the managed route instead of a failure; the skill-pack writer guard and doctor's skill checks point at `gbrain call --source <source> import_skill_proposal`.
+- **Doctor `foreign_ownership_marker` (#5808).** A stamp or reservation beside a source checkout whose brain or worktree this brain does not know is listed with its path and the operator step (`docs/guides/write-refusals.md#foreign-ownership-marker`).
+- **`writer activate` already managed (#5514).** Reason `already_enabled` with a `next_action` naming the owner process to check, instead of a generic refusal.
+- **`gbrain repair managed-sync-orphans --source <id>` (#5459).** Explicit-only, preview-bound: retires failure rows with no cursor, cursors recorded by a principal that is no longer an active local writer, and superseded pre-options cursors; live pending requests and resumable cursors are kept. Doctor `sync_failures` names it; `docs/guides/repair.md#managed-sync-orphans` and the sync-unblock runbook explain when.
+- **Transcripts on a managed brain (#5235).** A stale transcript part is deleted through the coordinator (`delete_page` with the expected revision) instead of refusing the re-ingest.
+- **`gbrain sources set-strategy <id> <markdown|code|auto>` (PR #5955).** Persists the sync strategy on the source; refuses `sync_run_unfinished` (exit 1) while a managed sync run is unfinished, naming the resume and the orphan-repair commands. Contributed by @rokas-tarasevicius.
+- **`bootstrap status` and Codex project config (#4082).** A `<workspace>/.codex/config.toml` MCP server is reported `partial` (detected, not verified) with an adopt hint; `gbrain bootstrap hooks --adopt --harness codex` records it after a passing verify in the versioned `<home>/bootstrap/adopted-connections.json` sidecar (sha256 over transport, URL and header names; no tokens) and the phase reads `done`; a drifted or removed table reads `partial` again. Nothing is written to the Codex config and no receipt registration is fabricated.
+
+### For contributors
+
+- New modules: `src/core/persistence/git-durability-policy.ts`, `git-durability-administration.ts`, `managed-sync-orphans.ts` (+ `src/core/repair/managed-sync-orphans.ts`), `src/commands/sources-strategy.ts`, `src/core/bootstrap/adopted-connections.ts`, `adopt-connection.ts`, `src/core/schema-migrations/v234-persistence-git-durability.ts`.
+- Tests (each proven failing on master first): `test/persistence-admin-git-durability.test.ts`, `test/doctor-foreign-ownership-marker.test.ts`, `test/persistence-activation.test.ts`, `test/repair-managed-sync-orphans.test.ts`, `test/transcripts-managed-ingest.test.ts`, `test/managed-push-remedy.serial.test.ts`, `test/doctor-skill-checks.test.ts`, `test/sources-strategy.test.ts`, `test/bootstrap-adopted-connection.serial.test.ts`. Doctor goldens regenerated (new check row; schema column count +1).
+- Two hunks on wave 13 PR1's files (`effect-git.ts` resolver call, `hardenBrainRepo` managed refusal) ship as patches with the integrator, not in this PR.
+
+## [0.60.162.0] - 2026-10-11
+
+**Dream stops merging facts that only look alike, writes refuse a typo instead of ignoring it, and a dozen smaller wrong answers are fixed.**
+
+Twenty-one issues and three contributor PRs, mostly about the brain quietly doing the wrong thing. Two facts that said "Invoice A is due Monday" and "Invoice B is due Tuesday" could be merged into one take because their embeddings were close; now a difference in a number, date, amount or negation keeps them apart. A `put_page` or `remember` that misspelled a parameter name was accepted with the typo silently dropped; now every write refuses an unknown parameter and names it. A `remember` of a fact you already stored word for word inserted a second copy on brains without an embedding key; now it returns the existing fact. A fence row that quoted a fence marker became a live marker and the row vanished; the marker is now encoded inside the cell. Health counters follow your schema pack instead of a hardcoded person/company list, `recall` hits say which source they came from, cross-source links your source policy approved are written by every writer, and a question like "what happened in September 2026" bounds `think` to that month on its own.
+
+### How to use it
+
+- `gbrain dream --phase consolidate --dry-run` now lists the clusters it would write under `details.clusters` before you commit to them.
+- `gbrain config set chronicle.max_events_per_page 40` caps how many chronicle events one page may contribute (default 25).
+- `gbrain config set dream.attribution_checks true` turns on two optional checks that stop an assistant's proposal from being recorded as the user's decision. Off by default; nothing changes until you opt in.
+- `gbrain search modes` suggests EmbeddingGemma's query prompt (`task: search result | query: `) when that model is the embedder.
+- `think` with no `since`/`until` reads the one explicit date the question names (`2026-09-15`, `2026-09`, `September 2026`); the result says `window_source: 'question'`. Caller bounds still win.
+
+### What you'd see
+
+| Before | After |
+|---|---|
+| Two untyped event facts with a 0.86 cosine merged into one take and the older one expired | They stay two facts; untyped facts need the 0.95 explicit-duplicate bar and must not differ in a number, date, amount or negation |
+| `put_page` with `expectedRevision` (typo) committed and ignored the field | `invalid_params` naming the unknown parameter, in every `strict_params` mode |
+| `put_page` on an existing page with no `expected_revision` → `revision_conflict` | `revision_required`, with `get_page` as the fix; a genuine stale revision is still `revision_conflict` |
+| `get_health.entity_page_count` 0 on a brain whose pack declares `yc` or `civic` entity pages | Counts the types the active pack declares, per source; a pack that does not load reports `entity_types_status: pack_unavailable` |
+| A provider 403 "project does not have access to model X" classified `auth` | `model_not_found`, with the model fix |
+
+### Itemized changes
+
+- **Consolidate no longer merges unrelated event facts** (#6023). Untyped facts (no metric claim) cluster only at `max(cycle.consolidate.cluster_threshold, 0.95)` and never when `claimsDiverge` finds a negation, number, date or amount that differs; typed metric facts keep the configured threshold because a metric series is expected to change value. `--dry-run` returns up to 50 clusters in `details.clusters`; private fact text appears only for the local CLI, other callers see ids and visibility. *Things to watch:* fewer takes from untyped event facts; facts an earlier run merged keep the `valid_until` it stamped (`remember … replaces` records a correction).
+- **Write operations reject unknown parameters** (#5970). Every mutating tool (`put_page`, `remember`, `add_timeline_entry`, …) refuses a parameter it does not declare with `invalid_params` and `suggestion: 'Unknown parameter "<name>".'`, before admission and in every `strict_params` mode. Read tools keep the mode's behavior. The merging page writes (`add_tag`, `remove_tag`, `add_timeline_entry`, `takes_*`) now declare the `expected_revision` and `force` they always honored (full tool surface; the starter schema is unchanged), so a caller that sent them keeps working.
+- **`writeSingleFact` dedups exact repeats and never mints a fallback entity** (#5152, #5504 part (a), #5275). An exact repeat for the same entity, or with no resolved entity, returns the existing fact (`status: duplicate`) with or without an embedding; a remote or unattributed caller never dedups against a private-sourced fact. An unmanaged write whose entity fell back to slugification stores `entity_slug` NULL instead of a placeholder slug, so the stub guard has nothing to refuse. The legacy backstop's exact check also covers facts with no resolved entity.
+- **Fence markers written into a cell are encoded, never live** (#5395). A claim quoting a fence marker round-trips as text; the row is no longer lost.
+- **Dream `synthesize_concepts` writes one page per concept, however the label is spelled** (#5965). Stems that differ only by hyphens, underscores and dots fold onto one page per run: the spelling with a live `concepts/` page wins, otherwise the one most atoms use (ties go to the hyphenated form); the others redirect for that run. Two spellings that both already have live pages are left apart. *Things to watch:* existing duplicate pages are not merged for you; `details.folded_spellings` names each fold.
+- **Mechanical attribution checks, off by default** (#5425). `dream.attribution_checks true` makes `propose_takes` store a proposal as held by `brain` when its numbers, dates and quotes appear only in assistant turns and no user turn states or accepts them, and quarantines a synthesis sentence a later user turn takes back on the same number or date (`superseded_in_source` in `unverified_claims`). Off, output is byte-identical.
+- **Chronicle caps events per page** (#5329). `chronicle.max_events_per_page` (default 25, 1..1000) keeps the first N survivors in judge order after the date rules; dropped proposals are counted as `over_cap`.
+- **Cross-source links the source policy approved are written by every writer** (#4680). A link whose target resolves into another source under `link_resolution.cross_source`, or a `[[source:slug]]` reference from a federated source, is written by `put_page`, `capture`, the managed stale pass and the reconciliation sweep, not only by `extract links`. The write receipt reports drops as `auto_links.skipped_cross_source`; a reader granted one source still never sees the other source's endpoint, and the entity card confines an untrusted caller's outgoing edges to its own source. *Things to watch:* pages that cite another source gain the edges you opted into on their next write or stale pass; the sweep reports an unqualified target that exists only elsewhere as `cross_source` rather than `missing_target`.
+- **`links.resolution_type` is written** (#4381): `qualified` for a `[[source:slug]]` reference, `unqualified` otherwise; edges no reference derived keep NULL. Existing rows are not backfilled.
+- **Entity counters follow the active schema pack** (#4772). `get_health` / `gbrain health` (`entity_page_count`, `link_coverage`, `timeline_coverage`, `most_connected`) and doctor's `graph_coverage` / `orphan_ratio` count the page types the pack declares with `primitive: entity`, resolved per source when sources carry their own pack (`schema_pack.source.<id>`). A pack that does not load reports `entity_types_status: pack_unavailable` (0 entities, `null` ratios, a `graph_coverage` warn naming the pack). Helper shape by @Matthieusabourin2. *Things to watch:* on gbrain-base brains `yc`, `civic` and `organization` pages now count, so coverage ratios move and a `graph_coverage` warn can appear where those pages are unlinked; `gbrain schema active` repairs a broken pack.
+- **`code-callers` lists callers inside top-level `describe`/`it` blocks and other module-level statements** (#5001). A top-level statement containing a call in a JS/TS/TSX/Python/Ruby file is chunked as `module` / `__module__` (`<file-basename>::__module__`), so its calls get edges; both edge writers share `mapCodeEdges`. *Things to watch:* the next `gbrain sync` re-chunks and re-embeds those files once (priced as `grammar_drift`; `CHUNKER_VERSION` stays 8). Attribution follows @nikolai-vysotskyi's suggestion.
+- **A 403 model-access denial classifies `model_not_found`, not `auth`** (#5394). The model-not-found phrases are tested before the status map; a plain 401/403 stays `auth`.
+- **A write naming no `expected_revision` for an existing page is `revision_required`** (#5385), with `get_page` as the fix; a wrong revision stays `revision_conflict`; `force` and `revision_backfill_pending` are unchanged. `remember` and `add_tag` on an existing page still converge through the semantic retry.
+- **`propose_takes` skips atoms and every dream-written page** (#5211). New atoms carry `dream_generated: true` next to `extracted_by`, so facts extraction, the chronicle and transcript discovery skip them like other derived pages; `listCandidatePages` also drops legacy `type: atom` pages that carry neither stamp. The source page an atom was extracted from is still a candidate.
+- **Every `recall` hit names its `source_id`** (#4830), falling back to the scope's single source; a federated read with no row source leaves it absent rather than guessing.
+- **`think` bounds its evidence to the one explicit date a question names** when the caller passes no window (PR #5086). ISO day, ISO month or English month + year; a bare year, two distinct dates, an invalid date or a relative phrase leaves the window open. `window_source` and a `WINDOW_FROM_QUESTION` warning say when it applied. Contributed by @tarush1989. Supersedes #5086.
+- **Matryoshka models that answer at their native width are fitted to the brain's width** (PR #5921). A recipe that declares `matryoshka: { native, prefixes }` for a model (NVIDIA's Nemotron-3-Embed-8B at 4096 with 1024/2048) has its native-width response sliced and L2-normalized before the dimension check; every other vector is untouched. Contributed by @abudhi19. Supersedes #5921.
+- **Doctor suggests EmbeddingGemma's query task prompt** (PR #6062): `task: search result | query: ` for `embeddinggemma` models in `gbrain search modes`. The document-side formatting stays open (#3783, #5215). Contributed by @xorets. Supersedes #6062.
+
+### For contributors
+
+- Pinned tests that changed with the contracts above: `test/legacy-fact-extraction-dedup.test.ts` and `test/facts-drain-scheduler.test.ts` (#5275: an exact unparented repeat from a second page is a duplicate), `test/write-attribution-facts-takes.test.ts` (#5504 seeds the entity page), `test/denied-after-list.test.ts` (#5970 sends only declared params), `test/managed-phase-matrix.test.ts` (#6023 fixture), `test/cycle-consolidate*.test.ts`, `test/e2e/cycle-consolidate-postgres.test.ts`, `test/managed-maintenance.test.ts`, `test/trust-taint-dream.test.ts`, `test/write-attribution-cycle.test.ts` (#6023 thresholds); `test/facts-fallback-stub-guard.test.ts`, `test/fence-write.test.ts`, `test/memory-verbs-conformance.test.ts` (#5504 NULL entity, #5152 dedup); `test/persistence-reconcile.test.ts` (#5970 refuses before admission); `test/link-preparation-shared-index.test.ts` (#4680 writes the approved edge); `test/capture-op.test.ts`, `test/persistence-revision-conflict-message.test.ts` (#5385 code); `test/evidence-delivery.test.ts` key list (#4830). Each flip carries a comment citing its issue.
+- Goldens regenerated for the contract changes above: `test/fixtures/goldens/cli/tools-json.json`, `exports/types.json`, `sql-text/links.json`, `evidence-delivery/off-path.json` (recall hits gain `source_id`) and the agent-contract journey `recall-degraded.json`.
+- New Postgres arms: `test/e2e/consolidate-divergence-postgres.test.ts`, `test/e2e/write-single-dedup-postgres.test.ts`, `test/e2e/chronicle-max-events-5329-postgres.test.ts`.
+- `docs/architecture/key-files/core-ai.md` split: providers, recipes and the Voyage width plumbing now live in `core-ai-continued.md`.
+
+## [0.60.161.0] - 2026-10-11
+
+**`embed --max-usd` is enforced, a fence write no longer wipes a database-only page, and write-gate overrides and Git child processes are hardened.**
+
+An approved `gbrain embed --max-usd` cap was never metered, so a run could spend past it; it is now enforced on every paid call, and `--yes` with no cost estimate runs under the default $5.00 cap. A facts fence write to a page with no file wrote a stub that overwrote the stored body (#6398); it is refused now. Which files can carry a write-gate override is hardened, and Git child processes now get a sanitized environment. Nothing needs doing after you upgrade; to let an embed run spend more than $5.00 without an estimate, pass `--max-usd <usd>`.
+
+### Itemized changes
+
+- `gbrain embed` meters an approved `--max-usd` while it spends, for text, `--slugs`, `--images` (multimodal and OCR) and `--background` runs. A run that reaches its cap keeps what it wrote, exits 11 with reason `cost_cap` and prints the shell-quoted resume command; rerun it with `--max-usd <usd>` to raise the cap. `--yes` with no cost estimate is now capped at the default $5.00. Consent counts a paid multimodal or OCR model when `--images` is set, and `--slugs` stops at the next flag.
+- A facts fence write to a database-only or soft-deleted page is refused with `db_only_page` instead of writing a stub over it (#6398). Doctor `stub_guard_24h` counts these separately and they do not raise its warning.
+- Hardened which files can carry a write-gate override; sync, import, file repairs and reconcile apply the same rule.
+- Git child processes now get a sanitized environment, checkout discovery is stricter, gbrain's hardened Git calls accept a narrower set of arguments, and `eval drift-watch` runs Git without a shell.
+- `pollCommand` output is shell-quoted and `LLMS_REPO_BASE` is normalized; the paid-consent skill lint says it is a documentation check, not enforcement.
+
+### For contributors
+
+- Flake fixes: the facts drain scheduler returns its tick promise (#6348); the capture-log weight fixture hand-shakes with its artifact (#6312); connector tests run on the production wait budget, with `withPausedOwnerBudget` where a test expects `writer_pending`.
+- Failure-only diagnostics, issues left open: the write-gate p95 check dumps every round's raw samples (#6430); the history fixture dumps effect, lock and request state (#6345); a shared source-row dump wraps managed connector recovery and every managed-extract-atoms scenario (#6427).
+- The shard-weight miner fetches unit capture artifacts and serial job logs per job; shard weights refreshed.
+- `bun run release:restamp` stamps a branch entry headed `## [Unreleased]` to the target version instead of throwing, and `--dry-run` runs the same CHANGELOG rebuild.
+- The doctor hot-check goldens normalize the UTC day buckets their fixture records at capture time, so they no longer fail after midnight UTC.
+- Takes test fixtures use placeholder holder names; assertions unchanged.
+- `test/git-env-guard.test.ts` fails on a new Git spawn that inherits `process.env` unfiltered.
+- New probes: `test/quarantine-override-tier.test.ts`, `test/quarantine-override-repair-reconcile.test.ts`, `test/fence-write-db-only.test.ts`, `test/doctor-stub-guard.test.ts`, `test/embed-max-usd-metered.serial.test.ts`, `test/embed-consent-multimodal.test.ts`, `test/gateway-ocr-reserve.test.ts`, `test/e2e/embed-background-cap.test.ts`, `test/persistence-effect-git-env.test.ts`, `test/drift-watch-args.test.ts`, `test/w13-small-hardening.test.ts`.
+
+## [0.60.160.0] - 2026-10-10
+
+**Keyword search finds words glued to Chinese, Japanese or Korean text, and you choose which source a self-registered agent writes to when you approve it.**
+
+A note titled `升级PostgreSQL17` used to be invisible to a keyword search for `PostgreSQL17`, because the index stored the whole glued run as one word. The index now splits wherever CJK text meets Latin letters or digits, and upgrading rebuilds only the pages and chunks that contain such a boundary. When an agent registers itself over OAuth and asks to connect, the approval page now has a "Write source" picker, so you decide which source it reads and writes before it gets a token. On a classic self-hosted Postgres brain, an agent whose page write is refused stops retrying and tells you the real fix: write the file, commit it and run `gbrain sync`. After you upgrade, run `gbrain reindex-search-vector` only if you changed `GBRAIN_FTS_LANGUAGE`; it now rebuilds page vectors too.
+
+### Itemized changes
+
+- **CJK/Latin boundaries in keyword search** (#6370). Every indexing `to_tsvector` and the title query read through a new `gbrain_fts_input()` that inserts a space at each CJK↔ASCII letter or digit boundary; text without CJK is unchanged byte for byte. The upgrade migration rebuilds only rows containing a boundary, in checkpointed batches.
+- **`gbrain reindex-search-vector` rebuilds page vectors** (#6374). Pages now get the same vector the write path builds, so a language change reaches titles and timelines, not only chunks. A page edited during the rebuild is skipped and reindexed by its own save, and facts you withdrew stay out of the index.
+- **Choose a self-registered client's source at first consent** (#6202). Clients that registered themselves through dynamic client registration show a "Write source" picker on their first approval, listing your active sources. Approving with or without a change counts as the client's one first consent; later changes go through the Agents page or `gbrain auth rescope --client`. Clients registered before this release keep read-only consent. A migration adds the `oauth_clients.registered_via` marker.
+- **Classic Postgres write refusals ask instead of retrying** (#6277). `owner_unavailable` with `detail: unbound_source` now renders `retryable: false` and `fix.next: ask_user`, and its guidance says write, commit, `gbrain sync --source <id>`. The guide in [write-refusals](docs/guides/write-refusals.md#unbound-sources-on-postgres) and six skills cover the classic path.
+- **One JSON document on stdout** (#6386): `gbrain sync status --json`, `gbrain sync unblock --json` and `gbrain embed --facts --json` write their JSON to stdout, not stderr.
+- **Bootstrap verify waits like a normal write** (#6356): `gbrain bootstrap verify` uses the CLI write wait instead of a fixed 5 seconds, and a write still pending names its next step.
+- **Local reranker setup** (#6381): the llama-server reranker guide points at the llama.cpp maintainers' model file, the recipe's default names the `qwen3-reranker-0.6b` alias the guide uses, and `gbrain models doctor` reports `config` when the server scores a relevant and an unrelated passage the same.
+- **Codex session hooks** (#6399): a Codex rollout that has only a header ends as `empty_session`, not `parser_drift`.
+- **Link validation** (#6266): the link validator resolves relative links from the page's own directory, the same way link extraction does.
+- **Search latency budget** (#6400): the query-embedding deadline starts at the first embed request, so time spent before it no longer eats the vector search's budget.
+
+### For contributors
+
+- CONTRIBUTING warns before the `git reset --hard` in the line-ending refresh.
+- Every pglite-snapshot cache key in `e2e.yml`, `test.yml` and `stress.yml` also hashes `src/core/audit/redact-connection-info.ts`, which the schema closure now imports.
+
+Contributed by @dovstern, @javieraldape, @daveove, @benswinney and @dhruvatr.
+
+## [0.60.159.0] - 2026-10-10
+
+**Captured memory stops leaking away: failed chats retry until they import, long messages stay whole, sessions file under their own source, and fence writers refuse instead of dropping rows.**
+
+Fix wave 13 PR3 closes 26 reported gaps in capture, the dream cycle, doctor, facts and config. Most of them silently lost or misfiled memory; each now either keeps it or says exactly what is held and how to release it.
+
+### Itemized changes
+
+- Chat connectors keep a conversation that failed until it imports (backoff, up to 10 retries per sync, fair `--limit` split, Claude org routing). The sync reports `partial` with `unresolved`, and doctor warns "archive incomplete". For archives synced before this fix, ask the user, then run `gbrain connectors sync <provider> --full` once.
+- Transcript pages keep every message whole. A message over 4,000 characters continues in the next block under the same speaker instead of being cut.
+- Captured session files record the source their session started under and are filed there. Older unstamped files are held until `gbrain sweep --assign-corpus <source>` (preview, then `--apply`), and a serve refuses to reroute a session to another source.
+- Fence writers no longer drop rows they can't read. A write that would re-render a facts or takes fence with a malformed row refuses with `invalid_fence` / `target_fence_malformed`; `forget` still expires the fact in the database. Facts fences are read by header name, so an unknown, repeated or missing column is held for the fence repair. `attributed_to` is a recognized column.
+- Managed atom extraction retries a failed page up to 3 times, then holds it (doctor `extract_atoms_held_failed` lists it with the paid retry command). `dream --drain` reports a `budget` stop with spend and cap instead of `no_progress`.
+- The dream cycle reads a schema pack set in database config when it gates extract_atoms and synthesize_concepts. A paid phase that only such a pack newly declares waits for `gbrain config set cycle.<phase>.enabled true` (`consent_required`).
+- Synthesis adopts an output that only local maintenance touched after the child committed. Any other later edit is a one-time per-page warning instead of a phase failure every cycle.
+- OpenClaw 2026.9.x compaction banks checkpoint segments again, and doctor warns when a week of compactions banked nothing.
+- Doctor: `--only` for an engine-reading check connects to the brain; `queue_health` and `global_maintenance_timeouts` attribute patterns deaths correctly; `type_proliferation` grades each source against its own pack.
+- Smaller fixes:
+  - claude-cli honors the call's output cap.
+  - Small strict-output calls run with thinking off.
+  - Batch `remember` refuses a non-UUID `request_id`.
+  - An empty repair preview's printed apply succeeds.
+  - Patterns records child timeouts and counts timeline appends.
+  - Relationship-contradiction judge errors back off, then hold (`gbrain edge-proposals retry`).
+  - `propose_takes` skips the dream cycle's own pages.
+  - Database `provider_chat_options` rows apply.
+  - CRAG think escalation stays within the query's sources.
+  - The Anthropic recipe lists `claude-haiku-5-5`.
+
+Contributed by @javieraldape, @mattverlaque, @spiky02plateau, @Masashi-Ono0611, @h6y3 and @andreineacsu.
+
+## [0.60.158.0] - 2026-10-10
+
+**`engine.transaction(fn, { signal })` and `engine.transactionDirect(fn, { signal })`: an `AbortSignal` that cancels a running Postgres transaction. No behavior changes for callers that pass no signal.**
+
+The publication deadline planned in #6288 / #6352 needs to end a specific publish transaction when its ceiling passes, so that its promise rejects and the caller's `finally` releases the request-row lock, page locks, worktree lock and capacity. Until now nothing could cancel one transaction's connection.
+
+### Itemized changes
+
+- **`TransactionOptions.signal`** (`src/core/engine.ts`, `src/core/postgres-engine.ts`, `src/core/postgres-engine/transaction-abort.ts`). On Postgres an abort discards the transaction's connection through the begin handle's `discard()` (the connection-ownership hunk from #5466 / #5560): the socket closes, the server rolls the transaction back on its own whether a statement is in flight or not, directly or through a transaction-mode pooler, and the pool reconnects on its next checkout. The transaction rejects with an `AbortError` whose `message` is the signal's reason and whose `cause` is the driver's `CONNECTION_CLOSED` error; every `finally` on the way out runs and the `tx` gauge is released. An already-aborted signal rejects before `BEGIN` is sent. An abort after `COMMIT` returned changes nothing. A nested transaction shares its parent's connection, so aborting it aborts the parent too.
+- **PGLite** (`src/core/pglite-engine.ts`): one in-process connection cannot interrupt a statement, so only the pre-`BEGIN` check applies; a mid-flight abort is ignored and the transaction commits.
+- Tests: `test/e2e/postgres-transaction-abort-postgres.test.ts` (5 cases: mid-flight abort on `transaction` and `transactionDirect` with `finally`, rollback checked again after the in-flight statement would have finished, pool and gauge freed; pre-aborted signal sends no `BEGIN`; abort after `COMMIT`; no signal), 3 of 5 fail on master (the option is ignored and the transaction commits); `test/transaction-abort.test.ts` (8 cases: the abort-before-and-after-attach paths, error mapping, listener removal, and PGLite's two behaviors).
+
+## [0.60.157.0] - 2026-10-10
+
+**A database-only `validate: false` stamp no longer refuses every write; lost memory writes are counted and replayable.**
+
+The v0.13.1 grandfather stamped `validate: false` into the database. On an unmanaged brain that migration never wrote the file (by design), so once the brain was managed every page with the stamp looked hand-edited and every coordinated write on it, `remember` included, was refused `source_changed` (#6429: 209k of 304k pages on one brain, 68 facts dropped silently). The stamp is now read as what it is, a mechanical database-side annotation, and the next write publishes it to the file. Nothing needs doing after you upgrade; to recover facts that were refused, run `gbrain repair failed-writes --source <id>` on the brain host and apply the set it prints after you agree.
+
+### Itemized changes
+
+- `prepareFileTarget` (`fileMatchesSnapshot`) treats a stored `validate: false` the way #5943 treats a pack-inferred `subtype`: a canonical file without a `validate:` key keeps the stored stamp instead of counting as an uncoordinated local edit. A file that records its own `validate:` decision is still compared as written. `put_page`, `remember`, maintenance pages, lint and `sources reconcile --audit` all route through it.
+- `gbrain repair failed-writes` also lists and replays caller writes (`remember`, `put_page`, `add_timeline_entry`) that ended `conflict` with `source_changed`, with the same dispositions. A replay refused `source_changed` is classified `file_database_drift` only while the file still differs from the database: a reconcile that rewrites only the file makes the write a candidate again (before, only a change to the page row did).
+- Doctor `lost_caller_writes` (ops) counts, per source, the caller writes whose receipt still holds an intent that never landed and names the `repair failed-writes` preview; a write whose replay or retry committed, or whose page was later deleted, is not counted.
+
+### For contributors
+
+- `test/ingestion/put-page-write-through.test.ts` (#6429 case) proves the stamp carry on PGLite (fails before the fix with `source_changed`); `test/repair-failed-writes-conflict-6429.test.ts` covers the conflict replay and the doctor check on PGLite and Postgres; `test/doctor-lost-caller-writes.test.ts` pins the registry wiring. Doctor goldens were regenerated for the new check.
 ## [0.60.156.0] - 2026-10-10
 
 **`gbrain setup claude-code` gives Claude Code memory in one command.** It finds or creates your brain, wires the MCP server and the read-context hooks, and checks that they answer. A second run changes nothing, and `--remove` takes out only what setup wrote.

@@ -39,8 +39,9 @@ import { resolveDefaultVisibility } from '../../../core/facts/visibility.ts';
 import { classifyBrainAudience } from '../../../core/facts/writeback-audience.ts';
 import { readVerbUsage } from '../../../core/verbs/usage-log.ts';
 import { readClientOpUsage } from '../../../core/mcp-usage.ts';
-import { readHeartbeatTail } from '../../../core/context/hook-heartbeat.ts';
-import { CORPUS_UNINGESTED_RETENTION_FACTOR, corpusBacklog } from '../../../core/context/corpus-segments.ts';
+import { OPENCLAW_COMPACT_EVENT, readHeartbeatTail } from '../../../core/context/hook-heartbeat.ts';
+import { CORPUS_UNINGESTED_RETENTION_FACTOR, corpusBacklog, corpusSpoolDir } from '../../../core/context/corpus-segments.ts';
+import { listCorpusSourceHolds } from '../../../core/context/corpus-source.ts';
 import { readHarnessReceiptState } from '../../../core/bootstrap/format.ts';
 import { mutedFirstRunDecisionsNotice } from '../../../core/onboard/mcp-onboarding.ts';
 import {
@@ -113,13 +114,59 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  * past plain retention it is on its way to deletion, so the check says so.
  * Records `details.corpus_backlog`; returns the warning text or null.
  */
-async function corpusBacklogProblem(engine: BrainEngine, fileCfg: ReturnType<typeof loadConfig>, details: Record<string, unknown>): Promise<string | null> {
+async function sessionCorpusDir(engine: BrainEngine, fileCfg: ReturnType<typeof loadConfig>): Promise<string> {
   const synth = fileCfg?.dream?.synthesize as Record<string, unknown> | undefined;
   const configured = (await engine.getConfig('dream.synthesize.session_corpus_dir').catch(() => null)) ?? synth?.session_corpus_dir;
-  const dir = typeof configured === 'string' && isAbsolute(configured) ? configured : join(resolveGbrainHome(), 'transcripts', 'corpus');
+  return typeof configured === 'string' && isAbsolute(configured) ? configured : join(resolveGbrainHome(), 'transcripts', 'corpus');
+}
+
+/**
+ * #6268: captured session files held because nothing proves their source
+ * (legacy top-level files on a multi-source brain, or sessions whose source
+ * never resolved). Only the operator can say where they belong, so the
+ * warning names the preview command. Records `details.corpus_source_holds`.
+ */
+async function corpusSourceHoldProblem(engine: BrainEngine, fileCfg: ReturnType<typeof loadConfig>, details: Record<string, unknown>): Promise<string | null> {
+  const sources = await engine.executeRaw<{ id: string }>('SELECT id FROM sources ORDER BY id LIMIT 2');
+  const holds = listCorpusSourceHolds(await sessionCorpusDir(engine, fileCfg), sources.length === 1);
+  details.corpus_source_holds = { legacy_unstamped: holds.legacy_unstamped, unresolved: holds.unresolved, sessions: holds.sessions.length };
+  const held = holds.legacy_unstamped + holds.unresolved;
+  if (held === 0) return null;
+  return `${held} captured session file(s) from ${holds.sessions.length} session(s) are held because nothing records which source they belong to `
+    + '(written before corpus files carried their source, or the session never resolved one); they are not extracted until mapped. '
+    + 'Ask the user which source they belong to, preview with gbrain sweep --assign-corpus <source>, then add --apply';
+}
+
+/**
+ * #6316: the OpenClaw context engine writes one heartbeat per compaction.
+ * Compactions in the window that never banked a segment mean the lane is
+ * silently dead (a host that passes neither a session file nor a target the
+ * engine can read). Records `details.openclaw_compactions_7d`.
+ */
+async function openclawCompactionProblem(details: Record<string, unknown>): Promise<string | null> {
+  const cutoff = Date.now() - COUNTER_WINDOW_DAYS * DAY_MS;
+  const runs = (await readHeartbeatTail(2000)).filter((e) => e.event === OPENCLAW_COMPACT_EVENT && Date.parse(e.ts) >= cutoff);
+  if (!runs.length) return null;
+  const skipped = runs.filter((e) => e.segment === 'skipped');
+  const reasons: Record<string, number> = {};
+  for (const e of skipped) reasons[e.reason ?? 'unknown'] = (reasons[e.reason ?? 'unknown'] ?? 0) + 1;
+  details.openclaw_compactions_7d = { total: runs.length, banked: runs.length - skipped.length, skipped: reasons };
+  const blind = (reasons.no_session ?? 0) + (reasons.transcript_runtime_unavailable ?? 0) + (reasons.transcript_read_failed ?? 0);
+  if (skipped.length < runs.length || blind === 0) return null;
+  const top = Object.entries(reasons).sort((a, b) => b[1] - a[1])[0]!;
+  return `OpenClaw ran ${runs.length} compaction(s) in ${COUNTER_WINDOW_DAYS}d and the gbrain checkpoint banked none (top skip: ${top[0]} x${top[1]}); `
+    + 'compaction-time facts are not being captured. Upgrade gbrain on the OpenClaw host and restart the gateway, then check again: gbrain doctor --json';
+}
+
+async function corpusBacklogProblem(engine: BrainEngine, fileCfg: ReturnType<typeof loadConfig>, details: Record<string, unknown>): Promise<string | null> {
+  const synth = fileCfg?.dream?.synthesize as Record<string, unknown> | undefined;
+  const dir = await sessionCorpusDir(engine, fileCfg);
   const days = typeof synth?.corpus_retention_days === 'number' && synth.corpus_retention_days > 0 ? synth.corpus_retention_days : 30;
   const now = Date.now();
-  const backlog = corpusBacklog(dir, days * DAY_MS, now);
+  const top = corpusBacklog(dir, days * DAY_MS, now);
+  const spool = corpusBacklog(corpusSpoolDir(dir), days * DAY_MS, now);
+  const oldest = [top.oldestPendingMtimeMs, spool.oldestPendingMtimeMs].filter((m): m is number => m !== null);
+  const backlog = { pending: top.pending + spool.pending, pastRetention: top.pastRetention + spool.pastRetention, oldestPendingMtimeMs: oldest.length ? Math.min(...oldest) : null };
   const oldestDays = backlog.oldestPendingMtimeMs === null ? null : Math.floor((now - backlog.oldestPendingMtimeMs) / DAY_MS);
   const purgeDays = days * CORPUS_UNINGESTED_RETENTION_FACTOR;
   details.corpus_backlog = { pending: backlog.pending, oldest_pending_days: oldestDays, past_retention: backlog.pastRetention, retention_days: days, deleted_after_days: purgeDays };
@@ -228,6 +275,11 @@ export async function buildMemoryWritebackCheck(engine: BrainEngine | null): Pro
       }
       if (privateRemoteProblem) offProblems.push(privateRemoteProblem);
       const explicitOff = wb.raw_mode === 'off';
+      // Unset (default) off still extracts SessionEnd and compaction files; explicit off retires them.
+      const offHoldProblem = explicitOff ? null : await corpusSourceHoldProblem(engine, fileCfg, details).catch(() => null);
+      if (offHoldProblem) offProblems.push(offHoldProblem);
+      const offCompactProblem = explicitOff ? null : await openclawCompactionProblem(details).catch(() => null);
+      if (offCompactProblem) offProblems.push(offCompactProblem);
       if (explicitOff) details.restart_after_off = WRITEBACK_RESTART_AFTER_OFF;
       return {
         name: MEMORY_WRITEBACK_CHECK_NAME,
@@ -244,6 +296,10 @@ export async function buildMemoryWritebackCheck(engine: BrainEngine | null): Pro
     const problems: string[] = [];
     const corpusProblem = await corpusBacklogProblem(engine, fileCfg, details).catch(() => null);
     if (corpusProblem) problems.push(corpusProblem);
+    const holdProblem = await corpusSourceHoldProblem(engine, fileCfg, details).catch(() => null);
+    if (holdProblem) problems.push(holdProblem);
+    const compactProblem = await openclawCompactionProblem(details).catch(() => null);
+    if (compactProblem) problems.push(compactProblem);
     if (!wb.ttl_valid) {
       problems.push(`memory.auto_writeback_transient_ttl is invalid — using '${wb.transient_ttl}'`);
     }

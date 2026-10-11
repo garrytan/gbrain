@@ -28,8 +28,10 @@
  */
 
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
+import { managedFilesystemRootFor } from '../persistence/filesystem-guard.ts';
 import { submitPageMutation } from '../persistence/page-mutations.ts';
 import { withCoordinatedWrite } from '../persistence/context.ts';
+import { pendingReceiptOf, pollCommand, resolveCliWriteWaitMs, WRITE_WAIT_ENV } from '../persistence/write-wait.ts';
 import { maintenanceAttribution } from '../persistence/attribution.ts';
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
@@ -67,6 +69,7 @@ import {
   startResolveIpcServer,
 } from '../context/resolve-ipc.ts';
 import { assembleTurnContext } from '../context/turn-context.ts';
+import { gitChildEnv } from '../git-env.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -134,16 +137,26 @@ function findOp(name: string): Operation {
   return op;
 }
 
-function localCtx(engine: BrainEngine, sourceId: string, log?: (l: string) => void): OperationContext {
+export function localCtx(engine: BrainEngine, sourceId: string, log?: (l: string) => void): OperationContext {
   const sink = log ?? (() => {});
+  const config = (loadConfigFileOnly() ?? { engine: 'pglite' }) as GBrainConfig;
   return {
     engine,
-    config: (loadConfigFileOnly() ?? { engine: 'pglite' }) as GBrainConfig,
+    config,
     logger: { info: sink, warn: sink, error: sink },
     dryRun: false,
     remote: false,
     sourceId,
+    writeWaitMs: resolveCliWriteWaitMs({ config }),
   };
+}
+
+/** The roundtrip detail for a failed probe write: an admitted, still-pending write names its request and the next step. */
+export function putPageFailureDetail(error: unknown, waitMs: number | undefined): string {
+  const receipt = pendingReceiptOf(error);
+  if (!receipt) return `put_page failed: ${(error as Error).message}`;
+  return `put_page was admitted but is still pending after ${Math.round((waitMs ?? 0) / 1000)}s (request ${receipt.request_id}); `
+    + `check it with \`${pollCommand(receipt.request_id)}\`, or raise ${WRITE_WAIT_ENV} and rerun gbrain bootstrap verify`;
 }
 
 // ---------------------------------------------------------------------------
@@ -327,6 +340,7 @@ export function checkWritebackContract(ws: string): VerifyCheck {
 function trackedWorkspaceFiles(ws: string): { files: string[]; via: 'git' | 'fallback' } {
   try {
     const out = execFileSync('git', ['-C', ws, 'ls-files', '--cached', '--others', '--exclude-standard', '-z'], {
+      env: gitChildEnv(),
       stdio: ['ignore', 'pipe', 'ignore'],
       timeout: 15_000,
       maxBuffer: 16 * 1024 * 1024,
@@ -406,6 +420,7 @@ function checkMcpJsonHygiene(ws: string): VerifyCheck {
     if (!existsSync(join(ws, '.mcp.json'))) return { id, ok: true, detail: 'no .mcp.json in the workspace' };
     try {
       execFileSync('git', ['-C', ws, 'ls-files', '--error-unmatch', '.mcp.json'], {
+        env: gitChildEnv(),
         stdio: 'ignore', timeout: 5_000,
       });
     } catch {
@@ -822,7 +837,7 @@ async function runRoundtrip(
       return { checks };
     }
   } catch (e) {
-    checks.push({ id: 'roundtrip', ok: false, detail: `put_page failed: ${(e as Error).message}` });
+    checks.push({ id: 'roundtrip', ok: false, detail: putPageFailureDetail(e, ctx.writeWaitMs) });
     return { checks };
   }
 
@@ -1023,13 +1038,24 @@ async function checkHooksSmoke(engine: BrainEngine, ws: string, sourceId: string
   }
 }
 
-function checkPushProbe(ws: string): VerifyCheck {
+export function checkPushProbe(ws: string): VerifyCheck {
   const id = 'push_probe';
   try {
     // Read through the shared per-root reader [D8/D13] — a v0.45.8+ push
     // writes push-status-<roothash>.json, not the legacy single file, so the
     // old direct read reported "no push recorded" on every fresh install.
     const entries = readPushStatuses();
+    const origin = gitOriginUrl(ws);
+    // #5606: where a push is expected (an origin or a recorded push), a managed
+    // canonical worktree is pushed by the persistence owner's Git effect;
+    // sources push is refused there, so never recommend it. A local-only
+    // managed workspace stays local-only below.
+    const managed = (entries.length > 0 || origin) ? managedFilesystemRootFor(ws) : null;
+    if (managed) {
+      const source = managed.sourceId ?? '<source>';
+      return { id, ok: true, detail: `managed canonical worktree${managed.sourceId ? ` (source ${managed.sourceId})` : ''} — page writes are committed and pushed by the persistence owner's Git effect, not by sources push; `
+        + `check \`gbrain sources writer status ${source} --json\` (git_durability) and enable with \`gbrain sources writer git-durability ${source} --enable --dry-run\` if it is off` };
+    }
     if (entries.length > 0) {
       const { failing } = summarizePushStatuses(entries);
       if (failing.length > 0) {
@@ -1040,7 +1066,6 @@ function checkPushProbe(ws: string): VerifyCheck {
       const ok = entries.find((e) => e.ok === true);
       return { id, ok: true, detail: `last workspace push succeeded (${ok?.ts ?? 'unknown time'})` };
     }
-    const origin = gitOriginUrl(ws);
     if (origin) return { id, ok: true, warn: true, detail: 'origin exists but no push recorded yet — run `gbrain sources push` once to prove the persistence path' };
     return { id, ok: true, detail: 'local-only mode — no push expected' };
   } catch (e) {

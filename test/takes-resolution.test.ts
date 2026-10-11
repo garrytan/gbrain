@@ -14,35 +14,35 @@ import { GBrainError } from '../src/core/types.ts';
 
 describe('deriveResolutionTuple', () => {
   test('quality=correct → (correct, true)', () => {
-    expect(deriveResolutionTuple({ quality: 'correct', resolvedBy: 'garry' })).toEqual({
+    expect(deriveResolutionTuple({ quality: 'correct', resolvedBy: 'dana' })).toEqual({
       quality: 'correct',
       outcome: true,
     });
   });
 
   test('quality=incorrect → (incorrect, false)', () => {
-    expect(deriveResolutionTuple({ quality: 'incorrect', resolvedBy: 'garry' })).toEqual({
+    expect(deriveResolutionTuple({ quality: 'incorrect', resolvedBy: 'dana' })).toEqual({
       quality: 'incorrect',
       outcome: false,
     });
   });
 
   test('quality=partial → (partial, null)', () => {
-    expect(deriveResolutionTuple({ quality: 'partial', resolvedBy: 'garry' })).toEqual({
+    expect(deriveResolutionTuple({ quality: 'partial', resolvedBy: 'dana' })).toEqual({
       quality: 'partial',
       outcome: null,
     });
   });
 
   test('outcome=true (back-compat alias) → (correct, true)', () => {
-    expect(deriveResolutionTuple({ outcome: true, resolvedBy: 'garry' })).toEqual({
+    expect(deriveResolutionTuple({ outcome: true, resolvedBy: 'dana' })).toEqual({
       quality: 'correct',
       outcome: true,
     });
   });
 
   test('outcome=false (back-compat alias) → (incorrect, false)', () => {
-    expect(deriveResolutionTuple({ outcome: false, resolvedBy: 'garry' })).toEqual({
+    expect(deriveResolutionTuple({ outcome: false, resolvedBy: 'dana' })).toEqual({
       quality: 'incorrect',
       outcome: false,
     });
@@ -50,7 +50,7 @@ describe('deriveResolutionTuple', () => {
 
   test('quality wins when both inputs supplied AND consistent', () => {
     // outcome=true is consistent with quality=correct; quality wins.
-    expect(deriveResolutionTuple({ quality: 'correct', outcome: true, resolvedBy: 'garry' })).toEqual({
+    expect(deriveResolutionTuple({ quality: 'correct', outcome: true, resolvedBy: 'dana' })).toEqual({
       quality: 'correct',
       outcome: true,
     });
@@ -58,22 +58,22 @@ describe('deriveResolutionTuple', () => {
 
   test('contradictory quality + outcome throws TAKE_RESOLUTION_INVALID', () => {
     expect(() =>
-      deriveResolutionTuple({ quality: 'correct', outcome: false, resolvedBy: 'garry' })
+      deriveResolutionTuple({ quality: 'correct', outcome: false, resolvedBy: 'dana' })
     ).toThrow(GBrainError);
     expect(() =>
-      deriveResolutionTuple({ quality: 'partial', outcome: true, resolvedBy: 'garry' })
+      deriveResolutionTuple({ quality: 'partial', outcome: true, resolvedBy: 'dana' })
     ).toThrow(GBrainError);
   });
 
   test('neither field set throws TAKE_RESOLUTION_INVALID', () => {
     expect(() =>
-      deriveResolutionTuple({ resolvedBy: 'garry' })
+      deriveResolutionTuple({ resolvedBy: 'dana' })
     ).toThrow(GBrainError);
   });
 
   // v0.36.1.1 R1-class: 'unresolvable' joins partial as null-outcome.
   test('R1: quality=unresolvable → (unresolvable, null)', () => {
-    expect(deriveResolutionTuple({ quality: 'unresolvable', resolvedBy: 'garry' })).toEqual({
+    expect(deriveResolutionTuple({ quality: 'unresolvable', resolvedBy: 'dana' })).toEqual({
       quality: 'unresolvable',
       outcome: null,
     });
@@ -84,10 +84,10 @@ describe('deriveResolutionTuple', () => {
     // before the schema CHECK fires. unresolvable requires null outcome —
     // same shape as partial.
     expect(() =>
-      deriveResolutionTuple({ quality: 'unresolvable', outcome: true, resolvedBy: 'garry' })
+      deriveResolutionTuple({ quality: 'unresolvable', outcome: true, resolvedBy: 'dana' })
     ).toThrow(GBrainError);
     expect(() =>
-      deriveResolutionTuple({ quality: 'unresolvable', outcome: false, resolvedBy: 'garry' })
+      deriveResolutionTuple({ quality: 'unresolvable', outcome: false, resolvedBy: 'dana' })
     ).toThrow(GBrainError);
   });
 });

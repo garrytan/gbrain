@@ -54,7 +54,7 @@ of making a duplicate.
 | <a id="connector-holds-exhausted"></a>`connector_holds_exhausted` | `connector_holds_exhausted` | A Google or GitHub source already holds 100 items and this sync would hold another. The sync stopped without advancing its cursor. So many held items usually means a source-wide problem (a broken renderer, a revoked scope), not bad items. | `gbrain sources status <source>` to see the held items and their error codes, fix the cause, then `gbrain sources retry-held <source>` and `gbrain sync --source <source>`. `gbrain sync --source <source> --full` also clears every hold. |
 | <a id="connector-fence-below-timeline"></a>`fence_not_carried` | `connector_fence_below_timeline` | A managed connector re-render would have dropped a facts or takes fence the stored page keeps below its timeline sentinel, or one that is duplicated, unbalanced or unparseable. The write was refused so those rows are not expired; the item is counted toward a hold. | Preview `gbrain repair connector-fences --source <source>`, apply it after review with `--apply`, then `gbrain sources retry-held <source>`. A page the repair counts as ambiguous needs a manual edit (see [repair](repair.md)). |
 | <a id="unsupported-mutation-protocol"></a>`consumer_upgrade_required` | `unsupported_mutation_protocol` | A connector on v0.60.11.0 or later sent a `connector_v2_*` write to a persistence consumer older than v0.60.11.0, which does not know the format. Other `permission_denied` refusals on connector receipts are never relabeled as upgrades. | `gbrain upgrade` on every consumer and worktree-owner host, then `gbrain sync --source <source>`. Upgrade those hosts before connector hosts. |
-| `unbound_source` | `owner_unavailable` | On Postgres, a page write went to a source that has a checkout path but no canonical owner. It is refused by default because another host may own the files. The same reason appears when the source was bound, or the page gained a canonical file, after a database-only write was accepted, and (as a `source_changed` sync failure) when a canonical file appears at the path of a page written while the source was unbound. | Bind the source (`gbrain sources writer status <source> --json`, then `gbrain sources writer claim <source> --path <checkout> --admin-intent writer_claim --expected-state <admin_state>`), or opt in with `gbrain config set persistence.unbound_write database_only`. See [unbound sources on Postgres](#unbound-sources-on-postgres). |
+| `unbound_source` | `owner_unavailable` | On Postgres, a page write went to a source that has a checkout path but no canonical owner. It is refused by default because another host may own the files. The same reason appears when the source was bound, or the page gained a canonical file, after a database-only write was accepted, and (as a `source_changed` sync failure) when a canonical file appears at the path of a page written while the source was unbound. | Classic mode: write the file, commit, `gbrain sync --source <source>` (a remote agent asks the user to). Otherwise bind the source (`gbrain sources writer status <source> --json`, then `gbrain sources writer claim <source> --path <checkout> --admin-intent writer_claim --expected-state <admin_state>`), or opt in with `gbrain config set persistence.unbound_write database_only`. Not retryable. See [unbound sources on Postgres](#unbound-sources-on-postgres). |
 | <a id="embedding_zero_norm"></a>`zero_norm`, `non_finite` or `empty_input` | `embedding_zero_norm` | The embedding provider returned a vector with no direction (all zeros, NaN or infinity) for a chunk, or the chunk text was empty. A vector index silently skips such a row, so gbrain refuses to store it. Only that chunk is refused: the page text and every other chunk's vector are saved, and the page is left for `gbrain embed --stale`. It is never retried as a rate limit or network error. | Inspect the named page's chunk text (empty, whitespace- or symbol-only chunks are the usual cause) or the embedding provider, fix it, then run `gbrain embed <slug>` (add `--source <source>` for a non-default source). If normal text also returns zero vectors, the provider or model is broken; check it with `gbrain doctor`. |
 | `targets_parked` (doctor: `parked_effects`) | effect `error_code` | A Git backup or withdrawal target failed five times in a row and was set aside so the other pages keep committing. An effect `error_code` of `git_index_stale` means an index lock older than 10 minutes blocks the checkout: `.git/index.lock` in it (`git -C <checkout> rev-parse --git-path index.lock` for a linked worktree). Remove it only if no git command is running there, then run the `retry-effects` command. A fresher lock (`git_index_locked`) is retried as contention and never parks. The page write itself committed; its Git backup or withdrawal is incomplete. Contention, dependency waits, shutdown and transient database errors never count toward the five. | `gbrain sources writer status <source>`, fix the cause it names, preview with `gbrain sources writer retry-effects <source> --request-id <id> --dry-run`, then run it without `--dry-run`. Each run grants one more attempt per parked target; a target that fails again parks again. |
 | <a id="writer_admin_locked"></a>`writer_admin_locked` | `writer_admin_locked` | The operator set the brain's writer admin lock (`gbrain sources writer lock`), so writer claim, activate, transfer prepare and transfer accept refuse for every caller. Ordinary writes are not affected. | Agents: stop and ask the operator; do not unlock it yourself. The operator runs, on the brain host, `gbrain sources writer unlock`, re-reads `gbrain sources writer status <source> --json`, administers, then `gbrain sources writer lock` again. See the [writer admin lock](../architecture/topologies.md#writer-admin-lock). |
@@ -86,7 +86,7 @@ a receipt can report has a row here.
 | Reason | Error code | What it means | Recovery |
 | --- | --- | --- | --- |
 | `writer_pool_capacity` | `writer_pool_capacity` | The canonical owner has no free publication slot right now; the write stays queued. | Wait and poll the receipt (`gbrain write-request <id>`). If it persists, check `gbrain sources writer status <source>`. |
-| `revision_required` | `revision_required` | The operation must be bound to a revision you reviewed (for example `--if-version` or `expected_revision`), and none was given. | Preview first, then repeat with the revision the preview printed. |
+| `revision_required` | `revision_required` | The operation must be bound to a revision you reviewed (for example `--if-version` or `expected_revision`), and none was given: a `put_page` of a page that already exists without `expected_revision` reports this since #5385 (earlier releases said `revision_conflict`). | Preview first, then repeat with the revision the preview printed. |
 | `revision_conflict` | `revision_conflict` | The page changed after the revision this write was bound to. Nothing was overwritten. | Re-read the page, merge your change, and save with the new revision. |
 | <a id="revision-backfill"></a>`revision_backfill_pending` | `revision_backfill_pending` | The page was written before page revisions existed (an upgrade from below schema v150) and the resumable revision backfill has not reached it, so it has no revision to bind to. Its revision reads as `backfill_pending`, never a UUID. Nothing was written. `gbrain doctor` reports the backfill as `revision_backfill` with the pending count and any failed rows by page. | Resume the backfill on the brain host with `gbrain apply-migrations --force-schema` (it prints its progress; `--yes` alone does not resume it once the schema is current). Rows that used all three attempts are no longer retried: run `gbrain repair orphan-children` to preview orphaned child rows and torn page bodies ([orphan children](repair.md#orphan-children)). |
 | `idempotency_conflict` | `idempotency_conflict` | The `request_id` was already used for a different target, content or protocol. | Use a new `request_id` for a different write; reuse an ID only to replay the same write. |
@@ -339,7 +339,7 @@ clears or retries it with no one acting.
 | <a id="fence-quoted_fence_rows"></a>`quoted_fence_rows` | A fence sits inside a code block or inline code span, so readers treat it as an example and importing would remove the stored rows it holds. | `-` | no | Move the fence out of the code, or delete the fence to remove its rows. Format: [markers](fence-format.md#markers). |
 | <a id="fence-stored_row_collision"></a>`stored_row_collision` | A new takes row's number already names a different stored take that is not in the page's fence (wire `take_row_collision`). | `-` | no | Renumber the new row, or add the stored take back to the fence. Format: [row numbers](fence-format.md#row-numbers). |
 | <a id="fence-withdrawn_claim_in_malformed_fence"></a>`withdrawn_claim_in_malformed_fence` | A facts fence that does not parse holds a claim the user withdrew, so gbrain cannot tell whether the row should stay withdrawn. | `-` | yes | Repair the fence so it parses (`gbrain repair fences --source <source>` previews it); the withdrawn row then stays withdrawn. Format: [examples](fence-format.md#examples). |
-| <a id="fence-target_fence_malformed"></a>`target_fence_malformed` | A verb that appends to or edits a page (`remember`, `extract_facts`, `takes_*`, `facts relink`, `edit_page`) found that page's stored fence does not parse and cannot be normalized in the same write (`edit_page` and the other takes writes never normalize). Memory verbs keep their v1 code (`invalid_params`, `detail: invalid_fence`). | `-` | yes | The maintenance run repairs the stored fence; to do it now, `gbrain repair fences --slug <slug>` on the brain host. Or read the page, fix the named fence (or write the whole page with `put_page`, which normalizes what it can and names every row it cannot), then retry with a new request_id. Format: [examples](fence-format.md#examples). |
+| <a id="fence-target_fence_malformed"></a>`target_fence_malformed` | A verb that appends to or edits a page (`remember`, `extract_facts`, `takes_*`, `facts relink`, `edit_page`) found that page's stored fence does not parse and cannot be normalized in the same write (`edit_page` and the other takes writes never normalize). A fact write that would re-render a facts fence the parser reads with warnings (a malformed row, or a header naming a column outside the facts schema) refuses the same way, so the skipped rows are never dropped. Memory verbs keep their v1 code (`invalid_params`, `detail: invalid_fence`). | `-` | yes | The maintenance run repairs the stored fence; to do it now, `gbrain repair fences --slug <slug>` on the brain host. Or read the page, fix the named fence (or write the whole page with `put_page`, which normalizes what it can and names every row it cannot), then retry with a new request_id. Format: [examples](fence-format.md#examples). |
 | <a id="fence-prepare_time"></a>`prepare_time` | Hold only: the file passed the content screen, but its fence was refused while it was prepared against the stored page (a stored-row collision, a withdrawn claim, rows quoted in code). `fence.reason` names which. Managed sync holds it in the same run instead of blocking. | `-` | yes | Fix it as its `fence.reason` says. After a database-side fix (for example removing the conflicting take), `gbrain sources retry-held <source>` re-checks the file. Format: [what gbrain never guesses](fence-format.md#never-guessed). |
 | <a id="fence-normalizer_failed"></a>`normalizer_failed` | The normalizer or its validator failed on this fence (a gbrain bug); the fence was not rewritten. A coordinated write refuses; a legacy import stores the page as written. | `manual` | no | Run `gbrain doctor --json` and report it with the gbrain version; an upgrade re-screens the file. Format: [what gbrain fixes](fence-format.md#normalized). |
 | <a id="fence-llm_unavailable"></a>`llm_unavailable` | The repair model timed out, was rate-limited or returned a server error. | `llm` | yes | Nothing to do: the next maintenance run (or `gbrain repair fences --apply`) retries. Format: [tiers](fence-format.md#never-guessed). |
@@ -480,8 +480,45 @@ that checkout, through the source's canonical owner. PGLite claims that owner
 automatically on the first write. Postgres does not, because several hosts can
 share one Postgres brain and only one of them may own the files. Until someone
 binds the source, page writes to it refuse with
-`owner_unavailable` and `detail: unbound_source`. The suggestion names both
-ways out with the real source filled in:
+`owner_unavailable` and `detail: unbound_source`. The refusal is a
+configuration state, not a transient one: it renders `retryable: false` and a
+`fix` with `next: ask_user`, so an agent never retries it.
+
+**Classic mode (managed persistence not activated).** This is the normal state
+of a self-hosted Postgres brain that never ran
+`gbrain sources writer activate`, and of any brain after
+`gbrain sources writer deactivate`. In classic mode the checkout is the source
+of truth: gbrain reads it and does not write files into it. Page writes through
+`put_page`, `capture`, `delete_page`, `restore_page`, `revert_version`,
+`add_tag`, `remove_tag`, `add_timeline_entry` and the `takes_*` tools refuse
+with `unbound_source`. What works:
+
+1. **Write the file, commit, sync** (the classic write path). Write or edit
+   `<checkout>/<slug>.md`, check generated frontmatter with
+   `gbrain frontmatter validate --stdin --path <slug>.md`, `git commit` it, then
+   run `gbrain sync --source <id>`. Sync imports commits; `--working-tree`
+   imports uncommitted edits for one run. Delete with `git rm`, commit, sync.
+   Tags and timeline entries are frontmatter and `## Timeline` lines in the
+   same file.
+2. **Database-only pages**, if the user accepts that new pages never reach the
+   checkout, its git history or file backups:
+   `gbrain config set persistence.unbound_write database_only` (below). It
+   never covers pages that came from files.
+3. **Leave classic mode** (a brain-wide decision for the user): claim the
+   source and activate managed persistence
+   ([topologies](../architecture/topologies.md#pre-activation-claims)). A claim
+   without activation blocks classic `gbrain sync` of that source, so never
+   claim to get one refused write through.
+
+**What the agent tells the user.** An agent with a shell on the brain host
+asks once, then uses path 1 itself and reads the page back. A remote agent
+(MCP) cannot write the checkout; it says: *"Your brain is in classic mode, so
+I can't save pages directly. Save it as `<slug>.md` in the `<id>` folder,
+commit it, and run `gbrain sync --source <id>`. Or I can explain the two other
+options: database-only pages, or managed mode."* It does not retry the write.
+
+**Managed mode, or a gbrain-owned checkout.** The suggestion names both ways
+out with the real source filled in:
 
 1. **Bind the source** on the host that holds the checkout. Run
    `gbrain sources writer status <source> --json` and note `admin_state`, then
@@ -523,6 +560,38 @@ per source. While the source is unbound it is `ok` and prints the bind command;
 after binding it warns, because those pages sit outside the canonical files.
 There is no command yet that turns them into files; to move one, save its
 content under a new slug and delete the database-only page.
+
+## Foreign ownership marker
+
+<a id="foreign-ownership-marker"></a>
+
+When a host claims a source checkout, gbrain writes two private ownership
+markers: `.gbrain-owner.json` inside the checkout and
+`.gbrain-owner-<sha256 of the path>.json` beside it. Both record the brain id
+and the worktree id they belong to. A claim of a checkout whose markers name
+another brain refuses `recovery_required` ("The physical checkout identity
+changed or belongs to another owner"), because removing a live brain's marker
+to claim its files would let two brains write the same checkout.
+
+A marker left behind by a brain that no longer exists (a PGLite brain later
+moved to Postgres with `gbrain migrate`, a `gbrain init` that was
+redone, a database dropped by hand) refuses the same way, and the refusal does
+not say which file or which brain. `gbrain doctor` reports the
+`foreign_ownership_marker` check for every source checkout and owner binding
+on this host: the marker's path, the brain id it records, and whether this
+brain knows the worktree. The check is read-only and runs only on the brain
+host.
+
+Clearing it is the operator's decision, in this order:
+
+1. Confirm with the user that the recorded brain is retired: it was moved into
+   this database, or it was deleted on purpose. `gbrain doctor --json` on the
+   old brain's home, if it still exists, shows its `brain_id`.
+2. Remove exactly the file doctor names on the brain host. Do not remove a
+   marker of a brain that is still in use; transfer ownership with
+   `gbrain sources writer transfer prepare|accept` instead.
+3. Claim again: `gbrain sources writer claim <source> --path <checkout> --dry-run`,
+   then the printed apply command.
 
 ## Secret scan refusals and redaction
 

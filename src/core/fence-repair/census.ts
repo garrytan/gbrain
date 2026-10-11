@@ -42,6 +42,7 @@ import {
   type CandidateFinding, type CandidateLocation, type CandidateRecord, type FileFinding, type PageFinding, type ScanRecord,
 } from './census-store.ts';
 import type { FenceCtx, FencePage, FenceReason, FenceTier } from './types.ts';
+import { gitChildEnv } from '../git-env.ts';
 
 type Exec = Pick<BrainEngine, 'executeRaw'>;
 
@@ -174,7 +175,7 @@ async function scanPages(engine: Exec, source: CensusSource, progress: ScanProgr
 function git(root: string, args: string[]): string | null {
   if (knownOutsideGitRepo(root)) return null;
   try {
-    return execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', maxBuffer: 512 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
+    return execFileSync('git', ['-C', root, ...args], { env: gitChildEnv(), encoding: 'utf8', maxBuffer: 512 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
   } catch (error) {
     noteGitFailure(root, error);
     return null;

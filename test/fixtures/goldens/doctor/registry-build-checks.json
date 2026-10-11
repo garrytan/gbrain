@@ -395,6 +395,10 @@
       },
       {
         "category": "ops",
+        "name": "lost_caller_writes"
+      },
+      {
+        "category": "ops",
         "name": "persistence_session_timeouts"
       },
       {
@@ -412,6 +416,10 @@
       {
         "category": "brain",
         "name": "orphan_persistence_bindings"
+      },
+      {
+        "category": "brain",
+        "name": "foreign_ownership_marker"
       },
       {
         "category": "brain",
@@ -736,6 +744,10 @@
       {
         "category": "ops",
         "name": "host_identity_mismatch"
+      },
+      {
+        "category": "brain",
+        "name": "extract_atoms_held_failed"
       },
       {
         "category": "brain",

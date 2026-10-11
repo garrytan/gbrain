@@ -193,6 +193,11 @@
                 "session_end": "extract",
                 "writeback": "retire"
               },
+              "corpus_source_holds": {
+                "legacy_unstamped": 0,
+                "sessions": 0,
+                "unresolved": 0
+              },
               "counters_note": "local, append-only, loss-tolerant observability over the last 7d — never a source of truth",
               "cross_lane_duplicates_7d": 0,
               "instruction_visibility": "world",
@@ -537,7 +542,7 @@
           },
           {
             "category": "meta",
-            "message": "1066 column(s) verified against live schema",
+            "message": "1067 column(s) verified against live schema",
             "name": "schema_columns",
             "status": "ok"
           },
@@ -915,6 +920,19 @@
           {
             "category": "ops",
             "details": {
+              "compacted_unreplayable": 0,
+              "count": 0,
+              "docs": "docs/guides/repair.md#failed-writes",
+              "repair": "failed-writes",
+              "writes": []
+            },
+            "message": "Every caller write with a retained receipt committed or was superseded.",
+            "name": "lost_caller_writes",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "details": {
               "applied": null,
               "configured": "5min",
               "docs": "docs/guides/troubleshooting.md#session-timeouts-not-applied"
@@ -1051,6 +1069,17 @@
             },
             "message": "Every persistence source binding belongs to an existing source.",
             "name": "orphan_persistence_bindings",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "count": 0,
+              "docs": "docs/guides/write-refusals.md#foreign-ownership-marker",
+              "markers": []
+            },
+            "message": "Every ownership marker beside a source checkout belongs to this brain.",
+            "name": "foreign_ownership_marker",
             "status": "ok"
           },
           {
@@ -1684,16 +1713,6 @@
             "status": "ok"
           },
           {
-            "category": "brain",
-            "details": {
-              "checkouts": 1,
-              "tracked": []
-            },
-            "message": "1 Git checkout(s) track no ownership marker (markers on disk stay untracked and are denied on push).",
-            "name": "tracked_ownership_marker",
-            "status": "ok"
-          },
-          {
             "category": "ops",
             "message": "System One is off (every decide slot is off; nothing is sent).",
             "name": "decide_health",
@@ -2191,6 +2210,17 @@
           {
             "category": "brain",
             "details": {
+              "code": "held_failed",
+              "held": 0,
+              "items": []
+            },
+            "message": "No managed atom page or transcript is held after repeated extraction failures.",
+            "name": "extract_atoms_held_failed",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
               "auto_repair": {
                 "active": false,
                 "enabled": true,
@@ -2391,7 +2421,7 @@
                   "by_day": [
                     {
                       "count": 1,
-                      "day": "<date>"
+                      "day": "2026-10-10"
                     }
                   ],
                   "normalized_7d": 1,
@@ -2759,7 +2789,7 @@
           },
           {
             "category": "meta",
-            "message": "5 distinct typed values (pack declares 20)",
+            "message": "5 distinct typed values (pack gbrain-base-v2 declares 20)",
             "name": "type_proliferation",
             "status": "ok"
           },
@@ -3197,6 +3227,11 @@
                 "session_end": "extract",
                 "writeback": "retire"
               },
+              "corpus_source_holds": {
+                "legacy_unstamped": 0,
+                "sessions": 0,
+                "unresolved": 0
+              },
               "counters_note": "local, append-only, loss-tolerant observability over the last 7d — never a source of truth",
               "cross_lane_duplicates_7d": 0,
               "instruction_visibility": "world",
@@ -3541,7 +3576,7 @@
           },
           {
             "category": "meta",
-            "message": "1066 column(s) verified against live schema",
+            "message": "1067 column(s) verified against live schema",
             "name": "schema_columns",
             "status": "ok"
           },
@@ -3919,6 +3954,19 @@
           {
             "category": "ops",
             "details": {
+              "compacted_unreplayable": 0,
+              "count": 0,
+              "docs": "docs/guides/repair.md#failed-writes",
+              "repair": "failed-writes",
+              "writes": []
+            },
+            "message": "Every caller write with a retained receipt committed or was superseded.",
+            "name": "lost_caller_writes",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "details": {
               "applied": null,
               "configured": "5min",
               "docs": "docs/guides/troubleshooting.md#session-timeouts-not-applied"
@@ -4055,6 +4103,17 @@
             },
             "message": "Every persistence source binding belongs to an existing source.",
             "name": "orphan_persistence_bindings",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "count": 0,
+              "docs": "docs/guides/write-refusals.md#foreign-ownership-marker",
+              "markers": []
+            },
+            "message": "Every ownership marker beside a source checkout belongs to this brain.",
+            "name": "foreign_ownership_marker",
             "status": "ok"
           },
           {
@@ -4688,16 +4747,6 @@
             "status": "ok"
           },
           {
-            "category": "brain",
-            "details": {
-              "checkouts": 1,
-              "tracked": []
-            },
-            "message": "1 Git checkout(s) track no ownership marker (markers on disk stay untracked and are denied on push).",
-            "name": "tracked_ownership_marker",
-            "status": "ok"
-          },
-          {
             "category": "ops",
             "message": "System One is off (every decide slot is off; nothing is sent).",
             "name": "decide_health",
@@ -5195,6 +5244,17 @@
           {
             "category": "brain",
             "details": {
+              "code": "held_failed",
+              "held": 0,
+              "items": []
+            },
+            "message": "No managed atom page or transcript is held after repeated extraction failures.",
+            "name": "extract_atoms_held_failed",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
               "auto_repair": {
                 "active": false,
                 "enabled": true,
@@ -5395,7 +5455,7 @@
                   "by_day": [
                     {
                       "count": 1,
-                      "day": "<date>"
+                      "day": "2026-10-10"
                     }
                   ],
                   "normalized_7d": 1,
@@ -5763,7 +5823,7 @@
           },
           {
             "category": "meta",
-            "message": "5 distinct typed values (pack declares 20)",
+            "message": "5 distinct typed values (pack gbrain-base-v2 declares 20)",
             "name": "type_proliferation",
             "status": "ok"
           },

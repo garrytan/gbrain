@@ -10,6 +10,7 @@ import type { WriteRequest } from '../src/core/persistence/model.ts';
 import { parseMarkdown } from '../src/core/markdown.ts';
 import { beginConnectorSync } from '../src/core/persistence/connector-sync.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { withSourceRowDiagnostics } from './helpers/source-row-diagnostics.ts';
 import { createConnectorFixture, options, json, googleConfig, githubConfig, contact, githubFetch, sourceCheckpoint } from './helpers/connector-fixture.ts';
 
 const { engines, env, boundSource, standaloneConnector, setup, teardown } = createConnectorFixture();
@@ -97,7 +98,7 @@ test('an already authenticated connector session drains later retained recovery 
     const config = parseGitHubSourceConfig(githubConfig, f.dir);
     await runGitHubSync(engine, f.id, config, options, githubFetch());
     await disposePersistenceConsumer(engine);
-    const session = (await beginConnectorSync(engine, f.id, 'github', config, options))!;
+    const session = (await withSourceRowDiagnostics(engine, f.id, () => beginConnectorSync(engine, f.id, 'github', config, options)))!;
     const crash = await standaloneConnector(engine, f, githubConfig, true);
     expect(crash.stdout).toContain('CONNECTOR_AFTER_PUBLICATION_BEFORE_COMMIT');
     const [retained] = await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE source_id=$1 AND recovery IS NOT NULL', [f.id]);

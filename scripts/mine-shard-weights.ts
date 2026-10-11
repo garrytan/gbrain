@@ -70,7 +70,7 @@ export function computeWeights(events: TimingEvent[]): Map<string, number> {
 }
 
 /** Refuse partial/failed sources before any output is replaced. */
-export function mineWeights(raw: string, lane: Lane, opts: { expectedJobs?: readonly string[]; e2eProfile?: E2EProfile; expectedFiles?: readonly string[] } = {}): Map<string, number> {
+export function mineWeights(raw: string, lane: Lane, opts: { expectedJobs?: readonly string[]; e2eProfile?: E2EProfile; expectedFiles?: readonly string[]; requireCapture?: boolean } = {}): Map<string, number> {
   const full = opts.e2eProfile === "full";
   const fullPaths = new Map<string, string>();
   if (full) {
@@ -94,9 +94,9 @@ export function mineWeights(raw: string, lane: Lane, opts: { expectedJobs?: read
     if (missing.length || unexpected.length) throw new Error(`${lane}: timing job set differs from run metadata (missing: ${missing.join(', ') || 'none'}; unexpected: ${unexpected.join(', ') || 'none'})`);
   }
   for (const [job, records] of byJob) {
-    const captured = records.filter(line => line.step === 'capture');
-    if (!captured.length) continue;
-    if (captured[0]!.text !== '##[gbrain-capture-start]' ||
+    const captured = records.filter(line => line.step === 'capture' || line.text.startsWith('##[gbrain-capture-'));
+    if (!captured.length && !opts.requireCapture) continue;
+    if (!captured.length || captured[0]!.text !== '##[gbrain-capture-start]' ||
         captured.at(-1)!.text !== '##[gbrain-capture-complete] exit=0' ||
         captured.filter(line => line.text === '##[gbrain-capture-start]').length !== 1 ||
         captured.filter(line => line.text.startsWith('##[gbrain-capture-complete]')).length !== 1) {
@@ -193,6 +193,16 @@ function gh(args: string[]): string {
   if (r.status !== 0) throw new Error(`gh ${args.join(" ")} failed: ${r.stderr}`);
   return r.stdout;
 }
+/** The capture artifact a unit shard uploads (`timings-unit-N`, test.yml): its records carry the capture markers. */
+function capturedUnitLog(run: string, job: string): string {
+  const shard = /^test \((\d+)\)$/.exec(job)?.[1];
+  if (!shard) throw new Error(`unit: unexpected job name ${job}`);
+  const dir = mkdtempSync(join(tmpdir(), "gbrain-mine-unit-"));
+  try {
+    gh(["run", "download", run, "--name", `timings-unit-${shard}`, "--dir", dir]);
+    return readFileSync(join(dir, "unit.log"), "utf8");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+}
 function git(args: string[]): string {
   const r = spawnSync("git", args, { cwd: ROOT, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
   if (r.status !== 0) throw new Error(`git ${args.join(" ")} failed: ${r.stderr}`);
@@ -251,6 +261,7 @@ async function main(): Promise<void> {
   let expectedFiles: string[] | undefined;
   let attempt: number | undefined;
   let fullJobs: Array<{ name: string; databaseId: number }> = [];
+  let serialJobs: Array<{ name: string; databaseId: number }> = [];
   if (run) {
     const info = JSON.parse(gh(["run", "view", run, "--json", full ? "attempt,conclusion,headSha,jobs" : "conclusion,headSha,jobs"]));
     if (info.conclusion !== "success") throw new Error(`run ${run} is not successful`);
@@ -258,6 +269,10 @@ async function main(): Promise<void> {
     if (!jobs.length || jobs.some((j: { conclusion: string }) => j.conclusion !== "success")) throw new Error(`run ${run} has no complete ${lane} lane`);
     expectedJobs = jobs.map((j: { name: string }) => j.name);
     commit = info.headSha;
+    if (lane === "serial") {
+      if (jobs.some((j: { databaseId: number }) => !Number.isInteger(j.databaseId) || j.databaseId < 1)) throw new Error("serial: missing job identity");
+      serialJobs = jobs.map(({ name, databaseId }: { name: string; databaseId: number }) => ({ name, databaseId }));
+    }
     if (full) {
       if (!Number.isInteger(info.attempt) || info.attempt < 1 || jobs.some((j: { databaseId: number }) => !Number.isInteger(j.databaseId) || j.databaseId < 1)) throw new Error("full E2E: missing attempt or job identity");
       attempt = info.attempt;
@@ -265,8 +280,11 @@ async function main(): Promise<void> {
       expectedFiles = sourceE2ECorpus(info.headSha);
     }
   }
-  const raw = full ? fullJobs.map(job => gh(["run", "view", run!, "--attempt", String(attempt), "--job", String(job.databaseId), "--log"])).join("\n") : run ? gh(["run", "view", run, "--log"]) : input ? readFileSync(input, "utf8") : await new Response(Bun.stdin.stream()).text();
-  const measured = mineWeights(raw, lane, { expectedJobs, e2eProfile, expectedFiles });
+  const raw = full ? fullJobs.map(job => gh(["run", "view", run!, "--attempt", String(attempt), "--job", String(job.databaseId), "--log"])).join("\n")
+    : run && lane === "unit" ? expectedJobs!.map(job => capturedUnitLog(run!, job)).join("\n")
+    : run && lane === "serial" ? serialJobs.map(job => gh(["run", "view", run!, "--job", String(job.databaseId), "--log"])).join("\n")
+    : run ? gh(["run", "view", run, "--log"]) : input ? readFileSync(input, "utf8") : await new Response(Bun.stdin.stream()).text();
+  const measured = mineWeights(raw, lane, { expectedJobs, e2eProfile, expectedFiles, requireCapture: !!run && lane === "unit" });
   // Downloaded artifacts/stdin may cover only one shard. Only an authoritative
   // complete GitHub unit/serial/full-E2E run replaces the full map; selected E2E always
   // merges because its executed corpus depends on the diff.

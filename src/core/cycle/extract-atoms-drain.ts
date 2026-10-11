@@ -100,6 +100,10 @@ export interface ExtractAtomsDrainDeps {
    *
    * `signal` is the hard stop and `stopSignal` the soft one (see the module
    * header); the batch hands both to `runPhaseExtractAtoms`.
+   *
+   * #6425: `budgetSkipped` counts items the batch skipped because the
+   * attempt's per-run cap was spent, with `budget` the spend and the cap. The
+   * attempt shares one tracker across batches, so the drain stops `budget`.
    */
   runBatch: (signals: { signal: AbortSignal; stopSignal: AbortSignal }) => Promise<{
     extracted: number;
@@ -108,6 +112,8 @@ export interface ExtractAtomsDrainDeps {
     failureCount?: number;
     firstError?: string;
     failures?: Array<{ source: string; reason: string }>;
+    budgetSkipped?: number;
+    budget?: { spentUsd: number; capUsd: number };
   }>;
   /**
    * Count remaining eligible-but-unextracted pages, or null on query error.
@@ -138,14 +144,14 @@ export interface ExtractAtomsDrainOpts {
 }
 
 /**
- * Why a drain stopped. `window`/`no_progress`/`max_batches` are soft stops
- * after a final recount; `deadline` (job deadline), `lock_lost` (cycle lock
+ * Why a drain stopped. `window`/`no_progress`/`max_batches`/`budget` are soft
+ * stops after a final recount (`budget`: the attempt's per-run cap is spent); `deadline` (job deadline), `lock_lost` (cycle lock
  * lease lost) and `aborted` (job cancelled or shutting down) are hard stops
  * whose `remaining` is the last count taken before the stop.
  */
 export type DrainStop =
   | 'drained' | 'window' | 'deadline' | 'lock_lost' | 'aborted'
-  | 'no_progress' | 'max_batches' | 'provider_failure';
+  | 'no_progress' | 'max_batches' | 'provider_failure' | 'budget';
 
 export const DRAIN_COUNT_TIMEOUT_MS = 60_000;
 
@@ -204,6 +210,9 @@ export interface ExtractAtomsDrainResult {
    * reported one (`source: reason`), or null for a clean run.
    */
   last_error: string | null;
+  /** #6425: on a `budget` stop, the attempt's spend and its per-run cap (`cycle.extract_atoms.budget_usd`). */
+  spent_usd?: number;
+  budget_usd?: number;
 }
 
 /**
@@ -245,6 +254,7 @@ export async function runExtractAtomsDrain(
   let lastError: string | null = null;
   let lastCount: number | null = null;
   let lockSignal: AbortSignal | null = null;
+  let budget: { spentUsd: number; capUsd: number } | undefined;
   const result = (stopped: DrainStop, remaining: number | null): ExtractAtomsDrainResult => ({
     phase: 'extract_atoms',
     status: providerFailure ? 'provider_failure' : 'ok',
@@ -257,6 +267,7 @@ export async function runExtractAtomsDrain(
     failures,
     omitted_failure_count: failureCount - failures.length,
     last_error: lastError,
+    ...(stopped === 'budget' && budget ? { spent_usd: budget.spentUsd, budget_usd: budget.capUsd } : {}),
   });
   try {
     return await deps.withLock(async (signal) => {
@@ -363,6 +374,13 @@ export async function runExtractAtomsDrain(
           if (r.providerFailure) {
             providerFailure = true;
             stopped = 'provider_failure';
+            break;
+          }
+
+          // #6425: the attempt's one BudgetTracker is spent, so no later batch can progress.
+          if ((r.budgetSkipped ?? 0) > 0) {
+            budget = r.budget;
+            stopped = 'budget';
             break;
           }
 
@@ -513,6 +531,8 @@ export async function runExtractAtomsDrainForSource(
           providerFailure: failures.length > 0 && itemsSucceeded === 0,
           failureCount: failures.length,
           failures: typedFailures,
+          budgetSkipped: Number(d.pages_skipped_budget ?? 0) + Number(d.transcripts_skipped_budget ?? 0),
+          budget: { spentUsd: Number(d.estimated_spend_usd ?? 0), capUsd: Number(d.budget_usd ?? 0) },
         };
       },
       countRemaining: (signal) => countExtractAtomsBacklog(engine, extractionSourceId, { signal }),

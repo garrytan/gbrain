@@ -120,6 +120,13 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     run: async engine => (await import('./checks/persistence-requests.ts')).writeStallCheck(engine),
   },
   {
+    id: 'lost_caller_writes', resolution: 'repair', registration: 'wave',
+    hostOnly: 'Replaying refused caller writes is a host-side, explicit-only repair.',
+    count: d => Number(d.count ?? 0),
+    impact: 'Some caller writes (remember, put_page, add_timeline_entry) were refused at publication and never landed; the caller saw an error and the fact or edit was dropped',
+    run: async (engine, scope) => (await import('./checks/persistence-requests.ts')).lostCallerWritesCheck(engine, scope.sourceIds),
+  },
+  {
     id: 'persistence_session_timeouts', resolution: 'operator', registration: 'wave',
     count: d => d.reason === 'session_timeouts_not_applied' ? 1 : 0,
     hostOnly: 'The connection URL and its pooler are brain-host configuration outside any source scope.',
@@ -170,6 +177,14 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     count: d => Number(d.count ?? 0),
     impact: 'Some persistence source bindings belong to a removed source or an earlier source incarnation',
     run: async engine => (await import('./checks/orphan-bindings.ts')).checkOrphanBindings(engine),
+  },
+  {
+    id: 'foreign_ownership_marker', resolution: 'operator', registration: 'wave',
+    hostOnly: 'Ownership markers are private files beside the source checkouts on the brain host.',
+    count: d => Number(d.count ?? 0),
+    impact: 'An ownership marker beside a source checkout names another brain or an unknown worktree, so claiming that checkout refuses recovery_required',
+    instruction: 'Confirm with the user that the recorded brain is retired, then remove exactly the marker file doctor names on the brain host and claim again (docs/guides/write-refusals.md#foreign-ownership-marker); never remove a marker of a brain still in use.',
+    run: async engine => (await import('./checks/orphan-bindings.ts')).checkForeignOwnershipMarkers(engine),
   },
   {
     id: 'unbound_source', resolution: 'operator', registration: 'wave',
