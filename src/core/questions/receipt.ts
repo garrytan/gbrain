@@ -81,8 +81,8 @@ export function fixFor(pin: PinRow, blocked: BlockedReason | null, freshness: Fr
     case 'awaiting_consent':
       return {
         argv: ['gbrain', 'questions', 'pin', '--id', id], consent: ['paid'], actor: remote ? 'user' : 'agent',
-        why: pin.inactive_reason === 'migrated_disabled' || pin.inactive_reason === 'migrated_zero_budget'
-          ? 'This pin was imported from dream.auto_think, which was off (or had a zero budget), so it stays inactive until the owner turns it on. Activating it allows paid model refreshes under cycle.standing_questions.budget_usd.'
+        why: pin.inactive_reason?.startsWith('migrated_')
+          ? 'This pin was imported from dream.auto_think, which never ran in the dream cycle, so it stays inactive until the owner turns it on. Activating it allows paid model refreshes under cycle.standing_questions.budget_usd.'
           : 'A pin created over MCP stays inactive until the owner activates paid refresh on the brain host (or has set consent.preapprove.paid.max_usd_per_run). Activating it allows paid model refreshes under cycle.standing_questions.budget_usd.',
         user_message: `The pinned question "${pin.question.slice(0, 120)}" needs a paid model call to answer and to keep its answer current. Activate it with: gbrain questions pin --id ${id}`,
         verify: verifyStep(id), requires_exclusive: false,
