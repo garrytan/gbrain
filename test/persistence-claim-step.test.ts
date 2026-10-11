@@ -27,7 +27,7 @@ describe('enterClaimStep', () => {
     enterClaimStep(clock, 'git_rev_parse', undefined, 'git', 2_500);
     expect(clock).toMatchObject({ step: 'git_rev_parse', stepSince: 2_500, waitingOn: 'git' });
     enterClaimPhase(clock, 'publishing', 3_000);
-    expect(clock).toMatchObject({ phase: 'publishing', since: 3_000, step: null, stepSince: 3_000, waitingOn: 'unknown' });
+    expect(clock).toMatchObject({ phase: 'publishing', since: 3_000, step: null, stepSince: 3_000, waitingOn: 'publication' }); // #6405: the publish phase names its own wait
   });
   test('throws the preparation\'s abort reason at the boundary, with or without a clock, and leaves the clock unchanged', () => {
     const abort = new AbortController();

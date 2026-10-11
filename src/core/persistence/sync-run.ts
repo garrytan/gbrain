@@ -19,6 +19,7 @@ import { assertManagedSyncActive, assertSyncDispatchActive, managedSyncAuthority
 import { prepareManagedSyncMutation, type SyncCursorOptions, type SyncIntent } from './sync-prepare.ts';
 import { startClaimPhase } from './claim-phase.ts';
 import { screeningRequest } from './noop-kernel.ts';
+import { stampDrainStep } from './drain-step.ts';
 import { noopWaiversEnabled, raceSyncBudget, screenWaiver, syncPreparationBudgetMs, unfinishedPageRequestParams, UNFINISHED_PAGE_REQUEST_SQL, waiveNoopEntry, waiveNoopRun, waiverBatchEnabled, type NoopWaiver, type WaiverRunEntry } from './sync-waivers.ts';
 import { resolve } from 'node:path';
 import { currentCompanyBrainSync, getCompanyBrainProfile, readCompanyBrainPlan } from '../company-brain/profile.ts';
@@ -286,6 +287,7 @@ function result(cursor: Cursor | CursorHeader, status: SyncResult['status'], rea
     deleted: cursor.counts.deleted, renamed: cursor.counts.renamed ?? 0, chunksCreated: cursor.counts.chunks, embedded: 0, pagesAffected: [],
     ...(cursor.slugCollisions?.length ? { slugCollisions: cursor.slugCollisions } : {}),
     ...(cursor.fileRefusals?.length ? { fileRefusals: cursor.fileRefusals } : {}),
+    ...(cursor.stagedHead && !cursor.authority.writer.remote ? { staged: { target: cursor.target, head: cursor.stagedHead } } : {}),
     waived: { imports: cursor.counts.waived?.imports ?? 0, deletes: cursor.counts.waived?.deletes ?? 0 },
     filesImported: cursor.index, bankedFiles: cursor.index,
     managedCursor: { index: cursor.index, total: 'total' in cursor ? cursor.total : cursor.entries.length, ...(cursor.progress ? { progress: cursor.progress } : {}) },
@@ -812,7 +814,7 @@ async function waiveRun(engine: BrainEngine, cursor: Cursor, head: Pending, key:
   // GBRA-75 wave 9: and one bounded-read session (bounded-reads.ts), so the run's screens share one transaction.
   const run = await withScreeningPaths(() => withBoundedReadSession(engine, session => screenWaiverRun(session, cursor, head, key, config, assertActive, frozenRun, limit)));
   if (!run) return null;
-  assertActive();
+  assertActive(); stampDrainStep('waiver_run', frozenRun.signal);
   const observedAt = frozenRun.observedAt ?? new Date().toISOString();
   const done = await waiveNoopRun(engine, cursor, run, key, async (tx, prefix) => {
     let next: Cursor = cursor;
@@ -1362,7 +1364,7 @@ async function runManagedSync(engine: BrainEngine, opts: SyncOpts, slice: { maxP
           creditedPages = 25; creditStarted = performance.now();
         }
         foregroundWaitStart = 0;
-        phase = 'freeze';
+        phase = 'freeze'; stampDrainStep('freeze', signal);
         const frozen = await freezeEntry(engine, cursor, key, assertActive, frozenRun);
         if ('hold' in frozen) {
           cursor = await saveCursor(engine, key, cursor, { ...advanceHeld(cursor), ...(frozen.overtaken ? { overtaken: true as const } : {}) }, false, assertActive, heldWrite(cursor, frozen.hold, observedAt));
@@ -1378,7 +1380,7 @@ async function runManagedSync(engine: BrainEngine, opts: SyncOpts, slice: { maxP
       }
       if (!cursor.pending) continue; // another owner-loop advanced the cursor
       const pending: Pending = cursor.pending;
-      phase = 'admission';
+      phase = 'admission'; stampDrainStep('admission', signal);
       const prior = await getWriteRequest(engine, cursor.authority.writer.principal, pending.requestId);
       assertActive();
       // #5470/#5984: a frozen entry whose publication would change nothing advances the cursor without an admission.
@@ -1423,7 +1425,7 @@ async function runManagedSync(engine: BrainEngine, opts: SyncOpts, slice: { maxP
       }), undefined, error => engine.reconnect({ error })).catch(error => cursorMovedAdmission(engine, key, admitting, pending, error));
       if (!row) { cursor = await currentCursor(engine, key, cursor); continue; }
       await validateSyncAuthority(engine, cursor.authority, pending.slug);
-      assertSyncDispatchActive();
+      assertSyncDispatchActive(); stampDrainStep('await_receipt', signal);
       // #5762: a checkpoint's validation runs under the coordinator's 5 s statement timeout, so its wait outlasts that
       // budget; a timed-out checkpoint then reports its terminal refusal and hint in this run instead of the next.
       // #5984: a drain re-enters anyway, so it waits longer per page instead of paying a full re-entry; its stop signal bounds the wait.
@@ -1482,7 +1484,7 @@ async function runManagedSync(engine: BrainEngine, opts: SyncOpts, slice: { maxP
       // waits for them), is transient admission back-pressure, not a sync failure to record. #6340: neither is a lost
       // database connection or a statement timeout: the cursor and its frozen manifest stay, and the next pass resumes them.
       if (!['permission_denied', 'worktree_refreshing', 'refresh_recovery_required'].includes(code) && !isWriteCapacityWait(error)
-        && !isRetryableConnError(error) && !isStatementTimeoutError(error)) {
+        && !isRetryableConnError(error) && !isStatementTimeoutError(error) && !(code === 'invalid_params' && phase === 'resume' && (await engine.executeRaw("SELECT 1 FROM op_checkpoints WHERE op='managed-sync-failure' AND fingerprint=$1 AND completed_keys->0->>'code' IS DISTINCT FROM 'invalid_params'", [key])).length > 0)) {
         const [stored] = cursor ? [] : await engine.executeRaw<{ completed_keys: [CursorHeader] }>('SELECT completed_keys FROM op_checkpoints WHERE op=$1 AND fingerprint=$2', [OP, key]);
         const failedCursor = cursor ?? stored?.completed_keys?.[0];
         const { failure } = await recordManagedSyncFailure(engine, { source_id: context.sourceId, source_incarnation: context.incarnation, path: cursor?.entries[cursor.index]?.path ?? failedCursor?.pending?.intent.path ?? `<${phase}>`, code,

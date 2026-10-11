@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import type { BrainEngine, LinkBatchInput } from '../src/core/engine.ts';
 import type { DerivedLinkOrigin, DerivedLinkReplacementOptions } from '../src/core/derived-links.ts';
+import { DerivedLinkEndpointChangedError, DerivedLinkSettingsChangedError, replaceDerivedLinksBatchOrReplay } from '../src/core/derived-links.ts';
+import { PageRevisionConflictError, RevisionBackfillPendingError } from '../src/core/page-state/types.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runExtract, extractStaleFromDB } from '../src/commands/extract.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
@@ -93,11 +95,10 @@ for (const kind of ['pglite', ...(process.env.DATABASE_URL ? ['postgres'] : [])]
           const errorSpy = spyOn(console, 'error').mockImplementation((...args) => { errors.push(args.join(' ')); });
           const exitSpy = spyOn(process, 'exit').mockImplementation(code => { throw new Error(`extract exited ${code}`); });
           try {
-            await expect(run()).rejects.toThrow(mode === 'stale' ? 'endpoint changed after type resolution' : 'extract exited 1');
-            if (mode !== 'stale') {
-              expect(exitSpy).toHaveBeenCalledWith(1);
-              expect(errors).toContain('A derived link endpoint changed after type resolution');
-            }
+            // #6272: the run defers the conflicted origin (unstamped, graph untouched) instead of aborting.
+            await run();
+            expect(exitSpy).not.toHaveBeenCalled();
+            expect(errors).not.toContain('A derived link endpoint changed after type resolution');
           } finally {
             engine.replaceDerivedLinks = original;
             engine.replaceDerivedLinksBatch = originalBatch;
@@ -118,5 +119,75 @@ for (const kind of ['pglite', ...(process.env.DATABASE_URL ? ['postgres'] : [])]
         });
       }
     }
+
+    for (const mode of ['links', 'all', 'stale']) {
+      test(`${mode}: a later origin edited after its snapshot read is deferred unstamped; its siblings are written (#6272)`, async () => {
+        const slugs = ['notes/a', 'notes/b', 'notes/c'];
+        // a -> c, b -> c, c -> a: no origin links to b, so editing b moves no other origin's endpoint.
+        for (const [slug, to] of [['notes/a', 'notes/c'], ['notes/b', 'notes/c'], ['notes/c', 'notes/a']]) {
+          await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `Links [[${to}]].` }, { sourceId });
+        }
+        const stamps = async () => Object.fromEntries((await engine.executeRaw<{ slug: string; links_extracted_at: string | null }>(
+          'SELECT slug,links_extracted_at FROM pages WHERE source_id=$1 AND slug=ANY($2) ORDER BY slug', [sourceId, slugs])).map(r => [r.slug, r.links_extracted_at]));
+        const outgoing = async (slug: string) => (await engine.executeRaw<{ to_slug: string }>(
+          `SELECT t.slug AS to_slug FROM links l JOIN pages f ON f.id=l.from_page_id JOIN pages t ON t.id=l.to_page_id
+           WHERE f.source_id=$1 AND f.slug=$2 AND l.link_source='markdown' ORDER BY t.slug`, [sourceId, slug])).map(r => r.to_slug);
+        await engine.executeRaw('UPDATE pages SET links_extracted_at=NULL WHERE source_id=$1', [sourceId]);
+        const original = engine.replaceDerivedLinks, originalBatch = engine.replaceDerivedLinksBatch;
+        let edited = false;
+        // Another writer edits b after its snapshot was read, just as b's links are published.
+        const editLaterOrigin = async (origins: DerivedLinkOrigin[]) => {
+          if (edited || !origins.some(origin => origin.slug === 'notes/b')) return;
+          edited = true;
+          await engine.putPage('notes/b', { type: 'note', title: 'notes/b', compiled_truth: 'Edited by another writer: [[notes/a]].' }, { sourceId });
+        };
+        engine.replaceDerivedLinks = async (origin, links, opts) => { await editLaterOrigin([origin]); return original.call(engine, origin, links, opts); };
+        engine.replaceDerivedLinksBatch = async items => { await editLaterOrigin(items.map(item => item.origin)); return originalBatch.call(engine, items); };
+        const out: string[] = [];
+        const writeSpy = spyOn(process.stdout, 'write').mockImplementation(((chunk: string) => { out.push(String(chunk)); return true; }) as never);
+        const logSpy = spyOn(console, 'log').mockImplementation((...args) => { out.push(args.join(' ')); });
+        const exitSpy = spyOn(process, 'exit').mockImplementation(code => { throw new Error(`extract exited ${code}`); });
+        let stale: Awaited<ReturnType<typeof extractStaleFromDB>> | undefined;
+        try {
+          if (mode === 'stale') stale = await extractStaleFromDB(engine, { dryRun: false, jsonMode: true, sourceIdFilter: sourceId, includeFrontmatter: false, catchUp: false });
+          else await runExtract(engine, [mode, '--source', 'db', '--source-id', sourceId, '--json']);
+        } finally {
+          engine.replaceDerivedLinks = original;
+          engine.replaceDerivedLinksBatch = originalBatch;
+          writeSpy.mockRestore();
+          logSpy.mockRestore();
+          exitSpy.mockRestore();
+        }
+        expect(edited).toBe(true);
+        expect(exitSpy).not.toHaveBeenCalled();
+        const summary = out.map(line => { try { return JSON.parse(line); } catch { return null; } }).filter(Boolean).at(-1);
+        expect(summary.skipped_concurrent_write).toBe(1);
+        if (stale) expect(stale.skippedConcurrentWrite).toBe(1);
+        expect(await outgoing('notes/a')).toEqual(['notes/c']);
+        expect(await outgoing('notes/c')).toEqual(['notes/a']);
+        // The deferred origin kept nothing from the read it lost: no links from that read, no stamp.
+        expect(await outgoing('notes/b')).toEqual([]);
+        expect(out.join('\n')).not.toContain('extract exited');
+        const after = await stamps();
+        expect(after['notes/b']).toBeNull();
+        if (mode !== 'links') { expect(after['notes/a']).not.toBeNull(); expect(after['notes/c']).not.toBeNull(); }
+        // The next run finishes it from the new content.
+        if (mode === 'stale') await extractStaleFromDB(engine, { dryRun: false, jsonMode: true, quiet: true, sourceIdFilter: sourceId, includeFrontmatter: false, catchUp: false });
+        else await runExtract(engine, [mode, '--source', 'db', '--source-id', sourceId, '--json']);
+        expect(await outgoing('notes/b')).toEqual(['notes/a']);
+        for (const slug of slugs) await engine.executeRaw('DELETE FROM pages WHERE source_id=$1 AND slug=$2', [sourceId, slug]);
+      });
+    }
+
+    test('only a real concurrent write defers; a synthetic revision_conflict, a backfill-pending revision and storage errors stay fatal (#6272)', async () => {
+      const item = { origin: { slug: 'notes/x', sourceId, expectedRevision: '00000000-0000-0000-0000-000000000000', sourceIncarnation: '00000000-0000-0000-0000-000000000000' }, links: [] };
+      const failing = (error: unknown) => ({ replaceDerivedLinks: async () => { throw error; }, replaceDerivedLinksBatch: async () => { throw error; } }) as unknown as BrainEngine;
+      expect(await replaceDerivedLinksBatchOrReplay(failing(new DerivedLinkEndpointChangedError('moved')), [item])).toEqual(['concurrent_write']);
+      expect(await replaceDerivedLinksBatchOrReplay(failing(new PageRevisionConflictError('a', 'b')), [item])).toEqual(['concurrent_write']);
+      expect(await replaceDerivedLinksBatchOrReplay(failing(new DerivedLinkSettingsChangedError()), [item])).toEqual(['settings_changed']);
+      for (const fatal of [Object.assign(new Error('synthetic'), { code: 'revision_conflict' }), new RevisionBackfillPendingError('a'), new TypeError('bad row')]) {
+        await expect(replaceDerivedLinksBatchOrReplay(failing(fatal), [item])).rejects.toBe(fatal);
+      }
+    });
   });
 }

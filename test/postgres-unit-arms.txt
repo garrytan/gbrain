@@ -27,7 +27,10 @@ test/doctor-frontmatter-holds.test.ts
 test/doctor-routing-skill-pack-source.test.ts
 test/embedding-completion-atomic.serial.test.ts
 test/engine-sql-facts-keyset.test.ts
+test/extract-all-stamp-intersection.serial.test.ts
 test/extract-endpoint-revision.serial.test.ts
+test/extract-entities-managed.test.ts
+test/extract-timeline-from-meetings-managed.test.ts
 test/fence-repair-receipts.test.ts
 test/graduation-copy.test.ts
 test/graduation-digest.test.ts
@@ -36,6 +39,7 @@ test/graduation-inventory.test.ts
 test/graduation-rollback.test.ts
 test/graduation-state.test.ts
 test/graduation-target.test.ts
+test/graduation-verify-sync-freshness.test.ts
 test/graduation-verify.test.ts
 test/grandfather-managed.test.ts
 test/harness-skills-epoch.test.ts
@@ -90,6 +94,7 @@ test/persistence-memory-mutations.test.ts
 test/persistence-page-authority.test.ts
 test/persistence-physical-root-device.test.ts
 test/persistence-preactivation-claim.test.ts
+test/persistence-publication-deadline.test.ts
 test/persistence-reconcile-git-dirty-6138.test.ts
 test/persistence-skill-bundles.serial.test.ts
 test/persistence-skill-crash.slow.test.ts
@@ -117,11 +122,13 @@ test/source-retire-missing-checkout.test.ts
 test/source-row-diagnostics.test.ts
 test/stats-health-source-scope.test.ts
 test/sync-drain-claims.test.ts
+test/sync-drain-inpass-stall.test.ts
 test/sync-drain-write-capacity.test.ts
 test/sync-frontmatter-recovery.test.ts
 test/sync-frontmatter-slug-conflict.test.ts
 test/sync-group-member-order.test.ts
 test/sync-legacy-holds.test.ts
+test/sync-staged-catchup.test.ts
 test/sync-waiver-budget.test.ts
 test/sync-waiver-run-imports.test.ts
 test/takes-vector-lifecycle-5885.serial.test.ts

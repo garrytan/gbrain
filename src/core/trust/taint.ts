@@ -156,9 +156,16 @@ export async function derivedMaintenanceTransaction<T>(engine: BrainEngine, deri
  */
 export async function lowerDerivedPage(engine: BrainEngine, derivation: { trust: WriteTrust; inputs: readonly TaintInput[] },
   sourceId: string, slug: string): Promise<void> {
-  await derivedMaintenanceTransaction(engine, derivation, async tx => ({ result: undefined,
-    rows: (await tx.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [sourceId, slug]))
-      .map(row => ({ table: 'pages' as const, id: Number(row.id), sourceId })) }));
+  await maintenanceTransaction(engine, tx => lowerDerivedPageIn(tx, derivation, sourceId, slug), derivation.trust);
+}
+
+/** lowerDerivedPage inside a caller's transaction (a managed brain's coordinated write). */
+export async function lowerDerivedPageIn(tx: BrainEngine, derivation: { trust: WriteTrust; inputs: readonly TaintInput[] },
+  sourceId: string, slug: string): Promise<void> {
+  for (const row of await tx.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [sourceId, slug])) {
+    await lowerToDerivedTier(tx, 'pages', [Number(row.id)], derivation.trust);
+    await recordTaintEdges(tx, { table: 'pages', id: Number(row.id), sourceId }, derivation.inputs);
+  }
 }
 
 // ---------------------------------------------------------------------------

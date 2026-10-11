@@ -356,6 +356,10 @@ function skipReason(file: string): string | null {
   if (keys.length) return `every test skipped without ${keys.join(', ')} (secret not available here); not stressed`;
   const owner = OWNING_WORKFLOWS.find(w => { const p = join(ROOT, '.github/workflows', w); return existsSync(p) && readFileSync(p, 'utf8').includes(file); });
   if (owner) return `every test skipped here: its prerequisite (agent binary or native target) comes from its owning job in .github/workflows/${owner}; not stressed`;
+  if (/process\.env\.GBRAIN_PGBOUNCER_URL/.test(text) && !process.env.GBRAIN_PGBOUNCER_URL) {
+    const pooled = readdirSync(join(ROOT, '.github/workflows')).find(w => { const body = readFileSync(join(ROOT, '.github/workflows', w), 'utf8'); return body.includes(file) && body.includes('GBRAIN_CI_REQUIRE_PGBOUNCER'); });
+    if (pooled) return `every test skipped without the PgBouncer fixture (GBRAIN_PGBOUNCER_URL); its owning pooled job in .github/workflows/${pooled} requires it; not stressed`;
+  }
   return null;
 }
 

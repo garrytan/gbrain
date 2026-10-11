@@ -371,7 +371,12 @@ The admin health indicators count it as `accepted_pending`, outside the error
 rate, with `pending_writes`, `oldest_pending_write_age_seconds` and
 `pending_writes_later_failed`. `owner_unavailable`
 and `writer_lock_unavailable` do not authorize a competing owner or a fresh
-request ID. `queue_capacity` refuses additional admission without evicting
+request ID. A process that cannot open the worktree lock file at all (a sandbox,
+an unwritable lock directory) leaves its write `queued` with
+`blocked_reason: writer_lock_unavailable` (receipt `next_action:
+inspect_owner`) for an owner process that can take the lock; retrying from the
+same process fails the same way, and the OS error stays in the owner-only
+detail. `queue_capacity` refuses additional admission without evicting
 existing requests. `revision_required`, `revision_conflict`,
 `idempotency_conflict`, and `source_changed` require correcting the caller's
 intent or authority. `recovery_required` names unresolved publication state.

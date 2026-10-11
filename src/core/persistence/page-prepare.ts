@@ -4,6 +4,8 @@ import { boundedReads } from './bounded-reads.ts';
 import { isQuarantined, quarantineOutcome } from '../quarantine.ts';
 import { existsSync, readFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
+import { matchesAnyGlob } from '../sync.ts';
+import { syncExcludePatterns } from './sync-discovery.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { Page, PageVersion } from '../types.ts';
@@ -148,7 +150,9 @@ export async function fileMatchesSnapshot(engine: BrainEngine, slug: string, byt
   return digest(actual) === digest(canonical(snapshot.page, snapshot.tags));
 }
 export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequest, 'source_id' | 'worktree_id' | 'slug'>, snapshot: PageSnapshot | null,
-  content: string | null, hostId?: string, options: { allowMissing?: boolean; deleting?: boolean; capture?: { path: string; hash: string }; activePack?: ParseOpts['activePack']; remote?: boolean } = {}): Promise<PreparedMutation['file']> {
+  content: string | null, hostId?: string, options: { allowMissing?: boolean; deleting?: boolean; capture?: { path: string; hash: string }; activePack?: ParseOpts['activePack']; remote?: boolean;
+    /** #6368: a tombstone purge whose file matches these sync.exclude globs (relative to the source root) owns no file. */
+    excludeTombstone?: { patterns: string[]; onExcluded: (path: string) => void } } = {}): Promise<PreparedMutation['file']> {
   if (!row.worktree_id) return undefined;
   // #6212: a legacy slug (admitted only to delete or restore its existing row) never owns a file: its recorded
   // source_uri or source_path may name the file of another page, such as the one sync now slugs it to.
@@ -178,6 +182,10 @@ export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequ
   if (!isWriteTargetContained(path, root)) throw opError('source_changed', 'The canonical file target is outside its registered source.',
     `The file of ${row.slug} resolves outside source ${row.source_id}'s registered root (a symlinked directory or a moved checkout), so nothing was written. Inspect the owner before resubmitting; how to repair the checkout is the user's decision.`,
     { fix: ownerStatusFix(row.source_id) });
+  if (options.excludeTombstone && snapshot?.page.deleted_at) {
+    const rel = relative(root, path).split(sep).join('/');
+    if (matchesAnyGlob(rel, options.excludeTombstone.patterns)) { options.excludeTombstone.onExcluded(rel); return undefined; }
+  }
   const before = existsSync(path) ? readFileSync(path) : null;
   if (!before && snapshot && !snapshot.page.deleted_at && !options.allowMissing) {
     // A declared db_only page has no canonical file by design and publishes to
@@ -198,10 +206,12 @@ export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequ
     if (!await fileMatchesSnapshot(engine, row.slug, before.toString('utf8'), snapshot, options.activePack)) {
       const held = await heldFileRefusal(engine, row, root, path, 'drift', options.remote === true);
       if (held) throw held;
+      // #6394: a page that never recorded its file reconciles against the file at its slug path only when adopted explicitly.
+      const adopt = !snapshot.page.source_path && !snapshot.page.source_uri ? ['--adopt-slug-path'] : [];
       throw opError('source_changed', 'The canonical file contains an uncoordinated local edit.',
-        `On the brain host, run gbrain sources reconcile ${row.source_id} ${row.slug} --brain <brain id, host by default> --preview, review and apply the resolved preview, then retry this write with a new request_id. Neither copy was overwritten.`,
+        `On the brain host, run gbrain sources reconcile ${row.source_id} ${row.slug} --brain <brain id, host by default> --preview${adopt.length ? ' --adopt-slug-path (the page records no file of its own, so the preview adopts the file at its slug path)' : ''}, review and apply the resolved preview, then retry this write with a new request_id. Neither copy was overwritten.`,
         { detail: 'file_database_drift', fix: readFix(`Previews how page ${row.slug}'s canonical file and database copy reconcile; a preview never changes canonical content.`,
-          { argv: ['gbrain', 'sources', 'reconcile', row.source_id, row.slug, '--brain', 'host', '--preview'] }) });
+          { argv: ['gbrain', 'sources', 'reconcile', row.source_id, row.slug, '--brain', 'host', '--preview', ...adopt] }) });
     }
   } else if (before && !snapshot && content !== null && sha256(before) !== sha256(content)
     && !(options.capture && sha256(before) === options.capture.hash)) {
@@ -259,6 +269,25 @@ async function pageDatabaseOnlyPublication(engine: SqlEngine, row: WriteRequest,
 }
 
 /**
+ * #6368: a tombstone whose file is under sync.exclude does not own that file (sync never reads it again), so its purge is
+ * database-only: the file is neither compared nor removed. `excludedPath` names that file; the apply re-checks it.
+ */
+async function prepareDeleteFileTarget(engine: BrainEngine, row: WriteRequest, snapshot: PageSnapshot, purge: boolean,
+  options: Parameters<typeof prepareFileTarget>[5]): Promise<{ file: PreparedMutation['file']; excludedPath: string | null }> {
+  let excludedPath: string | null = null;
+  const exclude = purge && snapshot.page.deleted_at != null ? await syncExcludePatterns(engine) : [];
+  const file = await prepareFileTarget(engine, row, snapshot, null, undefined, { ...options,
+    ...(exclude.length ? { excludeTombstone: { patterns: exclude, onExcluded: (path: string) => { excludedPath = path; } } } : {}) });
+  return { file, excludedPath };
+}
+
+async function assertStillSyncExcluded(tx: BrainEngine, row: WriteRequest, excludedPath: string): Promise<void> {
+  if (matchesAnyGlob(excludedPath, await syncExcludePatterns(tx))) return;
+  throw pageRefusal('source_changed', 'sync.exclude changed while the purge was prepared.', row,
+    `${excludedPath} was excluded from sync when the purge of ${row.slug} was prepared and is not any more, so nothing was purged. Run the purge again; it re-reads the exclusion.`, pageFix(row.source_id, row.slug));
+}
+
+/**
  * Providers and parsing run before the OS lock and before any publication transaction.
  * `coordinated`: the caller publishes this mutation itself through the coordinator, whose
  * page guard and revision check on `row.slug` cover this import (the put_page apply diet).
@@ -311,8 +340,9 @@ export async function preparePageMutation(unbounded: BrainEngine, row: WriteRequ
     // Tombstones still own their recorded artifact. Purge always attempts its
     // removal before the guarded hard-delete and receipt commit; failure rolls
     // back to the prior row, and replay survives the eventual absence of that row.
-    const file = await prepareFileTarget(engine, row, snapshot, null, undefined, { allowMissing: purge || options.allowMissingFile, deleting: true, activePack, remote: row.authority.remote });
-    return { observedRevision, noop, file, ...await pageDatabaseOnlyPublication(engine, row, file), apply: async tx => {
+    const { file, excludedPath } = await prepareDeleteFileTarget(engine, row, snapshot, purge, { allowMissing: purge || options.allowMissingFile, deleting: true, activePack, remote: row.authority.remote });
+    return { observedRevision, noop, file, ...await pageDatabaseOnlyPublication(engine, row, file), ...(excludedPath !== null ? { databaseOnlyReason: 'sync_excluded' as const } : {}), apply: async tx => {
+      if (purge && excludedPath !== null) await assertStillSyncExcluded(tx, row, excludedPath);
       if (purge) return purgePageInTransaction(tx, row, snapshot);
       if (!noop) { await tx.createVersion(row.slug, source); await tx.softDeletePage(row.slug, source); }
       return { status: 'soft_deleted', slug: row.slug, source_id: row.source_id, noop,

@@ -21,8 +21,8 @@ const engine: BrainEngine = input.database.engine === 'postgres' ? new PostgresE
 await engine.connect(input.database);
 if (input.crash) {
   const transaction = engine.transaction;
-  engine.transaction = async function <T>(this: BrainEngine, run: (tx: BrainEngine) => Promise<T>): Promise<T> {
-    const result = await transaction.call(this, run);
+  engine.transaction = async function <T>(this: BrainEngine, run: (tx: BrainEngine) => Promise<T>, opts?: Parameters<BrainEngine['transaction']>[1]): Promise<T> {
+    const result = await transaction.call(this, run, opts);
     const row = result as Partial<WriteRequest> | undefined;
     if (row?.state === 'committed' && row.intent?.kind === 'connector_v2_google_receipts') {
       if (outboundCalls) throw new Error('Historical lifecycle repair attempted outbound requests');

@@ -597,6 +597,7 @@
       "./extract": [
         "STALE_TIME_BUDGET_MS",
         "buildSlugPathIndex",
+        "extractCompletionKey",
         "extractLinksForSlugs",
         "extractLinksFromFile",
         "extractMarkdownLinks",

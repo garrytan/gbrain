@@ -61,8 +61,10 @@ Paid-provider files (`*.live.test.ts`, `test/live/`,
 `scripts/e2e-live-key-only.txt`) are listed as not stressed. A file whose
 every test skips on this platform, skips without an unavailable secret, or
 skips without a prerequisite its owning job in `heavy-tests.yml`,
-`native-locks.yml` or `macos-validation.yml` installs, is listed as not
-stressed with that reason; any other run with zero executed tests fails.
+`native-locks.yml` or `macos-validation.yml` installs, or skips without the
+PgBouncer fixture (`GBRAIN_PGBOUNCER_URL`) that a workflow step setting
+`GBRAIN_CI_REQUIRE_PGBOUNCER` runs it with, is listed as not stressed with that
+reason; any other run with zero executed tests fails.
 
 ## Isolation and receipts
 

@@ -13,7 +13,7 @@ import { assertPersistenceAccepting, waitForWrite, writeResponse } from './servi
 import { digest, requireUuid, sha256, stableJson } from './digest.ts';
 import { mergeReconcile, reconcileCanonical, reconcileDecisions, strictReconcileKeys } from './reconcile-merge.ts';
 import { additiveDecisions, assertAutoDecisions, classifyDrift, type AutoDecision, type DriftClassification } from './reconcile-additive.ts';
-import { assertReconcilePins, readReconcileState, staleReconcile, validateReconcileArtifact, type ReconcileArtifact, type ReconcileState } from './reconcile-state.ts';
+import { assertReconcilePins, readReconcileState, reconcilePreviewAdopts, staleReconcile, validateReconcileArtifact, type ReconcileArtifact, type ReconcileState } from './reconcile-state.ts';
 import { prepareReconcileResult } from './reconcile-prepare.ts';
 import { assertReconcileOutputPath, assertReconcileSize, manageReconcileBackups, retainReconcileBackup } from './reconcile-backup.ts';
 import type { LocalGrant } from './identity.ts';
@@ -90,7 +90,7 @@ async function config(engine: BrainEngine): Promise<GBrainConfig> {
   return await loadConfigWithEngine(engine, loadConfig()) ?? { engine: engine.kind } as GBrainConfig;
 }
 export async function runReconcilePreview(engine: BrainEngine, params: Record<string, unknown>): Promise<Record<string, unknown> & { preview: ReconcileArtifact }> {
-  strictReconcileKeys(params, ['source_id', 'slug', 'from', 'decisions', 'output_path', 'auto_additive', 'accept_suggested'], ['source_id', 'slug']);
+  strictReconcileKeys(params, ['source_id', 'slug', 'from', 'decisions', 'output_path', 'auto_additive', 'accept_suggested', 'adopt_slug_path'], ['source_id', 'slug']);
   const auto = params.auto_additive === true;
   if (params.auto_additive !== undefined && typeof params.auto_additive !== 'boolean'
     || params.accept_suggested !== undefined && (typeof params.accept_suggested !== 'boolean' || !auto)) {
@@ -110,7 +110,8 @@ export async function runReconcilePreview(engine: BrainEngine, params: Record<st
     'Pass the preview being resolved along with the decisions (CLI: --from with the preview file written by --out).');
   if (from && (from.preconditions.source_id !== sourceId || from.preconditions.slug !== slug)) throw opError('invalid_params', 'The previous preview names a different page.',
     `Use the preview made for ${slug} in '${sourceId}', or run the command with the source and slug that preview file names.`);
-  const state = await readReconcileState(engine, sourceId, slug, from?.preconditions.assessment_at);
+  const state = await readReconcileState(engine, sourceId, slug, from?.preconditions.assessment_at,
+    { adoptSlugPath: params.adopt_slug_path === true || (from !== undefined && reconcilePreviewAdopts(from)) });
   if (from) assertPreimages(from, state);
   const database = reconcileCanonical(state.snapshot.page, state.snapshot.tags);
   const classification = auto ? classifyDrift(state.file, database) : undefined;
@@ -166,7 +167,8 @@ export async function runReconcileApply(engine: BrainEngine, params: Record<stri
   try {
     assertPersistenceAccepting(engine);
     await assertReconcileSize(engine, artifact);
-    const state = await readReconcileState(engine, sourceId, slug, artifact.preconditions.assessment_at);
+    const adopt = { adoptSlugPath: reconcilePreviewAdopts(artifact) };
+    const state = await readReconcileState(engine, sourceId, slug, artifact.preconditions.assessment_at, adopt);
     assertPreimages(artifact, state);
     assertAutoDecisions(artifact.auto_decisions ?? [], state.file, reconcileCanonical(state.snapshot.page, state.snapshot.tags), artifact.decisions);
     const prepared = await prepareReconcileResult(engine, state, artifact.decisions);
@@ -176,7 +178,7 @@ export async function runReconcileApply(engine: BrainEngine, params: Record<stri
     const reference = await retainReconcileBackup(engine, artifact, authority.principal, requestId);
     const retainedReplay = await replay();
     if (retainedReplay) return retainedReplay;
-    const current = await readReconcileState(engine, sourceId, slug, artifact.preconditions.assessment_at);
+    const current = await readReconcileState(engine, sourceId, slug, artifact.preconditions.assessment_at, adopt);
     assertPreimages(artifact, current);
     const row = await admitWrite(engine, { principal: authority.principal, operation: 'put_page', sourceId,
       sourceIncarnation: state.pins.source_incarnation, slug, pageId: state.pins.page_id, worktreeId: state.pins.worktree_id,

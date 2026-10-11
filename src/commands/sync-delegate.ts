@@ -498,7 +498,7 @@ export type ManagedDelegationOutcome =
   | { kind: 'delegated'; result: SyncResult; pid: number }
   /** Not delegated; `reason` names the rung, `line` is the one line printed (null when nothing was printed). */
   | { kind: 'own_consumer'; reason: 'opted_out' | 'not_host' | 'not_postgres' | 'not_managed' | 'no_owner' | 'owner_not_serve' | 'probe_failed'
-      | 'kill_switch' | 'unsupported_flag' | 'no_socket' | 'older_serve' | 'serve_refused' | 'serve_lost'; line: string | null };
+      | 'kill_switch' | 'unsupported_flag' | 'no_socket' | 'older_serve' | 'serve_refused' | 'serve_lost' | 'serve_no_admission'; line: string | null };
 
 const fallbackLine = (pid: number, cause: string, fix = 'Restart that serve on this gbrain version to remove the second consumer.'): string =>
   `[sync] ${cause}; this run uses its own consumer beside the serve (PID ${pid}). ${fix}`;
@@ -607,6 +607,13 @@ export async function maybeDelegateManagedSyncToServe(engine: BrainEngine, args:
   if (polled.kind === 'lost') return own('serve_lost', '[sync] continuing the catch-up with this process\'s own consumer; the durable cursor resumes where the serve left it.');
   if (polled.kind === 'failed') throw polled.error;
   const { result, pagesAffectedTotal } = syncResultFromWire(polled.result);
+  // #6405/#6423: a delegated drain that admitted nothing left no request a publisher could still be writing, so this run
+  // takes the catch-up over with its own consumer, once (the fallback itself never delegates). A publication that never
+  // returned is different: the serve may still hold its locks, so that stop is reported as it is (restart the serve).
+  if (result.drain?.stop_reason === 'drain_stalled' && result.drain.stall?.cause === 'no_admission') {
+    return own('serve_no_admission', `[sync] the serve (PID ${pid}) admitted no write for ${result.drain.stall.stalled_seconds}s${result.drain.stall.step ? ` at step ${result.drain.stall.step}` : ''}; `
+      + 'continuing the catch-up with this process\'s own consumer, once (the durable cursor resumes where the serve left it).');
+  }
   if (pagesAffectedTotal > polled.result.pagesAffected.length) {
     serr(`[sync] (+${pagesAffectedTotal - polled.result.pagesAffected.length} more pages affected — list truncated for the IPC wire)`);
   }

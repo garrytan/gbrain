@@ -17,7 +17,7 @@ import { chargePreparationAttempt, clearResolvedRecovery, completeWrite, getWrit
 import type { WaitingOn } from './claim-phase.ts';
 import { preparationKind } from './preparation-budget.ts';
 import { isTerminal, principalKey, requestPrincipal, recoveryFiles, type FileRecoveryRecord, type RecoveryRecord, type WriteRequest } from './model.ts';
-import type { NativeLockHandle } from './native-lock.ts';
+import { isLockOpenFailure, noteLockOpenFailure, type NativeLockHandle } from './native-lock.ts';
 import { withCoordinatedWrite } from './context.ts';
 import { lockCoreSources } from './core-guard.ts';
 import { publicationAttribution } from './attribution.ts';
@@ -31,6 +31,7 @@ import { authorizePageVisibility } from './page-visibility.ts';
 import { withNoRepoWriteThroughWarning } from '../write-through.ts';
 import { assertUnboundPublication, classifyUnboundPage, unboundWriteWarning } from './unbound-source.ts';
 import { assertRecoveryStagingAbsent, cleanupRecoveryStaging, recoveryStagingFile, upgradeRecoveryStaging } from './staging.ts';
+import { bindPublicationTimeouts, publicationTransaction } from './publication-deadline.ts';
 import { assertMutationProtocol, assertSharedSkillPersistence, declareDurablePersistence, PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
 import { assertBundleRecoveryBinding, bundleFileHash, prepareBundleRecovery, publishStagedBundleFile, stageBundleFile, type MutationFile } from './bundle-files.ts';
 import { assertKnowledgePublicationAllowed } from '../shared-skills/knowledge-guard.ts';
@@ -51,7 +52,7 @@ interface PreparedMutationBase {
   contentUnchanged?: boolean;
   deferEmbedding?: boolean;
   /** Why a page write bound to a worktree publishes no file (receipt `write_through.skipped`). */
-  databaseOnlyReason?: 'db_only' | 'unbound_source' | 'mirror_read_only';
+  databaseOnlyReason?: 'db_only' | 'unbound_source' | 'mirror_read_only' | 'sync_excluded';
   /**
    * Must perform only transaction-composable database work. `preimage` (#5984)
    * is the publisher's read of the page under its page guard, after the revision
@@ -278,7 +279,14 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
         await releaseUnpublishedClaim(engine, row, 'owner_unavailable');
         return (await getWriteRequestById(engine, row.id))!;
       }
-      lock = await acquireWorktree(binding, 0, undefined, engine, { yieldLanes: true });
+      try { lock = await acquireWorktree(binding, 0, undefined, engine, { yieldLanes: true }); }
+      catch (error) {
+        // #6305: this process cannot open the lock file (sandbox, unwritable lock directory): like a busy lock, publish nothing.
+        if (!isLockOpenFailure(error)) throw error;
+        noteLockOpenFailure(row.worktree_id, error);
+        await releaseUnpublishedClaim(engine, row, 'writer_lock_unavailable');
+        return (await getWriteRequestById(engine, row.id))!;
+      }
       if (!lock) {
         await releaseUnpublishedClaim(engine, row, 'writer_busy');
         return (await getWriteRequestById(engine, row.id))!;
@@ -336,7 +344,8 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
       recovery = record;
       await hooks.boundary?.('prepared', row);
     }
-    const done = await engine.transaction(async tx => {
+    const done = await publicationTransaction(engine, async tx => {
+      await bindPublicationTimeouts(tx);
       await declareDurablePersistence(tx);
       const liveBinding = await guardOwnership(tx, row, hostId);
       if (prepared.sourceExclusive && !prepared.exclusiveSources?.length) await tx.executeRaw('SELECT id FROM sources WHERE id=$1 FOR UPDATE', [row.source_id]);

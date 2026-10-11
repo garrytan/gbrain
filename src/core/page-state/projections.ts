@@ -1,4 +1,5 @@
 import type { BrainEngine } from '../engine.ts';
+import type { ProgressReporter } from '../progress.ts';
 import type { Chunk, ChunkInput, ResolvedColumn, PageKind } from '../types.ts';
 import { MARKDOWN_CHUNKER_VERSION } from '../chunkers/recursive.ts';
 import { CHUNKER_VERSION } from '../chunkers/code.ts';
@@ -367,6 +368,8 @@ export interface ProjectionRebuildOptions {
   notAfter?: string;
   /** Skip failed rows inside their retry window (PROJECTION_RETRY_READY_SQL). */
   retryCooldown?: boolean;
+  /** Only rows whose queue reason is one of these. */
+  reasons?: readonly string[];
   /** Only these pages of one source. */
   pages?: { sourceId: string; slugs: readonly string[] };
   /** Receives each failed page; without it a generic stderr line is printed. */
@@ -391,6 +394,7 @@ export async function rebuildPendingPageProjections(engine: BrainEngine, limit =
   const filters: string[] = [];
   if (opts.retryCooldown) filters.push(PROJECTION_RETRY_READY_SQL);
   if (opts.notAfter !== undefined) { params.push(opts.notAfter); filters.push(`j.updated_at<=$${params.length}::text::timestamptz`); }
+  if (opts.reasons) { params.push(opts.reasons); filters.push(`j.reason=ANY($${params.length}::text[])`); }
   if (opts.pages) { params.push(opts.pages.slugs); filters.push(`j.slug=ANY($${params.length}::text[])`); }
   const sourceFilter = opts.pages ? `WHERE s.id=$${params.push(opts.pages.sourceId)}` : '';
   const jobs = await engine.executeRaw<{ source_id: string; source_incarnation: string; slug: string; revision: string; page_kind: string }>(`SELECT s.id AS source_id,j.source_incarnation,j.slug,j.revision,p.page_kind
@@ -442,3 +446,47 @@ export async function rebuildPendingPageProjections(engine: BrainEngine, limit =
   }
   return { rebuilt, superseded };
 }
+
+/** #6286: queued projections are rebuilt in batches of this many pages. */
+const DRAIN_BATCH = 100;
+
+export interface ProjectionDrainResult {
+  rebuilt: number;
+  superseded: number;
+  failed: ProjectionRebuildFailure[];
+  remaining: number;
+  limited: boolean;
+}
+
+export async function drainProjections(engine: BrainEngine, opts: { limit?: number; progress?: ProgressReporter; reasons?: readonly string[] } = {}): Promise<ProjectionDrainResult> {
+  const [{ runStart }] = await engine.executeRaw<{ runStart: string }>('SELECT now()::text AS "runStart"');
+  // PGLite's clock can be coarse: wait until it passes the run start, so a page
+  // that fails in this run is stamped after it and is not tried again.
+  while (!(await engine.executeRaw<{ passed: boolean }>('SELECT now()>$1::text::timestamptz AS passed', [runStart]))[0]?.passed) {
+    await new Promise(resolve => setTimeout(resolve, 1));
+  }
+  const total = (await projectionBacklog(engine)).pending;
+  opts.progress?.start('projections.drain', opts.limit === undefined ? total : Math.min(total, opts.limit));
+  const failed: ProjectionRebuildFailure[] = [];
+  let rebuilt = 0;
+  let superseded = 0;
+  let tried = 0;
+  try {
+    while (opts.limit === undefined || tried < opts.limit) {
+      const failuresBefore = failed.length;
+      const batch = await rebuildPendingPageProjections(engine, Math.min(DRAIN_BATCH, (opts.limit ?? Infinity) - tried),
+        { notAfter: runStart, reasons: opts.reasons, onFailure: failure => failed.push(failure) });
+      const attempted = batch.rebuilt + batch.superseded + failed.length - failuresBefore;
+      if (attempted === 0) break;
+      rebuilt += batch.rebuilt;
+      superseded += batch.superseded;
+      tried += attempted;
+      opts.progress?.tick(attempted, `${rebuilt} rebuilt, ${failed.length} failed`);
+    }
+  } finally {
+    opts.progress?.finish();
+  }
+  const remaining = (await projectionBacklog(engine)).pending;
+  return { rebuilt, superseded, failed, remaining, limited: opts.limit !== undefined && tried >= opts.limit && remaining > 0 };
+}
+

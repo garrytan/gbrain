@@ -110,7 +110,11 @@ export async function claimedHeadOrder(engine: BrainEngine, head: WriteRequest, 
   const group = typeof head.intent?.group === 'string' ? head.intent.group : head.request_id;
   const members = await engine.executeRaw<WriteRequest>(`SELECT * FROM persistence_requests WHERE worktree_id=$1::uuid AND intent->>'group'=$2
     AND state='queued' AND id<>$3::uuid ORDER BY sequence`, [head.worktree_id, group, head.id]);
-  return cancelRows(engine, [head, ...members]);
+  const missing = prior === 'missing' ? windowPredecessor(head) : null;
+  if (!missing) return cancelRows(engine, [head, ...members]);
+  // #6402: a predecessor that was never admitted is named, never reported as "an earlier page did not commit".
+  return [...await cancelRows(engine, [head], `Its predecessor request ${missing} was never admitted; this page was not published and is re-frozen on the next sync pass.`),
+    ...await cancelRows(engine, members, `The first page of its group (request ${head.request_id}) was cancelled because its predecessor request ${missing} was never admitted; this page was not published and is re-frozen on the next sync pass.`)];
 }
 
 /** The sync side's cancellation of the window after a failed page: every member nobody claimed yet. */
@@ -149,14 +153,14 @@ export async function cancelOrphanedLaneRows(engine: BrainEngine, run: string, s
 }
 
 /** Cancels unpublished rows (queued, or claimed with the given token) with the window reason. */
-export async function cancelRows(engine: BrainEngine, rows: WriteRequest[]): Promise<WriteRequest[]> {
+export async function cancelRows(engine: BrainEngine, rows: WriteRequest[], message = WINDOW_CANCEL_MESSAGE): Promise<WriteRequest[]> {
   const settled: WriteRequest[] = [];
   for (const row of rows) {
     const done = await engine.transaction(async tx => {
       await lockCounters(tx, ['brain', principalKey(requestPrincipal(row)), ...(row.worktree_id ? [`worktree:${row.worktree_id}`] : [])]);
       const [current] = await tx.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=$1::uuid FOR UPDATE', [row.id]);
       if (!current || isTerminal(current) || current.execution_token !== row.execution_token || current.publication_started || current.recovery) return current ?? null;
-      return completeWrite(tx, current, 'cancelled', {}, { code: 'cancelled', message: WINDOW_CANCEL_MESSAGE });
+      return completeWrite(tx, current, 'cancelled', {}, { code: 'cancelled', message });
     });
     if (done) settled.push(done);
   }

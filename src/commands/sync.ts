@@ -96,6 +96,8 @@ export interface SyncResult {
   bankedFiles?: number;
   /** #5984: the managed drain's verdict and the next step for the agent (see sync-drain.ts). */
   drain?: import('../core/persistence/sync-drain.ts').DrainReport;
+  /** #6349: this run synced a staged first-parent commit (`target`) short of `head`, because the delta to HEAD exceeded the cursor bound; `stages` counts the stages a CLI loop took. */
+  staged?: { target: string; head: string; stages?: number };
   /** #6278: the run stopped because too many writes stalled while preparing (one systemic diagnostic instead of a pile of holds). */
   breaker?: import('../core/persistence/sync-run.ts').ManagedSyncBreaker;
   /** #5984: managed cursor position (`index` of `total` manifest entries) and its active drain window. */

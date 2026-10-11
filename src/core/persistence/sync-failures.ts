@@ -4,6 +4,8 @@ import type { WriteRequest } from './model.ts';
 import { checkpointRetryCommand } from './checkpoint-validation.ts';
 import type { SyncProcessingOptions } from './sync-authority.ts';
 import type { SyncCursorOptions } from './sync-prepare.ts';
+import { resolveManagedSyncContext, syncGit, syncGitPath } from './sync-discovery.ts';
+import { readGitHold } from './sync-holds.ts';
 
 export interface ManagedSyncFailure {
   source_id: string;
@@ -33,9 +35,13 @@ export async function recordManagedSyncFailure(engine: BrainEngine, value: Omit<
       INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES('managed-sync-failure',$1,$2::text::jsonb)
       ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=CASE
         WHEN op_checkpoints.completed_keys->0->>'observation_id'=EXCLUDED.completed_keys->0->>'observation_id'
-        THEN op_checkpoints.completed_keys ELSE jsonb_build_array(EXCLUDED.completed_keys->0 || jsonb_build_object(
+        THEN op_checkpoints.completed_keys
+        WHEN op_checkpoints.completed_keys->0->>'target' IS DISTINCT FROM EXCLUDED.completed_keys->0->>'target'
+        THEN EXCLUDED.completed_keys
+        ELSE jsonb_build_array(EXCLUDED.completed_keys->0 || jsonb_build_object(
           'first_seen',op_checkpoints.completed_keys->0->>'first_seen',
-          'attempts',COALESCE((op_checkpoints.completed_keys->0->>'attempts')::int,0)+1)) END
+          'attempts',COALESCE((op_checkpoints.completed_keys->0->>'attempts')::int,0)+1)) END,
+        updated_at=now()
       RETURNING completed_keys`, [value.cursor_key, JSON.stringify([failure])]);
     return row.completed_keys[0];
   });
@@ -51,6 +57,82 @@ export async function clearManagedSyncFailureAfterSuccess(engine: BrainEngine, k
   const removed = await engine.executeRaw(`DELETE FROM op_checkpoints WHERE op='managed-sync-failure' AND fingerprint=$1
     AND NOT EXISTS(SELECT 1 FROM op_checkpoints c WHERE c.op='managed-sync' AND c.fingerprint=$1 AND COALESCE(c.completed_keys->0->>'done','false')<>'true') RETURNING fingerprint`, [key]);
   if (removed.length) try { clearManagedSyncFailure(key); } catch { }
+}
+
+/** Where a successful managed sync of a source stands: its registered root, Git root and the commit it imported. */
+export interface ManagedSyncImported { sourceId: string; incarnation: string; root: string; gitRoot: string; target: string }
+
+/** The imported state of a managed source on its owner host; throws when this host does not own an active binding. */
+export async function readManagedSyncImported(engine: BrainEngine, sourceId: string): Promise<ManagedSyncImported | null> {
+  const context = await resolveManagedSyncContext(engine, { sourceId, noPull: true });
+  const [source] = await engine.executeRaw<{ last_commit: string | null }>('SELECT last_commit FROM sources WHERE id=$1 AND incarnation=$2::uuid', [sourceId, context.incarnation]);
+  if (!source?.last_commit) return null;
+  return { sourceId, incarnation: context.incarnation, root: context.root, gitRoot: context.gitRoot, target: source.last_commit };
+}
+
+function blobAt(gitRoot: string, commit: string, path: string): string | null {
+  try { return syncGit(gitRoot, ['rev-parse', '--verify', '--quiet', `${commit}:${path}`]).trim() || null; } catch { return null; }
+}
+
+/**
+ * #6288: why a recorded managed failure is not settled by the imported state, or null when it is. The imported commit is
+ * the source's last successful managed sync, which leaves every path it does not hold imported as of that commit; so a
+ * failure is settled when its file exists there and the database holds a live page for it with no hold on the path, or
+ * when the file is gone there and no live page claims it.
+ */
+async function unsettledReason(engine: BrainEngine, run: ManagedSyncImported, failure: ManagedSyncFailure): Promise<string | null> {
+  if (failure.source_id !== run.sourceId || failure.source_incarnation !== run.incarnation) return 'source_changed';
+  if (failure.path.startsWith('<')) return 'no_recorded_file';
+  const gitPath = syncGitPath(run, failure.path);
+  const present = blobAt(run.gitRoot, run.target, gitPath) !== null;
+  const live = await engine.executeRaw('SELECT 1 FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND source_path = ANY($2::text[]) LIMIT 1', [run.sourceId, [failure.path, gitPath]]);
+  if (!present) return live.length ? 'not_deleted' : null;
+  if (!live.length) return 'not_imported';
+  return await readGitHold(engine, run.sourceId, run.incarnation, failure.path) ? 'held' : null;
+}
+
+async function deleteFailure(engine: BrainEngine, key: string, failure: ManagedSyncFailure): Promise<boolean> {
+  const removed = await engine.executeRaw(`DELETE FROM op_checkpoints WHERE op='managed-sync-failure' AND fingerprint=$1
+    AND completed_keys->0->>'observation_id'=$2 RETURNING fingerprint`, [key, failure.observation_id]);
+  if (removed.length) try { clearManagedSyncFailure(key); } catch { }
+  return removed.length > 0;
+}
+
+async function sourceFailureRows(engine: BrainEngine, sourceId: string): Promise<Array<{ key: string; failure: ManagedSyncFailure; unfinished: boolean }>> {
+  const rows = await engine.executeRaw<{ key: string; failure: ManagedSyncFailure; unfinished: boolean }>(`SELECT f.fingerprint AS key,f.completed_keys->0 AS failure,
+      EXISTS(SELECT 1 FROM op_checkpoints c WHERE c.op='managed-sync' AND c.fingerprint=f.fingerprint AND COALESCE(c.completed_keys->0->>'done','false')<>'true') AS unfinished
+    FROM op_checkpoints f WHERE f.op='managed-sync-failure' AND f.completed_keys->0->>'source_id'=$1 ORDER BY f.fingerprint`, [sourceId]);
+  return rows;
+}
+
+/**
+ * #6288: after a successful managed sync, clears this source's recorded failures under other cursor keys (a `--full` run's
+ * key is never resumed by autopilot) whose cursor is finished or gone and whose file the imported commit already settles.
+ */
+export async function clearSettledManagedSyncFailures(engine: BrainEngine, run: ManagedSyncImported): Promise<number> {
+  let cleared = 0;
+  for (const row of await sourceFailureRows(engine, run.sourceId)) {
+    if (row.unfinished || await unsettledReason(engine, run, row.failure)) continue;
+    if (await deleteFailure(engine, row.key, row.failure)) cleared++;
+  }
+  return cleared;
+}
+
+export interface ManagedFailureAcknowledgement { cleared: ManagedSyncFailure[]; refused: Array<{ failure: ManagedSyncFailure; reason: string }> }
+
+/**
+ * #6288: `gbrain sync --source <id> --acknowledge-managed <request_id|path>` (host CLI only). Removes the matching recorded
+ * failures only when the imported state already settles them; anything else is refused by reason, so no content is skipped.
+ */
+export async function acknowledgeManagedSyncFailures(engine: BrainEngine, run: ManagedSyncImported, selector: string): Promise<ManagedFailureAcknowledgement> {
+  const result: ManagedFailureAcknowledgement = { cleared: [], refused: [] };
+  for (const row of await sourceFailureRows(engine, run.sourceId)) {
+    if (row.failure.request_id !== selector && row.failure.path !== selector) continue;
+    const reason = row.unfinished ? 'cursor_unfinished' : await unsettledReason(engine, run, row.failure);
+    if (reason) result.refused.push({ failure: row.failure, reason });
+    else if (await deleteFailure(engine, row.key, row.failure)) result.cleared.push(row.failure);
+  }
+  return result;
 }
 
 export async function readManagedSyncFailures(engine: BrainEngine, sourceIds?: string[]): Promise<ManagedSyncFailure[]> {
