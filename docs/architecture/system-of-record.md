@@ -232,7 +232,8 @@ or a physical projection that leaves attribution untouched):
 - `src/core/cycle/grade-takes.ts` (1): unmanaged take auto-resolution runs in `maintenanceTransaction`; managed brains publish a `takes_resolve` request.
 - `src/core/cycle/phantom-redirect.ts` (3): the unmanaged phantom fact move, canonical body refresh and phantom soft delete run in `maintenanceTransaction`; the managed redirect moves facts inside its coordinated write.
 - `src/core/cycle/phases/consolidate.ts` (4): unmanaged consolidation's take insert or re-promotion, consolidation marks and valid_until writeback run in one `derivedMaintenanceTransaction` per cluster at the cluster's derived tier; managed brains submit a maintenance consolidation request.
-- `src/core/embed-facts.ts` (1): embedding columns only (physical projection).
+- `src/core/embed-facts.ts` (2): embedding columns only (physical projection).
+- `src/core/embed-takes-refresh.ts` (1): embedding columns only (physical projection).
 - `src/core/embedding-dim-check.ts` (1): embedding columns only (physical projection).
 - `src/core/extract/receipt-writer.ts` (1): the extraction receipt page runs in `maintenanceTransaction`.
 - `src/core/facts/backstop.ts` (1): the facts backstop's DB-only fallbacks insert each fact through one helper, in `maintenanceTransaction` at the extraction's derived tier; managed brains publish through the facts request preparer.
