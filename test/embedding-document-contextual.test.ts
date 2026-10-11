@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from 'bun:test';
-import { configureGateway, embed, resetGateway } from '../src/core/ai/gateway.ts';
+import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import { reembedPageWithContextualRetrieval } from '../src/core/contextual-retrieval-service.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { installFixtureChunks } from './helpers/page-projection.ts';
@@ -98,8 +98,16 @@ test('contextual re-embedding sends the snapshot title once and keeps canonical 
     .toEqual(['summarized body', 'function answer() {}']);
 
   requests = [];
+  await engine.setConfig('embedding_model', 'ollama:nomic-embed-text');
+  await engine.setConfig('embedding_dimensions', String(DIMS));
   configureGateway({ embedding_model: 'ollama:nomic-embed-text', embedding_dimensions: DIMS, env: {},
     base_urls: { ollama: `http://127.0.0.1:${server.port}/v1` } });
-  await embed(['unaffected provider body'], { documentTitle: 'Ignored title' });
-  expect(requests.flatMap(request => request.input)).toEqual(['unaffected provider body']);
+  await seed('contextual/unaffected-provider', 'No Gemma title', [
+    { text: 'unaffected provider body', source: 'compiled_truth' },
+  ]);
+  expect(await reembed('contextual/unaffected-provider', 'title'))
+    .toMatchObject({ kind: 'success', mode_applied: 'title' });
+  expect(requests.flatMap(request => request.input))
+    .toEqual([wrapped('No Gemma title', 'unaffected provider body')]);
+  expect(requests.map(request => request.model)).toEqual(['nomic-embed-text']);
 });
