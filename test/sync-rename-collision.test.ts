@@ -53,7 +53,7 @@ for (const kind of backends) describe(`sync rename onto an occupied slug (${kind
     writeFileSync(join(root, 'people', 'carol.md'), person('Carol', 'Carol is a person.'));
     git(root, 'add', '-A'); git(root, 'commit', '-qm', 'initial');
     await engine.executeRaw("INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,'{}')", [source, root]);
-    const sync = (opts: Record<string, unknown> = {}) => performSync(engine, { repoPath: root, sourceId: source, noPull: true, noEmbed: true, noExtract: true, ...opts });
+    const sync = (opts: Record<string, unknown> = {}) => performSync(engine, { repoPath: root, sourceId: source, noPull: true, noEmbed: true, noExtract: true, concurrency: 1, ...opts });
     await withEnv(env, async () => { await sync(); await run({ source, root, sync }); });
   }
   const page = async (source: string, slug: string) => (await engine.executeRaw<{ id: number; deleted_at: string | null; source_path: string | null; compiled_truth: string }>(
