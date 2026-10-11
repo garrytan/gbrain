@@ -405,6 +405,15 @@ collisions, schema state, and prints fixes. `gbrain bootstrap status --json` emi
 a support blob (versions, harness, last verify/push, hook failure rate) your agent
 can relay verbatim when you report a problem.
 
+Doctor's `bootstrap_last_verify` check reads the verify snapshots under
+`<home>/bootstrap/verify-*.json` and reports only when one exists: a brain that
+never ran `gbrain bootstrap verify` (a sole-writer deployment with no agent
+workspace, for example) has no snapshot and the check does not fire, so there is
+no not-applicable switch to set. Deleting those snapshot files returns the check
+to that silent state. `bootstrap verify` removes its two fixed-slug probe pages
+(`wiki/bootstrap-verify-probe`, `wiki/bootstrap-verify-probe-entity`) on every
+exit, including a roundtrip that fails at its first step.
+
 ## Real-agent e2e
 
 Most bootstrap tests drive the dispatcher with PATH-shimmed `claude`/`codex`

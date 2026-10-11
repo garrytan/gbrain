@@ -331,6 +331,31 @@ describe('verifyWorkspace — write-through disabled by config', () => {
   }, 240_000);
 });
 
+describe('verifyWorkspace — probe cleanup on an early roundtrip exit (#6001)', () => {
+  test('a roundtrip that fails before its cleanup step still removes both probe pages', async () => {
+    // A DIRECTORY where the second probe's file must go: the entity probe lands (row + file), the
+    // probe page's put_page throws, the roundtrip FAILS at step 1 and returns early, which used to
+    // skip removeProbes and leave the entity probe behind.
+    const inTheWay = join(ws, 'brain', `${VERIFY_PROBE_SLUG}.md`);
+    mkdirSync(inTheWay, { recursive: true });
+    try {
+      const res = await verifyWorkspace(engine, ws, { sourceId: 'workspace', gbrainHomeDir: home, capabilities: KEYLESS, skipHooksSmoke: true });
+      const rt = check(res.checks, 'roundtrip');
+      expect(rt.some((c) => !c.ok && c.detail.includes('put_page failed'))).toBe(true);
+      expect(res.checks.filter((c) => c.id === 'graph_floor')).toEqual([]);
+      expect(res.checks.filter((c) => c.id === 'probe_cleanup')).toEqual([]);
+      const probeRows = await engine.executeRaw<{ n: string }>(
+        `SELECT count(*)::text AS n FROM pages WHERE source_id = 'workspace' AND slug = ANY($1::text[])`,
+        [[VERIFY_PROBE_SLUG, VERIFY_PROBE_ENTITY_SLUG]],
+      );
+      expect(probeRows[0].n).toBe('0');
+      expect(existsSync(join(ws, 'brain', `${VERIFY_PROBE_ENTITY_SLUG}.md`))).toBe(false);
+    } finally {
+      rmSync(inTheWay, { recursive: true, force: true });
+    }
+  }, 240_000);
+});
+
 describe('verifyWorkspace — engine-plane side effects', () => {
   test('[CX-P1.1] facts.default_visibility: unset → set to world; explicit private → untouched', async () => {
     const e2 = new PGLiteEngine();
