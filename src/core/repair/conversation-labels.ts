@@ -232,7 +232,9 @@ export const conversationLabelsRepair: RepairHandler = {
           `Preview first: ${command} — then run the apply command it prints: ${command} --apply --expect <preview-hash>`,
           'docs/guides/repair.md#conversation-labels');
       }
-      const approved = await loadApprovedSet<LabelPage>(engine, { command: 'conversation-labels', hash: opts.expect, previewCommand: command });
+      const approved = await loadApprovedSet<LabelPage>(engine, { command: 'conversation-labels', hash: opts.expect, previewCommand: command,
+        emptyHash: async () => previewHash({ kind: 'conversation-labels-v1', brain_id: scope.brain_id, sources: (await engine.executeRaw<{ id: string; incarnation: string }>('SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids])),
+          selection: { source_ids: scope.source_ids, include_ambiguous: includeAmbiguous }, facts: [], pages: [] }) });
       const scopeKey = JSON.stringify(scope.source_ids);
       if (approved.items.some(page => page.include_ambiguous !== includeAmbiguous || JSON.stringify(page.scope) !== scopeKey)) {
         throw previewChangedError(opts.expect, command);

@@ -73,11 +73,13 @@ export function supersededFact(fact: ParsedFact, today: string, newRowNum: numbe
  * Strike fence row `rowNum` inside `body` with `strike` (strikethrough,
  * valid_until = today, and a withdrawal or supersession marker in context,
  * preserving existing context). Returns the rewritten body, or null when the
- * fence lacks the row (DB drifted from markdown) or its markers — callers
- * fall back to a DB-only expire.
+ * fence lacks the row (DB drifted from markdown), its markers, or does not
+ * parse cleanly (re-rendering it would drop the rows the parser skipped) —
+ * callers fall back to a DB-only expire and the bytes stay as they are.
  */
 export function strikeFenceRow(body: string, rowNum: number, strike: (fact: ParsedFact) => ParsedFact): string | null {
   const parsed = parseFactsFence(body);
+  if (parsed.warnings.length > 0) return null;
   const target = parsed.facts.find(f => f.rowNum === rowNum);
   if (!target) return null;
   const updated: ParsedFact[] = parsed.facts.map(f => f.rowNum === rowNum ? strike(f) : f);

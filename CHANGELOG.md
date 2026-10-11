@@ -41,6 +41,49 @@ identifiers and attribution are available in the pre-removal Git revision
 
 - New tests: `test/loops-counterparty-null-entity.test.ts` (+ Postgres arm), `test/loops-exclusion.test.ts`, `test/loops-extract-spend-cap.test.ts`, `test/db-lock-token-predicate.test.ts` (+ Postgres arm, in the PgBouncer matrix), `test/backup-archive-roundtrip-5312.test.ts`, `test/spawn-windows-hide.test.ts`, `test/scripts/windows-hide-guard.test.ts`, `test/windows-hidden-console.test.ts`. The `add_link` per-endpoint source parameters were deferred (the composite-key path is not cleanly scoped yet).
 
+## [0.60.159.0] - 2026-10-10
+
+**Captured memory stops leaking away: failed chats retry until they import, long messages stay whole, sessions file under their own source, and fence writers refuse instead of dropping rows.**
+
+Fix wave 13 PR3 closes 26 reported gaps in capture, the dream cycle, doctor, facts and config. Most of them silently lost or misfiled memory; each now either keeps it or says exactly what is held and how to release it.
+
+### Itemized changes
+
+- Chat connectors keep a conversation that failed until it imports (backoff, up to 10 retries per sync, fair `--limit` split, Claude org routing). The sync reports `partial` with `unresolved`, and doctor warns "archive incomplete". For archives synced before this fix, ask the user, then run `gbrain connectors sync <provider> --full` once.
+- Transcript pages keep every message whole. A message over 4,000 characters continues in the next block under the same speaker instead of being cut.
+- Captured session files record the source their session started under and are filed there. Older unstamped files are held until `gbrain sweep --assign-corpus <source>` (preview, then `--apply`), and a serve refuses to reroute a session to another source.
+- Fence writers no longer drop rows they can't read. A write that would re-render a facts or takes fence with a malformed row refuses with `invalid_fence` / `target_fence_malformed`; `forget` still expires the fact in the database. Facts fences are read by header name, so an unknown, repeated or missing column is held for the fence repair. `attributed_to` is a recognized column.
+- Managed atom extraction retries a failed page up to 3 times, then holds it (doctor `extract_atoms_held_failed` lists it with the paid retry command). `dream --drain` reports a `budget` stop with spend and cap instead of `no_progress`.
+- The dream cycle reads a schema pack set in database config when it gates extract_atoms and synthesize_concepts. A paid phase that only such a pack newly declares waits for `gbrain config set cycle.<phase>.enabled true` (`consent_required`).
+- Synthesis adopts an output that only local maintenance touched after the child committed. Any other later edit is a one-time per-page warning instead of a phase failure every cycle.
+- OpenClaw 2026.9.x compaction banks checkpoint segments again, and doctor warns when a week of compactions banked nothing.
+- Doctor: `--only` for an engine-reading check connects to the brain; `queue_health` and `global_maintenance_timeouts` attribute patterns deaths correctly; `type_proliferation` grades each source against its own pack.
+- Smaller fixes:
+  - claude-cli honors the call's output cap.
+  - Small strict-output calls run with thinking off.
+  - Batch `remember` refuses a non-UUID `request_id`.
+  - An empty repair preview's printed apply succeeds.
+  - Patterns records child timeouts and counts timeline appends.
+  - Relationship-contradiction judge errors back off, then hold (`gbrain edge-proposals retry`).
+  - `propose_takes` skips the dream cycle's own pages.
+  - Database `provider_chat_options` rows apply.
+  - CRAG think escalation stays within the query's sources.
+  - The Anthropic recipe lists `claude-haiku-5-5`.
+
+Contributed by @javieraldape, @mattverlaque, @spiky02plateau, @Masashi-Ono0611, @h6y3 and @andreineacsu.
+
+## [0.60.158.0] - 2026-10-10
+
+**`engine.transaction(fn, { signal })` and `engine.transactionDirect(fn, { signal })`: an `AbortSignal` that cancels a running Postgres transaction. No behavior changes for callers that pass no signal.**
+
+The publication deadline planned in #6288 / #6352 needs to end a specific publish transaction when its ceiling passes, so that its promise rejects and the caller's `finally` releases the request-row lock, page locks, worktree lock and capacity. Until now nothing could cancel one transaction's connection.
+
+### Itemized changes
+
+- **`TransactionOptions.signal`** (`src/core/engine.ts`, `src/core/postgres-engine.ts`, `src/core/postgres-engine/transaction-abort.ts`). On Postgres an abort discards the transaction's connection through the begin handle's `discard()` (the connection-ownership hunk from #5466 / #5560): the socket closes, the server rolls the transaction back on its own whether a statement is in flight or not, directly or through a transaction-mode pooler, and the pool reconnects on its next checkout. The transaction rejects with an `AbortError` whose `message` is the signal's reason and whose `cause` is the driver's `CONNECTION_CLOSED` error; every `finally` on the way out runs and the `tx` gauge is released. An already-aborted signal rejects before `BEGIN` is sent. An abort after `COMMIT` returned changes nothing. A nested transaction shares its parent's connection, so aborting it aborts the parent too.
+- **PGLite** (`src/core/pglite-engine.ts`): one in-process connection cannot interrupt a statement, so only the pre-`BEGIN` check applies; a mid-flight abort is ignored and the transaction commits.
+- Tests: `test/e2e/postgres-transaction-abort-postgres.test.ts` (5 cases: mid-flight abort on `transaction` and `transactionDirect` with `finally`, rollback checked again after the in-flight statement would have finished, pool and gauge freed; pre-aborted signal sends no `BEGIN`; abort after `COMMIT`; no signal), 3 of 5 fail on master (the option is ignored and the transaction commits); `test/transaction-abort.test.ts` (8 cases: the abort-before-and-after-attach paths, error mapping, listener removal, and PGLite's two behaviors).
+
 ## [0.60.157.0] - 2026-10-10
 
 **A database-only `validate: false` stamp no longer refuses every write; lost memory writes are counted and replayable.**

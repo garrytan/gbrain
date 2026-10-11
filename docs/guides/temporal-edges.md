@@ -235,7 +235,16 @@ gbrain edge-proposals reject 12
 gbrain edge-proposals undo 12         # removes the line it wrote
 gbrain edge-proposals undo --all-applied
 gbrain edge-proposals date 14 2024-05-01   # record when the newer relationship started
+gbrain edge-proposals list --status error  # pairs the judge failed on
+gbrain edge-proposals retry --all-held     # judge held pairs again on the next cycle
 ```
+
+When the judge call fails or its answer is unreadable, the pair gets an `error` row
+with the error class and a redacted message (at most 200 characters). The next cycle
+skips it for 24 hours, then judges it again; the first readable verdict replaces the
+error row. After 3 failed attempts on the same evidence the pair is held: no cycle
+pays for it again until `gbrain edge-proposals retry <id>` (or `--all-held`), or until
+its evidence changes.
 
 An applied proposal is one timeline line on the subject page:
 
