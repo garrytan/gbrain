@@ -24,7 +24,7 @@ import {
   matchesAnyGlob,
   pruneDir,
   isPathPruned,
-  SYNC_SKIP_FILES,
+  isSyncMetafile,
   type SyncStrategy,
 } from '../core/sync.ts';
 import { sortNewestFirst } from '../core/sort-newest-first.ts';
@@ -1255,7 +1255,8 @@ interface CollectOpts {
  * — preserve the walker semantic explicitly.
  *
  * Closes #345: exclude `SYNC_SKIP_FILES` metafiles
- * (`README.md` / `index.md` / `log.md` / `schema.md` / `RESOLVER.md`).
+ * (`README.md` / `index.md` / `log.md` / `schema.md` / `RESOLVER.md`) and, since
+ * #5186, the root-level `AGENTS.md` / `CLAUDE.md` (`SYNC_ROOT_SKIP_FILES`).
  * Incremental `sync` skips these via `isSyncable`, but the bulk-import
  * walker only filtered by extension — so a directory import imported every
  * directory README as a page, titled by its folder ("People", "Companies",
@@ -1290,11 +1291,10 @@ function isCollectibleForWalker(
   if (hasMalformedPathSegment(path)) return false;
 
   // Metafiles are directory scaffolding (READMEs / index / log / schema /
-  // resolver), not typed brain pages — same exclusion `sync`'s `isSyncable`
-  // applies. Guards both the FS-walk and the git-fast-path collection routes.
-  const segments = path.split('/');
-  const basename = segments[segments.length - 1] || '';
-  if ((SYNC_SKIP_FILES as readonly string[]).includes(basename)) return false;
+  // resolver, and the root AGENTS.md / CLAUDE.md harden writes), not typed
+  // brain pages — same exclusion `sync`'s `isSyncable` applies. Guards both
+  // the FS-walk and the git-fast-path collection routes.
+  if (isSyncMetafile(path)) return false;
 
   switch (strategy) {
     case 'code':
