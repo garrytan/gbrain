@@ -13,13 +13,13 @@
  * claim about it.
  */
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { extractPgliteDump, readBackupArchive, writeBackupArchive } from '../src/core/backup/archive.ts';
 
 let temporary: string;
-beforeAll(() => { temporary = mkdtempSync(join(tmpdir(), 'gbrain-5312-')); });
+beforeAll(() => { temporary = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-5312-'))); // macOS: /var is a symlink and the archive root refuses symlinks });
 afterAll(() => { rmSync(temporary, { recursive: true, force: true }); });
 
 /** One ustar entry the way PGLite's dumpDataDir writes them: /-prefixed, typeflag 0 or 5. */
