@@ -22,6 +22,7 @@
  * gate other effects, and an embedding effect gates nothing.
  */
 import type { BrainEngine } from '../engine.ts';
+import { requiresEmbeddingInputProof } from '../embedding-input-hash.ts';
 import { OperationError } from '../ops/contract.ts';
 import { embeddingWriteTarget } from '../page-state/projections.ts';
 import { quoteIdentifier } from '../search/embedding-column.ts';
@@ -56,6 +57,8 @@ export async function settleNoopEmbeddingEffects(engine: BrainEngine, hostId: st
   const expectedModel = embeddingCompletionModel(column, signature) ?? null;
   const key = `${column.name}\0${expectedModel ?? ''}\0${signature}`;
   const from = after?.key === key ? after.through : '0';
+  // shortcut: proof-required models need a per-page proof guard; revisit after measuring their queued backlog.
+  if (requiresEmbeddingInputProof(expectedModel)) return { settled: 0, cursor: { key, through: from }, done: true };
   // A drain with nothing new to consider costs one indexed read and opens no transaction.
   // Ordered by id so a generic plan (a prepared statement past its first runs) still walks the primary key from `from`.
   const [due] = await engine.executeRaw(`SELECT 1 FROM persistence_effects e WHERE e.id>$1::bigint AND e.kind='embedding' AND e.state='queued'
