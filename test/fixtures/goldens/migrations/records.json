@@ -1,6 +1,6 @@
 {
   "golden": {
-    "count": 229,
+    "count": 230,
     "gaps": [
       17,
       18,
@@ -50,7 +50,7 @@
       "sqlQueryForEngine": "71fb1ccec1b22cdc1662876dbd8c17ed81e9ab83485c6965cdf5caa4fc4a4ab5",
       "verifyProjectionStatistics": "0d231b04ecfbc5a4109d6fca9567bf4e8c9e9db6c3fbbb35212e026579ed6f67"
     },
-    "latest": 234,
+    "latest": 235,
     "records": [
       {
         "handler": {
@@ -2244,8 +2244,8 @@
         "idempotent": true,
         "name": "durable_concurrent_persistence",
         "sql": {
-          "length": 11520,
-          "sha256": "d04bc325652b2d227e16533a761ea501042ce54c7be9c6a105321f6fbeba4e86"
+          "length": 11594,
+          "sha256": "2f3633b4ae6df69183c7c3ae813a10d0bcd323d5b6ef0855f8777e671f69037b"
         },
         "sqlFor": "absent",
         "transaction": "absent",
@@ -3508,6 +3508,29 @@
         "version": 233
       },
       {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "persistence_git_durability",
+        "sql": {
+          "length": 131,
+          "sha256": "7d1ffa9ac4f3f4a8ea7213dd1b49e23d485f193665eac9fdf14077c6680c7291"
+        },
+        "sqlFor": {
+          "pglite": "absent",
+          "postgres": {
+            "length": 205,
+            "sha256": "254cf68f1c5924bf19bbe7ed7951d8e83d9704a2f55611721ca5f08d6e5ff394"
+          }
+        },
+        "transaction": "absent",
+        "verify": {
+          "form": "arrow",
+          "helpers": [],
+          "sha256": "22a7e9ac067d3d7821610d62f4f60f1343fd127a8715c0e9ec4c47dd475bdac8"
+        },
+        "version": 234
+      },
+      {
         "handler": {
           "form": "arrow",
           "helpers": [
@@ -3517,7 +3540,7 @@
             "migrationNotice",
             "quietMigrationNotices"
           ],
-          "sha256": "f660917b41c415f26c1dcb3ade1a0b18ef5fe4b8e01d245e4ad9c4e5e2de24fc"
+          "sha256": "0c09a1af6f61423684328e62c80ce21bb6f1b9a8598f5b03ce0fb1f476041492"
         },
         "idempotent": true,
         "name": "open_loops_counterparty_source",
@@ -3528,7 +3551,7 @@
         "sqlFor": "absent",
         "transaction": "absent",
         "verify": "absent",
-        "version": 234
+        "version": 235
       }
     ],
     "versions": [
@@ -3760,7 +3783,8 @@
       231,
       232,
       233,
-      234
+      234,
+      235
     ]
   },
   "normalizer": "migrations-record-v1"

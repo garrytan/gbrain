@@ -41,6 +41,7 @@ test/backup-powershell-warmup.serial.test.ts	global-state	global-state: spyOn ch
 test/backup-status-file.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, GBRAIN_BACKUP_CHECK_DAYS, GBRAIN_BACKUP_CHECK, GBRAIN_FORCE_BACKUP_NAG (+2 more))
 test/backup-verification.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)
 test/binary-self-update-compiled.serial.test.ts	global-state	global-state: compile smoke gated by GBRAIN_SELFUPDATE_COMPILE_SMOKE
+test/bootstrap-adopted-connection.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME) so the bootstrap dispatcher resolves the sandboxed home
 test/bootstrap-dispatcher.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, CODEX_HOME, HOME, CLAUDE_CONFIG_DIR)
 test/bootstrap-harness-lifecycle.serial.test.ts	global-state	global-state: patches process stdout/stderr/console
 test/bootstrap-harness.serial.test.ts	global-state	global-state: patches process stdout/stderr/console

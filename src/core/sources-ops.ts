@@ -57,6 +57,8 @@ import {
 import { gbrainPath } from './config.ts';
 import { isValidSourceId } from './source-id.ts';
 import { googleTuningConfig } from './google/source-config.ts';
+import { isSyncStrategy, type SyncStrategy } from './sync.ts';
+import { DEFAULT_CALENDAR_ID } from './google/types.ts';
 import { resolveSourceWithTier, type SourceTier } from './source-resolver.ts';
 import { deleteSourceRow } from './source-delete.ts';
 
@@ -120,6 +122,8 @@ export interface SourceListEntry {
   local_path: string | null;
   remote_url: string | null;
   federated: boolean;
+  /** Persisted `config.strategy` (`gbrain sources set-strategy`); null means sync falls back to 'markdown'. */
+  strategy: SyncStrategy | null;
   page_count: number;
   last_sync_at: string | null;
 }
@@ -899,6 +903,7 @@ export async function listSources(
       local_path: r.local_path,
       remote_url: typeof cfg.remote_url === 'string' ? cfg.remote_url : null,
       federated: cfg.federated === true,
+      strategy: isSyncStrategy(cfg.strategy) ? cfg.strategy : null,
       page_count: await countVisiblePages(engine, r.id),
       last_sync_at: r.last_sync_at ? new Date(r.last_sync_at).toISOString() : null,
     });

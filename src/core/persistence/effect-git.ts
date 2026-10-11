@@ -1,6 +1,8 @@
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve as resolvePath, sep } from 'node:path';
-import { execFileBounded, isDurabilityHardenedAsync } from '../brain-repo-durability.ts';
+import { execFileBounded } from '../brain-repo-durability.ts';
+import { gitDurabilityPolicy } from './git-durability-policy.ts';
+import type { WorktreeBinding } from './ownership.ts';
 import { OperationError, opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import type { GitCommitNote } from './effect-model.ts';
@@ -225,12 +227,14 @@ export const DURABILITY_NOT_ENABLED = { git: 'skipped', reason: 'durability_not_
 
 /**
  * Caller owns the native worktree lock. Never run pull, rebase, or legacy hooks.
- * `hardened` is the caller's durability probe of `root`, taken before it locked
- * the worktree.
+ * `hardened` is the caller's durability verdict for `root`, taken before it
+ * locked the worktree. Without one, the binding's recorded git_durability
+ * decides (#5182): `enabled`/`disabled` never consult the legacy hook probe,
+ * and an unrecorded binding falls back to the probe, fail-closed.
  */
 export async function publishGitEffect(root: string, relativePath: string, signal?: AbortSignal,
-  hardened?: boolean, note?: GitCommitNote): Promise<Record<string, unknown>> {
-  if (!(hardened ?? await isDurabilityHardenedAsync(root))) return { ...DURABILITY_NOT_ENABLED };
+  hardened?: boolean, note?: GitCommitNote, binding?: Pick<WorktreeBinding, 'git_durability'> | null): Promise<Record<string, unknown>> {
+  if (!(hardened ?? (await gitDurabilityPolicy(binding, root)).durable)) return { ...DURABILITY_NOT_ENABLED };
   const outcome = (await commitGitTargets(root, [relativePath], signal, note ? new Map([[relativePath, note]]) : undefined)).get(relativePath)!;
   if (outcome instanceof OperationError) throw outcome;
   if (outcome.reason === 'target_absent') return outcome;
