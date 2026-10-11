@@ -118,6 +118,8 @@ const MATRIX: Row[] = [
   { name: 'leave_brain', mode: 'skip', reason: 'Principal-bound leave/epoch races and foreign installation denial are tested in test/shared-skills-membership.test.ts.' },
   { name: 'list_brain_skillpack', mode: 'skip', reason: 'brain-resident skillpack surface; skillpack suites own it' },
   { name: 'advisor', mode: 'skip', reason: 'aggregate advisory over full stack; advisor suites own it' },
+  { name: 'questions_list', mode: 'skip', reason: 'owner-private (C4): a caller that cannot read private pages is refused question_owner_only; test/helpers/pinned-questions-scenarios.ts owns source confinement and the leakage matrix' },
+  { name: 'questions_status', mode: 'skip', reason: 'owner-private (C4): refused question_owner_only for restricted grants; ids outside the read scope answer question_not_found (test/helpers/pinned-questions-scenarios.ts)' },
   { name: 'open_loops', mode: 'skip', reason: 'loop rows need the Gmail detector pipeline; test/ops-loops.test.ts owns its remote posture (no-scope denial, grant confinement, redacted evidence)' },
   { name: 'list_skills', mode: 'skip', reason: 'bundled skills catalog from the install tree; skills suites own it (throws outside an installed skills dir)' },
 

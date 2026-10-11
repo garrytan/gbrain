@@ -97,7 +97,7 @@ describe('gbrain schema CLI (Phase C)', () => {
     // unified extract receipt-writer surface (D-EXTRACT-19 belt+suspenders).
     // v0.42.56.0 (#2390): extended to 27 by adding the Life Chronicle
     // `event` + `diary` temporal types (life/events/, life/diary/).
-    expect(r.stdout).toContain('Page types (27)');
+    expect(r.stdout).toContain('Page types (28)');
     expect(r.stdout).toContain('event :: temporal');
     expect(r.stdout).toContain('diary :: temporal');
     expect(r.stdout).toContain('Link verbs (12)');

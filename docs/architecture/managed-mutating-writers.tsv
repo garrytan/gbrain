@@ -67,6 +67,9 @@ op	run_skillopt	no_canonical_write	Skill files and proposals outside the brain d
 op	loops_close	coordinator	open_loops state rows; the commitment fact is retired (expired, fence row struck) through the loop-fact-retirement coordinator mutation (#5869).
 op	loops_mute	no_canonical_write	Loop suppression rows.
 op	mute_notice	no_canonical_write	Notice mute list in <GBRAIN_HOME>/notices/muted.json; no brain table or canonical file.
+op	questions_pin	coordinator	pinned_questions side-table rows; the question page publishes through coordinated put_page (trusted local callers only).
+op	questions_refresh	coordinator	Answer and evidence pointers in the pinned_questions side tables; question page sync through coordinated put_page (trusted local callers only).
+op	questions_unpin	coordinator	pinned_questions state; the question page is archived through coordinated put_page (trusted local callers only).
 op	loops_unmute	no_canonical_write	Loop suppression rows.
 op	rate_answer	no_canonical_write	Writes only retrieval_* feedback tables (answer ratings and learned weights), never a guarded canonical table or file.
 op	purge_fact	coordinator	submitPurgeFactMutation admits a journaled write and deletes the purged rows under withCoordinatedWrite (trusted local CLI only).

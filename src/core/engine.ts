@@ -2312,15 +2312,16 @@ export interface BrainEngine {
    * Find candidate duplicates for a new fact within a source+entity bucket.
    * Entity-prefilter is mandatory (bounds the contradiction-classifier blast
    * radius). Hard cap k=5 by default. Embedding-cosine when both sides have
-   * embeddings; recency fallback otherwise. `attributedTo` (the new fact's
-   * speaker) drops rows a different known speaker asserted before the k cap;
-   * NULL rows stay candidates.
+   * embeddings; recency fallback otherwise. `arm: 'keyword'` ranks the same
+   * bucket by full-text rank instead (C2 `facts.candidate_fusion`).
+   * `attributedTo` (the new fact's speaker) drops rows a different known
+   * speaker asserted before the k cap, in every arm; NULL rows stay candidates.
    */
   findCandidateDuplicates(
     source_id: string,
     entitySlug: string,
     factText: string,
-    opts?: { k?: number; embedding?: Float32Array; embeddingModel?: string | null; attributedTo?: FactAttribution | null },
+    opts?: { k?: number; embedding?: Float32Array; embeddingModel?: string | null; arm?: 'keyword'; attributedTo?: FactAttribution | null },
   ): Promise<FactRow[]>;
 
   /**

@@ -1,0 +1,1061 @@
+{
+  "decision_id": "c2-interleave-dev",
+  "plan": "MEMORY_PROOF_WAVE C2",
+  "stage": "dev",
+  "eligible_for_default": false,
+  "eligibility_note": "Dev verdict on a synthetic, offline fixture with a local embedding model; it cannot set a default. The parent wave decides facts.candidate_fusion.",
+  "verdict_type": "quality",
+  "overall": "inconclusive",
+  "decided_at": "2026-10-05T05:35:23.113Z",
+  "fixture": {
+    "seed": 20261005,
+    "companies": 40,
+    "seeded_rows": 1148,
+    "probes": 400,
+    "texts": 1506,
+    "texts_sha256": "821285709ddfa63c28565c164719709f5853243d7803cf828a2a835b0fc3f0cb",
+    "embedding_model": "BAAI/bge-small-en-v1.5",
+    "embedding_dims": 384,
+    "embeddings_sha256": "35723141e7ebabb95b9de8f39e85e646e3e7eda392791cc0d311efd680e1d4e6",
+    "candidate_k": 5,
+    "gbrain_git_head": "91081f319b724bd1ca1a82d4636d0cc7eadae208",
+    "gbrain_tree_dirty": false
+  },
+  "sources": [
+    {
+      "source": "c2-twin-fixture-tau-0.85",
+      "verdict": "inconclusive",
+      "threshold": 0.85,
+      "arms": {
+        "baseline": {
+          "config": {
+            "facts.candidate_fusion": "rrf_free"
+          }
+        },
+        "candidate": {
+          "config": {
+            "facts.candidate_fusion": "interleave"
+          }
+        }
+      },
+      "family": {
+        "family_id": "c2-interleave-dev:tau-0.85",
+        "verdict": "inconclusive",
+        "alpha": 0.05,
+        "comparisons": [
+          {
+            "id": "twin-recall-at-5",
+            "metric": "twin_recall_at_5",
+            "gate": "superiority",
+            "direction": "higher",
+            "description": "probes whose claim has an active row: that row is in the scored candidate set (k = 5)",
+            "status": "inconclusive",
+            "stats": {
+              "n_pairs": 280,
+              "n_clusters": 40,
+              "mean_a": 0.9964285714285714,
+              "mean_b": 0.9892857142857143,
+              "delta": -0.0071428571428571175,
+              "ci95": [
+                -0.017857142857142856,
+                0
+              ],
+              "wins": 0,
+              "losses": 2,
+              "ties": 278,
+              "p_two_sided": 0.49495050494950504,
+              "p_method": "cluster-sign-flip"
+            },
+            "p_holm": 1
+          },
+          {
+            "id": "false-supersession",
+            "metric": "false_supersession_rate",
+            "gate": "noninferiority",
+            "direction": "lower",
+            "tolerance": 0.005,
+            "description": "probes whose decision replaced or deduplicated a row of a different claim",
+            "status": "pass",
+            "stats": {
+              "n_pairs": 400,
+              "n_clusters": 40,
+              "mean_a": 0.195,
+              "mean_b": 0.195,
+              "delta": 0,
+              "ci95": [
+                0,
+                0
+              ],
+              "wins": 0,
+              "losses": 0,
+              "ties": 400,
+              "p_two_sided": 1,
+              "p_method": "cluster-sign-flip"
+            },
+            "p_holm": 1
+          },
+          {
+            "id": "preserved-distinct-claims",
+            "metric": "preserved_distinct_share",
+            "gate": "noninferiority",
+            "direction": "higher",
+            "tolerance": 0.005,
+            "description": "per company: share of every claim ever established that still has an active row after the replay",
+            "status": "pass",
+            "stats": {
+              "n_pairs": 40,
+              "n_clusters": 40,
+              "mean_a": 0.9324699733002015,
+              "mean_b": 0.9324699733002015,
+              "delta": 0,
+              "ci95": [
+                0,
+                0
+              ],
+              "wins": 0,
+              "losses": 0,
+              "ties": 40,
+              "p_two_sided": 1,
+              "p_method": "cluster-sign-flip"
+            },
+            "p_holm": 1
+          },
+          {
+            "id": "correct-decision",
+            "metric": "correct_decision_rate",
+            "gate": "exploratory",
+            "direction": "higher",
+            "description": "probes decided as the fixture expects (twin replaced, distinct claim inserted)",
+            "status": "exploratory",
+            "stats": {
+              "n_pairs": 400,
+              "n_clusters": 40,
+              "mean_a": 0.645,
+              "mean_b": 0.645,
+              "delta": 0,
+              "ci95": [
+                0,
+                0
+              ],
+              "wins": 0,
+              "losses": 0,
+              "ties": 400,
+              "p_two_sided": 1,
+              "p_method": "cluster-sign-flip"
+            },
+            "p_holm": 1
+          }
+        ]
+      },
+      "diagnostics": {
+        "by_kind": {
+          "rrf_free": {
+            "restatement": {
+              "n": 40,
+              "correct": 40,
+              "missed": 0,
+              "false_supersession": 0,
+              "twin_in_candidates": 40,
+              "with_twin": 40
+            },
+            "new_claim": {
+              "n": 40,
+              "correct": 37,
+              "missed": 0,
+              "false_supersession": 3,
+              "twin_in_candidates": 0,
+              "with_twin": 0
+            },
+            "coexisting": {
+              "n": 80,
+              "correct": 10,
+              "missed": 0,
+              "false_supersession": 70,
+              "twin_in_candidates": 0,
+              "with_twin": 0
+            },
+            "correction": {
+              "n": 120,
+              "correct": 79,
+              "missed": 36,
+              "false_supersession": 5,
+              "twin_in_candidates": 119,
+              "with_twin": 120
+            },
+            "private_correction": {
+              "n": 40,
+              "correct": 29,
+              "missed": 11,
+              "false_supersession": 0,
+              "twin_in_candidates": 40,
+              "with_twin": 40
+            },
+            "concurrent": {
+              "n": 80,
+              "correct": 63,
+              "missed": 17,
+              "false_supersession": 0,
+              "twin_in_candidates": 80,
+              "with_twin": 80
+            }
+          },
+          "interleave": {
+            "restatement": {
+              "n": 40,
+              "correct": 40,
+              "missed": 0,
+              "false_supersession": 0,
+              "twin_in_candidates": 40,
+              "with_twin": 40
+            },
+            "new_claim": {
+              "n": 40,
+              "correct": 37,
+              "missed": 0,
+              "false_supersession": 3,
+              "twin_in_candidates": 0,
+              "with_twin": 0
+            },
+            "coexisting": {
+              "n": 80,
+              "correct": 10,
+              "missed": 0,
+              "false_supersession": 70,
+              "twin_in_candidates": 0,
+              "with_twin": 0
+            },
+            "correction": {
+              "n": 120,
+              "correct": 79,
+              "missed": 36,
+              "false_supersession": 5,
+              "twin_in_candidates": 118,
+              "with_twin": 120
+            },
+            "private_correction": {
+              "n": 40,
+              "correct": 29,
+              "missed": 11,
+              "false_supersession": 0,
+              "twin_in_candidates": 40,
+              "with_twin": 40
+            },
+            "concurrent": {
+              "n": 80,
+              "correct": 63,
+              "missed": 17,
+              "false_supersession": 0,
+              "twin_in_candidates": 79,
+              "with_twin": 80
+            }
+          }
+        },
+        "false_supersession_hits": {
+          "rrf_free": [
+            "coexisting->quarter|Q1-2025",
+            "correction->office|Denver",
+            "coexisting->round|Series A",
+            "coexisting->board|m1",
+            "coexisting->board|m1",
+            "coexisting->round|seed",
+            "coexisting->quarter|Q1-2025",
+            "coexisting->office|Austin",
+            "coexisting->office|Boston",
+            "coexisting->quarter|Q4-2025",
+            "coexisting->quarter|Q3-2025",
+            "coexisting->office|Boston",
+            "new_claim->quarter|Q2-2025",
+            "coexisting->quarter|Q1-2025",
+            "correction->office|Boston",
+            "coexisting->round|Series B",
+            "coexisting->office|Seattle",
+            "coexisting->quarter|Q2-2025",
+            "coexisting->office|Austin",
+            "coexisting->board|m1",
+            "coexisting->quarter|Q3-2025",
+            "coexisting->board|m1",
+            "coexisting->board|m0",
+            "new_claim->office|Denver",
+            "coexisting->quarter|Q4-2025",
+            "coexisting->office|Boston",
+            "coexisting->quarter|Q2-2025",
+            "coexisting->board|m1",
+            "new_claim->quarter|Q4-2025",
+            "coexisting->office|Boston",
+            "coexisting->board|m4",
+            "coexisting->round|Series B",
+            "coexisting->board|m1",
+            "coexisting->board|m1",
+            "coexisting->round|Series A",
+            "coexisting->hq",
+            "coexisting->quarter|Q4-2025",
+            "coexisting->board|m0",
+            "coexisting->round|Series A",
+            "coexisting->board|m1",
+            "coexisting->board|m1",
+            "correction->headcount",
+            "coexisting->round|Series A",
+            "coexisting->quarter|Q1-2025",
+            "coexisting->quarter|Q1-2026",
+            "coexisting->board|m1",
+            "coexisting->office|Boston",
+            "coexisting->board|m1",
+            "coexisting->round|Series A",
+            "coexisting->office|Boston",
+            "correction->office|Austin",
+            "coexisting->quarter|Q3-2025",
+            "coexisting->office|Boston",
+            "coexisting->quarter|Q4-2025",
+            "coexisting->round|Series B",
+            "correction->office|Austin",
+            "coexisting->office|Denver",
+            "coexisting->board|m1",
+            "coexisting->quarter|Q1-2025",
+            "coexisting->round|seed",
+            "coexisting->office|Boston",
+            "coexisting->board|m0",
+            "coexisting->board|m4",
+            "coexisting->office|Lisbon",
+            "coexisting->quarter|Q2-2025",
+            "coexisting->round|Series A",
+            "coexisting->board|m1",
+            "coexisting->office|Boston",
+            "coexisting->round|Series A",
+            "coexisting->board|m1",
+            "coexisting->quarter|Q1-2025",
+            "coexisting->round|Series B",
+            "coexisting->board|m1",
+            "coexisting->office|Austin",
+            "coexisting->round|Series A",
+            "coexisting->office|Boston",
+            "coexisting->round|Series A",
+            "coexisting->office|Boston"
+          ],
+          "interleave": [
+            "coexisting->quarter|Q1-2025",
+            "correction->office|Denver",
+            "coexisting->round|Series A",
+            "coexisting->board|m1",
+            "coexisting->board|m1",
+            "coexisting->round|seed",
+            "coexisting->quarter|Q1-2025",
+            "coexisting->office|Austin",
+            "coexisting->office|Boston",
+            "coexisting->quarter|Q4-2025",
+            "coexisting->quarter|Q3-2025",
+            "coexisting->office|Boston",
+            "new_claim->quarter|Q2-2025",
+            "coexisting->quarter|Q1-2025",
+            "correction->office|Boston",
+            "coexisting->round|Series B",
+            "coexisting->office|Seattle",
+            "coexisting->quarter|Q2-2025",
+            "coexisting->office|Austin",
+            "coexisting->board|m1",
+            "coexisting->quarter|Q3-2025",
+            "coexisting->board|m1",
+            "coexisting->board|m0",
+            "new_claim->office|Denver",
+            "coexisting->quarter|Q4-2025",
+            "coexisting->office|Boston",
+            "coexisting->quarter|Q2-2025",
+            "coexisting->board|m1",
+            "new_claim->quarter|Q4-2025",
+            "coexisting->office|Boston",
+            "coexisting->board|m4",
+            "coexisting->round|Series B",
+            "coexisting->board|m1",
+            "coexisting->board|m1",
+            "coexisting->round|Series A",
+            "coexisting->hq",
+            "coexisting->quarter|Q4-2025",
+            "coexisting->board|m0",
+            "coexisting->round|Series A",
+            "coexisting->board|m1",
+            "coexisting->board|m1",
+            "correction->headcount",
+            "coexisting->round|Series A",
+            "coexisting->quarter|Q1-2025",
+            "coexisting->quarter|Q1-2026",
+            "coexisting->board|m1",
+            "coexisting->office|Boston",
+            "coexisting->board|m1",
+            "coexisting->round|Series A",
+            "coexisting->office|Boston",
+            "correction->office|Austin",
+            "coexisting->quarter|Q3-2025",
+            "coexisting->office|Boston",
+            "coexisting->quarter|Q4-2025",
+            "coexisting->round|Series B",
+            "correction->office|Austin",
+            "coexisting->office|Denver",
+            "coexisting->board|m1",
+            "coexisting->quarter|Q1-2025",
+            "coexisting->round|seed",
+            "coexisting->office|Boston",
+            "coexisting->board|m0",
+            "coexisting->board|m4",
+            "coexisting->office|Lisbon",
+            "coexisting->quarter|Q2-2025",
+            "coexisting->round|Series A",
+            "coexisting->board|m1",
+            "coexisting->office|Boston",
+            "coexisting->round|Series A",
+            "coexisting->board|m1",
+            "coexisting->quarter|Q1-2025",
+            "coexisting->round|Series B",
+            "coexisting->board|m1",
+            "coexisting->office|Austin",
+            "coexisting->round|Series A",
+            "coexisting->office|Boston",
+            "coexisting->round|Series A",
+            "coexisting->office|Boston"
+          ]
+        },
+        "stale_single_value_claims_at_end": {
+          "rrf_free": 57,
+          "interleave": 57
+        },
+        "probes_with_keyword_only_candidates": 341,
+        "twin_recall_by_slice": {
+          "dense": {
+            "rrf_free": {
+              "with_twin": 70,
+              "twin_in_candidates": 69
+            },
+            "interleave": {
+              "with_twin": 70,
+              "twin_in_candidates": 68
+            }
+          },
+          "standard": {
+            "rrf_free": {
+              "with_twin": 210,
+              "twin_in_candidates": 210
+            },
+            "interleave": {
+              "with_twin": 210,
+              "twin_in_candidates": 209
+            }
+          }
+        },
+        "product_decide_mismatches": null
+      }
+    },
+    {
+      "source": "c2-twin-fixture-tau-0.9",
+      "verdict": "inconclusive",
+      "threshold": 0.9,
+      "arms": {
+        "baseline": {
+          "config": {
+            "facts.candidate_fusion": "rrf_free"
+          }
+        },
+        "candidate": {
+          "config": {
+            "facts.candidate_fusion": "interleave"
+          }
+        }
+      },
+      "family": {
+        "family_id": "c2-interleave-dev:tau-0.9",
+        "verdict": "inconclusive",
+        "alpha": 0.05,
+        "comparisons": [
+          {
+            "id": "twin-recall-at-5",
+            "metric": "twin_recall_at_5",
+            "gate": "superiority",
+            "direction": "higher",
+            "description": "probes whose claim has an active row: that row is in the scored candidate set (k = 5)",
+            "status": "inconclusive",
+            "stats": {
+              "n_pairs": 280,
+              "n_clusters": 40,
+              "mean_a": 0.9964285714285714,
+              "mean_b": 0.9892857142857143,
+              "delta": -0.0071428571428571175,
+              "ci95": [
+                -0.017857142857142856,
+                0
+              ],
+              "wins": 0,
+              "losses": 2,
+              "ties": 278,
+              "p_two_sided": 0.49495050494950504,
+              "p_method": "cluster-sign-flip"
+            },
+            "p_holm": 1
+          },
+          {
+            "id": "false-supersession",
+            "metric": "false_supersession_rate",
+            "gate": "noninferiority",
+            "direction": "lower",
+            "tolerance": 0.005,
+            "description": "probes whose decision replaced or deduplicated a row of a different claim",
+            "status": "pass",
+            "stats": {
+              "n_pairs": 400,
+              "n_clusters": 40,
+              "mean_a": 0.0975,
+              "mean_b": 0.0975,
+              "delta": 0,
+              "ci95": [
+                0,
+                0
+              ],
+              "wins": 0,
+              "losses": 0,
+              "ties": 400,
+              "p_two_sided": 1,
+              "p_method": "cluster-sign-flip"
+            },
+            "p_holm": 1
+          },
+          {
+            "id": "preserved-distinct-claims",
+            "metric": "preserved_distinct_share",
+            "gate": "noninferiority",
+            "direction": "higher",
+            "tolerance": 0.005,
+            "description": "per company: share of every claim ever established that still has an active row after the replay",
+            "status": "pass",
+            "stats": {
+              "n_pairs": 40,
+              "n_clusters": 40,
+              "mean_a": 0.9665829982717108,
+              "mean_b": 0.9665829982717108,
+              "delta": 0,
+              "ci95": [
+                0,
+                0
+              ],
+              "wins": 0,
+              "losses": 0,
+              "ties": 40,
+              "p_two_sided": 1,
+              "p_method": "cluster-sign-flip"
+            },
+            "p_holm": 1
+          },
+          {
+            "id": "correct-decision",
+            "metric": "correct_decision_rate",
+            "gate": "exploratory",
+            "direction": "higher",
+            "description": "probes decided as the fixture expects (twin replaced, distinct claim inserted)",
+            "status": "exploratory",
+            "stats": {
+              "n_pairs": 400,
+              "n_clusters": 40,
+              "mean_a": 0.49,
+              "mean_b": 0.49,
+              "delta": 0,
+              "ci95": [
+                0,
+                0
+              ],
+              "wins": 0,
+              "losses": 0,
+              "ties": 400,
+              "p_two_sided": 1,
+              "p_method": "cluster-sign-flip"
+            },
+            "p_holm": 1
+          }
+        ]
+      },
+      "diagnostics": {
+        "by_kind": {
+          "rrf_free": {
+            "restatement": {
+              "n": 40,
+              "correct": 37,
+              "missed": 3,
+              "false_supersession": 0,
+              "twin_in_candidates": 40,
+              "with_twin": 40
+            },
+            "new_claim": {
+              "n": 40,
+              "correct": 38,
+              "missed": 0,
+              "false_supersession": 2,
+              "twin_in_candidates": 0,
+              "with_twin": 0
+            },
+            "coexisting": {
+              "n": 80,
+              "correct": 47,
+              "missed": 0,
+              "false_supersession": 33,
+              "twin_in_candidates": 0,
+              "with_twin": 0
+            },
+            "correction": {
+              "n": 120,
+              "correct": 32,
+              "missed": 84,
+              "false_supersession": 4,
+              "twin_in_candidates": 119,
+              "with_twin": 120
+            },
+            "private_correction": {
+              "n": 40,
+              "correct": 8,
+              "missed": 32,
+              "false_supersession": 0,
+              "twin_in_candidates": 40,
+              "with_twin": 40
+            },
+            "concurrent": {
+              "n": 80,
+              "correct": 34,
+              "missed": 46,
+              "false_supersession": 0,
+              "twin_in_candidates": 80,
+              "with_twin": 80
+            }
+          },
+          "interleave": {
+            "restatement": {
+              "n": 40,
+              "correct": 37,
+              "missed": 3,
+              "false_supersession": 0,
+              "twin_in_candidates": 40,
+              "with_twin": 40
+            },
+            "new_claim": {
+              "n": 40,
+              "correct": 38,
+              "missed": 0,
+              "false_supersession": 2,
+              "twin_in_candidates": 0,
+              "with_twin": 0
+            },
+            "coexisting": {
+              "n": 80,
+              "correct": 47,
+              "missed": 0,
+              "false_supersession": 33,
+              "twin_in_candidates": 0,
+              "with_twin": 0
+            },
+            "correction": {
+              "n": 120,
+              "correct": 32,
+              "missed": 84,
+              "false_supersession": 4,
+              "twin_in_candidates": 118,
+              "with_twin": 120
+            },
+            "private_correction": {
+              "n": 40,
+              "correct": 8,
+              "missed": 32,
+              "false_supersession": 0,
+              "twin_in_candidates": 40,
+              "with_twin": 40
+            },
+            "concurrent": {
+              "n": 80,
+              "correct": 34,
+              "missed": 46,
+              "false_supersession": 0,
+              "twin_in_candidates": 79,
+              "with_twin": 80
+            }
+          }
+        },
+        "false_supersession_hits": {
+          "rrf_free": [
+            "correction->office|Denver",
+            "coexisting->board|m1",
+            "coexisting->board|m1",
+            "coexisting->office|Austin",
+            "coexisting->quarter|Q4-2025",
+            "coexisting->quarter|Q3-2025",
+            "coexisting->office|Boston",
+            "coexisting->quarter|Q1-2025",
+            "correction->office|Boston",
+            "coexisting->board|m1",
+            "coexisting->board|m0",
+            "new_claim->office|Denver",
+            "coexisting->quarter|Q4-2025",
+            "coexisting->quarter|Q2-2025",
+            "coexisting->board|m1",
+            "new_claim->quarter|Q4-2025",
+            "coexisting->office|Boston",
+            "coexisting->board|m4",
+            "coexisting->round|Series B",
+            "coexisting->board|m1",
+            "coexisting->board|m1",
+            "coexisting->round|Series A",
+            "coexisting->quarter|Q4-2025",
+            "coexisting->board|m0",
+            "coexisting->board|m1",
+            "coexisting->board|m1",
+            "coexisting->office|Boston",
+            "coexisting->board|m1",
+            "correction->office|Austin",
+            "correction->office|Austin",
+            "coexisting->board|m1",
+            "coexisting->board|m0",
+            "coexisting->board|m4",
+            "coexisting->board|m1",
+            "coexisting->office|Boston",
+            "coexisting->board|m1",
+            "coexisting->board|m1",
+            "coexisting->round|Series A",
+            "coexisting->office|Boston"
+          ],
+          "interleave": [
+            "correction->office|Denver",
+            "coexisting->board|m1",
+            "coexisting->board|m1",
+            "coexisting->office|Austin",
+            "coexisting->quarter|Q4-2025",
+            "coexisting->quarter|Q3-2025",
+            "coexisting->office|Boston",
+            "coexisting->quarter|Q1-2025",
+            "correction->office|Boston",
+            "coexisting->board|m1",
+            "coexisting->board|m0",
+            "new_claim->office|Denver",
+            "coexisting->quarter|Q4-2025",
+            "coexisting->quarter|Q2-2025",
+            "coexisting->board|m1",
+            "new_claim->quarter|Q4-2025",
+            "coexisting->office|Boston",
+            "coexisting->board|m4",
+            "coexisting->round|Series B",
+            "coexisting->board|m1",
+            "coexisting->board|m1",
+            "coexisting->round|Series A",
+            "coexisting->quarter|Q4-2025",
+            "coexisting->board|m0",
+            "coexisting->board|m1",
+            "coexisting->board|m1",
+            "coexisting->office|Boston",
+            "coexisting->board|m1",
+            "correction->office|Austin",
+            "correction->office|Austin",
+            "coexisting->board|m1",
+            "coexisting->board|m0",
+            "coexisting->board|m4",
+            "coexisting->board|m1",
+            "coexisting->office|Boston",
+            "coexisting->board|m1",
+            "coexisting->board|m1",
+            "coexisting->round|Series A",
+            "coexisting->office|Boston"
+          ]
+        },
+        "stale_single_value_claims_at_end": {
+          "rrf_free": 121,
+          "interleave": 121
+        },
+        "probes_with_keyword_only_candidates": 345,
+        "twin_recall_by_slice": {
+          "dense": {
+            "rrf_free": {
+              "with_twin": 70,
+              "twin_in_candidates": 69
+            },
+            "interleave": {
+              "with_twin": 70,
+              "twin_in_candidates": 68
+            }
+          },
+          "standard": {
+            "rrf_free": {
+              "with_twin": 210,
+              "twin_in_candidates": 210
+            },
+            "interleave": {
+              "with_twin": 210,
+              "twin_in_candidates": 209
+            }
+          }
+        },
+        "product_decide_mismatches": null
+      }
+    },
+    {
+      "source": "c2-twin-fixture-tau-0.95",
+      "verdict": "inconclusive",
+      "threshold": 0.95,
+      "arms": {
+        "baseline": {
+          "config": {
+            "facts.candidate_fusion": "rrf_free"
+          }
+        },
+        "candidate": {
+          "config": {
+            "facts.candidate_fusion": "interleave"
+          }
+        }
+      },
+      "family": {
+        "family_id": "c2-interleave-dev:tau-0.95",
+        "verdict": "inconclusive",
+        "alpha": 0.05,
+        "comparisons": [
+          {
+            "id": "twin-recall-at-5",
+            "metric": "twin_recall_at_5",
+            "gate": "superiority",
+            "direction": "higher",
+            "description": "probes whose claim has an active row: that row is in the scored candidate set (k = 5)",
+            "status": "inconclusive",
+            "stats": {
+              "n_pairs": 280,
+              "n_clusters": 40,
+              "mean_a": 0.9928571428571429,
+              "mean_b": 0.9892857142857143,
+              "delta": -0.0035714285714285587,
+              "ci95": [
+                -0.010714285714285714,
+                0
+              ],
+              "wins": 0,
+              "losses": 1,
+              "ties": 279,
+              "p_two_sided": 1,
+              "p_method": "cluster-sign-flip"
+            },
+            "p_holm": 1
+          },
+          {
+            "id": "false-supersession",
+            "metric": "false_supersession_rate",
+            "gate": "noninferiority",
+            "direction": "lower",
+            "tolerance": 0.005,
+            "description": "probes whose decision replaced or deduplicated a row of a different claim",
+            "status": "pass",
+            "stats": {
+              "n_pairs": 400,
+              "n_clusters": 40,
+              "mean_a": 0.0075,
+              "mean_b": 0.0075,
+              "delta": 0,
+              "ci95": [
+                0,
+                0
+              ],
+              "wins": 0,
+              "losses": 0,
+              "ties": 400,
+              "p_two_sided": 1,
+              "p_method": "cluster-sign-flip"
+            },
+            "p_holm": 1
+          },
+          {
+            "id": "preserved-distinct-claims",
+            "metric": "preserved_distinct_share",
+            "gate": "noninferiority",
+            "direction": "higher",
+            "tolerance": 0.005,
+            "description": "per company: share of every claim ever established that still has an active row after the replay",
+            "status": "pass",
+            "stats": {
+              "n_pairs": 40,
+              "n_clusters": 40,
+              "mean_a": 0.9974866352201257,
+              "mean_b": 0.9974866352201257,
+              "delta": 0,
+              "ci95": [
+                0,
+                0
+              ],
+              "wins": 0,
+              "losses": 0,
+              "ties": 40,
+              "p_two_sided": 1,
+              "p_method": "cluster-sign-flip"
+            },
+            "p_holm": 1
+          },
+          {
+            "id": "correct-decision",
+            "metric": "correct_decision_rate",
+            "gate": "exploratory",
+            "direction": "higher",
+            "description": "probes decided as the fixture expects (twin replaced, distinct claim inserted)",
+            "status": "exploratory",
+            "stats": {
+              "n_pairs": 400,
+              "n_clusters": 40,
+              "mean_a": 0.39,
+              "mean_b": 0.39,
+              "delta": 0,
+              "ci95": [
+                0,
+                0
+              ],
+              "wins": 0,
+              "losses": 0,
+              "ties": 400,
+              "p_two_sided": 1,
+              "p_method": "cluster-sign-flip"
+            },
+            "p_holm": 1
+          }
+        ]
+      },
+      "diagnostics": {
+        "by_kind": {
+          "rrf_free": {
+            "restatement": {
+              "n": 40,
+              "correct": 29,
+              "missed": 11,
+              "false_supersession": 0,
+              "twin_in_candidates": 40,
+              "with_twin": 40
+            },
+            "new_claim": {
+              "n": 40,
+              "correct": 40,
+              "missed": 0,
+              "false_supersession": 0,
+              "twin_in_candidates": 0,
+              "with_twin": 0
+            },
+            "coexisting": {
+              "n": 80,
+              "correct": 77,
+              "missed": 0,
+              "false_supersession": 3,
+              "twin_in_candidates": 0,
+              "with_twin": 0
+            },
+            "correction": {
+              "n": 120,
+              "correct": 4,
+              "missed": 116,
+              "false_supersession": 0,
+              "twin_in_candidates": 119,
+              "with_twin": 120
+            },
+            "private_correction": {
+              "n": 40,
+              "correct": 0,
+              "missed": 40,
+              "false_supersession": 0,
+              "twin_in_candidates": 40,
+              "with_twin": 40
+            },
+            "concurrent": {
+              "n": 80,
+              "correct": 6,
+              "missed": 74,
+              "false_supersession": 0,
+              "twin_in_candidates": 79,
+              "with_twin": 80
+            }
+          },
+          "interleave": {
+            "restatement": {
+              "n": 40,
+              "correct": 29,
+              "missed": 11,
+              "false_supersession": 0,
+              "twin_in_candidates": 40,
+              "with_twin": 40
+            },
+            "new_claim": {
+              "n": 40,
+              "correct": 40,
+              "missed": 0,
+              "false_supersession": 0,
+              "twin_in_candidates": 0,
+              "with_twin": 0
+            },
+            "coexisting": {
+              "n": 80,
+              "correct": 77,
+              "missed": 0,
+              "false_supersession": 3,
+              "twin_in_candidates": 0,
+              "with_twin": 0
+            },
+            "correction": {
+              "n": 120,
+              "correct": 4,
+              "missed": 116,
+              "false_supersession": 0,
+              "twin_in_candidates": 118,
+              "with_twin": 120
+            },
+            "private_correction": {
+              "n": 40,
+              "correct": 0,
+              "missed": 40,
+              "false_supersession": 0,
+              "twin_in_candidates": 40,
+              "with_twin": 40
+            },
+            "concurrent": {
+              "n": 80,
+              "correct": 6,
+              "missed": 74,
+              "false_supersession": 0,
+              "twin_in_candidates": 79,
+              "with_twin": 80
+            }
+          }
+        },
+        "false_supersession_hits": {
+          "rrf_free": [
+            "coexisting->quarter|Q3-2025",
+            "coexisting->board|m0",
+            "coexisting->board|m1"
+          ],
+          "interleave": [
+            "coexisting->quarter|Q3-2025",
+            "coexisting->board|m0",
+            "coexisting->board|m1"
+          ]
+        },
+        "stale_single_value_claims_at_end": {
+          "rrf_free": 166,
+          "interleave": 166
+        },
+        "probes_with_keyword_only_candidates": 348,
+        "twin_recall_by_slice": {
+          "dense": {
+            "rrf_free": {
+              "with_twin": 70,
+              "twin_in_candidates": 69
+            },
+            "interleave": {
+              "with_twin": 70,
+              "twin_in_candidates": 68
+            }
+          },
+          "standard": {
+            "rrf_free": {
+              "with_twin": 210,
+              "twin_in_candidates": 209
+            },
+            "interleave": {
+              "with_twin": 210,
+              "twin_in_candidates": 209
+            }
+          }
+        },
+        "product_decide_mismatches": {
+          "rrf_free": 0,
+          "interleave": 0
+        }
+      }
+    }
+  ]
+}

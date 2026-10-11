@@ -223,3 +223,27 @@ export function composeFusionLists(input: ComposeFusionListsInput): FusionListEn
   }
   return out;
 }
+
+/**
+ * Round-robin interleave for find-the-twin candidate lists (C2): each arm's
+ * #1 in arm order, then each arm's #2, and so on, keeping the first
+ * occurrence of a key and stopping at `limit`. Rank-only and score-free, so
+ * arms whose scores live on different scales (cosine distance, ts_rank)
+ * merge without calibration; an empty arm casts no vote. Hybrid search
+ * keeps RRF (`composeFusionLists`); this is for small fixed-k candidate sets.
+ */
+export function interleaveFusion<T>(arms: ReadonlyArray<ReadonlyArray<T>>, key: (item: T) => string | number, limit = Number.POSITIVE_INFINITY): T[] {
+  const out: T[] = [];
+  const seen = new Set<string | number>();
+  const depth = Math.max(0, ...arms.map(arm => arm.length));
+  for (let rank = 0; rank < depth && out.length < limit; rank++) {
+    for (const arm of arms) {
+      if (rank >= arm.length || out.length >= limit) continue;
+      const id = key(arm[rank]);
+      if (seen.has(id)) continue;
+      seen.add(id);
+      out.push(arm[rank]);
+    }
+  }
+  return out;
+}

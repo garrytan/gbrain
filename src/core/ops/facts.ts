@@ -3,6 +3,7 @@ import { parseRelationalPlan } from '../search/relational-plan.ts';
 import { loadSearchModeConfig, resolveSearchMode } from '../search/mode.ts';
 import { WRITE_REQUEST_PARAM } from '../persistence/params.ts';
 import { deliverEvidence, effectivePlan, resolveEvidencePlan, type DeliveryMeta, type EvidencePlan } from '../search/evidence-delivery.ts';
+import { withFactDateHeaders } from '../search/evidence-date.ts';
 import { randomUUID } from 'node:crypto';
 import { readHolders } from './context.ts';
 /**
@@ -219,19 +220,19 @@ const recall: Operation = {
   outputRedaction: { retrieval: { localVerbatim: ['facts'] } },
   description: 'MEMORY VERB (v1): read saved facts by entity, since or session_id; `query` also searches pages. Remote callers see world facts only. One card: entity; reasoning: synthesize.',
   params: {
-    entity: { type: 'string', description: 'Entity slug; facts about it, newest first.' },
-    query: { type: 'string', description: 'Also search pages (results[] arm).' },
+    entity: { type: 'string', description: 'Entity slug; its facts, newest first.' },
+    query: { type: 'string', description: 'Also search pages (results[]).' },
     budget_tokens: { type: 'number', description: 'Token budget; facts pack first.' },
     budget_policy: { type: 'string', enum: ['facts_first', 'query_first'], description: 'facts_first (default) or query_first.' },
-    source_id: { type: 'string', description: 'Narrow to one source you may read.' },
-    since: { type: 'string', description: 'Facts since (ISO 8601 or "8 hours ago").' },
-    session_id: { type: 'string', description: 'Facts captured in this session.' },
-    include_expired: { type: 'boolean', description: 'Include expired facts.' },
-    supersessions: { type: 'boolean', description: 'Only the supersession audit log.' },
+    source_id: { type: 'string', description: 'One source you may read.' },
+    since: { type: 'string', description: 'Since (ISO 8601 or "8 hours ago").' },
+    session_id: { type: 'string', description: "This session's facts." },
+    include_expired: { type: 'boolean', description: 'Include expired.' },
+    supersessions: { type: 'boolean', description: 'Supersession audit log only.' },
     limit: { type: 'number', description: 'Per-arm max (default 50, cap 100).' },
     grep: { type: 'string', description: 'Substring of the fact text.' },
-    include_pending: { type: 'boolean', description: 'Add pending count.' },
-    return_unit: { type: 'string', enum: ['chunk', 'window', 'section', 'page', 'auto'], description: 'Evidence unit for results[] (see search).' },
+    include_pending: { type: 'boolean', description: 'Pending count.' },
+    return_unit: { type: 'string', enum: ['chunk', 'window', 'section', 'page', 'auto'], description: 'results[] evidence unit (see search).' },
     return_window: { type: 'number', description: 'Window size 1-3.' },
     min_trust: MIN_TRUST_PARAM,
   },
@@ -527,7 +528,7 @@ const recall: Operation = {
       : undefined;
 
     return {
-      facts: await stampRowTrust(ctx.engine, 'facts', packedFacts.map(r => ({ // #5575 A6: + trust_tier, origin, unconfirmed
+      facts: await withFactDateHeaders(ctx.engine, await stampRowTrust(ctx.engine, 'facts', packedFacts.map(r => ({ // #5575 A6: + trust_tier, origin, unconfirmed
         id: r.id,
         fact: r.fact,
         kind: r.kind,
@@ -557,7 +558,7 @@ const recall: Operation = {
         // is the protocol name for the stored source attribution.
         fact_id: String(r.id),
         provenance: r.source, ...(r.attributed_to ? { attributed_to: r.attributed_to } : {}),
-      })), f => f.id),
+      })), f => f.id)),
       total: packedFacts.length,
       ...(ambiguousEntity ? { ambiguous_entity: { candidates: ambiguousEntity, suggestion: AMBIGUOUS_ENTITY_SUGGESTION } } : {}),
       ...(pending_consolidation_count !== undefined ? { pending_consolidation_count } : {}),
@@ -793,6 +794,9 @@ const context_pack: Operation = {
       ...(budgetTokens !== null
         ? { budget_tokens: budgetTokens, budget_used: budgetUsed, dropped_count: droppedCount }
         : {}),
+      // C4: optional pinned answers (fresh sentences) and the withheld count (src/core/questions/service.ts).
+      ...(await (await import('../questions/service.ts')).pinnedAnswersForPack(ctx, [...new Set([...(res.cards ?? []).map((c) => c.entity.slug), ...entities])])
+        .catch(() => null)),
     };
   },
 };

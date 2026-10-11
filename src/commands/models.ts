@@ -103,7 +103,7 @@ const PER_TASK_KEYS: PerTaskModelRoute[] = [
     narrowResolver: resolveExtractAtomsModelWithSource,
   },
   { key: 'models.drift',                    tier: 'reasoning', description: 'Drift LLM judge (v0.29 scaffold)' },
-  { key: 'models.auto_think',               tier: 'deep',      description: 'Auto-think question answering' },
+  { key: 'models.standing_questions',       tier: 'deep',      description: 'Pinned-question answers (standing_questions phase, questions_pin/refresh)' },
   { key: 'models.think',                    tier: 'deep',      description: '`gbrain think` synthesis op' },
   {
     key: 'models.fence_repair',

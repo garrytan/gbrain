@@ -5,7 +5,8 @@
  * `runFactsPipeline` is extraction-first (LLM-gated in extract.ts) and cannot
  * back a verb whose fact arrives pre-formed. This module reuses the pipeline's
  * post-extraction stages directly: resolve → dedup (`decideSingleFact`: exact
- * fingerprint, then embedding cosine at the 0.95 explicit bar) → fence-first
+ * fingerprint, then embedding cosine at the model's calibrated
+ * threshold, supersession-threshold.ts) → fence-first
  * write (markdown durability) with the same legacy DB-only fallbacks
  * (thin-client, unparented, stub-guard). The `remember` verb itself routes
  * through the coordinated write (`submitRememberMutation`); the production

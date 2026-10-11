@@ -1,6 +1,6 @@
 {
   "golden": {
-    "count": 229,
+    "count": 230,
     "gaps": [
       17,
       18,
@@ -36,6 +36,7 @@
       "getFtsLanguage": "0d790b4c4af1f67a2a1bbd59470beb13f434917b381931baf8404a41c5d903db",
       "grantFromRow": "2d0603bb0f964d7e45e04aa76bac54cd4f6f63c91a8d9f028b60b4792bc1695e",
       "hnswMaxDimsForType": "a187cdcc520f813b7c39da97ce53da58509232ed9f851627ef41abfe1b68bd26",
+      "migrateAutoThinkToPins": "34267fe3b1cc4ab2850ddcf9ba18ce73d959678233a53de238c85231e6b71470",
       "migrateConnectorCheckpoints": "e0403022a56559556c82a9fa1e90d928f36e1d09c7db570e1d788a87d2dc9521",
       "migrateLegacyTokens": "6e4abe3670127e7a495b56ecbf9f5789edd3a7362d45704656c2210a85b27f4c",
       "migrationNotice": "9a6607b26a9719ef1833571b137bc8ebfcd1e16d545e89ff8728cf3ccbcbb409",
@@ -49,7 +50,7 @@
       "sqlQueryForEngine": "71fb1ccec1b22cdc1662876dbd8c17ed81e9ab83485c6965cdf5caa4fc4a4ab5",
       "verifyProjectionStatistics": "0d231b04ecfbc5a4109d6fca9567bf4e8c9e9db6c3fbbb35212e026579ed6f67"
     },
-    "latest": 234,
+    "latest": 235,
     "records": [
       {
         "handler": {
@@ -3528,6 +3529,25 @@
           "sha256": "22a7e9ac067d3d7821610d62f4f60f1343fd127a8715c0e9ec4c47dd475bdac8"
         },
         "version": 234
+      },
+      {
+        "handler": {
+          "form": "arrow",
+          "helpers": [
+            "migrateAutoThinkToPins"
+          ],
+          "sha256": "6538d483dacf5b76e4eb837603082e0c8611c613f6c534007fa2f2b197e1e1ed"
+        },
+        "idempotent": true,
+        "name": "pinned_questions",
+        "sql": {
+          "length": 2746,
+          "sha256": "07ff5ebf8abd16f5edf1bb76318ef541e7a74a3c275a78dac04acb103858e93b"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 235
       }
     ],
     "versions": [
@@ -3759,7 +3779,8 @@
       231,
       232,
       233,
-      234
+      234,
+      235
     ]
   },
   "normalizer": "migrations-record-v1"

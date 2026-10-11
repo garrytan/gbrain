@@ -64,6 +64,7 @@ export const ALL_PAGE_TYPES: readonly string[] = [
   // extractable:false (events are one-line atoms; diary is private interiority
   // never mined into the facts table). Pack entries in gbrain-base.yaml.
   'event', 'diary',
+  'question', // C4 pinned-question page (question + owner notes; owner-private, never evidence; src/core/questions/pages.ts)
 ] as const;
 
 /**
@@ -1078,6 +1079,18 @@ export interface SearchResult {
    * title_match_boost so the frozen EVIDENCE_ENUM is untouched.
    */
   exact_lookup?: 'slug' | 'title';
+  /**
+   * Set when `search.entity_anchoring` moved or added this row for an
+   * entity-scoped current-state query (search/entity-anchor.ts): the named
+   * entity's page, or a page that links to it or names it (newest first).
+   */
+  entity_anchored?: 'entity' | 'linked';
+  /** Set on a saved-fact row the `search.query_facts_arm` arm added (search/facts-arm.ts); page_id is 0. */
+  fact_row?: { id: number; valid_from: string; valid_until: string | null };
+  /** Fact rows only, and what callers see of them: never a page (no slug or id); follow with `follow_up`, read `page_slug` when the entity page exists. */
+  result_type?: 'fact'; fact_id?: string; page_slug?: string; follow_up?: { op: 'recall'; args: Record<string, string> };
+  /** A newer active fact covers the same entity and typed claim slot as a fact taken from this page. */
+  superseded_claim?: { fact_id: number; valid_from: string };
   /**
    * T4 — the strongest signal that surfaced this page (alias_hit >
    * exact_title_match > high_vector_match > keyword_exact > weak_semantic).

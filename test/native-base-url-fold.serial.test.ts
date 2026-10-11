@@ -91,6 +91,13 @@ describe('foldNativeBaseUrlsFromFilePlane (unit)', () => {
     expect(env.OPENAI_BASE_URL).toBe('https://file.example');
   });
 
+  test('folds google as GOOGLE_GENERATIVE_AI_BASE_URL; env still wins', () => {
+    expect(foldNativeBaseUrlsFromFilePlane({ provider_base_urls: { google: 'http://127.0.0.1:8787' } }, {}).GOOGLE_GENERATIVE_AI_BASE_URL)
+      .toBe('http://127.0.0.1:8787');
+    expect(foldNativeBaseUrlsFromFilePlane({ provider_base_urls: { google: 'http://file.example' } }, { GOOGLE_GENERATIVE_AI_BASE_URL: 'http://env.example' })
+      .GOOGLE_GENERATIVE_AI_BASE_URL).toBe('http://env.example');
+  });
+
   test('non-native providers are ignored; null config is a no-op', () => {
     const env1 = foldNativeBaseUrlsFromFilePlane(
       { provider_base_urls: { ollama: 'http://localhost:11434' } },
@@ -98,6 +105,7 @@ describe('foldNativeBaseUrlsFromFilePlane (unit)', () => {
     );
     expect(env1.ANTHROPIC_BASE_URL).toBeUndefined();
     expect(env1.OPENAI_BASE_URL).toBeUndefined();
+    expect(env1.GOOGLE_GENERATIVE_AI_BASE_URL).toBeUndefined();
     const base = { OPENAI_API_KEY: 'sk-x' };
     expect(foldNativeBaseUrlsFromFilePlane(null, base)).toEqual(base);
   });

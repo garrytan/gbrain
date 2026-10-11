@@ -147,13 +147,14 @@ describe('snapshot lock ownership and atomic publication', () => {
     const observedPath = join(dir, 'observed.json');
     const releasePath = join(dir, 'release');
     const code = `
-      import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+      import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
       import { join } from 'node:path';
       import { buildPgliteSnapshot, snapshotProfile } from './scripts/build-pglite-snapshot.ts';
       const dir = process.argv[1];
       try {
         await buildPgliteSnapshot('default', { fixtureDir: dir, log: () => {}, buildData: async () => {
-          writeFileSync(join(dir, 'observed.json'), readFileSync(join(snapshotProfile('default', dir).lock, 'owner.json')));
+          writeFileSync(join(dir, 'observed.json.tmp'), readFileSync(join(snapshotProfile('default', dir).lock, 'owner.json')));
+          renameSync(join(dir, 'observed.json.tmp'), join(dir, 'observed.json'));
           while (!existsSync(join(dir, 'release'))) await Bun.sleep(5);
           if (process.argv[2] === 'true') throw new Error('expected build failure');
           return new TextEncoder().encode('complete artifact');

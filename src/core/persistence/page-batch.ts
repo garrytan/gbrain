@@ -38,8 +38,8 @@ const PREPARE_CONCURRENCY = 8;
 const BATCH_ADMISSION_BUDGET_MS = 30_000;
 const PAGE_KEYS = new Set(['slug', 'content', 'expected_revision', 'allow_empty', 'drop_timeline']);
 interface BatchPage { slug: string; content: string; expected_revision?: unknown; allow_empty?: unknown; drop_timeline?: unknown }
-interface PageResult { index: number; slug: string; row?: WriteRequest; refusal?: OperationError; typeWarning?: PageTypeWarning | null }
-interface BatchMarker { id: string; index: number; size: number }
+interface PageResult { index: number; slug: string; row?: WriteRequest; refusal?: OperationError; typeWarning?: PageTypeWarning | null; repeatOf?: number }
+interface BatchMarker { id: string; index: number; size: number; repeats?: number[] }
 
 const invalid = (message: string, suggestion: string) => new OperationError('invalid_params', message, suggestion);
 
@@ -48,7 +48,6 @@ function parsePages(value: unknown): BatchPage[] {
     throw invalid(`pages must be an array of 1 to ${PAGE_BATCH_MAX_PAGES} pages; nothing was written.`,
       `Send at most ${PAGE_BATCH_MAX_PAGES} pages per put_pages call, each in its own call with its own request_id. To check an earlier batch, call put_pages with only its request_id.`);
   }
-  const seen = new Set<string>();
   let bytes = 0;
   const pages = value.map((page, index) => {
     if (!page || typeof page !== 'object' || Array.isArray(page)) throw invalid(`pages[${index}] must be an object {slug, content}; nothing was written.`, 'Pass each page as {slug, content} with optional expected_revision, allow_empty and drop_timeline.');
@@ -57,9 +56,6 @@ function parsePages(value: unknown): BatchPage[] {
     if (extra.length) throw invalid(`pages[${index}] has unsupported fields (${extra.join(', ')}); nothing was written.`, 'Each page accepts only slug, content, expected_revision, allow_empty and drop_timeline; put frontmatter inside content.');
     if (typeof record.slug !== 'string' || !record.slug) throw invalid(`pages[${index}].slug must be a non-empty string; nothing was written.`, 'Give every page its slug, for example "notes/topic-name".');
     if (typeof record.content !== 'string') throw invalid(`pages[${index}].content must be a string; nothing was written.`, 'Pass the complete markdown page, frontmatter included, as content.');
-    const key = record.slug.toLowerCase();
-    if (seen.has(key)) throw invalid(`Slug ${record.slug} appears twice in this batch; nothing was written.`, 'Merge the two pages into one, or send the second one in a later put_pages call.');
-    seen.add(key);
     bytes += Buffer.byteLength(record.content);
     return record as unknown as BatchPage;
   });
@@ -68,6 +64,34 @@ function parsePages(value: unknown): BatchPage[] {
       `Split the pages across several put_pages calls of at most ${PAGE_BATCH_MAX_BYTES} bytes each, each with its own request_id.`);
   }
   return pages;
+}
+
+interface Repeats { repeatOf: (number | undefined)[]; refusals: Map<number, OperationError> }
+
+/**
+ * Pages of one batch that share a slug (case-insensitive). A byte-identical
+ * repeat (same content, expected_revision and allow_empty) is one write: it
+ * points at its first occurrence. When the repeats differ, every page with
+ * that slug is refused on its own, naming the other indexes; the rest of the
+ * batch is written.
+ */
+function findRepeats(pages: BatchPage[]): Repeats {
+  const bySlug = new Map<string, number[]>();
+  pages.forEach((page, index) => bySlug.set(page.slug.toLowerCase(), [...(bySlug.get(page.slug.toLowerCase()) ?? []), index]));
+  const repeatOf: (number | undefined)[] = new Array(pages.length);
+  const refusals = new Map<number, OperationError>();
+  const same = (a: BatchPage, b: BatchPage) => a.slug === b.slug && a.content === b.content && a.expected_revision === b.expected_revision && a.allow_empty === b.allow_empty;
+  for (const indexes of bySlug.values()) {
+    if (indexes.length < 2) continue;
+    const first = pages[indexes[0]!]!;
+    if (indexes.every(index => same(pages[index]!, first))) { for (const index of indexes.slice(1)) repeatOf[index] = indexes[0]; continue; }
+    for (const index of indexes) {
+      const others = indexes.filter(other => other !== index).map(other => `pages[${other}]`).join(', ');
+      refusals.set(index, invalid(`Slug ${pages[index]!.slug} appears at pages[${index}] and ${others} with different content or options; none of them was written. The other pages of this batch were.`,
+        `Keep one version of ${pages[index]!.slug}: send it alone in a new put_pages call with a new request_id. Identical repeats of a page are written once and need no change.`));
+    }
+  }
+  return { repeatOf, refusals };
 }
 
 function markerOf(row: WriteRequest): BatchMarker | null {
@@ -84,7 +108,7 @@ async function readBatch(ctx: OperationContext, batchId: string): Promise<WriteR
 }
 
 function pageEntry(result: PageResult): Record<string, unknown> {
-  const base = { index: result.index, slug: result.slug };
+  const base = { index: result.index, slug: result.slug, ...(result.repeatOf !== undefined ? { repeat_of: result.repeatOf } : {}) };
   if (result.refusal) return { ...base, state: 'refused', error: result.refusal.toJSON() };
   if (!result.row) return { ...base, state: 'not_admitted' };
   const row = result.row;
@@ -111,7 +135,7 @@ function pageEntry(result: PageResult): Record<string, unknown> {
  * after its last page settles; the receipt reports their combined state.
  */
 async function batchLinks(ctx: OperationContext, sourceId: string, results: PageResult[]): Promise<Record<string, unknown>> {
-  const rows = results.flatMap(result => result.row ? [result.row] : []);
+  const rows = [...new Map(results.flatMap(result => result.row ? [[result.row.id, result.row] as const] : [])).values()];
   const committed = rows.filter(row => row.state === 'committed').map(row => row.id);
   if (committed.length > 1 && rows.every(isTerminal)) await queueLinksReconcile(ctx.engine, { sourceId, requestIds: committed });
   const effects = committed.length ? await ctx.engine.executeRaw<{ state: string; outcome: Record<string, unknown> | null }>(
@@ -170,32 +194,34 @@ export async function admitBatch(ctx: OperationContext, batchId: string, admissi
   }), BATCH_ADMISSION_BUDGET_MS, error => ctx.engine.reconnect({ error }));
 }
 
-async function prepareAll(caller: OperationContext, batchId: string, sourceId: string, pages: BatchPage[]) {
+async function prepareAll(caller: OperationContext, batchId: string, sourceId: string, pages: BatchPage[], repeats: Repeats) {
   // #6007 (workstream A): one writer verification and one shared-read snapshot per batch (page-mutations.ts withBatchAdmission).
-  return withBatchAdmission(caller, (own, shared) => preparePages(own, shared, batchId, sourceId, pages));
+  return withBatchAdmission(caller, (own, shared) => preparePages(own, shared, batchId, sourceId, pages, repeats));
 }
-async function preparePages(own: OperationContext, shared: OperationContext, batchId: string, sourceId: string, pages: BatchPage[]) {
-  const prepared: (Awaited<ReturnType<typeof preparePageAdmission>> | OperationError)[] = new Array(pages.length);
+async function preparePages(own: OperationContext, shared: OperationContext, batchId: string, sourceId: string, pages: BatchPage[], repeats: Repeats) {
+  const prepared: (Awaited<ReturnType<typeof preparePageAdmission>> | OperationError | undefined)[] = new Array(pages.length);
+  const todo = pages.flatMap((_, index) => repeats.repeatOf[index] === undefined && !repeats.refusals.has(index) ? [index] : []);
   const prepareOne = async (index: number) => {
-    const ctx = index === 0 ? own : shared;
+    const ctx = index === todo[0] ? own : shared;
     const page = pages[index]!;
+    const copies = repeats.repeatOf.flatMap((first, copy) => first === index ? [copy] : []);
     const params: Record<string, unknown> = { slug: page.slug, content: page.content, source_id: sourceId };
     if (page.expected_revision !== undefined) params.expected_revision = page.expected_revision;
     if (page.allow_empty !== undefined) params.allow_empty = page.allow_empty;
     if (page.drop_timeline !== undefined) params.drop_timeline = page.drop_timeline;
     try {
       prepared[index] = await preparePageAdmission(ctx, { operation: 'put_page', params,
-        batch: { id: batchId, index, size: pages.length, requestId: pageBatchChildRequestId(batchId, index) } });
+        batch: { id: batchId, index, size: pages.length, requestId: pageBatchChildRequestId(batchId, index), ...(copies.length ? { repeats: copies } : {}) } });
     } catch (error) {
       if (!(error instanceof OperationError)) throw error;
       prepared[index] = error;
     }
   };
   // The first page may bind the source's worktree; the rest only read.
-  await prepareOne(0);
+  if (todo.length) await prepareOne(todo[0]!);
   let next = 1;
-  await Promise.all(Array.from({ length: Math.min(PREPARE_CONCURRENCY, pages.length - 1) }, async () => {
-    while (next < pages.length) await prepareOne(next++);
+  await Promise.all(Array.from({ length: Math.min(PREPARE_CONCURRENCY, todo.length - 1) }, async () => {
+    while (next < todo.length) await prepareOne(todo[next++]!);
   }));
   return prepared;
 }
@@ -224,6 +250,7 @@ export async function submitPageBatch(ctx: OperationContext, params: Record<stri
       const row = byIndex.get(index);
       return { index, slug: row?.slug ?? '', ...(row ? { row } : {}) };
     });
+    for (const row of settled) for (const copy of markerOf(row)!.repeats ?? []) results[copy] = { index: copy, slug: row.slug, row, repeatOf: markerOf(row)!.index };
     return batchReceipt(ctx, batchId, sourceId, results, await batchLinks(ctx, sourceId, results));
   }
   const pages = parsePages(params.pages);
@@ -233,11 +260,13 @@ export async function submitPageBatch(ctx: OperationContext, params: Record<stri
     throw opError('idempotency_conflict', `Batch ${batchId} was first submitted with ${markerOf(resized)!.size} pages; this call has ${pages.length}. Nothing new was admitted.`,
       `To check the original batch, call put_pages with only request_id ${batchId}. To write a different set of pages, use a new request_id.`);
   }
-  const prepared = await prepareAll(ctx, batchId, sourceId, pages);
+  const repeats = findRepeats(pages);
+  const prepared = await prepareAll(ctx, batchId, sourceId, pages, repeats);
   // A grant that may not write here refuses every page alike: answer the call with that one error.
-  const first = prepared[0];
+  const attempted = prepared.filter(entry => entry !== undefined);
+  const first = attempted[0];
   if (first instanceof OperationError && first.code === 'permission_denied'
-    && prepared.every(entry => entry instanceof OperationError && entry.code === first.code && entry.message === first.message)) throw first;
+    && attempted.every(entry => entry instanceof OperationError && entry.code === first.code && entry.message === first.message)) throw first;
   const conflicts = prepared.flatMap((entry, index) => entry instanceof OperationError && entry.code === 'idempotency_conflict' ? [pages[index]!.slug] : []);
   if (conflicts.length) {
     throw opError('idempotency_conflict', `Batch ${batchId} was already accepted with different content for ${conflicts.join(', ')}. Nothing new was admitted.`,
@@ -247,6 +276,7 @@ export async function submitPageBatch(ctx: OperationContext, params: Record<stri
   const admissions: { index: number; admission: WriteAdmission }[] = [];
   const rows: WriteRequest[] = [];
   prepared.forEach((entry, index) => {
+    if (entry === undefined) return;
     if (entry instanceof OperationError) results[index]!.refusal = entry;
     else if (entry.prior) results[index]!.row = entry.prior;
     else { admissions.push({ index, admission: entry.admission }); results[index]!.typeWarning = entry.typeWarning; }
@@ -264,9 +294,15 @@ export async function submitPageBatch(ctx: OperationContext, params: Record<stri
     }
     admissions.forEach((entry, position) => { results[entry.index]!.row = admitted[position]!; });
   }
+  for (const [index, refusal] of repeats.refusals) results[index]!.refusal = refusal;
   const journaled = results.filter(result => result.row);
   const settled = await waitForWrites(ctx.engine, journaled.map(result => result.row!), ctx.config, remaining());
   journaled.forEach((result, position) => { result.row = settled[position]!; });
+  repeats.repeatOf.forEach((firstIndex, index) => {
+    if (firstIndex === undefined) return;
+    const original = results[firstIndex]!;
+    results[index] = { ...original, index, repeatOf: firstIndex };
+  });
   return batchReceipt(ctx, batchId, sourceId, results, await batchLinks(ctx, sourceId, results));
 }
 

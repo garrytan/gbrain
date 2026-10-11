@@ -56,6 +56,27 @@ Eleven reports from large brains, managed checkouts and the schema tooling. Each
 - `postgres-engine/schema-lock-timeout.ts`: session-level `lock_timeout` on the reserved DDL backend restored on release, `SET LOCAL` inside transaction-wrapped migrations, `pg_blocking_pids()` sampling on a one-backend diagnostic connection, `schema_lock_blocked` registry row; conditional `ENABLE ROW LEVEL SECURITY` in `schema.sql` and eight fragment schemas; `init-schema-retry` retries SQLSTATE 55P03; the v24 RLS E2E test calls `runMigrationSQL` directly and the remaining `init` spawns dump `pg_stat_activity` at half their budget (#5227).
 
 Contributed by @andreineacsu (#5517 diagnosis of #5491).
+## [0.60.164.0] - 2026-10-11
+
+**`query` now answers with the facts you corrected, and gbrain can keep a question answered for you.**
+
+A fact you save with `remember` used to lose to the stale page text it corrected, because page search never ranked saved facts. `query` now brings matching saved facts in as their own rows, in space the pages left free. Pinned questions are a new opt-in: pin a question once, and gbrain keeps its answer current with a citation behind every sentence.
+
+### Itemized changes
+
+- `query` adds up to 3 saved facts that match the question as rows of their own (`result_type: "fact"`, with `fact_id` and a `follow_up` recall call). They use only rows and tokens the pages left free, so no page is pushed out, and a page row whose claim a newer fact replaced is marked `superseded_claim`. It costs up to three database lookups and no model call. Remote callers see only facts whose source pages they could read. On by default; `gbrain config set search.query_facts_arm false` turns it off.
+- `remember` takes `valid_from`, so a correction can carry the date it became true instead of the day it was saved.
+- Fact supersession uses a threshold measured for the brain's embedding model. The default voyage-4 at 1024 dimensions keeps 0.95 and decides as before. Any other model no longer replaces a similar fact by cosine: both stay active and conflict review judges the pair, and exact-text duplicates still merge. Doctor `supersession_calibration` names a command that measures a threshold on synthetic text (about a cent), and `facts.supersession_thresholds` registers one.
+- Pinned questions: `gbrain questions pin|list|status|refresh|unpin` and MCP `questions_*`. Answers live in their own private tables with per-sentence evidence, never in search results, exports or git. A sentence whose evidence changed is flagged stale when you read it, and `context_pack` gains optional `pinned_questions` and `withheld` fields. A pin made over MCP stays inactive until the owner activates it. The dream cycle's `standing_questions` phase refreshes active pins under `cycle.standing_questions.budget_usd` (default $1.00 per run). Guide: `docs/guides/pinned-questions.md`.
+- Pinned questions replace `dream.auto_think`. On upgrade, its questions become inactive pins with their budget, cooldown, model and commit setting, so nothing starts spending; `gbrain questions pin --id <id>` turns one on. `gbrain config get|set dream.auto_think.*` names where each key went.
+- Opt-in retrieval settings, each off by default: `search.evidence_date_header` (each delivered evidence block starts with its observation date), `search.entity_anchoring` (a current-state question that names one entity puts that entity's page and the pages about it first), `search.temporal_fact_reserve` (a question about when things happened reserves part of the token budget for dated facts) and `facts.candidate_fusion interleave` (a keyword arm for supersession candidates).
+- `GOOGLE_GENERATIVE_AI_BASE_URL` (or `provider_base_urls.google`) routes Gemini chat, expansion and embeddings through a proxy.
+- Fixes:
+  - `put_pages` accepts a byte-identical repeated slug as one write; differing repeats are refused page by page instead of failing the batch. Slow fenced code no longer stalls a batch.
+  - `query` skips the image arm on brains with no image embeddings.
+  - `query` returning whole pages with a `token_budget` sizes its hit list to the budget instead of stopping at the default row count with budget unused.
+  - `gbrain extract-conversation-facts` reads plain `user:` / `assistant:` transcripts, and exits 0 on partial success with a summary of the pages that failed.
+- Migration v235 adds the pinned-question tables.
 
 ## [0.60.163.0] - 2026-10-11
 

@@ -7,7 +7,7 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import type { GBrainConfig } from '../../src/core/config.ts';
 import { claimWorktree } from '../../src/core/persistence/ownership.ts';
 import { disposePersistenceConsumer, waitForWrites } from '../../src/core/persistence/service.ts';
-import type { WriteRequest } from '../../src/core/persistence/model.ts';
+import { TERMINAL_STATES, type WriteRequest } from '../../src/core/persistence/model.ts';
 import { isolatedPersistencePostgres } from './persistence-postgres.ts';
 import { syncLockId } from '../../src/core/db-lock.ts';
 import { testBackends } from './test-backends.ts';
@@ -39,6 +39,23 @@ export function githubFetch(opts: { failDetail?: boolean; failSecondPage?: boole
     if (path === '/repos/acme-example/app') return json({ full_name: 'acme-example/app', private: true, default_branch: 'main' });
     throw new Error('Unexpected external fixture route');
   };
+}
+
+/**
+ * A baseline sweep that finished: re-run `run` until the source has no
+ * accepted-pending connector writes and no unfinished write request. A sweep
+ * whose writes outlast its wait budget ends partial (its cursor is saved by the
+ * next run), so a test that snapshots the cursor right after one `run()` could
+ * read the state before the cursor moved and then see the next run move it.
+ */
+export async function completeBaselineSweep(engine: BrainEngine, sourceId: string, run: () => Promise<unknown>, attempts = 5): Promise<void> {
+  for (let i = 0; i < attempts; i++) {
+    await run();
+    const unfinished = await engine.executeRaw<{ n: number }>(
+      'SELECT count(*)::int AS n FROM persistence_requests WHERE source_id=$1 AND NOT (state = ANY($2::text[]))', [sourceId, [...TERMINAL_STATES]]);
+    if ((await connectorPendingSet(engine, sourceId)).length === 0 && unfinished[0]!.n === 0) return;
+  }
+  throw new Error(`baseline sweep of ${sourceId} still had pending connector writes after ${attempts} runs`);
 }
 
 export async function sourceCheckpoint(engine: BrainEngine, id: string) {

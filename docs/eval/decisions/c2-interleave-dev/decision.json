@@ -1,0 +1,97 @@
+{
+  "schema_version": 1,
+  "decision_id": "c2-interleave-dev",
+  "plan": "MEMORY_PROOF_WAVE C2",
+  "title": "C2 fact supersession candidates (facts.candidate_fusion) dev comparison",
+  "verdict_type": "quality",
+  "stage": "dev",
+  "candidate": {
+    "gbrain": "garrytan/gbrain@91081f319b724bd1ca1a82d4636d0cc7eadae208",
+    "config": {
+      "facts.candidate_fusion": "interleave"
+    }
+  },
+  "baseline": {
+    "gbrain": "garrytan/gbrain@91081f319b724bd1ca1a82d4636d0cc7eadae208",
+    "config": {
+      "facts.candidate_fusion": "rrf_free"
+    }
+  },
+  "sources": [
+    {
+      "kind": "offline-fixture",
+      "id": "c2-twin-fixture",
+      "split": "dev",
+      "engine": "pglite",
+      "fixture": {
+        "generator": "scripts/eval-c2-candidate-fusion.ts buildFixture",
+        "seed": 20261005,
+        "companies": 40,
+        "dense_companies": 10,
+        "probe_kinds": [
+          "correction",
+          "restatement",
+          "concurrent",
+          "private_correction",
+          "coexisting",
+          "new_claim"
+        ]
+      },
+      "embed": {
+        "kind": "local",
+        "model": "BAAI/bge-small-en-v1.5",
+        "dims": 384,
+        "script": "scripts/eval-c2-embed.py",
+        "package": "fastembed==0.8.1",
+        "quantization": "int8 per-vector scale"
+      },
+      "candidate_k": 5,
+      "thresholds": [
+        0.85,
+        0.9,
+        0.95
+      ],
+      "decision_rule": "decideSingleFact: exact fingerprint duplicate, else the highest-cosine eligible candidate (same visibility, active) at or above the threshold supersedes; at 0.95 the real decideSingleFact runs beside the replay and must agree",
+      "cluster_by": "company",
+      "comparisons": [
+        {
+          "id": "twin-recall-at-5",
+          "metric": "twin_recall_at_5",
+          "gate": "superiority",
+          "direction": "higher",
+          "min_effect": 0,
+          "description": "probes whose claim has an active row in both arms: that row is in the scored candidate set"
+        },
+        {
+          "id": "false-supersession",
+          "metric": "false_supersession_rate",
+          "gate": "noninferiority",
+          "direction": "lower",
+          "tolerance": 0.005,
+          "description": "probes whose decision replaced or deduplicated a row of a different claim"
+        },
+        {
+          "id": "preserved-distinct-claims",
+          "metric": "preserved_distinct_share",
+          "gate": "noninferiority",
+          "direction": "higher",
+          "tolerance": 0.005,
+          "description": "per company: share of every claim ever established that still has an active row after the replay"
+        },
+        {
+          "id": "correct-decision",
+          "metric": "correct_decision_rate",
+          "gate": "exploratory",
+          "direction": "higher",
+          "description": "probes decided as the fixture expects"
+        }
+      ]
+    }
+  ],
+  "alpha": 0.05,
+  "seed": 42,
+  "draws": 10000,
+  "budget_usd": 0,
+  "created_at": "2026-10-05T05:30:00.000Z",
+  "notes": "Both arms replay the same seeded fixture on a fresh in-memory PGLite brain per arm and threshold, through the product's listSupersessionCandidates (single-prepare.ts). Only facts.candidate_fusion differs. A source passes when twin recall@5 is superior and both guards hold at every threshold; the gate is false supersession and preserved distinct claims, never recall alone. Statistics: pairedClusterStatistics (src/core/eval/paired-bootstrap.ts), cluster bootstrap over companies and cluster sign-flip p, Holm within each threshold. No model or network calls during the replay; the local embedding model runs once, free. Dev verdict: it cannot set a default."
+}

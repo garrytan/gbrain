@@ -102,6 +102,8 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
     , rows = 0
     , serverSignature = null
     , nextWriteTimer = null
+    , lastWritten = null
+    , deferredRetries = []
     , terminated = false
     , incomings = null
     , results = null
@@ -181,6 +183,7 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
         : (query = q, query.active = true, armInflight())
 
       build(q)
+      lastWritten = q
       const mayPipeline = !q.options.onexecute || q.options.onexecute(connection)
       return write(toBuffer(q))
         && !q.describeFirst
@@ -453,6 +456,8 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
     errored(err)
     while (sent.length)
       queryError(sent.shift(), err)
+    while (deferredRetries.length)
+      queryError(deferredRetries.shift(), err)
   }
 
   function errored(err) {
@@ -623,6 +628,7 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
 
   function ReadyForQuery(x) {
     connection.status = x[5]
+    query && query === lastWritten && (lastWritten = null)
     connection.inflightSince = 0
     if (query) {
       options.shared.completed++
@@ -669,6 +675,8 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
 
     while (sent.length && (query = sent.shift()) && (query.active = true, query.cancelled))
       Connection(options).cancel(query.state, query.cancelled.resolve, query.cancelled.reject)
+
+    flushRetries()
 
     if (query)
       return armInflight() // Consider opening if able and sent.length < 50
@@ -731,6 +739,7 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
     query.typesKey && query.statement.types.every(t => t > 0 && t < 16384)
       && options.shared_types.set(query.typesKey, query.statement.types.slice())
     query.describeFirst && !query.onlyDescribe && (write(prepared(query)), query.describeFirst = false)
+    flushRetries()
   }
 
   function RowDescription(x) {
@@ -928,7 +937,16 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
   function retry(q, error) {
     delete statements[q.signature]
     q.retried = error
-    execute(q)
+    deferredRetries.push(q)
+    flushRetries()
+  }
+
+  // GBrain: a describe-first or cursor query writes its next messages only when the server answers its first
+  // ones. A retry written in that gap lands between them on the wire, and every later response is then read
+  // for the wrong query (rows built with another statement's columns). Retries wait for that query.
+  function flushRetries() {
+    while (deferredRetries.length && !(lastWritten && (lastWritten.describeFirst || lastWritten.cursorFn)))
+      execute(deferredRetries.shift())
   }
 
   function NotificationResponse(x) {

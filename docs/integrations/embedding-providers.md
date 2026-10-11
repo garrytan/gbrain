@@ -81,7 +81,7 @@ The doctor distinguishes two repair paths:
 
 The main alternative to the Voyage default (its flexible-dim `text-embedding-3` models can keep an existing column width during a provider migration). Set `OPENAI_API_KEY`. Models: `text-embedding-3-large` (3072 max, 1536 default), `text-embedding-3-small` (1536). Matryoshka via the `dimensions` field — gbrain pins it from `embedding_dimensions` config so existing 1536-dim brains stay aligned across SDK upgrades.
 
-Optional `OPENAI_BASE_URL` — point the native OpenAI provider at an OpenAI-compatible gateway. A bare host is normalized to carry the `/v1` suffix automatically (so `https://gw.example.com` and `https://gw.example.com/v1` both work); when unset, the SDK's default endpoint is untouched. With `OPENAI_BASE_URL` set, embedding does not require `OPENAI_API_KEY` — the override targets local OpenAI-compatible servers (LM Studio, vLLM) that ignore auth, so gbrain sends a placeholder key instead of refusing. `ANTHROPIC_BASE_URL` gets the same normalization for Anthropic chat/expansion calls.
+Optional `OPENAI_BASE_URL` — point the native OpenAI provider at an OpenAI-compatible gateway. A bare host is normalized to carry the `/v1` suffix automatically (so `https://gw.example.com` and `https://gw.example.com/v1` both work); when unset, the SDK's default endpoint is untouched. With `OPENAI_BASE_URL` set, embedding does not require `OPENAI_API_KEY` — the override targets local OpenAI-compatible servers (LM Studio, vLLM) that ignore auth, so gbrain sends a placeholder key instead of refusing. `ANTHROPIC_BASE_URL` gets the same normalization for Anthropic chat/expansion calls; `GOOGLE_GENERATIVE_AI_BASE_URL` does the same for Gemini with `/v1beta` ([Google Gemini](../ai-providers/google.md)).
 
 ### Voyage AI
 
@@ -114,7 +114,7 @@ To switch an existing brain, run `gbrain migrate embeddings --to voyage:voyage-c
 
 ### Google Gemini
 
-Set `GOOGLE_GENERATIVE_AI_API_KEY` (the AI Studio public API key). Models: `gemini-embedding-2` (current, GA 2026-04-22) and `gemini-embedding-001`. Default 768 dims; Matryoshka up to 3072 (`--embedding-dimensions 1536` / `3072`). Cheap. The two models' vector spaces are not interchangeable — to move an existing brain from `-001` to `-2`, use `gbrain migrate embeddings --to google:gemini-embedding-2 --dim <N>`, not `config set`.
+Set `GOOGLE_GENERATIVE_AI_API_KEY` (the AI Studio public API key). Models: `gemini-embedding-2` (current, GA 2026-04-22) and `gemini-embedding-001`. Default 768 dims; Matryoshka up to 3072 (`--embedding-dimensions 1536` / `3072`). Cheap. The two models' vector spaces are not interchangeable — to move an existing brain from `-001` to `-2`, use `gbrain migrate embeddings --to google:gemini-embedding-2 --dim <N>`, not `config set`. Optional `GOOGLE_GENERATIVE_AI_BASE_URL` points native Gemini chat, expansion and embedding requests at a proxy or gateway; a URL without a version segment gets `/v1beta`. See [Google Gemini](../ai-providers/google.md).
 
 GCP service-account / Vertex AI auth (Vertex ADC) is not supported; only the AI Studio API key path is wired.
 

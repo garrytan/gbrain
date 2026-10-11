@@ -49,15 +49,35 @@ describe('pMapAllSettled', () => {
   });
 
   test('concurrency > items.length runs all in parallel (no semaphore stall)', async () => {
-    const start = Date.now();
+    // Every task waits at a barrier that opens only once all of them have
+    // started, so a stalled semaphore never opens it. The timeout is a hang
+    // guard, not the pass condition.
     const items = [1, 2, 3];
-    await pMapAllSettled(items, 100, async () => {
-      await new Promise((r) => setTimeout(r, 50));
-      return 'ok';
+    let inFlight = 0;
+    let peak = 0;
+    let open!: () => void;
+    const barrier = new Promise<void>((resolve) => { open = resolve; });
+    let guard: ReturnType<typeof setTimeout> | undefined;
+    const stalled = new Promise<never>((_, reject) => {
+      guard = setTimeout(() => reject(new Error(`semaphore stall: ${inFlight} of ${items.length} tasks started`)), 5_000);
     });
-    const elapsed = Date.now() - start;
-    // Sequential would be ~150ms; concurrent ~50ms. Allow generous slack.
-    expect(elapsed).toBeLessThan(140);
+    try {
+      const results = await Promise.race([
+        pMapAllSettled(items, 100, async () => {
+          inFlight++;
+          peak = Math.max(peak, inFlight);
+          if (inFlight === items.length) open();
+          await barrier;
+          inFlight--;
+          return 'ok';
+        }),
+        stalled,
+      ]);
+      expect(results.every((r) => r.status === 'fulfilled')).toBe(true);
+    } finally {
+      clearTimeout(guard);
+    }
+    expect(peak).toBe(items.length);
   });
 
   test('throws TypeError on concurrency < 1', async () => {

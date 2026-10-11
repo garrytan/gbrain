@@ -21,7 +21,10 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { SearchResult } from '../src/core/types.ts';
-import { captureOffPath, OFF_PATH_PAGES, seedOffPath, withCostWave } from './helpers/evidence-delivery-fixture.ts';
+import { dispatchToolCall } from '../src/mcp/dispatch.ts';
+import { __resetProcessNoticeLedgerForTests } from '../src/core/notice-ledger.ts';
+import { captureOffPath, offPathMcpBytes, OFF_PATH_PAGES, seedOffPath, withCostWave } from './helpers/evidence-delivery-fixture.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 const FIXTURE = join(import.meta.dir, 'fixtures/goldens/evidence-delivery/off-path.json');
 const CONVERSATION = 'chat/session-a';
@@ -102,5 +105,14 @@ describe('evidence delivery off path', () => {
       }
     }
     expect(expanded).toBeGreaterThan(0);
+  });
+
+  test('a once-per-process notice landing on recall leaves the frozen recall bytes intact', async () => {
+    const want = JSON.parse(readFileSync(FIXTURE, 'utf8')) as Record<string, string>;
+    __resetProcessNoticeLedgerForTests();
+    const res = await withChunkConfig(engine, () => withEnv({ GBRAIN_BACKUP_CHECK: '0' }, () =>
+      dispatchToolCall(engine, 'recall', { query: 'ocelot' }, { remote: true, transport: 'stdio', sourceId: 'default' })));
+    expect(res._meta?.gbrain_notices).toBeDefined();
+    expect(offPathMcpBytes(res)).toBe(withCostWave('mcp-recall', want['mcp-recall']));
   });
 });

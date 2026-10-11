@@ -42,6 +42,9 @@ const FIXTURES_DIR = resolve(import.meta.dir, 'fixtures');
 let engine: PostgresEngine | null = null;
 
 const ALL_TABLES = [
+  // C4 pinned questions: no FKs (pointers only); cleared so pins never leak across files.
+  'question_evidence',
+  'pinned_questions',
   'fact_withdrawals',
   // v0.31: facts must come BEFORE pages too (FK to sources, but tests
   // seed via direct SQL so the row stays referenced until truncated).

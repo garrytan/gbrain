@@ -8830,7 +8830,7 @@ matched. **create_safety** (enum): `exists` (a page for this already exists)
 signal). The derivation of both is implementation-defined and may improve;
 the values are frozen.
 
-### remember(fact, provenance, ttl?, entity?, kind?, visibility?, request_id?) — write
+### remember(fact, provenance, ttl?, entity?, kind?, visibility?, valid_from?, request_id?) — write
 
 Save ONE fact with mandatory attribution.
 
@@ -8839,6 +8839,7 @@ Save ONE fact with mandatory attribution.
   Empty ⇒ `provenance_required` error with a fix.
 - `entity`: set whenever the fact is about a specific person/company/project —
   entity-scoped recall will not find unattributed facts.
+- `valid_from` (ISO 8601): when the fact became true. Omitted ⇒ write time.
 - `infer_entity` (additive, boolean, default `true`): when `entity` is omitted,
   the server may link the fact to the one entity page its text names exactly
   (zero LLM; a second competing name, a bare first name or an ambiguous match
@@ -8870,9 +8871,8 @@ near-duplicates may insert; dedup and supersession ride embedding similarity).
 
 #### remember replaces (additive)
 
-`replaces` (string): the `fact_id` of the fact this new fact replaces. It is a
-caller-directed replacement: it says the old fact is no longer the current one,
-not that the two texts mean the same. Zero model calls; the cosine rule does
+`replaces` (string): the `fact_id` this fact replaces, caller-directed: the
+old fact is no longer current (the texts need not mean the same). Zero model calls; the cosine rule does
 not apply. The target must be an active fact in the same source, with the same
 visibility (world only for remote callers, else `not_found`) and the same
 entity, on the same entity page. Refusals come back as `invalid_params` with a
@@ -9273,7 +9273,7 @@ lockstep, and is honored ONLY for trusted-local callers (`remote === false`); a
 remote caller never widens (fail-closed).
 
 Response: `{ protocol_version, entities, cards[], open_threads[], facts[], text,
-degraded_reason?, budget_tokens?, budget_used?, dropped_count?, core? }`. `text` is the
+degraded_reason?, budget_tokens?, budget_used?, dropped_count?, core?, pinned_questions?, withheld? }`. `text` is the
 envelope-wrapped injectable block, rendered from the packed sets within `budget_tokens`.
 
 `entities` scopes cards and threads, not the hot facts (the session's recent

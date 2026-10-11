@@ -38,6 +38,8 @@ import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import type { ChatOpts, ChatResult } from '../src/core/ai/gateway.ts';
 import { configureGateway, resetGateway, __setChatTransportForTests, __setEmbedTransportForTests } from '../src/core/ai/gateway.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
+import { getPin, insertPin } from '../src/core/questions/store.ts';
+import { questionSlug } from '../src/core/questions/identity.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { testBackends } from './helpers/test-backends.ts';
 
@@ -300,6 +302,22 @@ const MATRIX: Record<CyclePhase, Entry> = {
       expect(slug).toBeDefined();
       expect(await committed(engine, 'default', slug!)).not.toHaveLength(0);
       expect((await engine.getPage(slug!, { sourceId: 'default' }))?.compiled_truth).toContain('DRIFTED — notes/drift-example');
+    },
+  },
+  standing_questions: {
+    config: { 'models.standing_questions': 'anthropic:claude-sonnet-4-6' },
+    seed: async ({ engine, sourceId }) => {
+      await put(engine, sourceId, 'companies/acme-example', page('company', 'Acme', 'Acme example builds widgets in Lisbon.'));
+      const scope = { source: sourceId, entity: 'companies/acme-example' };
+      const question = 'Where does acme-example build widgets?';
+      await insertPin(engine, { sourceId, slug: questionSlug(question, scope), question, scope, state: 'active', inactiveReason: null, publishMode: 'publish', createdBy: 'cli' });
+    },
+    reply: () => JSON.stringify({ sentences: [{ text: 'Acme example builds widgets in Lisbon.', cite: ['E1'] }], gaps: [] }),
+    assert: async ({ engine, sourceId, result }) => {
+      const slug = questionSlug('Where does acme-example build widgets?', { source: sourceId, entity: 'companies/acme-example' });
+      expect(result.details).toMatchObject({ refreshed: 1 });
+      expect(await committed(engine, sourceId, slug)).not.toHaveLength(0);
+      expect((await getPin(engine, sourceId, slug))?.answer.map(s => s.text)).toEqual(['Acme example builds widgets in Lisbon.']);
     },
   },
   edge_contradictions: {

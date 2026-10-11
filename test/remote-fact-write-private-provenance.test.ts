@@ -179,8 +179,12 @@ for (const kind of testBackends()) {
       const embedding = Float32Array.from({ length: dims }, (_, i) => (i % 7) / 10);
       const input = { entity_slug: page, fact: 'SECRETPROV-xi is opening another office', kind: 'fact' as const, visibility: 'world' as const };
       const decide = (excludePrivate: boolean) => decideSingleFact(engine, sourceId, input, embedding, 'test-model', 'owner', { excludePrivate });
-      expect((await decide(false)).candidate?.id).toBe(hidden);
-      expect(await decide(true)).toEqual({ status: 'inserted', candidate: null });
+      // Cosine supersession needs a threshold for the embedding model (supersession-threshold.ts); test-model has none.
+      await engine.setConfig('facts.supersession_thresholds', JSON.stringify({ [`test-model@${dims}`]: 0.95 }));
+      try {
+        expect((await decide(false)).candidate?.id).toBe(hidden);
+        expect(await decide(true)).toEqual({ status: 'inserted', candidate: null });
+      } finally { await engine.unsetConfig('facts.supersession_thresholds'); }
     }, 90_000);
 
     test('similar_active after a remote forget never lists a private-provenance fact; local still does', async () => {

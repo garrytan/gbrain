@@ -29,7 +29,13 @@ describe('cosineVerdict', () => {
     ['changed month is distinct', 'sweep:corpus', 0.97, 'The renewal closes in November', 'The renewal closes in December', 'distinct'],
     ['changed date is distinct', 'hook:compact', 0.97, 'Launch is on 2026-10-02', 'Launch is on 2026-10-09', 'distinct'],
   ] as const)('%s', (_label, lane, score, a, b, verdict) => {
-    expect(cosineVerdict(lane, score, a, b)).toBe(verdict);
+    // 0.95: voyage-4@1024's calibrated explicit-lane threshold (supersession-threshold.ts).
+    expect(cosineVerdict(lane, score, a, b, 0.95)).toBe(verdict);
+  });
+
+  test('an uncalibrated embedding model (null threshold) never makes an explicit-lane duplicate', () => {
+    expect(cosineVerdict('mcp:extract_facts', 0.999, same, same, null)).toBe('distinct');
+    expect(cosineVerdict('hook:writeback', 0.99, same, 'Alice Example relocates to NYC', null)).toBe('near_duplicate');
   });
 });
 
