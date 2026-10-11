@@ -19,7 +19,8 @@ import { join } from 'node:path';
 import { extractPgliteDump, readBackupArchive, writeBackupArchive } from '../src/core/backup/archive.ts';
 
 let temporary: string;
-beforeAll(() => { temporary = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-5312-'))); // macOS: /var is a symlink and the archive root refuses symlinks });
+// realpath: on macOS tmpdir() sits under /var, a symlink the archive root refuses.
+beforeAll(() => { temporary = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-5312-'))); });
 afterAll(() => { rmSync(temporary, { recursive: true, force: true }); });
 
 /** One ustar entry the way PGLite's dumpDataDir writes them: /-prefixed, typeflag 0 or 5. */
