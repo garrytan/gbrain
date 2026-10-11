@@ -814,8 +814,7 @@ async function waiveRun(engine: BrainEngine, cursor: Cursor, head: Pending, key:
   // GBRA-75 wave 9: and one bounded-read session (bounded-reads.ts), so the run's screens share one transaction.
   const run = await withScreeningPaths(() => withBoundedReadSession(engine, session => screenWaiverRun(session, cursor, head, key, config, assertActive, frozenRun, limit)));
   if (!run) return null;
-  assertActive();
-  stampDrainStep('waiver_run', frozenRun.signal);
+  assertActive(); stampDrainStep('waiver_run', frozenRun.signal);
   const observedAt = frozenRun.observedAt ?? new Date().toISOString();
   const done = await waiveNoopRun(engine, cursor, run, key, async (tx, prefix) => {
     let next: Cursor = cursor;
@@ -1485,8 +1484,7 @@ async function runManagedSync(engine: BrainEngine, opts: SyncOpts, slice: { maxP
       // waits for them), is transient admission back-pressure, not a sync failure to record. #6340: neither is a lost
       // database connection or a statement timeout: the cursor and its frozen manifest stay, and the next pass resumes them.
       if (!['permission_denied', 'worktree_refreshing', 'refresh_recovery_required'].includes(code) && !isWriteCapacityWait(error)
-        && !isRetryableConnError(error) && !isStatementTimeoutError(error) && !(code === 'invalid_params' && phase === 'resume' && (await engine.executeRaw(
-          "SELECT 1 FROM op_checkpoints WHERE op='managed-sync-failure' AND fingerprint=$1 AND completed_keys->0->>'code' IS DISTINCT FROM 'invalid_params'", [key])).length > 0)) {
+        && !isRetryableConnError(error) && !isStatementTimeoutError(error) && !(code === 'invalid_params' && phase === 'resume' && (await engine.executeRaw("SELECT 1 FROM op_checkpoints WHERE op='managed-sync-failure' AND fingerprint=$1 AND completed_keys->0->>'code' IS DISTINCT FROM 'invalid_params'", [key])).length > 0)) {
         const [stored] = cursor ? [] : await engine.executeRaw<{ completed_keys: [CursorHeader] }>('SELECT completed_keys FROM op_checkpoints WHERE op=$1 AND fingerprint=$2', [OP, key]);
         const failedCursor = cursor ?? stored?.completed_keys?.[0];
         const { failure } = await recordManagedSyncFailure(engine, { source_id: context.sourceId, source_incarnation: context.incarnation, path: cursor?.entries[cursor.index]?.path ?? failedCursor?.pending?.intent.path ?? `<${phase}>`, code,
