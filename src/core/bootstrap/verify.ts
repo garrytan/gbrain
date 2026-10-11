@@ -397,7 +397,7 @@ export function checkDenyGlobs(ws: string): VerifyCheck {
       // stamped before the exclude rule, a concurrent run's lock) is not a finding:
       // `sources push` excludes it. One in the INDEX is, with `git rm --cached` as the fix.
       const indexed = new Set(execFileSync('git', ['-C', ws, 'ls-files', '--cached', '-z'], {
-        stdio: ['ignore', 'pipe', 'ignore'], timeout: 15_000, maxBuffer: 16 * 1024 * 1024,
+        stdio: ['ignore', 'pipe', 'ignore'], timeout: 15_000, maxBuffer: 16 * 1024 * 1024, env: gitChildEnv(),
       }).toString().split('\0').filter((f) => f.length > 0));
       const findings = matches.filter((f) => indexed.has(f) || !OWNERSHIP_DENY_GLOBS.some((g) => matchesGlob(g, f)));
       if (findings.length > 0) {

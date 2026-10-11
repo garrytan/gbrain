@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { appendFileSync, closeSync, constants, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { OperationError } from '../ops/contract.ts';
+import { gitChildEnv } from '../git-env.ts';
 import { flushDirectory } from '../fs-durable.ts';
 import { digest, sha256 } from './digest.ts';
 import { canonicalFilesystemPath } from './root-registry.ts';
@@ -25,7 +26,7 @@ export function excludeOwnershipMarkers(directories: readonly string[]): void {
     try {
       if (!statSync(directory).isDirectory()) continue;
       const path = execFileSync('git', ['-C', directory, 'rev-parse', '--git-path', 'info/exclude'],
-        { stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000 }).toString().trim();
+        { stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, env: gitChildEnv() }).toString().trim();
       if (!path) continue;
       exclude = resolve(directory, path);
     } catch { continue; }
