@@ -6,7 +6,12 @@
  * (Claude Code `~/.claude.json`, Codex `config.toml`, opencode `opencode.json`)
  * and reports it; `gbrain doctor --only harness_wiring` adds the smoke test:
  * a live `gbrain serve` holding this brain's lock → pass (`wired_running`);
- * otherwise spawn the registered argv (15 s bound) and run initialize +
+ * otherwise (an HTTP registration on a brain with no PGLite lock to read, i.e.
+ * Postgres) GET the registered server's `/health?deep=1` with no credentials
+ * (3 s bound): a 200 `{status:'ok'}` → `wired_running`; a dead port keeps
+ * `http_serve_missing`; a port that answers wrongly or hangs is
+ * `http_serve_unhealthy` with no start-a-server fix (#6453); otherwise spawn
+ * the registered argv (15 s bound) and run initialize +
  * tools/list + `recall {query:"gbrain install check", limit:1}` (an empty
  * result passes). A `gbrain_status` reply (status-only serve) is reported with
  * its reason and fix. A live status-only `serve --http` (its marker under
@@ -32,6 +37,7 @@ import { checkError, doctorVerify, infoCheck } from '../check-fix.ts';
 import type { DoctorContext, DoctorEntry } from '../context.ts';
 
 export const HARNESS_SMOKE_TIMEOUT_MS = 15_000;
+export const HARNESS_HTTP_PROBE_TIMEOUT_MS = 3_000;
 const NAME = 'harness_wiring';
 const SMOKE_QUERY = 'gbrain install check';
 const STATUS_TOOL = 'gbrain_status';
@@ -157,8 +163,62 @@ function brainLock(): ReturnType<typeof peekLock> | null {
   }
 }
 
+/** A registered URL without userinfo, query or fragment: those can carry a credential. */
+function redactedUrl(raw: string | undefined): string {
+  try {
+    const u = new URL(raw ?? '');
+    u.username = ''; u.password = ''; u.search = ''; u.hash = '';
+    return u.toString();
+  } catch {
+    return '(unparseable url)';
+  }
+}
+
+/** True when this brain is a local PGLite store, the only engine whose lock `brainLock()` can read. */
+function readsPgliteLock(): boolean {
+  try {
+    const cfg = loadConfig();
+    return !!cfg && cfg.engine === 'pglite' && !cfg.database_url && !cfg.remote_mcp;
+  } catch {
+    return false;
+  }
+}
+
+export type HttpProbeOutcome =
+  | { state: 'up' }
+  | { state: 'down' }
+  | { state: 'timeout' }
+  | { state: 'unhealthy'; status: number };
+
+/**
+ * GET the registered server's `/health?deep=1` (the registration's own path
+ * with a trailing `/mcp` swapped for `/health`). No credentials are sent, no
+ * redirect is followed, and the body is only read for `{status:'ok'}`.
+ * Never throws and never echoes the URL.
+ */
+export async function probeHttpRegistration(r: HarnessRegistration, timeoutMs = HARNESS_HTTP_PROBE_TIMEOUT_MS): Promise<HttpProbeOutcome> {
+  let target: URL;
+  try {
+    target = new URL(r.url ?? '');
+    if (target.protocol !== 'http:' && target.protocol !== 'https:') return { state: 'down' };
+  } catch {
+    return { state: 'down' };
+  }
+  target.username = ''; target.password = ''; target.hash = '';
+  target.pathname = `${target.pathname.replace(/\/mcp\/?$/, '').replace(/\/+$/, '')}/health`;
+  target.search = '?deep=1';
+  try {
+    const res = await fetch(target, { signal: AbortSignal.timeout(timeoutMs), redirect: 'manual', headers: { accept: 'application/json' } });
+    if (res.status !== 200) return { state: 'unhealthy', status: res.status };
+    const body = (await res.json().catch(() => null)) as { status?: unknown } | null;
+    return body?.status === 'ok' ? { state: 'up' } : { state: 'unhealthy', status: res.status };
+  } catch (e) {
+    return { state: (e as { name?: string })?.name === 'TimeoutError' ? 'timeout' : 'down' };
+  }
+}
+
 function describeRegistration(r: HarnessRegistration): string {
-  return r.kind === 'http' ? `${HARNESS_LABEL[r.harness]} → ${r.url}` : `${HARNESS_LABEL[r.harness]} → ${[r.command, ...(r.args ?? [])].join(' ')}`;
+  return r.kind === 'http' ? `${HARNESS_LABEL[r.harness]} → ${redactedUrl(r.url)}` : `${HARNESS_LABEL[r.harness]} → ${[r.command, ...(r.args ?? [])].join(' ')}`;
 }
 
 function rewireFix(r: HarnessRegistration): Action | undefined {
@@ -210,7 +270,7 @@ export async function smokeStdioRegistration(r: HarnessRegistration, timeoutMs =
   }
 }
 
-async function smoke(r: HarnessRegistration): Promise<Check> {
+async function smoke(r: HarnessRegistration, httpProbeTimeoutMs = HARNESS_HTTP_PROBE_TIMEOUT_MS): Promise<Check> {
   const details = { harness: r.harness, registration: r.source, kind: r.kind };
   const lock = brainLock();
   if (lock?.held && lock.isServe) {
@@ -223,6 +283,19 @@ async function smoke(r: HarnessRegistration): Promise<Check> {
     return { name: NAME, status: 'ok', message: `${describeRegistration(r)}: a live gbrain ${transport} (PID ${lock.pid}) holds this brain.`, details: { ...details, reason: 'wired_running' } };
   }
   if (r.kind === 'http') {
+    // The PGLite lock is the only "a server is running" signal above, and it does not exist on Postgres
+    // (#6453): ask the registered endpoint itself before claiming it is missing.
+    const probe = readsPgliteLock() ? null : await probeHttpRegistration(r, httpProbeTimeoutMs);
+    if (probe?.state === 'up') {
+      return { name: NAME, status: 'ok', message: `${describeRegistration(r)}: the registered server answered its health probe.`, details: { ...details, reason: 'wired_running', probe: 'health' } };
+    }
+    if (probe && (probe.state === 'timeout' || probe.state === 'unhealthy')) {
+      // Something owns that port, so "start gbrain serve --http" could only collide with it.
+      const why = probe.state === 'timeout' ? 'did not answer its health probe in time' : `answered its health probe with HTTP ${probe.status}`;
+      return { name: NAME, status: 'warn', message: `${describeRegistration(r)} is registered and something listens there, but it ${why}.`,
+        details: { ...details, reason: 'http_serve_unhealthy', probe: probe.state, ...(probe.state === 'unhealthy' ? { http_status: probe.status } : {}) },
+        fix_unavailable_reason: 'no_safe_automatic_fix' };
+    }
     return { name: NAME, status: 'warn', message: `${describeRegistration(r)} is registered, but no \`gbrain serve --http\` is running on this machine, so new sessions get no memory tools.`,
       details: { ...details, reason: 'http_serve_missing' },
       fix: { argv: ['gbrain', 'serve', '--http'], consent: [], actor: 'user', requires_exclusive: true, verify: doctorVerify(NAME),
@@ -237,7 +310,7 @@ async function smoke(r: HarnessRegistration): Promise<Check> {
 }
 
 /** Registration read (full run) or registration read + smoke (`--only harness_wiring`). */
-export async function harnessWiringCheck(opts: { smoke: boolean }): Promise<Check> {
+export async function harnessWiringCheck(opts: { smoke: boolean; httpProbeTimeoutMs?: number }): Promise<Check> {
   // A shared HTTP server that answers in status-only mode outranks every registration verdict.
   const statusServer = (await verifiedStatusMarkers())[0];
   if (statusServer) {
@@ -271,7 +344,7 @@ export async function harnessWiringCheck(opts: { smoke: boolean }): Promise<Chec
   }
   const active = detectedHarnesses()[0];
   const primary = regs.find((r) => r.harness === active) ?? regs[0];
-  if (opts.smoke) return smoke(primary);
+  if (opts.smoke) return smoke(primary, opts.httpProbeTimeoutMs);
   return { name: NAME, status: 'ok', message: `Registered: ${regs.map(describeRegistration).join('; ')}. Smoke-test it with \`gbrain doctor --only harness_wiring\`.`,
     details: { reason: 'registration_unverified', harnesses: regs.map((r) => r.harness) } };
 }

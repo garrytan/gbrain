@@ -10,6 +10,24 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.166.0] - 2026-10-11
+
+**`gbrain doctor --only harness_wiring` no longer says the shared server is missing when it is up on Postgres.**
+
+An agent harness registered over HTTP (the `bootstrap harness` wiring) was reported as `http_serve_missing` on every Postgres brain, even while the registered `serve --http` answered. The check only knew a server was running by reading the PGLite lock, which a Postgres brain does not have. It now asks the registered server itself.
+
+### Itemized changes
+
+- On a brain with no PGLite lock to read, `harness_wiring` calls the registered server's `/health?deep=1` with a 3 s bound and no credentials. A healthy answer is `ok` with `reason: wired_running`, the same verdict `gbrain setup claude-code` already gives this wiring, so the two commands agree.
+- A refused connection keeps the existing `http_serve_missing` warning and its `gbrain serve --http` fix.
+- A port that answers with an error, answers with something that is not gbrain, redirects or does not answer in time is a new `http_serve_unhealthy` warning with no start-a-server fix, because something already owns that port.
+- The registered URL is shown without userinfo, query or fragment, and the probe never sends the registration's token. PGLite brains behave as before: the lock stays the only signal and no request is made.
+
+### For contributors
+
+- `probeHttpRegistration` is exported from `src/commands/doctor/checks/harness-wiring.ts`; `harnessWiringCheck` takes an optional `httpProbeTimeoutMs`.
+- New probe: `test/doctor-harness-wiring-http.test.ts` (healthy, dead, 503, not-gbrain, hung, redirect, credential redaction, PGLite unchanged).
+
 ## [0.60.165.0] - 2026-10-11
 
 **Managed sync stops instead of hanging, a database publish that never finishes is cancelled and retried, and managed brains write meeting timelines and extracted entities through the coordinator.**
