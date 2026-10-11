@@ -164,6 +164,7 @@ test/eval-longmemeval-synopsis-tier.serial.test.ts	R1	R1: mutates process.env (G
 test/eval-retrieval-quality-decide.serial.test.ts	R1	R1: mutates process.env (GBRAIN_DECIDE_SLOTS)
 test/eval-run-all-outcome.serial.test.ts	R2	R2: mock.module(../src/commands/eval-brainbench.ts) replaces modules for every file in the process; spyOn process.stderr.write
 test/eval-takes-quality-runner.serial.test.ts	R2	R2: mock.module(../src/core/ai/gateway.ts) replaces modules for every file in the process
+test/eval/rerank-gate-latency-ops.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)
 test/extract-conversation-facts-diagnostics.serial.test.ts	global-state	global-state: process-wide test seams __setChatTransportForTests, __setEmbedTransportForTests; configureGateway changes the process-wide AI gateway; spyOn console.log, process.exit, concurrency.resolveWorkersWithClamp, console.error (+2 more)
 test/extract-cross-source-links-db.serial.test.ts	R1	R1: mutates process.env (bracket or computed key)
 test/extract-endpoint-revision.serial.test.ts	global-state	global-state: spyOn console.error, process.exit

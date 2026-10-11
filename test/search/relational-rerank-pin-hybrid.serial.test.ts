@@ -119,18 +119,19 @@ afterAll(async () => {
 
 type Run = { results: SearchResult[]; meta: HybridSearchMeta | undefined; slugs: string[] };
 
-async function run(query: string, perCall: { relationalRerankPin?: number; autocut?: boolean } = {}): Promise<Run> {
+async function run(query: string, perCall: { relationalRerankPin?: number; autocut?: boolean; rerankGate?: 'off' | 'shadow' | 'on'; vector?: Float32Array } = {}): Promise<Run> {
   let meta: HybridSearchMeta | undefined;
+  const { vector, ...rest } = perCall;
   const results = await hybridSearch(engine, query, {
     limit: 10,
     sourceId: 'default',
-    queryEmbedFn: () => queryVector,
+    queryEmbedFn: () => vector ?? queryVector,
     onMeta: (m) => { meta = m; },
     // Autocut is OFF in every bundle since rule R2; this file pins the pin's
     // contract THROUGH autocut (pinned rows survive the cut, text-row autocut
     // is byte-identical), so it turns autocut on per call explicitly.
     autocut: true,
-    ...perCall,
+    ...rest,
   });
   return { results, meta, slugs: results.map((r) => r.slug) };
 }
@@ -303,4 +304,33 @@ describe('R1 paired shape across every "who invested in" question', () => {
     expect(onTop3AllGold, table).toBe(questions.length);
     expect(offHit1, table).toBe(0);
   }, 120_000);
+});
+
+describe('W3 rerank gate on: a skip keeps fused order, so neither the relational pin nor autocut fires', () => {
+  test('a strong vector grade on the seed company skips the reranker; the same vector with the gate off reranks and pins', async () => {
+    const seed = RELATIONAL_QUESTIONS.find((q) => q.query === Q)!.seed as string;
+    const vector = relationalBasisEmbedding(seed, queryVector.length);
+    const before = rerankCalls.length;
+    // A topNOut slice makes the skipped list a new array, so only the gate's
+    // own guard keeps the pin from firing on fused order.
+    await engine.setConfig('search.reranker.top_n_out', '30');
+    try {
+      const gated = await run(Q, { rerankGate: 'on', vector });
+      expect(rerankCalls.length).toBe(before);
+      expect(gated.meta?.rerank_gate).toMatchObject({ mode: 'on', grade: 'strong', reason: 'high_vector_match', would_skip: true, skipped: true, provider_called: false });
+      expect(degradedStages(gated.meta)).toEqual([]);
+      expect(gated.meta?.relational_rerank_pin).toBeUndefined();
+      expect(gated.results.some((r) => r.relational_pinned)).toBe(false);
+      expect(gated.results.some((r) => r.rerank_score !== undefined)).toBe(false);
+      expect(gated.meta?.autocut).toMatchObject({ applied: false, signal: 'none' });
+      expect(gated.slugs[0]).toBe(seed);
+
+      const reranked = await run(Q, { rerankGate: 'off', vector });
+      expect(rerankCalls.length).toBe(before + 1);
+      expect(reranked.meta?.relational_rerank_pin?.pinned.length).toBeGreaterThan(0);
+      expect(reranked.results.some((r) => r.relational_pinned)).toBe(true);
+    } finally {
+      await engine.unsetConfig('search.reranker.top_n_out');
+    }
+  });
 });

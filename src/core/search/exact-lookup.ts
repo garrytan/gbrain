@@ -191,6 +191,16 @@ export async function applyExactLookupTier(
   } catch {
     return results;
   }
+  return applyExactLookupHits(results, hits);
+}
+
+/**
+ * A54 — the apply half of the tier, for hits `structuralExactLookup` already
+ * returned (the rerank gate looks them up before reranking; this applies them
+ * at the tier's post-rerank position without a second probe). Hit rows are
+ * copied before injection, so one hit list can be applied once per search.
+ */
+export function applyExactLookupHits(results: SearchResult[], hits: readonly SearchResult[]): SearchResult[] {
   if (hits.length === 0) return results;
 
   const out = [...results];

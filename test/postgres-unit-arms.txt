@@ -108,6 +108,9 @@ test/repair-failed-writes-drift-w411.test.ts
 test/repair-fences.test.ts
 test/repair-frontmatter.test.ts
 test/scripts/test-stress-postgres.test.ts
+test/search/rerank-gate-hybrid.test.ts
+test/search/rerank-gate-skip.test.ts
+test/search/rerank-gate-telemetry.test.ts
 test/shared-content-freshness.test.ts
 test/shared-skills-catalog.test.ts
 test/shared-skills-retention-capacity.test.ts

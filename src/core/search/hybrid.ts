@@ -904,6 +904,13 @@ export interface HybridSearchOpts extends SearchOpts {
    */
   metadataBoostGate?: MetadataBoostGate;
   /**
+   * Per-call override for `search.reranker.gate` (crag.ts `gradePreRerank`):
+   * `shadow` grades before the cross-encoder and still reranks. `undefined` → config/bundle; anything else is unset via
+   * the ONE contract `normalizeRerankGate`. Threaded through resolveSearchMode
+   * in BOTH the inner search and the cache resolver (knobs hash `rrg=`).
+   */
+  rerankGate?: import('./crag.ts').RerankGateMode;
+  /**
    * explain_target (explain-target.ts): when set, each pipeline stage records
    * whether the target page was present and at what rank. Observation only —
    * never changes ranking.
@@ -1167,15 +1174,17 @@ export async function hybridSearch(
     return hybridSearch(engine, query, { ...opts, detail: 'high' });
   }
 
-  const { rerankPinned, relationalRerankPin } = await rerankAndPin(req, deduped, relationalList, effectiveModality);
+  const { rerankPinned, relationalRerankPin, rerankGate, identityLookups } = await rerankAndPin(req, deduped, relationalList, effectiveModality, {
+    exactLookupOpts: lexical.exactLookupOpts, multimodal: effectiveModality !== 'text' || unifiedDone,
+  });
   opts?.explainTarget?.observe('reranked', rerankPinned);
   const { returnPool, adaptiveDecision, autocutDecision, relationalSlotDecision } = await sizeReturnPool(req, {
-    rerankPinned, deduped, exactLookupOpts: lexical.exactLookupOpts, relationalList, effectiveModality,
+    rerankPinned, deduped, exactLookupOpts: lexical.exactLookupOpts, relationalList, effectiveModality, identityLookups,
   });
   opts?.explainTarget?.observe('return_pool', returnPool);
   return finalizeHybridResults(req, returnPool, {
     relaxedDropped, adaptiveDecision, autocutDecision, relationalSlotDecision,
-    relationalRerankPin, keywordArmConfidence, metadataBoostGate,
+    relationalRerankPin, keywordArmConfidence, metadataBoostGate, rerankGate,
   });
 }
 
