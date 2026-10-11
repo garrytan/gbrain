@@ -166,6 +166,24 @@ per-transcript synthesis subagents. The dials:
   Pages that already existed are checked only on the sentences this run
   added. The off switch is the incident escape hatch; telemetry lands in
   `details.synthesis.quote_verify`.
+- `dream.synthesize.attribution_rules` and `dream.propose_takes.attribution_rules`
+  (default off) — extra prompt rules from #5425: keep who proposed what and
+  later corrections explicit; an assistant-authored judgment is not the
+  user's. Off because matched runs measured no benefit (propose-takes F1
+  0.896 → 0.876); a brain that wants them opts in per phase.
+- `dream.attribution_checks` (default off; `true` or `false`) — the two
+  mechanical attribution checks of #5425 that need the same held-out
+  measurement before they can change defaults. On, `propose_takes` stores a
+  proposal held by `people/<slug>` as held by `brain` when its numbers, dates
+  and quoted phrases appear only in assistant turns of the page and no user
+  turn states or explicitly accepts any of them (a page without speaker turns
+  is left alone), and the synthesis claim check adds `superseded_in_source`:
+  a sentence whose grounded quote a later user turn takes back in a sentence
+  that negates and names the same number or date moves to
+  `unverified_claims`; a later sentence that only repeats the number, or
+  negates a different one, changes nothing. Off, every page and proposal is
+  byte-identical to a release without the checks. One switch, both checks:
+  `gbrain config set dream.attribution_checks true`.
 - `dream.synthesize.max_turns` (default 16) — synthesis turn budget for
   agentic children and oneshot fallbacks (the default oneshot path — see
   the next section — is a single completion and never spends turns). The
@@ -269,11 +287,13 @@ Three more fields answer "what did that cost and did it land":
 - `quote_verify` — what the post-write claim check touched: quotes checked
   and repaired, sentences quarantined (with counts per reason:
   `quote_not_in_source`, `quote_crosses_speakers`, `speaker_mismatch`,
-  `number_not_in_source`, `decision_misattributed`), pre-existing pages
+  `number_not_in_source`, `decision_misattributed`, and, with
+  `dream.attribution_checks` on, `superseded_in_source`), pre-existing pages
   checked by diff, and unbalanced paragraphs. `decision_misattributed` is a
   sentence saying a speaker decided, agreed or will do something whose
   numbers or dates only another speaker stated and the named speaker never
-  explicitly accepted.
+  explicitly accepted. `superseded_in_source` is a sentence whose quote a
+  later user turn took back on the same number or date.
 
 Per-call spend also lands in the `chat_usage_log` ledger with a phase tag:
 the orchestrator's own calls under `phase:synthesize`, each drained child

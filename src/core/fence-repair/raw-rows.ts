@@ -17,7 +17,7 @@
 import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, factsHeaderLayout, factsRowProblem, type FactsFenceColumn } from '../facts-fence.ts';
 import { TAKES_FENCE_BEGIN, TAKES_FENCE_END } from '../takes-fence.ts';
 import { indexOfOutsideCode, scanMarkdownCode, type MarkdownCodeMap } from '../fence-scan.ts';
-import { isSeparatorRow } from '../fence-shared.ts';
+import { decodeFenceCell, isSeparatorRow } from '../fence-shared.ts';
 import { BASE_WIDTH, canonicalColumn, cellValid, COLUMNS, MIN_CELLS, NAMED_COLUMNS, parseRowNum, TOLERATED_TRAILING } from './schema.ts';
 import type { FenceIssue, FenceKind, FenceReason, FenceSection } from './types.ts';
 
@@ -257,7 +257,7 @@ function cellAt(text: string, from: number, to: number): RawCell {
   const raw = slice.trim();
   const lead = slice.length - slice.trimStart().length;
   const start = raw ? from + lead : from + Math.min(1, slice.length);
-  return { raw, start, end: start + raw.length, text: raw.replace(/\\\|/g, '|').replace(/<br\s*\/?>/gi, '\n') };
+  return { raw, start, end: start + raw.length, text: decodeFenceCell(raw.replace(/\\\|/g, '|')) };
 }
 
 function strictHeaderCells(row: RawRow): boolean {

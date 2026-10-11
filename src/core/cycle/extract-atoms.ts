@@ -1252,6 +1252,7 @@ export async function runPhaseExtractAtoms(
               ...(atom.emotional_register && { emotional_register: atom.emotional_register }),
               extracted_at: new Date().toISOString(),
               extracted_by: 'extract_atoms-v0.41.2.1',
+              dream_generated: true, // #5211: the flag every anti-loop guard keys on
             },
             atom.body,
             '',

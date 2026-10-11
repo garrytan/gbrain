@@ -132,7 +132,7 @@ function requestError(error: unknown): PublicationFailure {
   const refusal = databaseRefusal(error);
   if (refusal) return refusal;
   const code = (error as { code?: string })?.code;
-  if (code === 'revision_conflict') {
+  if (code === 'revision_conflict' || code === 'revision_required') {
     return { code, message: error instanceof Error && error.message ? error.message : 'The page changed after the supplied revision was read.' };
   }
   // #5216: the row still awaits its revision backfill; the error names the resume command.

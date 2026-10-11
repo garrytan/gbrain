@@ -43,6 +43,16 @@ export const PAGE_MUTATION_PARAMS: Record<string, ParamDef> = {
 };
 
 /**
+ * #5970: the precondition a merging page write (`add_tag`, `remove_tag`, `add_timeline_entry`, `takes_*`) accepts.
+ * The coordinator always honored `expected_revision` / `force` on these; declared so a strict dispatcher admits them.
+ * Full surface only, like `content_origin`: accepted on every surface, off the starter schema budget.
+ */
+export const MERGE_PRECONDITION_PARAMS: Record<string, ParamDef> = {
+  expected_revision: { type: 'string', description: 'Revision read; omit to merge onto the current page.', fullSurfaceOnly: true },
+  force: { ...PAGE_MUTATION_PARAMS.force, fullSurfaceOnly: true },
+};
+
+/**
  * #5575 CEO-26/DX-8: where the content of an agent write came from. Optional
  * and additive (MEMORY_VERBS-compatible); `tool_output` stores the write as
  * external, untrusted. Safety never depends on it (the channel tier holds

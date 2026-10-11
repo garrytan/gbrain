@@ -13,6 +13,7 @@ import {
   normalizeAIError,
 } from '../../src/core/ai/errors.ts';
 import { FactsExtractionError } from '../../src/core/facts/extract.ts';
+import { redactProviderKeys } from '../../src/core/ai/key-redact.ts';
 
 const openai404 = () => Object.assign(
   new Error('The model `gpt-5.6-terra` does not exist or you do not have access to it.'),
@@ -59,5 +60,34 @@ describe('model_not_found class (B-N7)', () => {
     const err = new FactsExtractionError('provider_error', 'openai:gpt-5.6-terra', normalizeAIError(openai404(), 'chat(openai:gpt-5.6-terra)'));
     expect(err.message).toContain('(cause=AIConfigError model_not_found)');
     expect(err.message).not.toContain('auth');
+  });
+});
+
+describe('a 403 model-access denial is model_not_found, not auth (#5394)', () => {
+  const openai403 = (text: string) => Object.assign(new Error(text), { statusCode: 403 });
+
+  test('"project does not have access to the model" on a 403 classifies as model_not_found', () => {
+    const body = 'Project `proj_abc123` does not have access to model `gpt-5.6-terra`.';
+    expect(classifyGlobalLlmError(normalizeAIError(openai403(body), 'chat(openai:gpt-5.6-terra)'))).toBe('model_not_found');
+    expect(classifyGlobalLlmError(openai403('Your project does not have access to the model gpt-5.6-terra'))).toBe('model_not_found');
+    expect(classifyGlobalLlmError(openai403('You do not have access to this model.'))).toBe('model_not_found');
+  });
+
+  test('a plain 401 or 403 with no access phrase stays auth', () => {
+    expect(classifyGlobalLlmError(openai403('forbidden'))).toBe('auth');
+    expect(classifyGlobalLlmError(Object.assign(new Error('Incorrect API key provided'), { statusCode: 401 }))).toBe('auth');
+  });
+
+  test('the normalized 403 carries the model fix, not the key fix, and the gateway redactor scrubs the body', () => {
+    const secret = ['sk', 'test', 'redaction', 'value', '0001'].join('-');
+    const redact = (text: string) => redactProviderKeys(text, { OPENAI_API_KEY: secret });
+    const err = normalizeAIError(openai403(`Project \`proj_abc123\` does not have access to model \`gpt-5.6-terra\`. key ${secret}`), 'chat(openai:gpt-5.6-terra)', redact);
+    expect(err).toBeInstanceOf(AIConfigError);
+    expect(err.message).not.toContain(secret);
+    const fix = (err as AIConfigError).fix!;
+    expect(fix).toContain('the openai provider does not serve openai:gpt-5.6-terra');
+    expect(fix).toContain('`gbrain models`');
+    expect(fix).not.toContain('API key');
+    expect(classifyGlobalLlmError(err)).toBe('model_not_found');
   });
 });

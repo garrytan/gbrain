@@ -27,6 +27,9 @@ const QUERY_PREFIX_FAMILIES: ReadonlyArray<{ family: string; pattern: RegExp; va
   { family: 'e5', pattern: /(^|[/:_-])(multilingual-)?e5([-_.]|$)/, value: 'query: ' },
   { family: 'BGE', pattern: /(^|[/:_-])bge-(?!m3)/, value: 'Represent this sentence for searching relevant passages: ' },
   { family: 'nomic-embed', pattern: /nomic-embed/, value: 'search_query: ' },
+  // PR #6062 (query half, @xorets): the model card's retrieval task prompt; the document-side `title: … | text: …`
+  // formatting is a per-model document transform and stays a tracked feature, not a prefix.
+  { family: 'EmbeddingGemma', pattern: /embeddinggemma/, value: 'task: search result | query: ' },
 ];
 
 export function suggestedQueryPrefix(embeddingModel: string): { family: string; value: string } | null {
