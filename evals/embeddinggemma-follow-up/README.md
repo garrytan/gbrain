@@ -5,6 +5,10 @@ frozen CC0 corpus in `dataset.json` and real 768-dimensional vectors from a
 local Ollama `embeddinggemma:latest` model. It does not establish production
 acceptance or authorize re-embedding a brain.
 
+The completed real-model run is documented in [the results report](results/README.md).
+That page links the compact [report](results/report.json) and the lossless,
+sanitized [full evidence bundle](results/evidence.json.gz).
+
 After the coordinator reviews the harness, run it from the repository root
 with a local Ollama base URL and a directory that does not already exist:
 
