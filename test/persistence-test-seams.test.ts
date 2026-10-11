@@ -16,7 +16,7 @@ import { afterAll, expect, test } from 'bun:test';
 import { MAINTENANCE_PUBLISH_WAIT_MS, MAINTENANCE_WRITE_WAIT_MS, MaintenanceWriteWait, __setMaintenanceWriteWaitForTests, maintenancePublishWaitMs } from '../src/core/persistence/maintenance-wait.ts';
 import { EFFECT_RENEWAL_INTERVAL_MS, __setEffectRenewalIntervalForTests, effectRenewalInterval } from '../src/core/persistence/effects.ts';
 import { CONNECTOR_WAIT_BUDGET_MS, connectorWaitBudget } from '../src/core/persistence/connector-sync.ts';
-import { createConnectorFixture } from './helpers/connector-fixture.ts';
+import { createConnectorFixture, withPausedOwnerBudget } from './helpers/connector-fixture.ts';
 
 function expectProductionDefaults(): void {
   expect(maintenancePublishWaitMs()).toBe(MAINTENANCE_PUBLISH_WAIT_MS);
@@ -57,7 +57,10 @@ test('the effect renewal seam restores the previous interval', () => {
 test('the connector fixture restores the production wait budget on teardown', async () => {
   const fixture = createConnectorFixture();
   await fixture.setup();
-  try { expect(connectorWaitBudget.ms).toBeLessThan(CONNECTOR_WAIT_BUDGET_MS); }
-  finally { await fixture.teardown(); }
+  try {
+    expect(connectorWaitBudget.ms).toBe(CONNECTOR_WAIT_BUDGET_MS);
+    await withPausedOwnerBudget(async () => { expect(connectorWaitBudget.ms).toBeLessThan(CONNECTOR_WAIT_BUDGET_MS); });
+    expect(connectorWaitBudget.ms).toBe(CONNECTOR_WAIT_BUDGET_MS);
+  } finally { await fixture.teardown(); }
   expectProductionDefaults();
 }, 120_000);

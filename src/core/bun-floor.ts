@@ -25,6 +25,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { VERSION } from '../version.ts';
 import { BUN_VERSION_RE, bunVersionMeets, compareBunVersions } from './runtime-version.ts';
+import { gitChildEnv } from './git-env.ts';
 
 /** Exit code of a `gbrain upgrade` refused for the Bun floor (sysexits EX_CONFIG). */
 export const BUN_FLOOR_EXIT_CODE = 78;
@@ -64,7 +65,7 @@ function git(repoRoot: string, args: string[], timeout = 10_000): string {
     stdio: ['ignore', 'pipe', 'ignore'],
     timeout,
     maxBuffer: PACKAGE_BODY_LIMIT + 1,
-    env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+    env: gitChildEnv({ GIT_TERMINAL_PROMPT: '0' }),
   });
 }
 

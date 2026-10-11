@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { execFileSync } from 'child_process';
 import { lstatSync } from 'fs';
 import { join, resolve } from 'path';
+import { gitChildEnv } from './git-env.ts';
 
 interface GitScope {
   listings: Map<string, string | null>;
@@ -54,6 +55,7 @@ export function gitLsFiles(dir: string, args: string[]): string | null {
   if (!knownOutsideGitRepo(dir)) {
     try {
       stdout = execFileSync('git', ['-C', dir, 'ls-files', ...args], {
+        env: gitChildEnv(),
         encoding: 'utf8', maxBuffer: 512 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'],
       });
     } catch (error) {

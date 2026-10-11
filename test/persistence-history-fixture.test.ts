@@ -14,10 +14,10 @@
  * Seams: none; PGLite always, Postgres when DATABASE_URL is set.
  */
 import { describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildHistoryFixture, HISTORY_FIXTURE_TABLES, historyPlan, type HistoryFixture } from '../scripts/persistence/history-fixture.ts';
+import { buildHistoryFixture, delayedEffectDiagnostics, HISTORY_FIXTURE_TABLES, historyPlan, type HistoryFixture } from '../scripts/persistence/history-fixture.ts';
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -81,3 +81,23 @@ test('one seed is one logical history; another seed differs', () => {
   expect([...kinds].sort()).toEqual(['add_timeline_entry', 'delete_page', 'edit_page', 'forget', 'put_page', 'remember',
     'restore_page', 'takes_add', 'takes_supersede']);
 });
+
+test('#6345: the reschedule timeout message dumps the delayed effect, the lock, pending requests and the latest effects', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'gbrain-history-fixture-diag-'));
+  try {
+    await withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
+      const { engine, close } = await isolatedSharedSkillsEngine(undefined);
+      try {
+        const lock = join(home, 'index.lock');
+        writeFileSync(lock, '');
+        const requestId = '00000000-0000-4000-8000-000000006345';
+        const dump = await delayedEffectDiagnostics(engine, requestId, lock);
+        expect(dump).toContain(`delayed request ${requestId} effects:\n  (none)`);
+        expect(dump).toContain('index.lock present: true');
+        expect(dump).toContain('non-terminal requests:\n  (none)');
+        expect(dump).toContain('12 latest effects:\n  (none)');
+        expect(dump).not.toContain('query failed');
+      } finally { await close(); }
+    });
+  } finally { rmSync(home, { recursive: true, force: true }); }
+}, 120_000);

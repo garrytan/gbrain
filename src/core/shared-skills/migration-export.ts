@@ -23,6 +23,7 @@ import type { Page } from '../types.ts';
 import { slugifyPath } from '../sync.ts';
 import { assertPackagedSkillSource } from './setup-source-policy.ts';
 import { approvedSchemaIdentity, loadActivePackForEngine, type ApprovedSchemaIdentity } from '../schema-pack/engine-resolution.ts';
+import { gitChildEnv } from '../git-env.ts';
 
 export interface DatabaseContentExportOptions {
   root: string;
@@ -257,7 +258,7 @@ export async function exportDatabaseContent(ctx: OperationContext, options: Data
         privateWrite(target, content);
       }
       verifyFiles(receipt.staging_root, hashes, true);
-      const enclosing = spawnSync('git', ['-C', receipt.staging_root, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', timeout: 15_000 });
+      const enclosing = spawnSync('git', ['-C', receipt.staging_root, 'rev-parse', '--show-toplevel'], { env: gitChildEnv(), encoding: 'utf8', timeout: 15_000 });
       if (enclosing.status === 0) {
         throw opError('local_conflict', 'The export would claim an enclosing Git worktree. Choose a destination outside existing repositories.',
           `${root} lies inside an existing Git worktree; pass --content-root a path outside any repository.`);

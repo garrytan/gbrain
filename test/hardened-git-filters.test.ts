@@ -133,3 +133,41 @@ describe('W4.3: hardenedPathDirty matches git status without running it', () => 
     expect(hardenedPathDirty(join(plain, 'sub'), 'note.md')).toBeNull();
   });
 });
+
+describe('wave 13: exact options and literal pathspecs', () => {
+  test('options outside the allow-list refuse; every current call shape passes', () => {
+    for (const args of [['cat-file', '--textc', 'HEAD:note.md'], ['cat-file', '--filt', 'HEAD:note.md'], ['cat-file', '-p', 'HEAD:note.md'],
+      ['ls-files', '--with-tree=HEAD'], ['rev-parse', '--git-path', 'hooks'], ['ls-tree', '--format=%(objectname)', 'HEAD'],
+      ['hash-object', '--no-filters', '--path=x', '--', 'note.md'], ['diff-index', '--cached', '--ext', 'HEAD']]) {
+      expect(() => assertHardenedGitArgs(args)).toThrow(/hardened git refuses/);
+    }
+    for (const args of [['rev-parse', '--show-toplevel'], ['rev-parse', '--absolute-git-dir'], ['rev-parse', '--verify', '--end-of-options', 'HEAD^{commit}'],
+      ['rev-parse', '--show-object-format'], ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'], ['ls-tree', '-r', '-l', '-z', '--full-tree', 'abc'],
+      ['ls-tree', '-r', '-l', '-z', '--full-tree', 'abc', '--', ':(literal)a.md'], ['cat-file', 'blob', 'abc'], ['ls-files', '--stage', '-z'],
+      ['ls-files', '--others', '--exclude-standard', '-z'], ['ls-files', '-z', '--cached', '--stage'], ['ls-files', '-z', '--others', '--exclude-standard'],
+      ['ls-files', '-s', '--eol', '-z', '--', ':(literal)a.md'], ['ls-files', '-z', '--others', '--exclude-standard', '--', ':(literal)a.md'],
+      ['diff-index', '--cached', '--quiet', 'HEAD', '--', ':(literal)a.md'], ['hash-object', '--no-filters', '--', '-odd.md'],
+      ['check-attr', '-z', 'filter', 'text', 'eol', 'working-tree-encoding', '--', 'a.md']]) {
+      expect(() => assertHardenedGitArgs(args)).not.toThrow();
+    }
+  });
+
+  test('a refused option never reaches git, so repository config cannot run', () => {
+    const root = repo(r => writeFileSync(join(r, '.gitattributes'), 'note.md diff=evil\n'));
+    const marker = join(root, '..', `${root.split('/').pop()}-textconv-ran`);
+    git(root, 'config', 'diff.evil.textconv', `sh -c 'touch ${marker}; cat "$1"' -`);
+    expect(() => hardenedGitSync(root, ['cat-file', '--textc', 'HEAD:note.md'], { timeoutMs: 5_000, maxBytes: 1024 })).toThrow(/hardened git refuses/);
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  test('G2: glob characters in a path are literal', () => {
+    const root = repo(r => writeFileSync(join(r, '[ab].md'), 'bracket\n'));
+    writeFileSync(join(root, 'a.md'), 'staged\n');
+    git(root, 'add', 'a.md');
+    expect(hardenedPathDirty(root, '[ab].md')).toBe(false);
+    const star = repo(r => writeFileSync(join(r, '*.md'), 'star\n'));
+    writeFileSync(join(star, 'other.md'), 'untracked\n');
+    expect(hardenedPathDirty(star, '*.md')).toBe(false);
+    expect(hardenedPathDirty(root, 'a.md')).toBe(true);
+  });
+});

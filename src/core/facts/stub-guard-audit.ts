@@ -5,7 +5,10 @@
  *   `${GBRAIN_AUDIT_DIR:-~/.gbrain/audit}/stub-guard-YYYY-Www.jsonl`
  * when `writeFactsToFence` refuses to spawn an unprefixed entity page
  * (reason 'unprefixed') or a page for a fallback-resolved slug (#4108,
- * reason 'fallback_resolution'). The audit log is the operator visibility
+ * reason 'fallback_resolution'), or routes facts for a page that exists only
+ * in the database (a row with no file, or a tombstoned row) to the DB-only path
+ * instead of a stub that would overwrite it (#6398, reason 'db_only_page'). The
+ * audit log is the operator visibility
  * surface for the v0.34.5+ stub guard sunset criterion, WHICH APPLIES TO
  * THE 'unprefixed' REASON ONLY: when unprefixed reads <5 hits/week for 3
  * consecutive weeks on production brains, that arm can be removed in v0.36
@@ -49,8 +52,9 @@ export interface StubGuardEvent {
   /**
    * Which guard arm fired (#4108). Optional: pre-#4108 lines have no reason
    * and are counted as 'unprefixed' (the only arm that existed then).
+   * 'db_only_page' (#6398) is a routing record, not a resolver miss.
    */
-  reason?: 'unprefixed' | 'fallback_resolution';
+  reason?: 'unprefixed' | 'fallback_resolution' | 'db_only_page';
 }
 
 /**
