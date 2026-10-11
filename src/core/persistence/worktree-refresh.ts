@@ -37,6 +37,7 @@ import { isPhysicalRootMetadata } from './physical-root-record.ts';
 import { startPersistenceConsumer } from './service.ts';
 import { lockTopologyPrincipal, lockTopologyRows, topologyPrincipal, withTopologyLocks } from './topology-locks.ts';
 import { ACTIVE_REFRESH_STATES_SQL, CHECKOUT_EFFECT_KINDS_SQL, type WorktreeRefreshState } from './worktree-refresh-schema.ts';
+import { gitChildEnv } from '../git-env.ts';
 
 export interface WorktreeRefreshRow {
   id: string; worktree_id: string; source_ids: string[]; principal_id: string; owner_epoch: string | number;
@@ -83,7 +84,7 @@ async function withGit<T>(run: (git: (args: string[], timeoutMs?: number) => Pro
   try {
     return await run(async (args, timeoutMs = 30_000) => {
       const { error, stdout, stderr } = await execFileBounded('git', ['-c', 'core.quotepath=false', '-c', `core.hooksPath=${hooks}`, ...args],
-        { timeout: timeoutMs, maxBuffer: 32 * 1024 ** 2, env: { ...process.env, ...GIT_ENV } });
+        { timeout: timeoutMs, maxBuffer: 32 * 1024 ** 2, env: gitChildEnv(GIT_ENV) });
       const timedOut = !!error && (error.killed || typeof error.code !== 'number');
       return { stdout, stderr, code: error ? (typeof error.code === 'number' ? error.code : -1) : 0, timedOut };
     });

@@ -75,6 +75,7 @@ import {
   type SecretFinding,
 } from './secret-scan.ts';
 import { shellQuote } from './mcp-registration.ts';
+import { gitChildEnv } from './git-env.ts';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -292,7 +293,7 @@ function git(
     stdio: ['ignore', 'pipe', 'pipe'],
     timeout: opts.timeoutMs ?? 60_000,
     maxBuffer: 64 * 1024 * 1024,
-    env: { ...process.env, ...(opts.auth ? GIT_ENV_AUTH : GIT_ENV) },
+    env: gitChildEnv({ ...(opts.auth ? GIT_ENV_AUTH : GIT_ENV) }),
   }).toString();
 }
 
@@ -310,7 +311,7 @@ function gitBuffer(root: string, args: string[], timeoutMs = 60_000): Buffer {
     stdio: ['ignore', 'pipe', 'pipe'],
     timeout: timeoutMs,
     maxBuffer: 64 * 1024 * 1024,
-    env: { ...process.env, ...GIT_ENV },
+    env: gitChildEnv({ ...GIT_ENV }),
   });
 }
 

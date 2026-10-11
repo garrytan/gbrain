@@ -6,7 +6,7 @@ import { parseGoogleSourceConfig, runGoogleSync } from '../src/core/google/googl
 import { disposePersistenceConsumer, startPersistenceConsumer, waitForWrite } from '../src/core/persistence/service.ts';
 import type { WriteRequest } from '../src/core/persistence/model.ts';
 import { withEnv } from './helpers/with-env.ts';
-import { createConnectorFixture, options, json, googleConfig, contact } from './helpers/connector-fixture.ts';
+import { createConnectorFixture, options, json, googleConfig, contact, withPausedOwnerBudget } from './helpers/connector-fixture.ts';
 
 const { engines, env, source, boundSource, setup, teardown } = createConnectorFixture();
 beforeAll(setup, 120_000);
@@ -82,7 +82,7 @@ test('#5686: a connector write still pending when the stamp lands publishes inst
     await engine.executeRaw("UPDATE persistence_worktrees SET state='draining' WHERE id=$1::uuid", [f.binding.worktree_id]);
     await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
     const { fetcher } = peopleFetcher();
-    try { await runGoogleSync(engine, f.id, parseGoogleSourceConfig(googleConfig, f.dir), options, fetcher); } catch { /* pending admission */ }
+    try { await withPausedOwnerBudget(() => runGoogleSync(engine, f.id, parseGoogleSourceConfig(googleConfig, f.dir), options, fetcher)); } catch { /* pending admission */ }
     const pending = await engine.executeRaw<WriteRequest>("SELECT * FROM persistence_requests WHERE source_id=$1 AND intent->>'kind' LIKE '%import' AND state='queued'", [f.id]);
     expect(pending.length).toBeGreaterThan(0);
     await stamp(engine, f.id);

@@ -17,7 +17,7 @@
  *   2. MCP-bound caller (allow-list set) sees `compiled_truth` with the
  *      fence stripped.
  *   3. The strip applies regardless of allow-list contents — even an
- *      allow-list of `['garry', 'brain', 'world']` (i.e., everything) still
+ *      allow-list of `['dana', 'brain', 'world']` (i.e., everything) still
  *      strips, because the allow-list's PRESENCE signals an MCP-bound
  *      caller. This is the key insight: the allow-list is identity, not
  *      filter scope, for read-op redaction.
@@ -44,7 +44,7 @@ ${TAKES_FENCE_BEGIN}
 | # | claim | kind | who | weight | since | source |
 |---|-------|------|-----|--------|-------|--------|
 | 1 | CEO of Acme | fact | world | 1.0 | 2017-01 | Crustdata |
-| 2 | Strong technical founder | take | garry | 0.85 | 2026-04 | OH |
+| 2 | Strong technical founder | take | dana | 0.85 | 2026-04 | OH |
 | 3 | Seemed burned out | hunch | brain | 0.4 | 2026-04 | OH |
 ${TAKES_FENCE_END}
 
@@ -100,11 +100,11 @@ describe('C4: get_page takes-fence redaction (#728)', () => {
   test('MCP caller with permissive allow-list (everything) STILL strips fence (presence = identity)', async () => {
     // Critical invariant: the ALLOW-LIST PRESENCE flags the caller as
     // MCP-bound. The contents of the allow-list don't loosen the redaction —
-    // even ['world','garry','brain'] still strips, because takes_list /
+    // even ['world','dana','brain'] still strips, because takes_list /
     // takes_search are the typed surfaces for take inspection. get_page is
     // not an authorized take-reading channel.
     const result = await dispatchToolCall(engine, 'get_page', { slug: PAGE_SLUG }, {
-      remote: true, sourceId: 'default',      takesHoldersAllowList: ['world', 'garry', 'brain'],
+      remote: true, sourceId: 'default',      takesHoldersAllowList: ['world', 'dana', 'brain'],
     });
     const page = parseResult(result) as { compiled_truth: string };
     expect(page.compiled_truth).not.toContain(TAKES_FENCE_BEGIN);

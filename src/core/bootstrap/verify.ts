@@ -68,6 +68,7 @@ import {
   startResolveIpcServer,
 } from '../context/resolve-ipc.ts';
 import { assembleTurnContext } from '../context/turn-context.ts';
+import { gitChildEnv } from '../git-env.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -338,6 +339,7 @@ export function checkWritebackContract(ws: string): VerifyCheck {
 function trackedWorkspaceFiles(ws: string): { files: string[]; via: 'git' | 'fallback' } {
   try {
     const out = execFileSync('git', ['-C', ws, 'ls-files', '--cached', '--others', '--exclude-standard', '-z'], {
+      env: gitChildEnv(),
       stdio: ['ignore', 'pipe', 'ignore'],
       timeout: 15_000,
       maxBuffer: 16 * 1024 * 1024,
@@ -405,6 +407,7 @@ function checkMcpJsonHygiene(ws: string): VerifyCheck {
     if (!existsSync(join(ws, '.mcp.json'))) return { id, ok: true, detail: 'no .mcp.json in the workspace' };
     try {
       execFileSync('git', ['-C', ws, 'ls-files', '--error-unmatch', '.mcp.json'], {
+        env: gitChildEnv(),
         stdio: 'ignore', timeout: 5_000,
       });
     } catch {

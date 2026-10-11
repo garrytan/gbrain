@@ -141,6 +141,7 @@ test/embed-backfill-cli-admission.serial.test.ts	global-state	global-state: R3: 
 test/embed-exit-code-3037.serial.test.ts	global-state	global-state: binds local servers/ports
 test/embed-input-type-wire.serial.test.ts	global-state	global-state: configureGateway changes the process-wide AI gateway
 test/embed-lock-skipped.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)
+test/embed-max-usd-metered.serial.test.ts	global-state	global-state: configureGateway and __setEmbedTransportForTests change the process-wide AI gateway; replaces globalThis.fetch for the Voyage multimodal stub
 test/embed-null-signature-warning-5527.serial.test.ts	global-state	global-state: process-wide test seams __setEmbedTransportForTests; configureGateway changes the process-wide AI gateway; spyOn console.error
 test/embed-oversize-heal-drain.serial.test.ts	R2	R2: mock.module(../src/core/embedding.ts) replaces modules for every file in the process
 test/embed-partial-failure-3037.serial.test.ts	R2	R2: mock.module(../src/core/embedding.ts) replaces modules for every file in the process
@@ -186,6 +187,7 @@ test/fts-language-migration.serial.test.ts	R1	R1: mutates process.env (bracket o
 test/fts-language-schema-replay.serial.test.ts	R1	R1: mutates process.env (GBRAIN_PGLITE_SNAPSHOT)
 test/fts-language.serial.test.ts	R1	R1: mutates process.env (bracket or computed key)
 test/gateway-reconfigure-clobber.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)
+test/git-listing-memo.serial.test.ts	R1	R1: puts a git-counting shim on process.env.PATH for every spawn in the process (git child processes inherit it, so withEnv cannot scope it)
 test/git-remote-durable.serial.test.ts	R1	R1: mutates process.env (GBRAIN_GIT_ALLOW_FILE_TRANSPORT)
 test/git-remote-pull-file-transport.serial.test.ts	R1	R1: mutates process.env (GBRAIN_GIT_ALLOW_FILE_TRANSPORT)
 test/google-connect-cmd.serial.test.ts	global-state	global-state: spyOn console.error; patches process stdout/stderr/console
@@ -382,4 +384,3 @@ test/write-path-no-egress.serial.test.ts	global-state	global-state: binds a loca
 test/write-path-zero-llm.serial.test.ts	R1	R1: mutates process.env (ANTHROPIC_API_KEY, OPENAI_API_KEY) so gated chat and embedding paths are live
 test/writeback-nudge.serial.test.ts	global-state	global-state: patches process stdout/stderr/console
 test/writeback-review-fixes.serial.test.ts	global-state	global-state: process-wide test seams __resetCheckpointHarvestForTests; patches process stdout/stderr/console
-test/git-listing-memo.serial.test.ts	R1	R1: puts a git-counting shim on process.env.PATH for every spawn in the process (git child processes inherit it, so withEnv cannot scope it)
