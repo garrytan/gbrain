@@ -477,7 +477,10 @@ export async function runLoopsExtract(
         await maintenanceTransaction(engine, tx => applyGateDecision(tx, gate, { table: 'facts', sourceId: payload.sourceId }, async () => null));
       } else {
         const { writeSingleFact } = await import('../facts/write-single.ts');
-        factId = (await writeSingleFact(engine, payload.sourceId, { ...fact, derivation, gate })).id;
+        // Loops extraction is a local maintenance job on the owner host, so its
+        // dedup may see facts whose provenance page is private (#5152); an unset
+        // trust would treat every private-sourced repeat as new and insert it.
+        factId = (await writeSingleFact(engine, payload.sourceId, { ...fact, derivation, gate, remote: false })).id;
       }
     } catch (err) {
       // The loop row still lands; the facts projection is best-effort, but its

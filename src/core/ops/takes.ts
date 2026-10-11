@@ -1,5 +1,5 @@
 import { submitPageMutation } from '../persistence/page-mutations.ts';
-import { WRITE_REQUEST_PARAM } from '../persistence/params.ts';
+import { MERGE_PRECONDITION_PARAMS, WRITE_REQUEST_PARAM } from '../persistence/params.ts';
 /**
  * Takes + think operation cluster — pure move from operations.ts (v0.46.x
  * tranche 1). Op consts stay module-private; `takesOperations` below lists
@@ -225,7 +225,7 @@ const think: Operation = {
     save: { type: 'boolean', description: 'Persist a synthesis page (local-CLI only; ignored for MCP)' },
     take: { type: 'boolean', description: 'Append a take row to the anchor page (requires anchor)' },
     model: { type: 'string', description: 'Model override (alias or full id). Falls through models.think → models.default → GBRAIN_MODEL → opus.' },
-    since: { type: 'string', description: 'Start of temporal window (YYYY-MM-DD or YYYY-MM)' },
+    since: { type: 'string', description: 'Start of temporal window (YYYY-MM-DD or YYYY-MM). Omit both bounds and a question naming one explicit date (2026-09-15, 2026-09, September 2026) is bounded to it; the result says window_source.' },
     until: { type: 'string', description: 'End of temporal window' },
     reference_date: { type: 'string', description: 'YYYY-MM-DD the question\'s relative time words resolve against (default: today in brain.timezone).' },
   },
@@ -382,6 +382,7 @@ const takes_add: Operation = {
     'allow-list (stdio default: world).',
   params: {
     request_id: WRITE_REQUEST_PARAM,
+    ...MERGE_PRECONDITION_PARAMS,
     local_dir: { type: 'string', description: 'Trusted CLI directory hint; must equal the registered source root.' },
     slug: { type: 'string', required: true, description: 'Page slug to attach the take to (page must exist).' },
     claim: { type: 'string', required: true, description: 'The claim text (one line).' },
@@ -414,6 +415,7 @@ const takes_update: Operation = {
     'allow-list; other rows present as not_found.',
   params: {
     request_id: WRITE_REQUEST_PARAM,
+    ...MERGE_PRECONDITION_PARAMS,
     local_dir: { type: 'string', description: 'Trusted CLI directory hint; must equal the registered source root.' },
     slug: { type: 'string', required: true, description: 'Page slug.' },
     row_num: { type: 'number', required: true, description: 'Take row number on the page (from takes_list).' },
@@ -444,6 +446,7 @@ const takes_supersede: Operation = {
     'Markdown-canonical; remote holder fencing as in takes_update.',
   params: {
     request_id: WRITE_REQUEST_PARAM,
+    ...MERGE_PRECONDITION_PARAMS,
     local_dir: { type: 'string', description: 'Trusted CLI directory hint; must equal the registered source root.' },
     slug: { type: 'string', required: true, description: 'Page slug.' },
     row_num: { type: 'number', required: true, description: 'Row number of the take being superseded.' },
@@ -478,6 +481,7 @@ const takes_resolve: Operation = {
     'must be in the caller\'s holder allow-list. Markdown-canonical.',
   params: {
     request_id: WRITE_REQUEST_PARAM,
+    ...MERGE_PRECONDITION_PARAMS,
     local_dir: { type: 'string', description: 'Trusted CLI directory hint; must equal the registered source root.' },
     slug: { type: 'string', required: true, description: 'Page slug.' },
     row_num: { type: 'number', required: true, description: 'Take row number to resolve.' },
@@ -510,6 +514,7 @@ const takes_remove: Operation = {
     'CLI: `gbrain takes remove <slug> --row N`.',
   params: {
     request_id: WRITE_REQUEST_PARAM,
+    ...MERGE_PRECONDITION_PARAMS,
     local_dir: { type: 'string', description: 'Trusted CLI directory hint; must equal the registered source root.' },
     slug: { type: 'string', required: true, description: 'Page slug.' },
     row_num: { type: 'number', required: true, description: 'Take row number to remove (from takes_list).' },

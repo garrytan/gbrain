@@ -131,13 +131,13 @@ export function normalizeAIError(err: unknown, context?: string, redact?: (text:
   const msg = redact ? redact(raw) : raw;
   const ctxPrefix = context ? `[${context}] ` : '';
 
-  // 4xx (except 429) = config-level, non-retryable
+  // 4xx (except 429) = config-level, non-retryable. A 403 whose body says the
+  // project has no access to the model is a model problem, not a key problem.
   if (typeof status === 'number' && status >= 400 && status < 500 && status !== 429) {
     return carryStatusFields(err, new AIConfigError(
       `${ctxPrefix}${msg}`,
-      status === 401 || status === 403
-        ? 'Check your API key is valid and has access to this model.'
-        : status === 404 ? modelNotFoundFix(context)
+      status === 404 || MODEL_NOT_FOUND_MESSAGE_RE.test(msg) ? modelNotFoundFix(context)
+        : status === 401 || status === 403 ? 'Check your API key is valid and has access to this model.'
         : 'Check your model id + provider options match the provider API.',
       err,
     ));
@@ -230,10 +230,13 @@ const BILLING_MESSAGE_RE =
 const AUTH_MESSAGE_RE =
   /authentication_error|permission_error|invalid (?:x-)?api[-_ ]?key|api key (?:is )?(?:invalid|expired|missing)|unauthorized/i;
 const RATE_MESSAGE_RE = /rate[-_ ]?limit(?:ed|_error)?\b|too many requests/i;
-// Provider 404 phrasings for an unknown or inaccessible model (OpenAI
-// `model_not_found` / "does not exist or you do not have access", Anthropic
-// `not_found_error`), for errors that carry no numeric 404.
-const MODEL_NOT_FOUND_MESSAGE_RE = /\bmodel_not_found\b|\bnot_found_error\b|does not exist or you do not have access/i;
+// Provider phrasings for an unknown or inaccessible model: OpenAI
+// `model_not_found` / "does not exist or you do not have access" (404),
+// Anthropic `not_found_error`, and the project-level access denial OpenAI
+// returns as a 403 ("Project … does not have access to model …", #5394).
+// Tested before the status map, so the denial is not reported as a bad key.
+const MODEL_NOT_FOUND_MESSAGE_RE =
+  /\bmodel_not_found\b|\bnot_found_error\b|does not exist or you do not have access|(?:does not|doesn't|do not|don't) have access to (?:the |this )?model/i;
 // Structured status forms only; a bare number in prose ("processed 429
 // pages") never matches either shape. The quoted-JSON form
 // (`"api_error_status":429`, the claude-cli result blob) cannot occur as free
@@ -373,11 +376,11 @@ export function classifyGlobalLlmError(err: unknown): GlobalLlmErrorClass | null
   const phraseText = rawIdx === -1 ? message : message.slice(0, rawIdx);
 
   if (BILLING_MESSAGE_RE.test(phraseText)) return 'billing';
+  if (MODEL_NOT_FOUND_MESSAGE_RE.test(phraseText)) return 'model_not_found';
   if (status !== undefined) {
     const byStatus = statusToClass(status);
     if (byStatus) return byStatus;
   }
-  if (MODEL_NOT_FOUND_MESSAGE_RE.test(phraseText)) return 'model_not_found';
   // Config-level errors are whole-run by construction — a missing/invalid
   // key or an unknown model id fails identically on every call. The gateway
   // throws AIConfigError directly for missing keys ("OpenAI chat requires

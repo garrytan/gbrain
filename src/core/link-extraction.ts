@@ -1044,7 +1044,7 @@ export function resolvedLinkCandidate(candidate: LinkCandidate, originSlug: stri
     from_source_id: resolved.fromSourceId, to_source_id: resolved.toSourceId,
     link_type: candidate.linkType, context: candidate.context, link_source: candidate.linkSource,
     origin_slug: candidate.canonicalAttendance ? originSlug : candidate.originSlug,
-    origin_source_id: originSourceId, origin_field: candidate.originField,
+    origin_source_id: originSourceId, origin_field: candidate.originField, resolution_type: candidate.targetSourceId ? 'qualified' as const : 'unqualified' as const,
   };
   return candidate.canonicalAttendance ? orientCanonicalAttendance(row) : row;
 }

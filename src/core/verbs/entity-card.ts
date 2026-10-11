@@ -373,8 +373,11 @@ async function assembleCard(
   // slug; engine.getBacklinkCounts counts inbound from ALL sources. We run
   // a both-sides-scoped query here (f.source_id = t.source_id = this source),
   // mentions excluded (matching the backlink-count convention). Outgoing edges
-  // (getLinks) are the entity's OWN declared links — from-side scoped — so they
-  // stay as-is. The referrer must also be live and, for an untrusted caller,
+  // (getLinks) are the entity's OWN declared links — from-side scoped for the
+  // trusted local caller; an untrusted caller reads them through the engine's
+  // all-endpoints branch (`sourceIds`), so an edge the source policy admitted
+  // into another source (#4680) never shows that source's slug on the card.
+  // The referrer must also be live and, for an untrusted caller,
   // readable: the same private-page and private-origin predicates get_backlinks
   // applies, so a private or derived page never surfaces its slug, its
   // links.context sentence, or a count.
@@ -386,7 +389,7 @@ async function assembleCard(
       )
       .then(rs => rs.map(r => r.alias_norm))
       .catch(() => [] as string[]),
-    engine.getLinks(pageSlug, { sourceId, excludePrivate, temporal: { status: 'all' } }).catch(() => []),
+    engine.getLinks(pageSlug, { ...(remote ? { sourceIds: [sourceId] } : { sourceId }), excludePrivate, temporal: { status: 'all' } }).catch(() => []),
     engine
       .executeRaw<{ from_slug: string; link_type: string; context: string | null }>(
         `SELECT f.slug AS from_slug, l.link_type, l.context${TEMPORAL_LINK_SELECT_SQL}

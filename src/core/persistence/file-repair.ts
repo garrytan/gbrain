@@ -319,7 +319,7 @@ export async function prepareManagedFileRepairMutation(engine: BrainEngine, row:
   const target = checkFile();
   const source = { sourceId: row.source_id };
   const snapshot = await engine.readPageSnapshot(row.slug, { ...source, includeDeleted: true });
-  assertPageRevision(snapshot, p.expected_revision ? { expectedRevision: p.expected_revision } : {});
+  assertPageRevision(snapshot, { expectedRevision: p.expected_revision ?? null }); // null: admitted against an absent page; still a revision_conflict if one appeared (#5385)
   if ((snapshot?.page.id ?? null) !== row.page_id || (snapshot?.page.source_path != null && snapshot.page.source_path !== p.sourcePath)) {
     throw opError('page_identity_changed', 'The repaired path no longer names the previewed page.',
       `Page ${row.slug} in source ${row.source_id} was replaced, removed, or now maps to a different file than ${p.sourcePath}, so repair request ${row.request_id} published nothing. Preview the repair again.`,

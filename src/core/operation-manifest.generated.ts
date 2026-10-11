@@ -1321,6 +1321,16 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
         "type": "string",
         "description": "UUID; retry with it on timeout."
       },
+      "expected_revision": {
+        "type": "string",
+        "description": "Revision read; omit to merge onto the current page.",
+        "fullSurfaceOnly": true
+      },
+      "force": {
+        "type": "boolean",
+        "description": "Ignore the revision.",
+        "fullSurfaceOnly": true
+      },
       "slug": {
         "type": "string",
         "required": true,
@@ -1352,6 +1362,16 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       "request_id": {
         "type": "string",
         "description": "UUID; retry with it on timeout."
+      },
+      "expected_revision": {
+        "type": "string",
+        "description": "Revision read; omit to merge onto the current page.",
+        "fullSurfaceOnly": true
+      },
+      "force": {
+        "type": "boolean",
+        "description": "Ignore the revision.",
+        "fullSurfaceOnly": true
       },
       "slug": {
         "type": "string",
@@ -1718,6 +1738,16 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       "request_id": {
         "type": "string",
         "description": "UUID; retry with it on timeout."
+      },
+      "expected_revision": {
+        "type": "string",
+        "description": "Revision read; omit to merge onto the current page.",
+        "fullSurfaceOnly": true
+      },
+      "force": {
+        "type": "boolean",
+        "description": "Ignore the revision.",
+        "fullSurfaceOnly": true
       },
       "slug": {
         "type": "string",
@@ -3415,7 +3445,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "since": {
         "type": "string",
-        "description": "Start of temporal window (YYYY-MM-DD or YYYY-MM)"
+        "description": "Start of temporal window (YYYY-MM-DD or YYYY-MM). Omit both bounds and a question naming one explicit date (2026-09-15, 2026-09, September 2026) is bounded to it; the result says window_source."
       },
       "until": {
         "type": "string",
@@ -3498,6 +3528,16 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
         "type": "string",
         "description": "UUID; retry with it on timeout."
       },
+      "expected_revision": {
+        "type": "string",
+        "description": "Revision read; omit to merge onto the current page.",
+        "fullSurfaceOnly": true
+      },
+      "force": {
+        "type": "boolean",
+        "description": "Ignore the revision.",
+        "fullSurfaceOnly": true
+      },
       "local_dir": {
         "type": "string",
         "description": "Trusted CLI directory hint; must equal the registered source root."
@@ -3558,6 +3598,16 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
         "type": "string",
         "description": "UUID; retry with it on timeout."
       },
+      "expected_revision": {
+        "type": "string",
+        "description": "Revision read; omit to merge onto the current page.",
+        "fullSurfaceOnly": true
+      },
+      "force": {
+        "type": "boolean",
+        "description": "Ignore the revision.",
+        "fullSurfaceOnly": true
+      },
       "local_dir": {
         "type": "string",
         "description": "Trusted CLI directory hint; must equal the registered source root."
@@ -3601,6 +3651,16 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       "request_id": {
         "type": "string",
         "description": "UUID; retry with it on timeout."
+      },
+      "expected_revision": {
+        "type": "string",
+        "description": "Revision read; omit to merge onto the current page.",
+        "fullSurfaceOnly": true
+      },
+      "force": {
+        "type": "boolean",
+        "description": "Ignore the revision.",
+        "fullSurfaceOnly": true
       },
       "local_dir": {
         "type": "string",
@@ -3661,6 +3721,16 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       "request_id": {
         "type": "string",
         "description": "UUID; retry with it on timeout."
+      },
+      "expected_revision": {
+        "type": "string",
+        "description": "Revision read; omit to merge onto the current page.",
+        "fullSurfaceOnly": true
+      },
+      "force": {
+        "type": "boolean",
+        "description": "Ignore the revision.",
+        "fullSurfaceOnly": true
       },
       "local_dir": {
         "type": "string",
@@ -3726,6 +3796,16 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       "request_id": {
         "type": "string",
         "description": "UUID; retry with it on timeout."
+      },
+      "expected_revision": {
+        "type": "string",
+        "description": "Revision read; omit to merge onto the current page.",
+        "fullSurfaceOnly": true
+      },
+      "force": {
+        "type": "boolean",
+        "description": "Ignore the revision.",
+        "fullSurfaceOnly": true
       },
       "local_dir": {
         "type": "string",
