@@ -175,15 +175,28 @@ async function runSupervisor(ctx: DoctorContext): Promise<Check[]> {
         localPid,
       });
       if (verdict === 'mismatch') {
+        const samePidHostLabelDiffers = lock!.holder_pid === localPid;
         checks.push({
           name: 'supervisor_singleton',
           status: 'warn',
-          message:
+          message: samePidHostLabelDiffers
+            ? `Queue '${queue}' singleton lock records ${lock!.holder_host}:${lock!.holder_pid}, ` +
+              `and the local pidfile has the same pid on ${localHost}. The host label differs, ` +
+              `which may mean this machine's hostname changed after the lock was acquired ` +
+              `(the lock keeps the name it was acquired under); a matching pid does not rule out ` +
+              `a supervisor on another host that has the same pid. Check for a second supervisor ` +
+              `on every host that uses this database (for example, look for gbrain jobs supervisor ` +
+              `with ps on each). A restarted supervisor that acquires the lock records the current hostname. ` +
+              `If a second supervisor does exist, keep a single supervisor per queue: ` +
+              `gbrain jobs supervisor stop. (effective cap here: ${rssStr})`
+            :
             `Queue '${queue}' singleton lock is held by ${lock!.holder_host}:${lock!.holder_pid}, ` +
             `but the local pidfile points to ${localHost}:${localPid ?? 'none'}. A second supervisor may be ` +
             `running with a different --max-rss (effective cap here: ${rssStr}). Stop the extra one ` +
             `and keep a single supervisor per queue: gbrain jobs supervisor stop.`,
-          details: { queue, lock_holder: `${lock!.holder_host}:${lock!.holder_pid}`, local: `${localHost}:${localPid ?? 'none'}`, effective_max_rss_mb: effectiveMaxRss },
+          details: { queue, lock_holder: `${lock!.holder_host}:${lock!.holder_pid}`, local: `${localHost}:${localPid ?? 'none'}`, effective_max_rss_mb: effectiveMaxRss,
+            ...(samePidHostLabelDiffers ? { same_pid_host_label_differs: true } : {}),
+          },
         });
       } else if (verdict === 'single') {
         checks.push({
