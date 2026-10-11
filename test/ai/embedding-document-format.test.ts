@@ -8,12 +8,20 @@ describe('formatEmbeddingInput', () => {
       inputType: 'document',
       documentTitle: 'A real title',
     })).toBe('title: A real title | text: body');
+    expect(formatEmbeddingInput('body', 'ollama:embeddinggemma', {
+      documentTitle: ' A real title ',
+    })).toBe('title:  A real title  | text: body');
     expect(formatEmbeddingInput('body', 'ollama:EmbeddingGemma:latest')).toBe(
       'title: none | text: body',
     );
     expect(formatEmbeddingInput('body', 'ollama:embeddinggemma:300m')).toBe(
       'title: none | text: body',
     );
+    for (const documentTitle of ['', ' \n\t']) {
+      expect(formatEmbeddingInput('body', 'ollama:embeddinggemma', {
+        documentTitle,
+      })).toBe('title: none | text: body');
+    }
   });
 
   test('leaves query inputs unchanged, including already-prefixed queries', () => {

@@ -57,7 +57,7 @@ export const ollama: Recipe = {
       no_batch_cap: true,
       format_input: (text, { model, input_type, document_title }) =>
         /^embeddinggemma(?::|$)/i.test(model) && input_type === 'document'
-          ? `title: ${document_title ?? 'none'} | text: ${text}`
+          ? `title: ${document_title?.trim() ? document_title : 'none'} | text: ${text}`
           : text,
     },
     expansion: {
