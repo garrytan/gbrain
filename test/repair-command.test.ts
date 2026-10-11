@@ -188,7 +188,10 @@ describe('gbrain repair timeline', () => {
       const original = readFileSync(file, 'utf8');
       writeFileSync(file, `${original}\nAn uncoordinated local edit.\n`);
       const scope = await resolveRepairScope(engine);
-      await expect(runRepair(ctxFor(engine, source), timelineRepair, scope, { apply: true })).rejects.toBeDefined();
+      await expect(runRepair(ctxFor(engine, source), timelineRepair, scope, { apply: true })).resolves.toMatchObject({
+        applied: 0, skipped: 0, complete: true, outcomes: { failed: 1 },
+        outcome_items: [{ item: `${source}:notes/a`, outcome: 'failed', reason: 'source_changed' }],
+      });
       writeFileSync(file, original);
       const retried = await runRepair(ctxFor(engine, source), timelineRepair, scope, { apply: true });
       expect(retried).toMatchObject({ applied: 1, complete: true });

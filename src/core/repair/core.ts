@@ -23,6 +23,7 @@ import { getWriteRequest } from '../persistence/journal.ts';
 import { initializeLocalPersistence, requestPrincipalForContext } from '../persistence/page-mutations.ts';
 import { lookupEmbeddingPrice, estimateCostFromChars } from '../embedding-pricing.ts';
 import { shellQuote, type Action } from '../agent-output.ts';
+import { redactConnectionInfo } from '../audit/redact-connection-info.ts';
 import type { RepairKindSpec } from './registry.ts';
 
 export const REPAIR_KINDS = ['timeline', 'visibility', 'safe-chunks', 'contextual-mode', 'connector-checkpoints', 'request-indexes', 'connector-fences', 'take-supersession', 'orphan-bindings', 'embedding-effects', 'attribution-backfill', 'planner-stats', 'google-file-modes', 'stale-atoms', 'extractor-facts', 'conversation-labels', 'captured-facts', 'loop-facts', 'ontology-facts', 'orphan-children', 'failed-writes', 'frontmatter', 'fences', 'slug-conflicts', 'timeline-comments'] as const;
@@ -349,10 +350,18 @@ export async function runRepair(ctx: OperationContext, handler: RepairHandler, s
           + `Rerun \`${result.apply_command}\` to resume; the same request is replayed.` };
         return finish();
       }
-      if (!writerHeld(error)) throw error;
-      result.stopped = { reason: error.code, message: `The canonical writer for source '${item.source_id}' is held (${error.code}). `
-        + `Inspect it with: gbrain sources writer status ${item.source_id} — then rerun \`${result.apply_command}\` to resume.` };
-      return finish();
+      if (writerHeld(error)) {
+        result.stopped = { reason: error.code, message: `The canonical writer for source '${item.source_id}' is held (${error.code}). `
+          + `Inspect it with: gbrain sources writer status ${item.source_id} — then rerun \`${result.apply_command}\` to resume.` };
+        return finish();
+      }
+      if (!(error instanceof OperationError) || !['invalid_params', 'source_changed'].includes(error.code)) throw error;
+      result.outcomes = { ...result.outcomes, failed: (result.outcomes?.failed ?? 0) + 1 };
+      if ((result.outcome_items ??= []).length < (handler.outcomeItemsLimit ?? SAMPLE * 2)) {
+        result.outcome_items.push({ item: `${item.source_id}:${item.slug}`, outcome: 'failed', reason: error.code,
+          detail: { message: redactConnectionInfo(error.message) } });
+      }
+      continue;
     }
     await writeCursor(ctx.engine, handler.kind, scope, item.cursor, runId, opts.expect);
   }
