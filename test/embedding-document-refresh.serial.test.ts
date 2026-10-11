@@ -14,10 +14,11 @@
  * 4. Serial because configureGateway and the environment are process-global,
  *    and this test binds the fake Ollama endpoint.
  */
-import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, expect, spyOn, test } from 'bun:test';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import { runEmbedCore } from '../src/commands/embed.ts';
 import { runMigrateEmbeddings } from '../src/commands/migrate-embeddings.ts';
 import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
@@ -131,6 +132,10 @@ test('ordinary reuse stays legacy; explicit full refresh formats, proves, and re
     expect(requests).toEqual([]);
 
     let migrationExit = -1;
+    const migrationOutput: string[] = [];
+    const logSpy = spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      migrationOutput.push(args.join(' '));
+    });
     try {
       await runMigrateEmbeddings(engine, ['--to', MODEL, '--dim', String(DIMS), '--reranker', 'keep', '--json'], {
         exit: code => { throw new ExitSignal(code); },
@@ -138,8 +143,11 @@ test('ordinary reuse stays legacy; explicit full refresh formats, proves, and re
     } catch (error) {
       if (!(error instanceof ExitSignal)) throw error;
       migrationExit = error.code;
+    } finally {
+      logSpy.mockRestore();
     }
     expect(migrationExit).toBe(0);
+    expect(JSON.parse(migrationOutput[0]!).status).toBe('skipped_no_work');
     expect(requests).toEqual([]);
 
     const afterOrdinaryRuns = await storedRows();
@@ -152,7 +160,21 @@ test('ordinary reuse stays legacy; explicit full refresh formats, proves, and re
     expect(requests).toHaveLength(1);
 
     interruptedTitle = requests[0]!.input[0]!;
-    expect(pages.some(page => interruptedTitle === documentInput(page.title, page.body))).toBe(true);
+    const completedPage = pages.find(page => interruptedTitle === documentInput(page.title, page.body));
+    if (!completedPage) throw new Error(`Unexpected interrupted request: ${interruptedTitle}`);
+    const afterInterruptedRefresh = await storedRows();
+    const installed = afterInterruptedRefresh.find(row => row.slug === completedPage.slug)!;
+    const oldInstalled = before.find(row => row.slug === completedPage.slug)!;
+    expect(installed.embedding).not.toBe(oldInstalled.embedding);
+    expect(vectorValue(installed.embedding)).toBeCloseTo(0.2, 6);
+    expect(installed.signature).toBe(SIGNATURE);
+    expect(installed.model).toBe(MODEL);
+    expect(installed.embedding_input_hash).toBe(await expectedProof(completedPage));
+    expect(installed.embedded_text_hash).toBe(createHash('md5').update(completedPage.body).digest('hex'));
+    for (const untouched of pages.filter(page => page.slug !== completedPage.slug)) {
+      expect(afterInterruptedRefresh.find(row => row.slug === untouched.slug)).toEqual(
+        before.find(row => row.slug === untouched.slug));
+    }
     const retryStart = requests.length;
     const resumed = await runEmbedCore(engine, { all: true, quiet: true });
     expect(resumed.embedded).toBe(pages.length);
