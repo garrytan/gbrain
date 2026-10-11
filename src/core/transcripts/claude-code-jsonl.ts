@@ -257,6 +257,13 @@ export interface ParsedTranscript {
    * span. Kept alongside rather than on ToolCallRecord, which deliberately
    * carries no transcript-internal positions. */
   toolCallTurnIndexes: number[];
+  /**
+   * Set by a lane that can prove the read held only records it recognizes and
+   * no conversation: the Codex lane sets it when every non-blank line parsed
+   * and was a session header (a session opened and closed with no prompt).
+   * Session-end reads it as an empty session instead of parser drift.
+   */
+  recognizedOnly?: boolean;
 }
 
 /**

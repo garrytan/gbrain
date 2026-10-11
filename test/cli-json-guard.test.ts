@@ -204,6 +204,15 @@ describe('D2 command migrations: doctor, sync, embed on a keyless brain', () => 
     expect(doc.fix?.argv?.[0]).toBe('gbrain'); // the readiness enablement command (A7)
   }, 120_000);
 
+  test('sync status|unblock --json: the one document on stdout, nothing JSON on stderr (#6386)', async () => {
+    for (const verb of ['status', 'unblock']) {
+      const r = await cli(['sync', verb, '--source', 'notes', '--json']);
+      expect(r.exitCode).toBe(0);
+      expect(onlyDocument(r.stdout)).toMatchObject({ source_id: 'notes' });
+      expect(r.stderr.split('\n').some(line => line.startsWith('{'))).toBe(false);
+    }
+  }, 120_000);
+
   test('doctor --json with no brain: the no_brain envelope', async () => {
     const empty = mkdtempSync(join(tmpdir(), 'gbrain-json-nobrain-'));
     try {
@@ -216,4 +225,23 @@ describe('D2 command migrations: doctor, sync, embed on a keyless brain', () => 
   });
 
   test('teardown', () => { rmSync(home, { recursive: true, force: true }); });
+});
+
+describe('D2 command migrations: embed --facts on a brain with an embedding model', () => {
+  test('embed --stale --facts --dry-run --json: one document on stdout, no copy on stderr (#6386)', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-json-facts-'));
+    try {
+      const cli = (args: string[]) => runCli(args, { home, cwd: home, timeoutMs: 120_000, env: { OPENAI_API_KEY: undefined } });
+      expect((await cli(['init', '--pglite', '--embedding-model', 'openai:text-embedding-3-small', '--json'])).exitCode).toBe(0);
+      const r = await cli(['embed', '--stale', '--facts', '--source', 'default', '--dry-run', '--json']);
+      expect(r.exitCode).toBe(0);
+      expect(onlyDocument(r.stdout)).toMatchObject({ source_id: 'default', dryRun: true, stopped: 'preview' });
+      expect(r.stderr.split('\n').some(line => line.startsWith('{'))).toBe(false);
+      const plain = await cli(['embed', '--stale', '--facts', '--source', 'default', '--dry-run']);
+      expect(plain.exitCode).toBe(0);
+      expect(onlyDocument(plain.stdout)).toMatchObject({ source_id: 'default', dryRun: true });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  }, 150_000);
 });

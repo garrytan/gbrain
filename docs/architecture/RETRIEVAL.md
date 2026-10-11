@@ -203,7 +203,7 @@ expansion (query: requested by default in every mode; --no-expand opts out;
        ▼
 hybrid recall + fusion:
    ├── vector  (HNSW on chunk embeddings, per-page max-pool)
-   ├── keyword (BM25 via tsvector)
+   ├── keyword (BM25 via tsvector; text indexed through gbrain_fts_input)
    ├── title-phrase arm
    ├── relational (typed-edge recall arm — relational queries only; 2-3
    │      relationship questions walk typed hop chains when
@@ -252,6 +252,17 @@ limit slice → token-budget enforcement (per mode bundle)
        ▼
 results (+ retrieval-confidence grade in query-op meta — crag.ts)
 ```
+
+**CJK/Latin boundaries in the keyword index (#6370).** Postgres' default
+parser reads Han, Kana and Hangul as letters, so `升级PostgreSQL17后查询Redis7`
+would be one lexeme and an ASCII query for `Redis7` would miss it. Every
+indexing `to_tsvector` (both trigger functions, the page seal, the import seal
+and `reindex-search-vector`) and the title arm's `websearch_to_tsquery` read
+their text through `gbrain_fts_input()` (`src/core/fts-language.ts`), which
+inserts a space at each CJK↔ASCII-letter/digit boundary. It is a no-op on text
+without CJK, so non-CJK vectors are byte-identical. Pure-CJK queries still take
+the raw-text CJK keyword path. The `fts_cjk_boundary` migration rebuilds only
+the rows whose text holds such a boundary.
 
 Per-arm fail-open has one deliberate exception: when BOTH lexical arms
 (`searchKeyword` + `searchTitles`) come back empty because of an ACCESS-class
