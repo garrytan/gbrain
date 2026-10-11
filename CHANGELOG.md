@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.161.0] - 2026-10-11
 
 **`embed --max-usd` is enforced, a fence write no longer wipes a database-only page, and write-gate overrides and Git child processes are hardened.**
 
