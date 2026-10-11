@@ -186,6 +186,15 @@ or bypass consent. Its scope ceiling and redirect validation remain enforced;
 see [DCR](DEPLOY.md#dynamic-client-registration-dcr). If DCR is disabled, manually
 register the client and enter its metadata where that harness supports it.
 
+A self-registered client lands on the `default` source and is marked
+`registered_via = 'dcr'` in `oauth_clients`. At its first consent the owner
+picks the source it reads and writes; the choice is recorded in the grant audit
+(`action: consent`, revision 1). After that the consent screen shows the source
+read-only, and the source changes only through the Agents page or
+`gbrain auth rescope --client`. Clients registered before this marker existed,
+operator-registered clients and `client_credentials` clients never get the
+choice.
+
 ## Inspect clients and edit access
 
 ```bash

@@ -443,60 +443,81 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
     // == write scope). Operators who need narrower / wider scope rescope
     // via the CLI later. Pre-v60/v61 brain falls through to the legacy
     // projection (no source_id / federated_read column yet).
-    try {
-      await this.sql`
-        INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
-                                    grant_types, scope, token_endpoint_auth_method,
-                                    client_id_issued_at, source_id, federated_read)
-        VALUES (${clientId}, ${secretHash}, ${client.client_name || 'unnamed'},
-                ${pgArray((client.redirect_uris || []).map(String))},
-                ${pgArray(grantTypes)},
-                ${registeredScope}, ${authMethod},
-                ${now}, ${'default'}, ${pgArray(['default'])})
-      `;
-    } catch (err) {
-      if (isUndefinedColumnError(err, 'federated_read')) {
-        try {
-          await this.sql`
-            INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
-                                        grant_types, scope, token_endpoint_auth_method,
-                                        client_id_issued_at, source_id)
-            VALUES (${clientId}, ${secretHash}, ${client.client_name || 'unnamed'},
-                    ${pgArray((client.redirect_uris || []).map(String))},
-                    ${pgArray(grantTypes)},
-                    ${registeredScope}, ${authMethod},
-                    ${now}, ${'default'})
-          `;
-        } catch (err2) {
-          if (isUndefinedColumnError(err2, 'source_id')) {
-            await this.sql`
-              INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
-                                          grant_types, scope, token_endpoint_auth_method,
-                                          client_id_issued_at)
-              VALUES (${clientId}, ${secretHash}, ${client.client_name || 'unnamed'},
-                      ${pgArray((client.redirect_uris || []).map(String))},
-                      ${pgArray(grantTypes)},
-                      ${registeredScope}, ${authMethod},
-                      ${now})
-            `;
-          } else {
-            throw err2;
-          }
-        }
-      } else if (isUndefinedColumnError(err, 'source_id')) {
+    // #6202: registered_via='dcr' marks the client as self-registered, so its
+    // owner picks its source at the first consent (OAuthGrants.begin). A brain
+    // without the column yet (new server before the migration) falls through to
+    // the unmarked ladder: the client keeps today's read-only consent.
+    const insertUnmarked = async (): Promise<void> => {
+      try {
         await this.sql`
           INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
                                       grant_types, scope, token_endpoint_auth_method,
-                                      client_id_issued_at)
+                                      client_id_issued_at, source_id, federated_read)
           VALUES (${clientId}, ${secretHash}, ${client.client_name || 'unnamed'},
                   ${pgArray((client.redirect_uris || []).map(String))},
                   ${pgArray(grantTypes)},
                   ${registeredScope}, ${authMethod},
-                  ${now})
+                  ${now}, ${'default'}, ${pgArray(['default'])})
         `;
-      } else {
-        throw err;
+      } catch (err) {
+        if (isUndefinedColumnError(err, 'federated_read')) {
+          try {
+            await this.sql`
+              INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
+                                          grant_types, scope, token_endpoint_auth_method,
+                                          client_id_issued_at, source_id)
+              VALUES (${clientId}, ${secretHash}, ${client.client_name || 'unnamed'},
+                      ${pgArray((client.redirect_uris || []).map(String))},
+                      ${pgArray(grantTypes)},
+                      ${registeredScope}, ${authMethod},
+                      ${now}, ${'default'})
+            `;
+          } catch (err2) {
+            if (isUndefinedColumnError(err2, 'source_id')) {
+              await this.sql`
+                INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
+                                            grant_types, scope, token_endpoint_auth_method,
+                                            client_id_issued_at)
+                VALUES (${clientId}, ${secretHash}, ${client.client_name || 'unnamed'},
+                        ${pgArray((client.redirect_uris || []).map(String))},
+                        ${pgArray(grantTypes)},
+                        ${registeredScope}, ${authMethod},
+                        ${now})
+              `;
+            } else {
+              throw err2;
+            }
+          }
+        } else if (isUndefinedColumnError(err, 'source_id')) {
+          await this.sql`
+            INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
+                                        grant_types, scope, token_endpoint_auth_method,
+                                        client_id_issued_at)
+            VALUES (${clientId}, ${secretHash}, ${client.client_name || 'unnamed'},
+                    ${pgArray((client.redirect_uris || []).map(String))},
+                    ${pgArray(grantTypes)},
+                    ${registeredScope}, ${authMethod},
+                    ${now})
+          `;
+        } else {
+          throw err;
+        }
       }
+    };
+    try {
+      await this.sql`
+        INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
+                                    grant_types, scope, token_endpoint_auth_method,
+                                    client_id_issued_at, source_id, federated_read, registered_via)
+        VALUES (${clientId}, ${secretHash}, ${client.client_name || 'unnamed'},
+                ${pgArray((client.redirect_uris || []).map(String))},
+                ${pgArray(grantTypes)},
+                ${registeredScope}, ${authMethod},
+                ${now}, ${'default'}, ${pgArray(['default'])}, ${'dcr'})
+      `;
+    } catch (err) {
+      if (!isUndefinedColumnError(err, 'registered_via')) throw err;
+      await insertUnmarked();
     }
 
     // #2179: optional `token_ttl_seconds` hint from the DCR request body,

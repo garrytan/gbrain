@@ -62,6 +62,9 @@ writer coordination refusal, inspect `gbrain sources writer status --brain <id>
 --json` on the selected host first and report the owner, epoch, enabled state and
 blocked recovery to the operator. Do not claim a checkout, activate managed mode,
 transfer an owner, replace identities, or remove ownership markers as a repair.
+When the status reads `enabled: false` and the refusal says `unbound_source`,
+the brain is in classic mode on purpose: report that writes go through the
+checkout (file, commit, `gbrain sync`) and leave it classic.
 Deliberate administration requires a separately approved topology change and the
 action-specific intent plus reviewed state precondition described in
 `docs/architecture/topologies.md`. Neither a TTY nor `--yes` nor

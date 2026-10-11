@@ -12,17 +12,17 @@ import { buildIndexOnline, migrationNotice } from './helpers.ts';
 // canonical member or an exact-email alias; google/counterparty.ts), so a
 // Gmail source's loop can point at `default:people/<slug>`. Readers that join a
 // loop to an entity page confine on both predicates (slug AND source), with a
-// NULL (pre-v233 row) read as the loop's own source. Nullable, no default,
+// NULL (pre-v234 row) read as the loop's own source. Nullable, no default,
 // metadata-only on Postgres 11+ and PGLite; not in schema.sql's CREATE TABLE,
 // so fresh and upgraded brains share column ordinals (the v180/v221 pattern).
 // The partial index serves the entity card's lookup; Postgres builds it
 // CONCURRENTLY on a dedicated connection, PGLite inline (buildIndexOnline).
-export const v233: Migration = {
-  version: 233,
+export const v234: Migration = {
+  version: 234,
   name: 'open_loops_counterparty_source',
   idempotent: true,
   sql: `${OPEN_LOOPS_COUNTERPARTY_SOURCE_COLUMN_SQL};`,
   handler: async engine => {
-    await buildIndexOnline(engine, 233, OPEN_LOOPS_COUNTERPARTY_SOURCE_INDEX, { notice: migrationNotice });
+    await buildIndexOnline(engine, 234, OPEN_LOOPS_COUNTERPARTY_SOURCE_INDEX, { notice: migrationNotice });
   },
 };

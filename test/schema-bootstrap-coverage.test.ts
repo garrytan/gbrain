@@ -908,6 +908,11 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   // migration-only so fresh and upgraded brains share column ordinals; the
   // partial index is built by the migration handler, never by the blob.
   'open_loops.counterparty_source_id',
+  // #6202 oauth_clients.registered_via (migration oauth_client_registered_via):
+  // migration-only like min_trust, so fresh and upgraded catalogs keep the same
+  // column order; no blob statement or index reads it, and the DCR insert falls
+  // back to the unmarked insert while the column is missing.
+  'oauth_clients.registered_via',
   // T7 — search_telemetry rank-1 drift columns (migration v111). search_telemetry
   // is created entirely by migration v57 (not in the schema blob), so the v57+v111
   // chain handles fresh + upgrade; no CREATE INDEX references these columns, so

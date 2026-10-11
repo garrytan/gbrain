@@ -673,3 +673,33 @@ describe('verifyWorkspace — managed brain (#5280)', () => {
     }
   }, 240_000);
 });
+
+describe('bootstrap verify write wait (#6356)', () => {
+  test('the probe ctx waits as long as a CLI write: 30 s by default, GBRAIN_WRITE_WAIT_MS when set', async () => {
+    const verify = await import('../src/core/bootstrap/verify.ts') as Record<string, unknown>;
+    const localCtx = verify.localCtx as (engine: unknown, sourceId: string) => OperationContext;
+    expect(typeof localCtx).toBe('function');
+    const saved = process.env.GBRAIN_WRITE_WAIT_MS;
+    try {
+      delete process.env.GBRAIN_WRITE_WAIT_MS;
+      expect(localCtx({}, 'default').writeWaitMs).toBe(30_000);
+      process.env.GBRAIN_WRITE_WAIT_MS = '45000';
+      expect(localCtx({}, 'default').writeWaitMs).toBe(45_000);
+    } finally {
+      if (saved === undefined) delete process.env.GBRAIN_WRITE_WAIT_MS; else process.env.GBRAIN_WRITE_WAIT_MS = saved;
+    }
+  });
+
+  test('an admitted, still-pending probe write names its request and the poll command', async () => {
+    const verify = await import('../src/core/bootstrap/verify.ts') as Record<string, unknown>;
+    const detail = verify.putPageFailureDetail as (e: unknown, waitMs: number | undefined) => string;
+    expect(typeof detail).toBe('function');
+    const pending = { message: 'write pending', toJSON: () => ({ error: 'write_pending', write_request: { request_id: '0b6f6f0e-2c1a-4d8e-9f3a-5e2b7c9d1a44', state: 'queued', retry_after_ms: 1000 } }) };
+    const text = detail(pending, 30_000);
+    expect(text).toContain('still pending after 30s');
+    expect(text).toContain('0b6f6f0e-2c1a-4d8e-9f3a-5e2b7c9d1a44');
+    expect(text).toContain('gbrain write-request -- 0b6f6f0e-2c1a-4d8e-9f3a-5e2b7c9d1a44');
+    expect(text).toContain('GBRAIN_WRITE_WAIT_MS');
+    expect(detail(new Error('boom'), 30_000)).toBe('put_page failed: boom');
+  });
+});
