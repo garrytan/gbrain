@@ -41,8 +41,12 @@ describe('findBacklinkGaps RSS slope', () => {
       expect(r.delta_peak_mb).toBeLessThan(256);
       expect(r.heap_retained_mb).toBeLessThan(48);
     }
+    // The slope is measured on the heap after a forced GC, which is what the scan kept alive; the RSS peak above
+    // is what the OOM killer sees but also carries JSC's nursery, which grows with allocation volume (a 2.5x to 5x
+    // spread between 48 and 384 MiB with nothing retained), so it holds only the absolute bound. Before the fix the
+    // retained heap was the corpus (48 MiB -> 50 MB, 384 MiB -> 390 MB); after, both sizes keep a few MB.
     const largest = runs.at(-1)!;
     const smallest = runs[0]!;
-    expect(largest.delta_peak_mb).toBeLessThan(smallest.delta_peak_mb * 2 + 64);
+    expect(largest.heap_retained_mb).toBeLessThan(smallest.heap_retained_mb * 2 + 16);
   }, 900_000);
 });
