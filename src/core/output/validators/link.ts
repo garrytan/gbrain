@@ -9,11 +9,13 @@
  *     Dangling links emit an error.
  *   - Anything else (mailto:, internal anchors) → warning.
  *
- * We strip leading "../" components so a link from a daily file written as
- * `../../people/alice.md` resolves to the `people/alice` slug the engine
- * knows. This matches how engine.addLink is called downstream.
+ * Relative links resolve against the linking page's directory through the
+ * link extractor's own resolver (resolveMarkdownLinkSlug), so a link this
+ * validator accepts is a link the graph records, and a wrong-depth link is
+ * reported with the slug it actually resolves to.
  */
 
+import { resolveMarkdownLinkSlug } from '../../link-extraction.ts';
 import type { PageValidator, PageValidationContext, ValidationFinding } from '../writer.ts';
 
 const MD_LINK_RE = /\[([^\]]+)\]\(([^)]+)\)/g;
@@ -44,7 +46,7 @@ export const linkValidator: PageValidator = {
         continue;
       }
 
-      const slug = normalizeToSlug(href);
+      const slug = resolveMarkdownLinkSlug(ctx.slug, href.trim());
       if (!slug) {
         findings.push({
           slug: ctx.slug,
@@ -78,7 +80,9 @@ export const linkValidator: PageValidator = {
           validator: 'link',
           severity: 'error',
           line: pos.line,
-          message: `Dangling wikilink to ${slug} (no such page)`,
+          message: pos.raw.trim().replace(/\.md$/i, '').toLowerCase() === slug
+            ? `Dangling wikilink to ${slug} (no such page)`
+            : `Dangling wikilink to ${slug} (no such page; ${truncate(pos.raw, 80)} from ${ctx.slug} resolves there)`,
         });
       }
     }

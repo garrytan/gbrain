@@ -583,6 +583,38 @@ function resolveRelativeSlug(pageSlug: string, ref: EntityRef): string {
   return [...dirSegs.slice(0, keep), ref.slug].join('/');
 }
 
+/**
+ * A same-directory markdown ref (`sameDir`) resolved against the linking
+ * page's directory: `../` / `./../` prefixes (upLevels) and any mid-path
+ * `.`/`..` fold the way the FS walker's join() does, slugified through the
+ * sync grammar. A run that would climb above the root is a dangling link
+ * there too, so it resolves to '' (no candidate).
+ */
+function resolveSameDirSlug(pageSlug: string, ref: EntityRef): string {
+  const segs = pageSlug.includes('/') ? pageSlug.split('/').slice(0, -1) : [];
+  for (const seg of ('../'.repeat(ref.upLevels ?? 0) + ref.slug).split('/')) {
+    if (seg === '' || seg === '.') continue;
+    if (seg !== '..') { segs.push(seg); continue; }
+    if (segs.length === 0) return '';
+    segs.pop();
+  }
+  return slugifyPath(segs.join('/'));
+}
+
+/**
+ * The page slug a markdown link `href` on page `pageSlug` points at, resolved
+ * exactly as extractPageLinks resolves it (page-relative `./` and `../`,
+ * root-relative dir paths, `.md` and `#anchor` stripped). Null when the
+ * extractor would emit no link for it. The writer's link validator calls
+ * this, so "the validator accepts it" means "the graph links it".
+ */
+export function resolveMarkdownLinkSlug(pageSlug: string, href: string): string | null {
+  const ref = extractEntityRefs(`[link](${href})`)[0];
+  if (!ref) return null;
+  const target = ref.sameDir ? resolveSameDirSlug(pageSlug, ref) : resolveRelativeSlug(pageSlug, ref).toLowerCase();
+  return target || null;
+}
+
 // ─── Link candidates (richer than EntityRef) ────────────────────
 
 export interface LinkCandidate {
@@ -782,18 +814,7 @@ export async function extractPageLinks(
     // `[Alice](Alice%20Chen.md)` reaches `people/alice-chen`. Downstream
     // existence checks drop targets that aren't pages.
     if (ref.sameDir) {
-      const segs = slug.includes('/') ? slug.split('/').slice(0, -1) : [];
-      // `../` / `./../` prefixes (upLevels) and any mid-path `.`/`..` fold
-      // the way the FS walker's join() does; a run that would climb above
-      // the root is a dangling link there too, so it yields no candidate.
-      let climbed = false;
-      for (const seg of ('../'.repeat(ref.upLevels ?? 0) + ref.slug).split('/')) {
-        if (seg === '' || seg === '.') continue;
-        if (seg !== '..') { segs.push(seg); continue; }
-        if (segs.length === 0) { climbed = true; break; }
-        segs.pop();
-      }
-      const target = climbed ? '' : slugifyPath(segs.join('/'));
+      const target = resolveSameDirSlug(slug, ref);
       if (target && target !== slug) {
         const idx = ref.index ?? content.indexOf(ref.name);
         const context = idx >= 0 ? excerpt(content, idx, 240) : ref.name;

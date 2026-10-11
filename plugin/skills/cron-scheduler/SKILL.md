@@ -105,9 +105,11 @@ sources:
   no per-source lock, so a run that outlives the interval would overlap the
   next tick. A run stopped at its deadline ends `resumable` and the next tick
   continues it. Sources drain one at a time, so `--parallel` does not apply.
-- `owner_unavailable` for a source: another host owns it. Install a
+- `owner_unavailable` for a source: read its `detail`. `unbound_source` on a
+  classic Postgres brain is normal and does not stop classic sync; keep the
+  sync line. Any other detail means another host owns the source: install a
   per-source line on that host (`gbrain sync --source <id> --no-pull
-  --hard-deadline 13m`, plus its refresh) instead of claiming the source here.
+  --hard-deadline 13m`, plus its refresh) instead of claiming it here.
 - Failed files: run the `--retry-failed` command the failure prints
   (`gbrain sync --source <id> --no-pull --retry-failed …`) after fixing the
   files; never add `--skip-failed`.
