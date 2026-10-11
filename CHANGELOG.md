@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased] - fix wave 14 PR2 (GBRA-79)
+## [0.60.163.0] - 2026-10-11
 
 **A managed brain's Git durability is now a recorded owner setting, and the managed-worktree refusals name the command to run instead of a dead end.**
 
