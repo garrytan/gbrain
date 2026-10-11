@@ -14,8 +14,8 @@
  * Normalizer `doctor-json-v1`: ordered checks (name, status, message,
  * details, issues) plus the report envelope, with volatile tokens replaced:
  * temp home / repo / os tmpdir paths, UUIDs, ISO timestamps, the running
- * package and Bun versions, the machine hostname, and `*_ms` / elapsed / pid-style
- * detail keys, and the latest schema migration number in the `schema_version`
+ * package and Bun versions, the machine hostname, `*_ms` / elapsed / pid-style
+ * detail keys, and wall-clock `day` keys (the fence trend's UTC day buckets), and the latest schema migration number in the `schema_version`
  * message (`<latest>`, so a migration renumber does not churn the goldens;
  * `expectSchemaLatestMatchesRegistry` keeps the hidden number honest). Check order is emitted order (deterministic; no Map/Set
  * iteration is re-sorted). stderr lines are kept (normalized) because the
@@ -137,7 +137,7 @@ export function patchConfig(h: DoctorHome, patch: (cfg: Record<string, unknown>)
 }
 
 const UUID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
-const VOLATILE_KEYS = /(^|_)(ms|pid|elapsed|duration|uptime)$|_ms$|^elapsed/i;
+const VOLATILE_KEYS = /(^|_)(ms|pid|elapsed|duration|uptime)$|_ms$|^elapsed|^day$/i;
 
 export function normalizeDoctorText(text: string, roots: Record<string, string>, extra: Array<[RegExp | string, string]> = []): string {
   let out = scrubPaths(text, roots);
