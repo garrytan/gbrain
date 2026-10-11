@@ -36,10 +36,10 @@ test('oversized system plus latest question fails before any model request', asy
 
 test('continuation stops before growing answer exceeds the next request budget', async () => {
   let calls = 0;
-  const answer = knowledgeWorkbenchAnswer({} as any, { search: async () => ({ results: [] } as any), answer: async input => { calls++; return { text: '回答'.repeat(1000), model: input.model, stopReason: 'length' } as any; } });
+  const answer = knowledgeWorkbenchAnswer({} as any, { search: async () => ({ results: [] } as any), answer: async input => { calls++; return { text: '回答'.repeat(2000), model: input.model, stopReason: 'length' } as any; } });
   const result = await answer({ messages: [message('new', '问题')], model: 'm', knowledge: false, contextWindow: 4096, signal: new AbortController().signal, progress: () => {} });
   expect(calls).toBe(1);
-  expect(result.text).toBe('回答'.repeat(1000));
+  expect(result.text).toBe('回答'.repeat(2000));
   expect(result.stopReason).toBe('length');
 });
 

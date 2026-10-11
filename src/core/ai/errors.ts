@@ -70,7 +70,7 @@ export function classifyChatError(error:unknown):ChatErrorKind{
   if(value.status===429)return 'rate_limit';
   if(value.status!==undefined&&value.status>=500)return 'provider_5xx';
   if(/timeout|timed out/i.test(value.names+' '+value.text))return 'timeout';
-  if(/ECONN|ENOTFOUND|EAI_AGAIN|fetch failed|network/i.test(value.codes+' '+value.names+' '+value.text))return 'network';
+  if(/ECONN|ENOTFOUND|EAI_AGAIN|fetch failed|unable to connect|network|socket.*(?:closed|reset)|connection.*(?:closed|reset)|完整结束标记/i.test(value.codes+' '+value.names+' '+value.text))return 'network';
   if(/JSON|parse|malformed|choices|invalid response/i.test(value.names+' '+value.text))return 'parse';
   return 'failure';
 }

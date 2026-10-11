@@ -3,6 +3,26 @@ import {RequestContext,ToolResultBudget,trimToolOutput,contextFailure} from '../
 import {estimateTokens} from '../src/product/workbench/context';
 import {planContext} from '../src/product/workbench/context';
 
+test('small model windows reserve actual output once and leave useful input space',()=>{
+  const context=new RequestContext({contextWindow:8192,model:'ollama:qwen3.6:latest',system:'',tools:[],signal:new AbortController().signal});
+  expect(context.outputTokens).toBeLessThanOrEqual(2048);expect(context.budget).toBeGreaterThan(4000);expect(context.budget+context.outputTokens).toBeLessThan(8192);
+});
+test('an unavailable local model is a connection failure, while certificate rejection is preserved',()=>{
+  expect(contextFailure(new Error('Unable to connect. Is the computer able to access the url?')).code).toBe('model_connection_lost');
+  expect(contextFailure(new Error('unknown certificate verification error')).message).toContain('certificate verification');
+});
+test('fresh evidence keeps useful space ahead of consumed results and duplicate prefetch',async()=>{
+  const body='预算十万元，负责人王测试。'.repeat(200);
+  const messages:any[]=[{role:'user',content:'比较预算与负责人'}];
+  for(let index=0;index<4;index++)messages.push({role:'assistant',content:[{type:'text',text:'已查到一项，继续核对'},{type:'tool-call',toolCallId:String(index),toolName:'knowledge_read',input:{source_id:'a',slug:'page'}}]},{role:'user',content:[{type:'tool-result',toolCallId:String(index),toolName:'knowledge_read',output:{source_id:'a',slug:'page',content:body,offset:index*1000,nextOffset:9999}}]});
+  const runtime=new RequestContext({contextWindow:8192,system:'请比较并引用',systemContext:{prefix:'<knowledge>',content:body,suffix:'</knowledge>'},tools:[{name:'knowledge_read',description:'读取',inputSchema:{type:'object'}}],signal:new AbortController().signal,summarize:async()=> '已核对前三项预算资料。'});
+  const sent=await runtime.prepare(messages);
+  const fresh=sent.messages.at(-1)!.content as any[];
+  expect(fresh[0].output.content.length).toBeGreaterThan(900);
+  expect(runtime.tokens(sent.messages)).toBeLessThanOrEqual(runtime.budget);
+  expect(JSON.stringify(messages)).toContain(body);
+});
+
 test('a batch reserves immutable shares before results complete in any order',()=>{
   const pool=new ToolResultBudget(960,['a','b','c','d']);
   const caps=['a','b','c','d'].map(id=>pool.limit(id));

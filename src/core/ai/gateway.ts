@@ -30,6 +30,7 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { z } from 'zod';
 import { streamOllamaNativeChat, unwrapOllamaQwenResult, type OllamaNativeMessage } from './ollama-native.ts';
+import {chatRequestFetch,IncompleteChatStream,withChatRequest,type ChatRequestPolicy,type ChatRequestEvent} from './chat-request-runtime.ts';
 
 import {
   BudgetTracker,
@@ -56,7 +57,7 @@ import type { BrainEngine } from '../engine.ts';
 import { loadConfig } from '../config.ts';
 import { buildGatewayConfig } from './gateway-config.ts';
 import { dimsProviderOptions } from './dims.ts';
-import { AIConfigError, AITransientError, normalizeAIError,isReasoningControlRejection,isStructuredOutputRejection } from './errors.ts';
+import { AIConfigError, AITransientError, normalizeAIError,isReasoningControlRejection,isStructuredOutputRejection,isToolCallingRejection } from './errors.ts';
 import {defaultMaxOutputTokens,reasoningOffOptions,supportsQwenSoftThinkingSwitch} from './model-compatibility.ts';
 import {parseLlmJson} from '../llm-json.ts';
 import { recordChatUsage } from './chat-usage.ts';
@@ -75,7 +76,7 @@ const DEFAULT_RERANKER_MODEL = 'zeroentropyai:zerank-2';
 
 let _config: AIGatewayConfig | null = null;
 const _modelCache = new Map<string, any>();
-const _rejectedChatOptions=new Map<string,Set<'reasoning'|'schema'>>();
+const _rejectedChatOptions=new Map<string,Set<'reasoning'|'schema'|'tools'>>();
 
 /**
  * v0.31.12 recipe-models merge: per-gateway-instance set of model ids the
@@ -2397,6 +2398,9 @@ export interface ChatOpts {
   timeoutMs?: number;
   modelOutputLimit?: number;
   contextWindow?: number;
+  requestPolicy?: ChatRequestPolicy;
+  onRequestEvent?: (event:ChatRequestEvent)=>void;
+  maxRetries?: number;
   lengthRetryLimit?: (input:{model:string;messages:readonly ChatMessage[];maxTokens:number;finalTurn?:boolean})=>number|Promise<number>;
   responseSchema?: {name:string;schema:Record<string,unknown>};
   retryLength?: boolean;
@@ -2551,17 +2555,17 @@ function instantiateChat(recipe: Recipe, modelId: string, cfg: AIGatewayConfig):
     case 'native-openai': {
       const apiKey = cfg.env.OPENAI_API_KEY;
       if (!apiKey) throw new AIConfigError(`OpenAI chat requires OPENAI_API_KEY.`, recipe.setup_hint);
-      return createOpenAI({ apiKey }).languageModel(modelId);
+      return createOpenAI({ apiKey,fetch:chatRequestFetch() }).languageModel(modelId);
     }
     case 'native-google': {
       const apiKey = cfg.env.GOOGLE_GENERATIVE_AI_API_KEY;
       if (!apiKey) throw new AIConfigError(`Google chat requires GOOGLE_GENERATIVE_AI_API_KEY.`, recipe.setup_hint);
-      return createGoogleGenerativeAI({ apiKey }).languageModel(modelId);
+      return createGoogleGenerativeAI({ apiKey,fetch:chatRequestFetch() }).languageModel(modelId);
     }
     case 'native-anthropic': {
       const apiKey = cfg.env.ANTHROPIC_API_KEY;
       if (!apiKey) throw new AIConfigError(`Anthropic chat requires ANTHROPIC_API_KEY.`, recipe.setup_hint);
-      return createAnthropic({ apiKey }).languageModel(modelId);
+      return createAnthropic({ apiKey,fetch:chatRequestFetch() }).languageModel(modelId);
     }
     case 'openai-compatible': {
       // D12=A: unified auth via Recipe.resolveAuth (or default).
@@ -2571,7 +2575,7 @@ function instantiateChat(recipe: Recipe, modelId: string, cfg: AIGatewayConfig):
       return createOpenAICompatible({
         name: recipe.id,
         baseURL: compat.baseURL,
-        ...(compat.fetch ? { fetch: compat.fetch } : {}),
+        fetch:chatRequestFetch(compat.fetch),
         ...auth,
         supportsStructuredOutputs:true,
       }).languageModel(modelId);
@@ -2620,10 +2624,18 @@ function chatAbortSignal(opts:ChatOpts):AbortSignal|undefined{
 }
 
 export function chatOutputLimit(model:string,explicit?:number):number|undefined{
-  const {recipe,parsed}=resolveRecipe(model);
-  const declared=recipe.touchpoints.chat?.max_output_tokens;
-  const limits=[explicit,requireConfig().chat_output_limits?.[model],typeof declared==='function'?declared(parsed.modelId):declared].filter((value):value is number=>typeof value==='number'&&Number.isSafeInteger(value)&&value>0);
+  let declared:number|undefined;
+  try{const {recipe,parsed}=resolveRecipe(model);const value=recipe.touchpoints.chat?.max_output_tokens;declared=typeof value==='function'?value(parsed.modelId):value;}catch{}
+  const limits=[explicit,requireConfig().chat_output_limits?.[model],declared].filter((value):value is number=>typeof value==='number'&&Number.isSafeInteger(value)&&value>0);
   return limits.length?Math.min(...limits):undefined;
+}
+function rejectedChatOptions(model:string):Set<'reasoning'|'schema'|'tools'>{
+  const {recipe,parsed}=resolveRecipe(model);
+  const endpoint=_chatTransport?'test-transport':recipe.implementation==='openai-compatible'?applyOpenAICompatConfig(recipe,requireConfig(),'chat').baseURL:'';
+  const key=JSON.stringify([recipe.id,parsed.modelId,endpoint]);
+  let values=_rejectedChatOptions.get(key);
+  if(!values){values=new Set();_rejectedChatOptions.set(key,values);}
+  return values;
 }
 
 async function lengthRecoveryLimit(opts:ChatOpts,current:number,finalTurn?:boolean):Promise<number>{
@@ -2714,9 +2726,7 @@ async function chatOnce(opts: ChatOpts): Promise<ChatResult> {
   const modelStr = modelStrEarly;
   const { model, recipe, modelId } = await resolveChatProvider(modelStr);
   const endpoint=recipe.implementation==='openai-compatible'?applyOpenAICompatConfig(recipe,requireConfig(),'chat').baseURL:'';
-  const optionKey=JSON.stringify([recipe.id,modelId,endpoint]);
-  const rejected=_rejectedChatOptions.get(optionKey)??new Set<'reasoning'|'schema'>();
-  _rejectedChatOptions.set(optionKey,rejected);
+  const rejected=rejectedChatOptions(modelStr);
 
   const supportsCache = recipe.touchpoints.chat?.supports_prompt_cache === true;
   const useCache = !!opts.cacheSystem && supportsCache;
@@ -2777,6 +2787,7 @@ async function chatOnce(opts: ChatOpts): Promise<ChatResult> {
       messages: toModelMessages(repairedMessages) as any,
       tools: opts.tools && opts.tools.length > 0 ? tools : undefined,
       maxOutputTokens,
+      ...(opts.maxRetries===undefined?{}:{maxRetries:opts.maxRetries}),
       ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
       abortSignal: chatAbortSignal(opts),
       providerOptions: Object.keys(providerOptions).length > 0 ? providerOptions : undefined,
@@ -2854,6 +2865,7 @@ async function chatOnce(opts: ChatOpts): Promise<ChatResult> {
             apiKey: auth.apiKey,
             headers: auth.headers,
             onText: qwenAnswerEnvelope ? undefined : opts.onTextDelta,
+            ...(opts.requestPolicy?{allowReasoningFallback:false}:{}),
             format: qwenAnswerEnvelope
               ? {
                   type: 'object',
@@ -2917,6 +2929,7 @@ async function chatOnce(opts: ChatOpts): Promise<ChatResult> {
             } else if (part.type === 'finish') finishReason = part.finishReason ?? finishReason;
             else if (part.type === 'error') throw part.error;
           }
+          if(opts.requestPolicy&&(!finishReason||finishReason==='unknown'))throw streamError??new IncompleteChatStream();
           return { content: [...(streamedText ? [{ type: 'text', text: streamedText }] : []), ...toolCalls], text: streamedText, toolCalls, finishReason, usage, providerMetadata };
         })()
         : await generateText(generationOptions);
@@ -3061,13 +3074,13 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     if (index > 0) opts.onTextReset?.(model);
     try {
       const callOpts={ ...opts, model, ...(opts.onTextDelta ? { onTextDelta: (delta: string) => { if (delta) emitted = true; opts.onTextDelta!(delta); } } : {}) };
-      let result = await chatOnce(callOpts);
+      let result = await withChatRequest(callOpts,chatOnce);
       if(opts.retryLength&&result.stopReason==='length'){
         const current=Math.min(opts.maxTokens??defaultMaxOutputTokens(model),chatOutputLimit(model,opts.modelOutputLimit)??Infinity);
         const maxTokens=await lengthRecoveryLimit(callOpts,current);
         if(maxTokens<=current)return result;
         opts.onTextReset?.(model);
-        const retried=await chatOnce({...callOpts,maxTokens});
+        const retried=await withChatRequest({...callOpts,maxTokens},chatOnce);
         result={...retried,usage:{
           input_tokens:result.usage.input_tokens+retried.usage.input_tokens,
           output_tokens:result.usage.output_tokens+retried.usage.output_tokens,
@@ -3121,6 +3134,10 @@ export interface ToolLoopReplayState {
 }
 
 export interface ToolLoopOpts {
+  requestPolicy?: ChatRequestPolicy;
+  onRequestEvent?: (event:ChatRequestEvent)=>void;
+  preserveHistory?: boolean;
+  finalPrompt?: string;
   temperature?: number;
   onTextDelta?: (delta: string) => void;
   onTextReset?: (model: string) => void;
@@ -3128,6 +3145,11 @@ export interface ToolLoopOpts {
   toolConcurrency?: number;
   retryLength?: boolean;
   jsonToolCalls?: boolean;
+  jsonToolFallback?: boolean;
+  jsonToolPrompt?: string;
+  jsonFinalAnswer?: boolean;
+  parseToolText?: (text:string)=>{text:string;toolCalls:Array<{toolName:string;input:Record<string,unknown>}>};
+  toolTextPreview?: (text:string)=>string;
   turnTimeoutMs?: number;
   modelOutputLimit?: number;
   lengthRetryLimit?: ChatOpts['lengthRetryLimit'];
@@ -3225,6 +3247,8 @@ export interface ToolLoopResult {
 export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
   const maxTurns = opts.maxTurns ?? 20;
   const model=opts.model??getChatModel();
+  const compatibility=opts.jsonToolFallback?rejectedChatOptions(model):undefined;
+  let jsonToolCalls=opts.jsonToolCalls||compatibility?.has('tools')||false;
   const maxTokens = Math.min(opts.maxTokens ?? defaultMaxOutputTokens(model),chatOutputLimit(model,opts.modelOutputLimit)??Infinity);
   const handlers = opts.toolHandlers;
   const totalUsage: ChatResult['usage'] = {
@@ -3275,29 +3299,36 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
       let callSystem=opts.system??'';
       const prepared=await opts.beforeModelCall?.({ turnIdx, messages:callMessages,maxTokens:callMaxTokens,...(opts.finalizeOnLastTurn?{finalTurn}:{}) });
       if(prepared){
-        if(callMessages===messages)messages.splice(0,messages.length,...prepared.messages);
-        callMessages=callMessages===messages?messages:prepared.messages;
+        if(callMessages===messages&&!opts.preserveHistory)messages.splice(0,messages.length,...prepared.messages);
+        callMessages=callMessages===messages&&!opts.preserveHistory?messages:prepared.messages;
         if(prepared.maxTokens!==undefined)callMaxTokens=Math.max(1,Math.min(callMaxTokens,prepared.maxTokens));
         callContextWindow=prepared.contextWindow;
         if(prepared.system!==undefined)callSystem=prepared.system;
       }
       opts.abortSignal?.throwIfAborted();
-      chatResult = await chat({
+      let rawText='',visibleText='';
+      const invoke=()=>chat({
         model: opts.model,
-        system: (finalTurn?`${callSystem}\nThis is the reserved final verification turn. Return the requested JSON receipt of persisted entities and evidence-backed relations. Tools are unavailable; do not claim unwritten targets.`:callSystem)+(opts.jsonToolCalls&&!finalTurn?`\nNative tools are unavailable. To request an operation return JSON only: {"tool_calls":[{"name":"allowed tool name","arguments":{}}]}. Use only these definitions: ${JSON.stringify(opts.tools)}. Otherwise return the required final JSON receipt.`:''),
-        messages:opts.jsonToolCalls?callMessages.map(message=>({role:message.role,content:typeof message.content==='string'?message.content:JSON.stringify(message.content)})):callMessages,
-        tools: finalTurn||opts.jsonToolCalls?undefined:opts.tools,
-        responseSchema:opts.jsonToolCalls?{name:'entity_response',schema:{type:'object',additionalProperties:true}}:undefined,
+        system: (finalTurn?`${callSystem}\n${opts.finalPrompt??'This is the reserved final verification turn. Return the requested JSON receipt of persisted entities and evidence-backed relations. Tools are unavailable; do not claim unwritten targets.'}`:callSystem)+(jsonToolCalls?`\n${opts.jsonToolPrompt??'Native tools are unavailable. To request an operation return JSON only: {"tool_calls":[{"name":"allowed tool name","arguments":{}}]}. Otherwise return the required final JSON receipt.'}${finalTurn?'':`\nUse only these definitions: ${JSON.stringify(opts.tools)}`}`:''),
+        messages:jsonToolCalls?callMessages.map(message=>({role:message.role,content:typeof message.content==='string'?message.content:JSON.stringify(message.content)})):callMessages,
+        tools: finalTurn||jsonToolCalls?undefined:opts.tools,
+        responseSchema:jsonToolCalls?{name:'entity_response',schema:{type:'object',additionalProperties:true}}:undefined,
         maxTokens:callMaxTokens,
         contextWindow:callContextWindow,
         timeoutMs:opts.turnTimeoutMs,
+        requestPolicy:opts.requestPolicy,
+        onRequestEvent:opts.onRequestEvent,
         disableReasoning:opts.disableReasoning,
         abortSignal: opts.abortSignal,
         cacheSystem: opts.cacheSystem,
         ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
-        ...(opts.onTextDelta ? { onTextDelta: opts.onTextDelta } : {}),
-        ...(opts.onTextReset ? { onTextReset: opts.onTextReset } : {}),
+        ...(!jsonToolCalls&&opts.onTextDelta ? { onTextDelta:(delta:string)=>{rawText+=delta;const visible=opts.toolTextPreview?.(rawText)??rawText;if(!visible.startsWith(visibleText)){opts.onTextReset?.(model);opts.onTextDelta?.(visible);}else opts.onTextDelta?.(visible.slice(visibleText.length));visibleText=visible;} } : {}),
+        ...(opts.onTextReset ? { onTextReset:(model:string)=>{rawText='';visibleText='';opts.onTextReset?.(model);} } : {}),
       });
+      try{chatResult=await invoke();}catch(error){
+        if(!opts.jsonToolFallback||jsonToolCalls||!isToolCallingRejection(error))throw error;
+        compatibility!.add('tools');jsonToolCalls=true;chatResult=await invoke();
+      }
       if(chatResult.stopReason==='length'){
         const blocks:ChatBlock[]=[{type:'text',text:chatResult.text,truncated:true,outputLimit:callMaxTokens,lengthRetry:!!retry,finalVerification:finalTurn}];
         chatResult={...chatResult,blocks};
@@ -3305,10 +3336,20 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
         else retry=undefined;
       }else{
         retry=undefined;
-        if(opts.jsonToolCalls){
-          const parsed=parseLlmJson<{tool_calls?:Array<{name:string;arguments:unknown}>}>(chatResult.text);
+        if(!jsonToolCalls&&opts.parseToolText&&chatResult.blocks.some(block=>block.type==='tool-call')){
+          const clean=opts.toolTextPreview?.(chatResult.text)??chatResult.text;
+          chatResult={...chatResult,text:clean,blocks:[...(clean?[{type:'text' as const,text:clean}]:[]),...chatResult.blocks.filter(block=>block.type!=='text')]};
+        }else if(!jsonToolCalls&&opts.parseToolText){
+          const parsed=opts.parseToolText(chatResult.text);
+          chatResult={...chatResult,text:parsed.text,stopReason:parsed.toolCalls.length?'tool_calls':chatResult.stopReason,blocks:[...(parsed.text?[{type:'text' as const,text:parsed.text}]:[]),...parsed.toolCalls.map((call,index)=>({type:'tool-call' as const,toolCallId:`text-${turnIdx}-${index}`,...call}))]};
+        }
+        if(jsonToolCalls){
+          const parsed=parseLlmJson<{tool_calls?:Array<{name:string;arguments:unknown}>;answer?:string}>(chatResult.text);
           if(!finalTurn&&Array.isArray(parsed?.tool_calls)&&parsed.tool_calls.length>0&&!parsed.tool_calls.some(call=>!call||typeof call.name!=='string'||!opts.toolHandlers.has(call.name)||!call.arguments||typeof call.arguments!=='object'||Array.isArray(call.arguments))){
             chatResult={...chatResult,stopReason:'tool_calls',blocks:parsed.tool_calls.map((call,index)=>({type:'tool-call' as const,toolCallId:`json-${turnIdx}-${index}`,toolName:call.name,input:call.arguments}))};
+          }else if(opts.jsonFinalAnswer){
+            if(typeof parsed?.answer!=='string'||!parsed.answer.trim())throw new Error('模型 JSON 回答或工具请求无效，原始资料和对话已保留。');
+            chatResult={...chatResult,text:parsed.answer,blocks:[{type:'text',text:parsed.answer}]};
           }
         }
       }

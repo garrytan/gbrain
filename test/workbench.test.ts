@@ -10,6 +10,28 @@ import { knowledgeWorkbenchAnswer } from '../src/product/workbench/routes';
 import { WorkbenchStore } from '../src/product/workbench/store';
 
 const root = () => mkdtempSync(join(tmpdir(), 'pmbrain-workbench-test-'));
+test('ordinary assistant chat replaces orphaned reasoning and preserves only the final answer',async()=>{
+  let visible='';const answer=knowledgeWorkbenchAnswer({} as any,{search:async()=>({results:[]} as any),answer:async opts=>{for(const character of '内部分析</think>可见答案')opts.onTextDelta?.(character);return {text:'内部分析</think>可见答案',model:'ollama:local',providerId:'ollama',blocks:[],usage:{input_tokens:10,output_tokens:5,cache_read_tokens:0,cache_creation_tokens:0},stopReason:'end'};}});
+  const result=await answer({messages:[{id:'q',role:'user',text:'普通问题',status:'complete',createdAt:''}],model:'ollama:local',knowledge:false,signal:new AbortController().signal,progress:()=>{},onDelta:delta=>{visible+=delta;},onReplace:value=>{visible=value;}});
+  expect(result.text).toBe('可见答案');expect(visible).toBe('可见答案');
+});
+test('compressed-only history retains exact Source references and projects old local numbering',async()=>{
+  const store=new WorkbenchStore(root());const inputs:any[]=[];const transcripts:string[]=[];
+  const service=new WorkbenchService(store,()=>[{id:'ollama:local',name:'本地',contextWindow:8192}],async input=>{inputs.push(input);return {text:'新回答',model:'ollama:local',citations:[]};},async input=>{transcripts.push(input.transcript);return '甲页 [1]，乙页 [2]';});
+  const assistant=defaultAssistant();assistant.context.maxMessages=2;service.saveAssistant(assistant);
+  const thread=service.create({knowledge:true});
+  thread.messages.push(
+    {id:'u1',role:'user',text:'第一问',status:'complete',createdAt:''},
+    {id:'a1',role:'assistant',text:'甲页 [1]',status:'complete',createdAt:'',citations:[{sourceId:'a',slug:'same',title:'甲',snippet:'甲资料'}]},
+    {id:'u2',role:'user',text:'第二问',status:'complete',createdAt:''},
+    {id:'a2',role:'assistant',text:'乙页 [1]',status:'complete',createdAt:'',citations:[{sourceId:'b',slug:'same',title:'乙',snippet:'乙资料'}]},
+  );store.save(thread);
+  service.send(thread.id,{text:'请核对两个来源'});await service.settled(thread.id);
+  expect(inputs[0].messages.map((message:any)=>message.text)).toEqual(['请核对两个来源']);
+  expect(inputs[0].priorCitations?.map((item:any)=>[item.sourceId,item.slug])).toEqual([['a','same'],['b','same']]);
+  expect(transcripts.join('\n')).toContain('乙页 [2]');
+  const reopened=store.get(thread.id);expect(reopened.messages[3]?.text).toBe('乙页 [1]');expect(reopened.messages[3]?.citations?.[0]?.sourceId).toBe('b');
+});
 test('知识助手回答里的角标在悬停时显示对应引用', () => {
   expect(inlineCitationIndex('[1]')).toBe(1);
   expect(inlineCitationIndex('[12]')).toBe(12);

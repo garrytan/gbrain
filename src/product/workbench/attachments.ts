@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { extname } from 'node:path';
 import type { ChatBlock } from '../../core/ai/gateway';
-import { ATTACHMENT_MAX_BYTES, ATTACHMENT_MAX_COUNT, toolHistoryText } from '../../../shared/workbench';
+import { ATTACHMENT_MAX_BYTES, ATTACHMENT_MAX_COUNT, toolHistoryText,toolContextHistory } from '../../../shared/workbench';
 import type { WorkbenchAttachment, WorkbenchMessage } from '../../../shared/workbench';
 
 export { ATTACHMENT_MAX_BYTES, ATTACHMENT_MAX_COUNT };
@@ -113,7 +113,7 @@ export function retrievalText(message: Pick<WorkbenchMessage, 'text' | 'attachme
 }
 
 export function workbenchModelContent(message: Pick<WorkbenchMessage, 'text' | 'attachments' | 'attachmentSupplement' | 'toolCalls'>, supplement?: string): string | ChatBlock[] {
-  const extra = [...new Set([message.attachmentSupplement, supplement, toolHistoryText(message)].map(item => item?.trim() || '').filter(Boolean))];
+  const extra = [...new Set([message.attachmentSupplement, supplement, toolContextHistory(message)].map(item => item?.trim() || '').filter(Boolean))];
   if (!message.attachments?.length && !extra.length) return message.text;
   const parts: ChatBlock[] = [];
   const bits = [message.text.trim(), ...extra];

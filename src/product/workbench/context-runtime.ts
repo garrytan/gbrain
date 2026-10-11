@@ -1,6 +1,8 @@
 import type {ChatBlock,ChatMessage,ChatToolDef} from '../../core/ai/gateway';
 import {chatOutputLimit} from '../../core/ai/gateway';
-import {contextBudget,estimateTokens,summaryInputBudget,OUTPUT_RESERVE_TOKENS} from './context';
+import {defaultMaxOutputTokens} from '../../core/ai/model-compatibility';
+import {classifyChatError} from '../../core/ai/errors';
+import {contextBudget,estimateTokens,summaryInputBudget} from './context';
 import type {WorkbenchSummarizer} from './service';
 
 export class ContextBudgetError extends Error {
@@ -13,6 +15,9 @@ export function contextFailure(error:unknown):{code:string;message:string}{
   const raw=error instanceof Error?error.message:String(error);
   if(error instanceof ContextBudgetError||raw.includes('PMBrain 上下文预算'))return {code:'pmbrain_context_budget',message:raw};
   if(!/rate[_ -]?limit|per minute|\b429\b|\btpm\b/i.test(raw)&&/maximum context length|context[_ ](?:length|window).*(?:exceed|limit)|prompt is too long|too many (?:input )?tokens|input.*token.*exceed/i.test(raw))return {code:'provider_context_limit',message:`模型服务拒绝请求：实际上下文超限。服务返回：${raw}`};
+  const kind=classifyChatError(error);
+  if(kind==='network')return {code:'model_connection_lost',message:`模型连接中断，自动恢复未能完成。已有资料和对话已保存，可重新生成。服务返回：${raw}`};
+  if(kind==='timeout')return {code:'model_request_timeout',message:`模型等待超时，已有资料和对话已保存。${raw}`};
   return {code:'request_failed',message:raw};
 }
 export function chatMessageTokens(messages:readonly ChatMessage[]):number{
@@ -79,6 +84,11 @@ export async function compressTranscript(options:{model:string;prior:string;tran
   }
   return summary;
 }
+export function requestOutputTokens(model?:string,contextWindow?:number,explicit?:number):number{
+  let limit=explicit;
+  if(model)try{limit=chatOutputLimit(model,limit);}catch{}
+  return Math.max(1,Math.min(defaultMaxOutputTokens(model),Math.floor((contextWindow??32000)/4),limit??Infinity));
+}
 export class RequestContext {
   readonly budget:number;
   readonly outputTokens:number;
@@ -89,10 +99,8 @@ export class RequestContext {
   private lastEstimate=0;
   constructor(private options:{contextWindow?:number;threshold?:number;system:string;systemContext?:{prefix:string;content:string;suffix:string};tools:ChatToolDef[];signal:AbortSignal;model?:string;summarize?:WorkbenchSummarizer;compressionModel?:string;compressionWindow?:number;onCompact?:(note:string)=>void;outputLimit?:number}){
     const window=options.contextWindow??32000;
-    let outputLimit=options.outputLimit;
-    if(options.model)try{outputLimit=chatOutputLimit(options.model,outputLimit);}catch{}
-    this.outputTokens=Math.min(OUTPUT_RESERVE_TOKENS,Math.floor(window/2),outputLimit??Infinity);
-    this.budget=Math.min(contextBudget(options.contextWindow,options.threshold??.8),window-this.outputTokens-128);
+    this.outputTokens=requestOutputTokens(options.model,options.contextWindow,options.outputLimit);
+    this.budget=Math.min(contextBudget(options.contextWindow,options.threshold??.8,this.outputTokens),window-this.outputTokens-128);
     this.toolTokens=estimateTokens(JSON.stringify(options.tools));
     this.currentSystem=options.system+(options.systemContext?options.systemContext.prefix+options.systemContext.content+options.systemContext.suffix:'');
   }
@@ -100,25 +108,34 @@ export class RequestContext {
   tokens(messages:readonly ChatMessage[]){return Math.ceil((this.fixed+chatMessageTokens(messages))*this.tokenRatio);}
   observeUsage(inputTokens:number){if(Number.isFinite(inputTokens)&&inputTokens>0&&this.lastEstimate>0)this.tokenRatio=Math.max(this.tokenRatio,inputTokens/this.lastEstimate);}
   get contextWindow(){return Math.min(this.options.contextWindow??32000,Math.max(2048,Math.ceil((this.budget+this.outputTokens+256)/1024)*1024));}
-  async prepare(history:readonly ChatMessage[],requested=this.outputTokens):Promise<{messages:ChatMessage[];maxTokens:number;contextWindow:number;system:string}>{
+  async prepare(history:readonly ChatMessage[],requested=this.outputTokens,finalTurn=false):Promise<{messages:ChatMessage[];maxTokens:number;contextWindow:number;system:string}>{
     this.options.signal.throwIfAborted();
     let messages=history.map(message=>({...message,content:typeof message.content==='string'?message.content:message.content.map(block=>({...block}))}));
     if(this.tokens(messages)>this.budget-Math.min(1024,Math.floor(this.budget*.15))) {
       for(const message of messages)if(message.role==='assistant'&&Array.isArray(message.content)&&message.content.some(block=>block.type==='tool-call'))message.content=message.content.filter(block=>block.type!=='text');
     }
     const outputs=messages.flatMap(message=>Array.isArray(message.content)?message.content.filter(block=>block.type==='tool-result'):[]);
+    const fresh=new Set(Array.isArray(messages.at(-1)?.content)?(messages.at(-1)!.content as ChatBlock[]).filter(block=>block.type==='tool-result').map(block=>block.toolCallId):[]);
+    if(this.tokens(messages)>this.budget*.8){
+      const oldCap=Math.max(96,Math.min(256,Math.floor(this.budget*.12/Math.max(1,outputs.length-fresh.size))));
+      for(const message of messages)if(Array.isArray(message.content))message.content=message.content.map(block=>block.type==='tool-result'&&!fresh.has(block.toolCallId)?{...block,output:trimToolOutput(block.output,oldCap)}:block);
+    }
     const baseline=messages.map(message=>({...message,content:typeof message.content==='string'?message.content:message.content.map(block=>block.type==='tool-result'?{...block,output:''}:block)}));
-    const headroom=this.options.tools.length?Math.min(1024,Math.floor(this.budget*.15)):0;
+    const headroom=this.options.tools.length&&!finalTurn?Math.min(2048,Math.floor(this.budget*(fresh.size?.2:.3))):0;
     if(this.options.systemContext){
       const part=this.options.systemContext;
       const standing=this.options.system+part.prefix+part.suffix;
-      const room=Math.max(0,Math.floor((this.budget-headroom)/this.tokenRatio)-estimateTokens(standing)-this.toolTokens-chatMessageTokens(baseline)-outputs.length*24-128);
+      const resultReserve=Math.min(Math.floor(this.budget*.4),fresh.size*2048+(outputs.length-fresh.size)*128);
+      const room=Math.max(0,Math.floor((this.budget-headroom-resultReserve)/this.tokenRatio)-estimateTokens(standing)-this.toolTokens-chatMessageTokens(baseline)-outputs.length*24-128);
       const content=estimateTokens(part.content)<=room?part.content:fitText(part.content,room,excerpt=>excerpt);
       this.currentSystem=this.options.system+part.prefix+content+part.suffix;
       if(content.length<part.content.length)this.options.onCompact?.('检索节选已按本次请求剩余空间缩短，完整资料仍保留。');
     }
-    const cap=Math.max(24,Math.floor(Math.max(0,this.budget-this.tokens(baseline)-128)/Math.max(1,outputs.length)/this.tokenRatio));
-    for(const message of messages)if(Array.isArray(message.content))message.content=message.content.map(block=>block.type==='tool-result'?{...block,output:trimToolOutput(block.output,cap)}:block);
+    const available=Math.max(0,Math.floor((this.budget-headroom-this.tokens(baseline)-128)/this.tokenRatio));
+    const oldShare=outputs.length>fresh.size?Math.min(Math.floor(available*.2),256*(outputs.length-fresh.size)):0;
+    const freshCap=Math.max(24,Math.floor((available-oldShare)/Math.max(1,fresh.size)));
+    const oldCap=Math.max(24,Math.floor((fresh.size?oldShare:available)/Math.max(1,outputs.length-fresh.size)));
+    for(const message of messages)if(Array.isArray(message.content))message.content=message.content.map(block=>block.type==='tool-result'?{...block,output:trimToolOutput(block.output,fresh.has(block.toolCallId)?freshCap:oldCap)}:block);
     let previous=Infinity;
     while(outputs.length&&this.tokens(messages)>this.budget-headroom&&this.tokens(messages)<previous){
       previous=this.tokens(messages);

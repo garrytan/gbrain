@@ -1,5 +1,6 @@
 import {randomUUID} from 'node:crypto';
-import {stripReasoningBlocks} from '../llm-json';
+import {modelAnswerText} from './tool-text';
+import {chatRequestFetch,IncompleteChatStream} from './chat-request-runtime';
 
 export interface OllamaNativeToolCall { function: { name: string; arguments: Record<string, unknown> } }
 export interface OllamaNativeMessage {
@@ -22,6 +23,7 @@ export interface OllamaNativeChatInput {
   temperature?: number;
   abortSignal?: AbortSignal;
   onText?: (delta: string) => void;
+  allowReasoningFallback?: boolean;
 }
 
 export interface OllamaNativeChatResult {
@@ -120,7 +122,7 @@ export async function streamOllamaNativeChat(
   if (input.apiKey && !headers.has('Authorization')) {
     headers.set('Authorization', `Bearer ${input.apiKey}`);
   }
-  const response = await fetch(ollamaNativeChatUrl(input.baseURL), {
+  const response = await chatRequestFetch()(ollamaNativeChatUrl(input.baseURL), {
     method: 'POST',
     headers,
     body: JSON.stringify({
@@ -140,7 +142,7 @@ export async function streamOllamaNativeChat(
   });
   if (!response.ok) {
     const body = await response.text().catch(() => '');
-    throw new Error(`Ollama chat failed: HTTP ${response.status} ${body.slice(0, 180)}`);
+    throw Object.assign(new Error(`Ollama chat failed: HTTP ${response.status} ${body.slice(0, 180)}`),{statusCode:response.status});
   }
   if (!response.body) throw new Error('Ollama chat returned an empty response');
 
@@ -149,6 +151,7 @@ export async function streamOllamaNativeChat(
   let pending = '';
   let text = '';
   let thinking = '';
+  let finished=false;
   const toolCalls: OllamaNativeChatResult['toolCalls'] = [];
   let finishReason = 'stop';
   let inputTokens = 0;
@@ -158,6 +161,7 @@ export async function streamOllamaNativeChat(
     if (!line.trim()) return;
     const chunk = JSON.parse(line) as {
       error?: string;
+      done?: boolean;
       message?: { content?: string; thinking?: string; tool_calls?: OllamaNativeToolCall[] };
       done_reason?: string;
       prompt_eval_count?: number;
@@ -168,9 +172,10 @@ export async function streamOllamaNativeChat(
       eval_duration?: number;
     };
     if (chunk.error) throw new Error(`Ollama chat failed: ${chunk.error}`);
+    if(chunk.done===true)finished=true;
     if (typeof chunk.message?.content === 'string' && chunk.message.content) {
       text += chunk.message.content;
-      if(!input.tools?.length)input.onText?.(chunk.message.content);
+      if(!input.tools?.length&&input.allowReasoningFallback!==false)input.onText?.(chunk.message.content);
     }
     if (typeof chunk.message?.thinking === 'string') thinking += chunk.message.thinking;
     for (const call of chunk.message?.tool_calls ?? []) {
@@ -202,9 +207,10 @@ export async function streamOllamaNativeChat(
   }
   consumeLine(pending);
   } finally { await reader.cancel().catch(() => undefined); reader.releaseLock(); }
+  if(input.contextWindow!==undefined&&!finished)throw new IncompleteChatStream();
 
-  const finalText = input.tools?.length ? stripReasoningBlocks(text) : text.trim() ? text : toolCalls.length ? '' : thinking;
-  if(input.tools?.length&&finalText)input.onText?.(finalText);
+  const finalText = input.tools?.length||input.allowReasoningFallback===false ? modelAnswerText(text) : text.trim() ? text : toolCalls.length ? '' : thinking;
+  if((input.tools?.length||input.allowReasoningFallback===false)&&finalText&&!(input.allowReasoningFallback===false&&toolCalls.length))input.onText?.(finalText);
   return {
     content: [...(finalText ? [{ type: 'text' as const, text: finalText }] : []),...toolCalls.map(call=>({type:'tool-call' as const,...call}))],
     text: finalText,

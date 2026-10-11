@@ -1,4 +1,5 @@
 export interface WorkbenchCitation { sourceId: string | null; slug: string; title: string; snippet: string }
+import type {ChatRequestEvent} from '../src/core/ai/chat-request-runtime';
 export interface WorkbenchToolCall {
   id: string;
   name: string;
@@ -11,6 +12,16 @@ export interface WorkbenchToolCall {
 }
 export function toolHistoryText(message: { toolCalls?: WorkbenchToolCall[] }): string {
   return (message.toolCalls ?? []).map(item => `【此前知识工具 ${item.name} · ${item.status}】${item.input}\n${item.output ?? item.error ?? ''}`).join('\n');
+}
+export function toolContextHistory(message:{toolCalls?:WorkbenchToolCall[]}):string{
+  return (message.toolCalls??[]).map(item=>{
+    let output=item.error??'';
+    if(item.output)try{
+      const value=JSON.parse(item.output);
+      output=JSON.stringify(Array.isArray(value.results)?{results:value.results.map((row:Record<string,unknown>)=>({...row,snippet:String(row.snippet??'').slice(0,120)}))}:{...value,content:typeof value.content==='string'?value.content.slice(0,180)+'\n（已读节选，完整结果保存在对话记录）':value.content});
+    }catch{output=item.output.slice(0,240);}
+    return `【此前已执行 ${item.name} · ${item.status}】${item.input}\n${output}`;
+  }).join('\n');
 }
 export const ATTACHMENT_MAX_BYTES = 15 * 1024 * 1024;
 export const ATTACHMENT_MAX_COUNT = 8;
@@ -37,6 +48,8 @@ export interface WorkbenchMessage {
   error?: string;
   stage?: string;
   errorCode?: string;
+  request?: ChatRequestEvent;
+  requestHistory?: ChatRequestEvent[];
   citations?: WorkbenchCitation[];
   knowledge?: 'used' | 'none' | 'off';
   contextMessages?: number;

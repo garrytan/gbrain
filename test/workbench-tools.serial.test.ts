@@ -17,6 +17,72 @@ const call = (name: string, input: unknown, id = 'call'): ChatResult => ({ ...te
 const question = { id: 'q', text: '核对项目预算', role: 'user' as const, status: 'complete' as const, createdAt: '' };
 const hit = { source_id: 'a', slug: 'project', title: '项目预算', snippet: '初步预算' };
 const search = async () => ({ results: [hit] } as any);
+test('several empty multiword searches require one single-keyword check before declaring no evidence',async()=>{
+  let requests=0;const queries:string[]=[];
+  __setChatTransportForTests(async()=>{requests++;return requests===1?call('knowledge_search',{query:'人物 经历 兴趣'}):requests===2?text('没有找到资料'):requests===3?call('knowledge_search',{query:'人物'}):text('核对到资料 [1]');});
+  const answer=knowledgeWorkbenchAnswer({getPage:async()=>null} as any,{search:async(_engine,{query})=>{queries.push(query);return {results:query==='人物'?[hit]:[]} as any;},answer:chat,loop:toolLoop});
+  const result=await answer({messages:[question],model:'service-test:chat',knowledge:true,signal:new AbortController().signal,progress:()=>{}});
+  expect(result.citations).toHaveLength(1);expect(result.text).toBe('核对到资料 [1]');expect(queries).toContain('人物');
+});
+test('tool-selection prose is not concatenated into the final answer',async()=>{
+  let requests=0;__setChatTransportForTests(async()=>++requests===1?{...call('knowledge_search',{query:'预算'}),text:'内部分析不作为结论',blocks:[{type:'text',text:'内部分析不作为结论'},...call('knowledge_search',{query:'预算'}).blocks]}:text('最终预算十万元 [1]'));
+  const answer=knowledgeWorkbenchAnswer({getPage:async()=>null} as any,{search,answer:chat,loop:toolLoop});
+  const result=await answer({messages:[question],model:'service-test:chat',knowledge:true,signal:new AbortController().signal,progress:()=>{}});
+  expect(result.text).toBe('最终预算十万元 [1]');
+});
+test('summary references retain source cards when all cited replies were compressed',async()=>{
+  let system='';__setChatTransportForTests(async opts=>{system=opts.system??'';return text('甲资料 [1]，乙资料 [2]');});
+  const answer=knowledgeWorkbenchAnswer({getPage:async()=>null} as any,{search:async()=>({results:[]} as any),answer:chat,loop:toolLoop});
+  const result=await answer({messages:[question],summary:'甲资料 [1]，乙资料 [2]',priorCitations:[{sourceId:'a',slug:'same',title:'甲',snippet:'甲资料'},{sourceId:'b',slug:'same',title:'乙',snippet:'乙资料'}],model:'service-test:chat',knowledge:true,signal:new AbortController().signal,progress:()=>{}} as any);
+  expect(result.citations.map(item=>[item.sourceId,item.slug])).toEqual([['a','same'],['b','same']]);
+  expect(system).toContain('[1] 甲 {"source_id":"a","slug":"same"}');expect(system).toContain('[2] 乙 {"source_id":"b","slug":"same"}');
+});
+
+test('an empty full-question presearch requires one keyword search before claiming no knowledge',async()=>{
+  let requests=0,searches=0;
+  __setChatTransportForTests(async()=>{requests++;return requests===1?text('没有找到任何资料'):requests===2?call('knowledge_search',{query:'预算'}):text('已核对预算十万元 [1]');});
+  const answer=knowledgeWorkbenchAnswer({getPage:async()=>null} as any,{search:async()=>{searches++;return {results:searches===1?[]:[hit]} as any;},answer:chat,loop:toolLoop});
+  const result=await answer({messages:[question],model:'service-test:chat',knowledge:true,signal:new AbortController().signal,progress:()=>{}});
+  expect(result.citations).toHaveLength(1);expect(result.text).not.toContain('没有找到任何资料');expect(searches).toBe(2);expect(requests).toBe(3);
+});
+
+test('DSML text calls execute through the same Source-validated reader and stay out of visible text',async()=>{
+  let requests=0,reads=0,visible='';
+  __setChatTransportForTests(async opts=>{requests++;const answer=requests===1?'<think>内部</think><｜｜DSML｜｜ calls><｜｜DSML｜｜ invoke name="knowledge_read"><｜｜DSML｜｜ parameter name="source_id" string="true">a</｜｜DSML｜｜ parameter><｜｜DSML｜｜ parameter name="slug" string="true">project</｜｜DSML｜｜ parameter></｜｜DSML｜｜ invoke></｜｜DSML｜｜ calls>':'预算十万元 [1]';for(const character of answer)opts.onTextDelta?.(character);return text(answer);});
+  const answer=knowledgeWorkbenchAnswer({getPage:async()=>{reads++;return {compiled_truth:'预算十万元',timeline:''};}} as any,{search,answer:chat,loop:toolLoop});
+  const result=await answer({messages:[question],model:'service-test:chat',knowledge:true,signal:new AbortController().signal,progress:()=>{},onDelta:delta=>{visible+=delta;}});
+  expect(result.text).toBe('预算十万元 [1]');expect(visible).not.toContain('DSML');expect(visible).not.toContain('内部');expect(requests).toBe(2);expect(reads).toBe(2);
+});
+test('the reserved final answer carries evidence without native tool history',async()=>{
+  let requests=0;
+  __setChatTransportForTests(async opts=>{requests++;if(opts.tools?.length)return call('knowledge_read',{source_id:'a',slug:'project'},`read-${requests}`);expect(JSON.stringify(opts.messages)).not.toContain('tool-call');expect(JSON.stringify(opts.messages)).not.toContain('tool-result');expect(JSON.stringify(opts.messages)).toContain('十万元');return text('最终预算十万元 [1]');});
+  const answer=knowledgeWorkbenchAnswer({getPage:async()=>({compiled_truth:'预算十万元',timeline:''})} as any,{search,answer:chat,loop:toolLoop});
+  const result=await answer({messages:[question],model:'service-test:chat',knowledge:true,signal:new AbortController().signal,progress:()=>{}});
+  expect(result.text).toContain('最终预算十万元');expect(requests).toBe(8);
+});
+
+test('follow-up references keep prior Source cards and remap conflicting turn-local indices',async()=>{
+  const seen:string[]=[];__setChatTransportForTests(async opts=>{seen.push(JSON.stringify(opts.messages));return text('延续此前预算 [1]，新资料 [2]');});
+  const prior={id:'a',role:'assistant' as const,status:'complete' as const,text:'此前预算 [1]',createdAt:'',citations:[{sourceId:'old',slug:'budget',title:'旧预算',snippet:'十万元'}]};
+  const answer=knowledgeWorkbenchAnswer({getPage:async()=>null} as any,{search:async()=>({results:[{source_id:'new',slug:'plan',title:'新资料',snippet:'八月完成'}]} as any),answer:chat,loop:toolLoop});
+  const result=await answer({messages:[question,prior,{...question,id:'follow',text:'继续比较'}],model:'service-test:chat',knowledge:true,signal:new AbortController().signal,progress:()=>{}});
+  expect(result.citations.map(item=>[item.sourceId,item.slug])).toEqual([['old','budget'],['new','plan']]);
+  expect(seen[0]).toContain('此前预算 [1]');expect(result.text).toContain('[2]');
+  const next=await knowledgeWorkbenchAnswer({} as any,{search:async()=>({results:[]} as any),answer:chat,loop:toolLoop})({messages:[question,prior,{...question,id:'follow'}],model:'service-test:chat',knowledge:true,signal:new AbortController().signal,progress:()=>{}});
+  expect(next.citations[0]?.sourceId).toBe('old');expect(prior.citations[0].sourceId).toBe('old');
+});
+
+test('retrieval rounds reserve a final answer instead of failing after repeated reads',async()=>{
+  let requests=0;const finalSystems:string[]=[];
+  __setChatTransportForTests(async opts=>{
+    requests++;
+    if(opts.tools?.length)return call('knowledge_read',{source_id:'a',slug:'project',offset:(requests-1)*100});
+    finalSystems.push(opts.system??'');return text('根据已读资料，预算十万元 [1]');
+  });
+  const answer=knowledgeWorkbenchAnswer({getPage:async()=>({source_id:'a',compiled_truth:'预算十万元。'.repeat(2000),timeline:''})} as any,{search,answer:chat,loop:toolLoop,summarize:async()=> '已核对预算十万元。'});
+  const result=await answer({messages:[question],model:'service-test:chat',knowledge:true,contextWindow:8192,signal:new AbortController().signal,progress:()=>{}});
+  expect(requests).toBe(8);expect(result.text).toContain('预算十万元');expect(result.stopReason).toBe('end');expect(finalSystems[0]).toContain('本轮资料收集已结束');expect(finalSystems[0]).not.toContain('JSON receipt');
+});
 beforeEach(() => configureGateway({ generative_enabled: true, chat_model: 'service-test:chat', env: {} }));
 afterEach(() => { __setChatTransportForTests(null); resetGateway(); });
 

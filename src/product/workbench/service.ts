@@ -1,15 +1,18 @@
 import { randomUUID } from 'node:crypto';
 import type { WorkbenchCitation, WorkbenchConversation, WorkbenchMessage, WorkbenchModel, WorkbenchToolCall } from '../../../shared/workbench';
 import { advanceStoredReads, attachmentRead, enrichAttachments, incomingAttachments, resolveListedAttachments, summarySource, modelReadsPdfNatively } from './attachments';
-import { knowledgeReserve, planContext } from './context';
+import { knowledgeReserve, planContext,conversationCitations,referenceProjection } from './context';
 import { WorkbenchStore } from './store';
-import { compressTranscript, contextFailure } from './context-runtime';
+import { compressTranscript, contextFailure,requestOutputTokens } from './context-runtime';
+import type {ChatRequestEvent} from '../../core/ai/chat-request-runtime';
+import {assistantSession} from './request';
 
 export { conversationContext } from './context';
 
 export interface WorkbenchAnswerInput {
   messages: WorkbenchMessage[];
   summary?: string;
+  priorCitations?: WorkbenchCitation[];
   model: string;
   knowledge: boolean;
   systemPrompt?: string;
@@ -23,10 +26,11 @@ export interface WorkbenchAnswerInput {
   onReplace?: (text: string, model: string) => void;
   onTool?: (call: WorkbenchToolCall) => void;
   onContext?: (note: string) => void;
+  onRequestEvent?: (event:ChatRequestEvent)=>void;
   contextSummarizer?: { model: string; contextWindow?: number; summarize: WorkbenchSummarizer };
 }
 export type WorkbenchAnswer = (input: WorkbenchAnswerInput) => Promise<{ text: string; model: string; citations: WorkbenchCitation[]; knowledge?: 'used' | 'none' | 'off'; stopReason?: 'end' | 'length' | 'other' }>;
-export type WorkbenchSummarizer = (input: { model: string; prior: string; transcript: string; signal: AbortSignal; contextWindow?: number }) => Promise<string>;
+export type WorkbenchSummarizer = (input: { model: string; prior: string; transcript: string; signal: AbortSignal; contextWindow?: number; onRequestEvent?:(event:ChatRequestEvent)=>void }) => Promise<string>;
 
 async function compressOlder(model: string, prior: string, pending: WorkbenchMessage[], signal: AbortSignal, summarize?: WorkbenchSummarizer, contextWindow?: number): Promise<string> {
   if (!pending.length) return prior;
@@ -44,7 +48,7 @@ export class WorkbenchService {
     for (const conversation of store.list()) {
       let changed = false;
       for (const message of conversation.messages) if (message.status === 'running') {
-        message.status = 'error'; message.error = '上次生成因服务退出而中断，请重试。';
+        message.status = 'error'; message.error = '上次生成因服务退出而中断，请重试。'; message.errorCode='service_interrupted';
         for (const call of message.toolCalls ?? []) if (call.status === 'running') { call.status = 'error'; call.error = message.error; call.completedAt = new Date().toISOString(); }
         changed = true;
       }
@@ -123,6 +127,7 @@ export class WorkbenchService {
     };
     conversation.messages.push(reply); this.store.save(conversation);
     const abort = new AbortController();
+    const session=assistantSession(model,abort.signal);
     let opened = false;
     let acceptReady!: (value: WorkbenchConversation) => void;
     let rejectReady!: (error: unknown) => void;
@@ -136,11 +141,22 @@ export class WorkbenchService {
       if (!force && lastSave !== 0 && nowMs - lastSave < 80) return;
       lastSave = nowMs; this.store.save(conversation);
     };
+    const reportRequest=(event:ChatRequestEvent)=>{
+      if(abort.signal.aborted||reply.status!=='running'||(session.signal.aborted&&event.phase!=='failed'))return;
+      reply.request=event;
+      if(event.phase==='complete'||event.phase==='failed'){
+        reply.requestHistory??=[];reply.requestHistory.push(event);
+        if(reply.requestHistory.length>48)reply.requestHistory.shift();
+      }
+      saveSoon();
+    };
+    const summarizer=this.summarize?async(value:Parameters<WorkbenchSummarizer>[0])=>this.summarize!({...value,onRequestEvent:reportRequest}):undefined;
     const promise = (async () => {
       try {
         const userTurn = [...conversation.messages].reverse().find(message => message.role === 'user');
         try {
-          await this.prepareTurnAttachments(conversation, attachmentFlags, abort.signal);
+          await this.prepareTurnAttachments(conversation, attachmentFlags, session.signal);
+          session.signal.throwIfAborted();
           if (abort.signal.aborted) throw Object.assign(new Error('已停止生成'), { name: 'AbortError' });
           const moved = input.retry ? [] : advanceStoredReads(conversation.messages, userTurn?.text ?? '');
           if (moved.length && userTurn) userTurn.attachmentSupplement = moved.map(item => item.excerpt).join('\n\n');
@@ -157,7 +173,9 @@ export class WorkbenchService {
           }
           throw error;
         }
-        const contextOptions = { contextWindow, summaryUntil: conversation.summaryUntil, systemPrompt: assistant.systemPrompt, additionalTokens: conversation.knowledge ? knowledgeReserve(contextWindow, assistant.context.threshold) : 0 };
+        const priorCitations=conversationCitations(conversation.messages);
+        const outputReserve=requestOutputTokens(model,contextWindow);
+        const contextOptions = { contextWindow,outputReserve, summaryUntil: conversation.summaryUntil, systemPrompt: assistant.systemPrompt, additionalTokens: conversation.knowledge ? knowledgeReserve(contextWindow, assistant.context.threshold,outputReserve) : 0 };
         let { recent, older } = planContext(conversation.messages, assistant.context, { ...contextOptions, summary: conversation.summary });
         const olderTurns = older.filter(message => message.role === 'user').length;
         reply.contextMessages = recent.length;
@@ -175,7 +193,7 @@ export class WorkbenchService {
             saveSoon(true);
             const summaryModel = assistant.context.summaryModel;
             const summarizerModel = summaryModel && this.models().some(item => item.id === summaryModel) ? summaryModel : model;
-            const compressed = await compressOlder(summarizerModel, prior, pending, abort.signal, this.summarize, this.models().find(item => item.id === summarizerModel)?.contextWindow);
+            const compressed = await compressOlder(summarizerModel, prior, pending.map(message=>referenceProjection(message,priorCitations)), session.signal, summarizer, this.models().find(item => item.id === summarizerModel)?.contextWindow);
             if (abort.signal.aborted) return;
             summary = compressed;
             conversation.summary = summary;
@@ -192,7 +210,7 @@ export class WorkbenchService {
           if (!extra.length) break;
           const summaryModel = assistant.context.summaryModel;
           const summarizerModel = summaryModel && this.models().some(item => item.id === summaryModel) ? summaryModel : model;
-          summary = await compressOlder(summarizerModel, summary ?? '', extra, abort.signal, this.summarize, this.models().find(item => item.id === summarizerModel)?.contextWindow);
+          summary = await compressOlder(summarizerModel, summary ?? '', extra.map(message=>referenceProjection(message,priorCitations)), session.signal, summarizer, this.models().find(item => item.id === summarizerModel)?.contextWindow);
           older = planned.older;
           conversation.summary = summary;
           conversation.summaryUntil = older.at(-1)?.id;
@@ -205,32 +223,34 @@ export class WorkbenchService {
         const result = await this.answer({
           contextWindow, contextThreshold: assistant.context.threshold,
           ...(this.summarize ? { contextSummarizer: { model: compressionModel, contextWindow: this.models().find(item => item.id === compressionModel)?.contextWindow, summarize: this.summarize } } : {}),
-          messages: this.modelMessages(conversation.id, recent), ...(summary ? { summary } : {}), model, knowledge: conversation.knowledge,
+          messages: this.modelMessages(conversation.id, recent), ...(summary ? { summary } : {}), ...(conversation.knowledge?{priorCitations}:{}), model, knowledge: conversation.knowledge,
           ...(assistant.systemPrompt.trim() ? { systemPrompt: assistant.systemPrompt } : {}),
           ...(assistant.temperature !== null ? { temperature: assistant.temperature } : {}),
-          signal: abort.signal,
-          progress: stage => { if (abort.signal.aborted) return; reply.stage = stage; saveSoon(true); },
+          signal: session.signal,
+          progress: stage => { if (session.signal.aborted) return; reply.stage = stage; saveSoon(true); },
           onDelta: delta => {
-            if (abort.signal.aborted || !delta) return;
+            if (session.signal.aborted || !delta) return;
             const first = reply.text.length === 0;
             reply.text += delta;
             saveSoon(first);
           },
           onReplace: (text, nextModel) => {
-            if (abort.signal.aborted) return;
+            if (session.signal.aborted) return;
             reply.text = text; reply.model = nextModel;
             reply.modelName = this.models().find(item => item.id === nextModel)?.name || nextModel;
             saveSoon(true);
           },
           onTool: call => {
-            if (abort.signal.aborted) return;
+            if (session.signal.aborted) return;
             reply.toolCalls ??= [];
             const index = reply.toolCalls.findIndex(item => item.id === call.id);
             if (index < 0) reply.toolCalls.push({ ...call }); else reply.toolCalls[index] = { ...call };
             saveSoon(true);
           },
-          onContext: note => { if (!abort.signal.aborted) { reply.contextNote = note; saveSoon(true); } },
+          onContext: note => { if (!session.signal.aborted) { reply.contextNote = note; saveSoon(true); } },
+          onRequestEvent:reportRequest,
         });
+        session.signal.throwIfAborted();
         if (!abort.signal.aborted) {
           if (!result.text.trim()) throw new Error('模型未返回可用回答，已有工具结果和完整会话已保留，请重试。');
           reply.text = result.text;
@@ -243,6 +263,7 @@ export class WorkbenchService {
         }
       } catch (error) { if (opened && !abort.signal.aborted) { const failure = contextFailure(error); reply.status = 'error'; reply.error = failure.message; reply.errorCode = failure.code; } }
       finally {
+        session.close();
         if (opened) {
           if (abort.signal.aborted) reply.status = 'cancelled';
           for (const call of reply.toolCalls ?? []) if (call.status === 'running') { call.status = abort.signal.aborted ? 'cancelled' : 'error'; call.error = abort.signal.aborted ? '已停止' : reply.error || '工具执行中断'; call.completedAt = new Date().toISOString(); }
