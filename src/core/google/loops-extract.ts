@@ -31,6 +31,7 @@ import { isCalendarSystemMail, isNoiseSender, sha8 } from './google-render.ts';
 import { hasBulkCategory } from './gmail-categories.ts';
 import { isExcludedByLabels, loadLoopsExclusionPolicy, NO_EXCLUSION, pageLabelIds, type LoopsExclusionPolicy } from './loops-exclusion.ts';
 import { bareAddress, type GmailMessageMeta, type GmailThreadData } from './types.ts';
+import { resolveCounterparty, type ResolvedCounterparty } from './counterparty.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { deriveTrust } from '../trust/taint.ts';
 import { applyGateDecision, derivedGateConfig, derivedGateInput } from '../trust/derived-gate.ts';
@@ -487,16 +488,15 @@ export async function runLoopsExtract(
         ` (${typeof code === 'string' ? code : err instanceof Error ? err.name : 'error'}): ${(err instanceof Error ? err.message : String(err)).slice(0, 200)}`);
     }
 
-    // Counterparty slug: high-confidence resolutions only. The facts layer's
-    // slugify holding fallback is fine for facts, but a phantom slug on the
-    // loop row would group `gbrain waiting` under a person that doesn't
-    // exist and miss every entity-card lookup.
-    let counterpartySlug: string | null = null;
+    // Counterparty page: high-confidence resolutions only, own source first
+    // and then across sources by identity (#5504; google/counterparty.ts).
+    // The facts layer's slugify holding fallback is fine for facts, but a
+    // phantom slug on the loop row would group `gbrain waiting` under a
+    // person that doesn't exist and miss every entity-card lookup.
+    let counterparty: ResolvedCounterparty | null = null;
     if (counterpartyRef) {
       try {
-        const { resolveEntitySlugWithSource } = await import('../entities/resolve.ts');
-        const resolved = await resolveEntitySlugWithSource(engine, payload.sourceId, counterpartyRef);
-        if (resolved && resolved.source !== 'fallback_slugify') counterpartySlug = resolved.slug;
+        counterparty = await resolveCounterparty(engine, payload.sourceId, { name: c.counterparty_name, email: c.counterparty_email });
       } catch {
         /* resolution is best-effort */
       }
@@ -508,7 +508,8 @@ export async function runLoopsExtract(
       sourceId: payload.sourceId,
       dedupKey,
       loopType,
-      counterpartySlug,
+      counterpartySlug: counterparty?.slug ?? null,
+      counterpartySourceId: counterparty?.sourceId ?? null,
       counterpartyEmail: c.counterparty_email || null,
       summary: c.text,
       evidence: [{ page_slug: payload.slug, ...(c.quote ? { quote: c.quote } : {}) }],
@@ -523,18 +524,20 @@ export async function runLoopsExtract(
     loopIds.push(id);
 
     // Projection 3 — typed edge thread-page → person-page, so the relational
-    // arm ("who owes me", "who am I waiting on") can traverse it.
-    if (counterpartySlug) {
+    // arm ("who owes me", "who am I waiting on") can traverse it. The edge
+    // points at the page's own source; the fact above stays in the connector
+    // source (#5504).
+    if (counterparty) {
       try {
         await engine.addLink( // gbrain-allow-direct-insert: loops-extract writes its own provenance-tagged edges (link_source google-loops); auto-link reconciliation never manages these
           payload.slug,
-          counterpartySlug,
+          counterparty.slug,
           (c.quote || c.text).slice(0, 200),
           c.direction === 'owed_by_me' ? 'owes_to' : 'awaiting_reply_from',
           'google-loops',
           undefined,
           undefined,
-          { fromSourceId: payload.sourceId, toSourceId: payload.sourceId },
+          { fromSourceId: payload.sourceId, toSourceId: counterparty.sourceId },
         );
       } catch {
         /* edge is best-effort */

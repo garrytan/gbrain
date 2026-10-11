@@ -42,6 +42,7 @@ import {
   type LoopEvidence,
   type SuppressionSet,
 } from '../loops/loops-store.ts';
+import { resolveCounterparty, type ResolvedCounterparty } from './counterparty.ts';
 import { isCalendarSystemMail, isNoiseSender } from './google-render.ts';
 import { hasBulkCategory } from './gmail-categories.ts';
 import { isExcludedByLabels, NO_EXCLUSION, pageLabelIds, type LoopsExclusionPolicy } from './loops-exclusion.ts';
@@ -281,7 +282,8 @@ export function __clearSuppressionCacheForTests(engine?: BrainEngine): void {
 /**
  * Apply the verdict: close thread loops that no longer hold, upsert the ones
  * that do (dedup key 'thread:<threadId>:<loop_type>' — reopen on conflict).
- * Counterparty slug resolution is alias-exact within the same source.
+ * Counterparty resolution: own source first, then identity-only across
+ * sources (google/counterparty.ts, #5504).
  */
 export async function applyThreadLoopVerdict(
   engine: BrainEngine,
@@ -354,13 +356,12 @@ async function upsertThreadLoop(
   spec: ThreadLoopSpec,
   pageSlug: string | null,
 ): Promise<void> {
-  let counterpartySlug: string | null = null;
+  // Own source first, then across sources by identity only (#5504); a
+  // slugify fallback would fabricate a person that doesn't exist, so an
+  // unresolved counterparty stays NULL.
+  let counterparty: ResolvedCounterparty | null = null;
   try {
-    const { resolveEntitySlugWithSource } = await import('../entities/resolve.ts');
-    const resolved = await resolveEntitySlugWithSource(engine, sourceId, spec.counterpartyEmail);
-    // Only alias-exact/high-confidence resolutions count — a slugify
-    // fallback would fabricate a person that doesn't exist.
-    if (resolved && resolved.source !== 'fallback_slugify') counterpartySlug = resolved.slug;
+    counterparty = await resolveCounterparty(engine, sourceId, { email: spec.counterpartyEmail });
   } catch {
     /* resolution is best-effort */
   }
@@ -368,7 +369,8 @@ async function upsertThreadLoop(
     sourceId,
     dedupKey: `thread:${threadId}:${spec.loopType}`,
     loopType: spec.loopType,
-    counterpartySlug,
+    counterpartySlug: counterparty?.slug ?? null,
+    counterpartySourceId: counterparty?.sourceId ?? null,
     counterpartyEmail: spec.counterpartyEmail,
     summary: spec.summary,
     evidence: spec.evidence.map((e) => ({ ...e, ...(pageSlug ? { page_slug: pageSlug } : {}) })),

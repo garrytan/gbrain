@@ -1,6 +1,6 @@
 {
   "golden": {
-    "count": 226,
+    "count": 227,
     "gaps": [
       17,
       18,
@@ -14,6 +14,7 @@
       "FACT_RELINK_TABLE_SQL": "1fdde4b99d0077365274096f294be64a992961c7b4544af794224de238b03630",
       "FACT_UNLINKED_INDEX_SQL": "87dcf23c3fa570d93bfb214b6bbb024faa9ff9bff227aa78869a29580be03298",
       "ISSUANCE_CLOCK_SLACK_SECONDS": "8f36c80392df6f9b9c754826289b63969d9d41ca8955213291e4413d614dce35",
+      "OPEN_LOOPS_COUNTERPARTY_SOURCE_INDEX": "e9b472d9db37733e908ea40512ad3f9520d7a6729ce207b0d279d43d3beb5b2f",
       "PAGES_RECONCILE_NAME_INDEXES": "8805e35341b22324b932b1cc05030cc8f2bfc95532bf810ec35330783f29c59a",
       "PERSISTENCE_COMMITTED_WATERMARK_INDEX": "f472fa0acb542c1caebaaa3bc69fb2da1647e5e201239429fc02ccef0d669533",
       "PERSISTENCE_COMPACTABLE_INDEX": "25ee657878efb41ba9ea3a7624464ddcf66407d861659456c230366e57f230a0",
@@ -41,7 +42,7 @@
       "sqlQueryForEngine": "71fb1ccec1b22cdc1662876dbd8c17ed81e9ab83485c6965cdf5caa4fc4a4ab5",
       "verifyProjectionStatistics": "0d231b04ecfbc5a4109d6fca9567bf4e8c9e9db6c3fbbb35212e026579ed6f67"
     },
-    "latest": 231,
+    "latest": 232,
     "records": [
       {
         "handler": {
@@ -3455,6 +3456,29 @@
         "transaction": "absent",
         "verify": "absent",
         "version": 231
+      },
+      {
+        "handler": {
+          "form": "arrow",
+          "helpers": [
+            "OPEN_LOOPS_COUNTERPARTY_SOURCE_INDEX",
+            "buildIndexOnline",
+            "dropInvalidConcurrentIndex",
+            "migrationNotice",
+            "quietMigrationNotices"
+          ],
+          "sha256": "3cc85accec244596bd36b032d658121ae3c3b8fc48b3e8d52d918813433de225"
+        },
+        "idempotent": true,
+        "name": "open_loops_counterparty_source",
+        "sql": {
+          "length": 76,
+          "sha256": "1976b6a28a5078fa1879722e27fdd7778d9524810212c1e4953a6b9cf0b78d70"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 232
       }
     ],
     "versions": [
@@ -3683,7 +3707,8 @@
       228,
       229,
       230,
-      231
+      231,
+      232
     ]
   },
   "normalizer": "migrations-record-v1"

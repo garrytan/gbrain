@@ -79,6 +79,19 @@ decisions. One extractor, three projections per item:
 - a typed edge thread-page → person-page (`owes_to` / `awaiting_reply_from`)
   — so relational search can traverse it
 
+The person page a loop points at may live in another source than the mail:
+on a federated brain the Gmail source holds the threads while
+`people/<slug>` lives in `default`. Both detectors resolve the counterparty
+in the mail's own source first and then across sources by identity only:
+the exact email address as an alias of one page in one other source, or an
+`entity_identities` group whose canonical member sits elsewhere. A display
+name alone never crosses a source and a tie stays unresolved, so a loop is
+either attached to a real page or carries no counterparty page at all. The
+loop row records which source that page is in (`counterparty_source_id`),
+the typed edge points there, and the entity card, `gbrain waiting` and
+`open_loops` read the loop from that page, never from a namesake in another
+source. The commitment fact itself stays in the mail's source.
+
 Guardrails: injection-hardened input (the model sees the NEWEST 12k of the
 thread, so the latest reply is always visible to the judge), ALL-or-nothing
 parse barrier (a malformed model response writes nothing), only the last 30
