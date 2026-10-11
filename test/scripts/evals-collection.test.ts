@@ -21,6 +21,10 @@ const REPO_ROOT = resolve(import.meta.dir, "..", "..");
 const KEYLESS_ALLOWLIST = new Set([
   // pure-function scoring/CI-parsing helpers; imports no gateway (verified)
   "evals/functional-area-resolver/harness-runner.test.ts",
+  // pure dataset/metrics checks and a fake Ollama loopback; no external calls or API keys
+  "evals/embeddinggemma-follow-up/dataset.test.ts",
+  "evals/embeddinggemma-follow-up/metrics.test.ts",
+  "evals/embeddinggemma-follow-up/run.test.ts",
 ]);
 
 describe("evals/ collection into the CI matrix", () => {
