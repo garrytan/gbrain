@@ -31,10 +31,20 @@ identifiers and attribution are available in the pre-removal Git revision
 - **Backups (#5312).** The archive write → read → cluster-extract round trip runs natively on the `windows-latest` row; the backup guide tells a hand copier to copy the tree, not just the files. The PGLite `dumpDataDir` ENOENT on Windows stays open.
 - **No console windows from detached processes (#4992).** `src/core/spawn.ts` launches subprocesses with `windowsHide: true` by default (an explicit `false` is kept; only `openBrowser` uses it), and the minions supervisor, worker, child runner, readiness probe, isolation, registry and shell handler, the Stop-hook push, `cli/main.ts`, the hook heartbeat, the backup check, `cli-force-exit`, `cli-preflight`, the autopilot lock and commands and `bounded-child-exec` go through it now. `scripts/check-windows-hide.ts` (in `verify`) is a ratchet: a new direct launch fails unless its file is in `NOT_YET_MIGRATED` (89 files today), and a listed file that moves onto the seam must drop its entry. `test/windows-hidden-console.test.ts` proves it natively on the `windows-latest` row (the unhidden control launch must show a window first, or the run fails as `windows_console_gate_unsupported`). Contributed by @rokas-tarasevicius (PR #6105). The remaining sites keep their windows until they migrate.
 
+### Polish
+
+- **`lint` stops inventing `created:` (#5433).** `missing-created` fires only when none of `created`, `event_date`, `date`, `published`, `captured_at`, `ingested_at` parses, is never fixable, and `--fix` (the cycle's lint phase included) no longer copies ingest time into `created`; pages that got one that way keep it.
+- **`add_tag` / `remove_tag` defer embedding (#5251).** Tags are not chunk text, so the prepared import reuses stored vectors; the ~1.5 s republication cost in the issue is not addressed and the issue stays open.
+- **`bootstrap verify` always removes its probe pages (#6001)**, early exits included; the guide says `bootstrap_last_verify` is silent when no snapshot exists.
+- **agent-voice defaults to `sonic-3.6` (#5905)**; `CARTESIA_MODEL_ID` overrides.
+- **Admin Dashboard pauses its 30 s poll while the tab is hidden (#5061)** and refreshes once on return (`admin/src/lib/visibility-poll.ts`; `admin/dist` and `src/admin-embedded.ts` rebuilt).
+- **Superseded push records (#5799 residual).** `isSupersededPushStatus` / `livePushStatuses` in `workspace-push.ts` drop a `writer_coordinator_required` record and any record whose root is a managed worktree now; the `commands/hook.ts` call site is a stack hunk behind wave 13 (`test.todo` marks the hook-level test).
+
 ### Things to watch
 
 - `test/db-lock-fencing.test.ts` and `test/cycle-lock-steal.serial.test.ts` simulate a steal by rotating the acquisition token (what a real successor does) instead of only moving `acquired_at`; a rewrite of `acquired_at` under a live holder is now, deliberately, not a steal.
 - `test/junk-entity-guards.test.ts`'s #6158 pin changed from "open policy question" (`operator_judgement`) to a concrete remedy; `test/google-source-reconcile.test.ts`'s calendar reconcile pin flipped from "events outside the window stay" to "they reconcile on `--full`".
+- `test/lint-3958.test.ts`, `test/managed-lint.test.ts`, `test/managed-phase-matrix.test.ts` and `test/cycle-lint-durability.test.ts` relied on the `created:` promotion as their one fixable issue and were updated deliberately (#5433).
 - `test/migrations-golden.test.ts` carries 232 as a provisional gap until the integrator renumbers the migration at merge-slot time.
 
 ### For contributors
