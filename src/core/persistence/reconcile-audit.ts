@@ -5,6 +5,7 @@ import { OperationError, opError, type OperationContext } from '../ops/contract.
 import { isValidSourceId } from '../source-id.ts';
 import { validateSlug } from '../utils.ts';
 import { resolveSourceLocalFilePath } from '../markdown.ts';
+import { slugifyPath } from '../sync.ts';
 import { recordedPathFromFileUri, scannerSlugRootMode } from '../write-through.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
 import { submissionAuthority } from './authority.ts';
@@ -62,7 +63,7 @@ export async function auditCanonicalSource(engine: BrainEngine, sourceId: string
     ORDER BY slug LIMIT $3`, [sourceId, options.after ?? '', limit + 1]);
   const report: ReconcileAuditReport = { source_id: sourceId, inspected: 0, drifted: 0, errors: 0, database_only: 0, findings: [],
     next_after: rows.length > limit ? rows[limit - 1].slug : null, complete: rows.length <= limit, snapshot_only: true,
-    ...(options.classify ? { classified: { structurally_additive: 0, additive_with_suggestions: 0, review_required: 0, formatting_only: 0, error: 0 } } : {}) };
+    ...(options.classify ? { classified: { structurally_additive: 0, additive_with_suggestions: 0, review_required: 0, formatting_only: 0, slug_rule_mismatch: 0, error: 0 } } : {}) };
   const mode = await scannerSlugRootMode(engine, sourceId, root);
   for (const candidate of rows.slice(0, limit)) {
     report.inspected++;
@@ -124,7 +125,14 @@ async function classifyFinding(engine: BrainEngine, sourceId: string, slug: stri
       : `Preview gbrain sources reconcile ${sourceId} ${slug} --brain <brain> --preview --auto-additive --out <new file>${verdict === 'additive_with_suggestions' ? ', read the inserted lines, then add --accept-suggested' : ''}; apply it with a new request ID.`;
     return { classification: verdict, suggestion, drift_paths: classification.paths.map(({ path, class: kind, reason }) => ({ path, class: kind, reason })),
       ...(Number.isFinite(updated) ? { file_modified_after_database: statSync(state.path).mtimeMs > updated } : {}) };
-  } catch {
+  } catch (error) {
+    // #5966 (W14 P1.7): a legacy render of a slug the path cannot derive, with no slug stamp; the frontmatter repair is the fix.
+    const slugRule = error instanceof OperationError && (error.detail === 'slug_rule_mismatch' || (error.code === 'invalid_params' && slugifyPath(slug + '.md') !== slug));
+    if (slugRule) {
+      counts.slug_rule_mismatch++;
+      return { classification: 'slug_rule_mismatch',
+        suggestion: `The canonical file carries no slug stamp, so its path derives ${slugifyPath(slug + '.md')} instead of ${slug}. Preview gbrain repair frontmatter --source ${sourceId} (a safe repair stamps slug: ${slug}), apply it, then audit again.` };
+    }
     counts.error++;
     return { classification: 'error' };
   }

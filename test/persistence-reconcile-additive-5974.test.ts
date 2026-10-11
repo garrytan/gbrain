@@ -139,7 +139,7 @@ test('the reporter\'s additive page reconciles under --auto-additive; a replaced
       .rejects.toMatchObject({ writeError: 'source_changed' });
 
     const audit = await auditCanonicalSource(engine, f.id, { classify: true });
-    expect(audit.classified).toEqual({ structurally_additive: 0, additive_with_suggestions: 1, review_required: 1, formatting_only: 0, error: 0 });
+    expect(audit.classified).toEqual({ structurally_additive: 0, additive_with_suggestions: 1, review_required: 1, formatting_only: 0, slug_rule_mismatch: 0, error: 0 });
     expect(JSON.stringify(audit)).not.toContain('carol-example');
     expect(audit.findings.find(x => x.slug === 'people/replaced-example')).toMatchObject({ classification: 'review_required',
       drift_paths: [{ path: '/compiled_truth', class: 'review', reason: 'database_text_changed_or_removed' }] });

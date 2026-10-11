@@ -5475,6 +5475,13 @@
       },
       {
         "kind": "function",
+        "name": "slugStampedFrontmatter",
+        "signature": [
+          "(slug: string, frontmatter: Record<string, unknown>) => Record<string, unknown>"
+        ]
+      },
+      {
+        "kind": "function",
         "name": "sourceGitScope",
         "signature": [
           "(localPath: string) => string[] | null"

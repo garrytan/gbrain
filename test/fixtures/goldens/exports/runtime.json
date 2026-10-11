@@ -703,6 +703,7 @@
         "resolveSourceLocalFilePath",
         "serializeMarkdown",
         "serializePageToMarkdown",
+        "slugStampedFrontmatter",
         "sourceGitScope",
         "splitBody",
         "yamlAliasesWithinLimit",
