@@ -17,6 +17,7 @@ import { join } from 'node:path';
 import { execFileBounded } from '../bounded-child-exec.ts';
 import { classifyGitCheckout } from '../git-checkout.ts';
 import { durableSsrfFlags, GIT_ENV, GIT_ENV_AUTH, GIT_SSRF_SUBCOMMAND_FLAGS } from '../git-remote.ts';
+import { gitChildEnv } from '../git-env.ts';
 import { ensureGbrainHome, resolveGbrainHome } from '../gbrain-home.ts';
 import { opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
@@ -59,7 +60,7 @@ export function parseGitDurabilityParams(params: Record<string, unknown>): GitDu
 
 async function git(root: string, args: string[], auth = false): Promise<{ code: number; stdout: string; stderr: string }> {
   const { error, stdout, stderr } = await execFileBounded('git', ['-C', root, ...(auth ? durableSsrfFlags() : []), ...args],
-    { timeout: GIT_TIMEOUT_MS, maxBuffer: 1024 * 1024, env: { ...process.env, ...GIT_ENV, ...(auth ? GIT_ENV_AUTH : {}), LC_ALL: 'C' } });
+    { timeout: GIT_TIMEOUT_MS, maxBuffer: 1024 * 1024, env: gitChildEnv({ ...GIT_ENV, ...(auth ? GIT_ENV_AUTH : {}), LC_ALL: 'C' }) });
   if (error && (error.killed || typeof error.code !== 'number')) throw opError('git_unavailable', 'Git did not finish within its bounded attempt.',
     `git ${args[0]} in ${root} did not finish within ${GIT_TIMEOUT_MS / 1000} seconds or could not start; nothing was changed. Check that git runs in that checkout on the brain host, then rerun.`);
   return { code: error ? error.code as number : 0, stdout, stderr };
