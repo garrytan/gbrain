@@ -16,7 +16,7 @@
 // when available. Empty file → INVALID_SHAPE. Unknown extension → falls
 // through to JSON.parse attempt.
 
-import { closeSync, fstatSync, openSync, readSync } from 'node:fs';
+import { closeSync, fstatSync, openSync, readFileSync, readSync } from 'node:fs';
 import { extname } from 'node:path';
 import { parseSchemaPackManifest, type SchemaPackManifest } from './manifest-v1.ts';
 
@@ -69,15 +69,19 @@ export function loadPackFromFile(path: string, opts: { maxBytes?: number } = {})
   let fd = -1;
   let content: string;
   try {
-    fd = openSync(path, 'r');
-    const size = fstatSync(fd).size;
-    if (size > maxBytes) {
-      throw new SchemaPackLoaderError(
-        'PACK_TOO_LARGE',
-        `pack file ${path} is ${formatPackBytes(size)}, above the ${formatPackBytes(maxBytes)} bound; it was not read. A pack this large is usually a quoted scalar (a link-type regex) whose backslashes an older release doubled on every mutation: open the file in an editor, restore the affected lines by hand, and re-run. Runbook: ${OVERSIZED_PACK_RUNBOOK}.`,
-        path,
-      );
+    try {
+      fd = openSync(path, 'r');
+    } catch (e) {
+      // A pack bundled into a compiled binary lives on Bun's virtual
+      // filesystem (`/$bunfs/...`), which serves readFileSync but has no
+      // descriptors; the bound is checked on the bytes read instead.
+      if (!path.startsWith('/$bunfs/')) throw e;
+      const bundled = readFileSync(path);
+      if (bundled.byteLength > maxBytes) throw tooLarge(path, bundled.byteLength, maxBytes);
+      return loadPackFromString(bundled.toString('utf-8'), path);
     }
+    const size = fstatSync(fd).size;
+    if (size > maxBytes) throw tooLarge(path, size, maxBytes);
     const buf = Buffer.allocUnsafe(size);
     let read = 0;
     while (read < size) {
@@ -93,6 +97,14 @@ export function loadPackFromFile(path: string, opts: { maxBytes?: number } = {})
     if (fd !== -1) try { closeSync(fd); } catch { /* already closed */ }
   }
   return loadPackFromString(content, path);
+}
+
+function tooLarge(path: string, size: number, maxBytes: number): SchemaPackLoaderError {
+  return new SchemaPackLoaderError(
+    'PACK_TOO_LARGE',
+    `pack file ${path} is ${formatPackBytes(size)}, above the ${formatPackBytes(maxBytes)} bound; it was not read. A pack this large is usually a quoted scalar (a link-type regex) whose backslashes an older release doubled on every mutation: open the file in an editor, restore the affected lines by hand, and re-run. Runbook: ${OVERSIZED_PACK_RUNBOOK}.`,
+    path,
+  );
 }
 
 /**

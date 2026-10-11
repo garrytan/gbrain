@@ -8,11 +8,18 @@ export function recreateRoot(root: string, opts: { keepStamp: boolean }): void {
   const stamp = readFileSync(join(root, PHYSICAL_ROOT_MARKER));
   const before = statSync(root, { bigint: true });
   rmSync(root, { recursive: true });
-  mkdirSync(join(root, '..', `decoy-${randomUUID().slice(0, 8)}`));
-  mkdirSync(root);
+  // ext4 and XFS hand a freed inode straight back to the next mkdir, so take
+  // decoys until the recreated root gets a different one (the tests compare
+  // the reservation's recorded inode with the live directory).
+  for (let attempt = 0; attempt < 64; attempt++) {
+    mkdirSync(join(root, '..', `decoy-${randomUUID().slice(0, 8)}`));
+    mkdirSync(root);
+    if (statSync(root, { bigint: true }).ino !== before.ino) break;
+    rmSync(root, { recursive: true });
+  }
   writeFileSync(join(root, 'note.md'), 'Canonical example');
   if (opts.keepStamp) writeFileSync(join(root, PHYSICAL_ROOT_MARKER), stamp, { mode: 0o600 });
   const after = statSync(root, { bigint: true });
-  if (after.ino === before.ino && after.birthtimeNs === before.birthtimeNs) throw new Error('fixture: the recreated directory kept its identity');
+  if (after.ino === before.ino) throw new Error('fixture: the recreated directory kept its inode after 64 decoys');
 }
 

@@ -30,12 +30,15 @@ function measure(mib: number): { gaps: number; delta_peak_mb: number; heap_retai
 }
 
 describe('findBacklinkGaps RSS slope', () => {
-  test('up to 384 MiB of non-target markdown the RSS delta stays under 150 MB, the heap keeps under 48 MB, and the delta does not follow the corpus', () => {
+  test('up to 384 MiB of non-target markdown the RSS delta stays under 256 MB, the heap keeps under 48 MB, and the delta does not follow the corpus', () => {
     const runs = SIZES_MIB.map(mib => ({ mib, ...measure(mib) }));
+    console.error(`[backlinks-rss] ${runs.map(r => `${r.mib} MiB: rss +${r.delta_peak_mb} MB, heap ${r.heap_retained_mb} MB`).join('; ')}`);
     for (const r of runs) {
       expect(r.gaps).toBe(r.mib);
       // Before the fix the RSS delta was ~3x the corpus (48 MiB → +193 MB, 384 MiB → +1470 MB) and the heap kept every body.
-      expect(r.delta_peak_mb).toBeLessThan(150);
+      // After: +88 MB at 384 MiB on a 4-core builder, +168 MB on a 16-vCPU CI VM (JSC sizes its nursery by the machine), so
+      // the absolute bound leaves room for that while staying 5x under the pre-fix number; the slope check below is the property.
+      expect(r.delta_peak_mb).toBeLessThan(256);
       expect(r.heap_retained_mb).toBeLessThan(48);
     }
     const largest = runs.at(-1)!;
