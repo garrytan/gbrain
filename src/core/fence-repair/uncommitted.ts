@@ -18,6 +18,7 @@ import type { BrainEngine } from '../engine.ts';
 import { shellQuote } from '../agent-output.ts';
 import type { FenceRepairReceipt } from './receipt.ts';
 import { fenceRepairCommitSubject } from './receipt.ts';
+import { gitChildEnv } from '../git-env.ts';
 
 type Exec = Pick<BrainEngine, 'executeRaw'>;
 
@@ -52,9 +53,9 @@ export async function recordUncommittedFenceRepair(engine: Exec, notice: Uncommi
 function committed(root: string, path: string): boolean {
   if (!existsSync(root)) return true;
   try {
-    const status = execFileSync('git', ['-C', root, 'status', '--porcelain', '--untracked-files=all', '--', path], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    const status = execFileSync('git', ['-C', root, 'status', '--porcelain', '--untracked-files=all', '--', path], { env: gitChildEnv(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
     if (status.trim()) return false;
-    execFileSync('git', ['-C', root, 'ls-files', '--error-unmatch', '--', path], { stdio: 'ignore' });
+    execFileSync('git', ['-C', root, 'ls-files', '--error-unmatch', '--', path], { env: gitChildEnv(), stdio: 'ignore' });
     return true;
   } catch {
     return false;

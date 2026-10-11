@@ -38,7 +38,10 @@
 //    jobs submit, doctor --remediate, dream) needs approval wording (ask,
 //    agree, approve, consent, confirm, permission) on its line or in the 8
 //    lines before it. This lane covers skills/migrations/** too: migration
-//    notes are agent-executed during upgrades.
+//    notes are agent-executed during upgrades. It is a lexical tripwire for
+//    documentation, not an enforcement point: the runtime spend-consent check
+//    is what stops unapproved paid work, and this lane only keeps skills from
+//    teaching an agent to skip it.
 //
 // The CLI-ref lane fails closed (W4.7): when the CLI surface cannot be
 // loaded the check FAILS instead of warning; pass --no-cli-refs to skip it
@@ -367,7 +370,7 @@ for (const root of generatedRoots.filter((r) => existsSync(r))) {
   }
 }
 
-// --- 5. paid consent (fail, W4.7; migrations included) ---
+// --- 5. paid consent (fail, W4.7; migrations included): a documentation tripwire, not enforcement ---
 const PAID_COMMAND_RE = /(?:^|[|&;(]|\$)\s*(?:(?:nohup|exec|time)\s+|[A-Z_][A-Z0-9_]*=\S*\s+)*gbrain\s+(embed|reindex|reindex-code|enrich|extract-conversation-facts|book-mirror|dream|jobs\s+submit|doctor)(?![\w-])([^\n`]*)/;
 const PREAPPROVAL_RE = /(?:^|\s)--(?:yes|max-usd|max-cost|max-cost-usd)(?:[=\s]|$)/;
 const APPROVAL_WORDING_RE = /\b(?:ask|asks|asked|agree|agrees|agreed|approv\w*|consent\w*|confirm\w*|permission)\b/i;
@@ -387,7 +390,7 @@ for (const file of files) {
       if (m[1] === 'dream' && !/--phase\s+(?:synthesize|patterns|chronicle)\b/.test(m[2]) && /--phase\b/.test(m[2])) continue;
       const context = lines.slice(Math.max(0, i - 8), i + 1).join('\n');
       if (APPROVAL_WORDING_RE.test(context)) continue;
-      failures.push(`[paid-consent] ${rel}:${i + 1} — \`${snippet}\` pre-approves paid work with no approval step near it, so an agent following this would spend without asking. Fix: say to ask the user first (for example "only after the user agrees:" on the line above), and show the free preview (--dry-run) before it`);
+      failures.push(`[paid-consent] ${rel}:${i + 1} — \`${snippet}\` pre-approves paid work with no approval step near it, so an agent following this doc would be taught to spend without asking (the runtime consent check still applies; this lint only checks the wording). Fix: say to ask the user first (for example "only after the user agrees:" on the line above), and show the free preview (--dry-run) before it`);
     }
   });
 }

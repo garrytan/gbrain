@@ -32,18 +32,33 @@ export function hardenedGitEnvironment(): NodeJS.ProcessEnv {
 
 export type HardenedGitResult = { ok: true; stdout: Buffer } | { ok: false; reason: 'exit' | 'timeout' | 'too_large' | 'unavailable'; status?: number };
 
-const CONVERTING_OPTIONS = new Set(['--filters', '--textconv', '--ext-diff', '-p', '--patch', '-u', '--stat', '--word-diff']);
-const ALLOWED_SUBCOMMANDS = new Set(['rev-parse', 'ls-files', 'ls-tree', 'cat-file', 'hash-object', 'check-attr', 'diff-index']);
+/**
+ * The exact options each allowed plumbing subcommand may take; anything not
+ * listed here refuses.
+ */
+const ALLOWED_OPTIONS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  ['rev-parse', new Set(['--show-toplevel', '--absolute-git-dir', '--verify', '--quiet', '--show-object-format'])],
+  ['ls-files', new Set(['-s', '--stage', '--eol', '-z', '--cached', '--others', '--exclude-standard'])],
+  ['ls-tree', new Set(['-r', '-l', '-z', '--full-tree'])],
+  ['cat-file', new Set<string>()],
+  ['hash-object', new Set(['--no-filters'])],
+  ['check-attr', new Set(['-z'])],
+  ['diff-index', new Set(['--cached', '--quiet'])],
+]);
 
 /**
  * Refuses (throws) any Git invocation that could run a repository-configured
- * clean/process filter or textconv: only the allow-listed plumbing, with
- * `hash-object` only under `--no-filters` and `diff-index` only `--cached`.
+ * clean/process filter or textconv: only the allow-listed plumbing with its
+ * exact options before `--`/`--end-of-options`, `hash-object` only under
+ * `--no-filters` and `diff-index` only `--cached`.
  */
 export function assertHardenedGitArgs(args: readonly string[]): void {
   const sub = args[0] ?? '';
-  const ok = ALLOWED_SUBCOMMANDS.has(sub) && !args.some(arg => CONVERTING_OPTIONS.has(arg) || arg.startsWith('--textconv') || arg.startsWith('--filters'))
-    && (sub !== 'hash-object' || args.includes('--no-filters')) && (sub !== 'diff-index' || args.includes('--cached'));
+  const allowed = ALLOWED_OPTIONS.get(sub);
+  const end = args.findIndex(arg => arg === '--' || arg === '--end-of-options');
+  const options = args.slice(1, end < 0 ? undefined : end).filter(arg => arg.startsWith('-'));
+  const ok = allowed !== undefined && options.every(arg => allowed.has(arg))
+    && (sub !== 'hash-object' || options.includes('--no-filters')) && (sub !== 'diff-index' || options.includes('--cached'));
   if (!ok) throw new Error(`hardened git refuses \`git ${args.slice(0, 2).join(' ')}\`: only filter-free plumbing may run in an untrusted checkout (see src/core/hardened-git.ts)`);
 }
 
@@ -74,11 +89,12 @@ const PATH_LIMITS = { timeoutMs: 10_000, maxBytes: 1024 * 1024 };
  * any Git failure.
  */
 export function hardenedPathDirty(root: string, rel: string): boolean | null {
-  const indexed = hardenedGitSync(root, ['ls-files', '-s', '--eol', '-z', '--', rel], PATH_LIMITS);
+  const pathspec = `:(literal)${rel}`;
+  const indexed = hardenedGitSync(root, ['ls-files', '-s', '--eol', '-z', '--', pathspec], PATH_LIMITS);
   if (!indexed.ok) return null;
   const entry = indexed.stdout.toString('utf8').split('\0')[0];
   if (!entry) {
-    const untracked = hardenedGitSync(root, ['ls-files', '-z', '--others', '--exclude-standard', '--', rel], PATH_LIMITS);
+    const untracked = hardenedGitSync(root, ['ls-files', '-z', '--others', '--exclude-standard', '--', pathspec], PATH_LIMITS);
     return untracked.ok ? untracked.stdout.length > 0 : null;
   }
   const [meta = '', eolInfo = ''] = entry.split('\t');
@@ -89,7 +105,7 @@ export function hardenedPathDirty(root: string, rel: string): boolean | null {
   if (mode !== '100644' && mode !== '100755') return null;
   const head = hardenedGitSync(root, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'], PATH_LIMITS);
   if (!head.ok) return head.reason === 'exit' && head.status === 1 ? true : null;
-  const staged = hardenedGitSync(root, ['diff-index', '--cached', '--quiet', 'HEAD', '--', rel], PATH_LIMITS);
+  const staged = hardenedGitSync(root, ['diff-index', '--cached', '--quiet', 'HEAD', '--', pathspec], PATH_LIMITS);
   if (!staged.ok) return staged.reason === 'exit' && staged.status === 1 ? true : null;
   const hashed = hardenedGitSync(root, ['hash-object', '--no-filters', '--', rel], PATH_LIMITS);
   if (!hashed.ok) return null;
