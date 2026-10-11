@@ -1,4 +1,4 @@
-import { ownerImportTrust } from '../trust/channel.ts';
+import { ownerImportTrust, ownerSourceGateInput } from '../trust/channel.ts';
 import { basename } from 'node:path';
 import { readFileSync } from 'node:fs';
 import type { BrainEngine } from '../engine.ts';
@@ -102,6 +102,7 @@ export async function prepareReconcileResult(engine: BrainEngine, state: Reconci
   const imported = await importFromContent(engine, state.pins.slug, content, {
     sourceId: state.pins.source_id, sourcePath: state.snapshot.page.source_path ?? state.originSourcePath ?? undefined,
     filename: basename(state.path).replace(/\.mdx?$/i, ''), noEmbed: true, remote: false, preserveGateMarkers: true, allowEmptyOverwrite: true,
+    overrideTier: (await ownerSourceGateInput(engine, state.pins.source_id, result.frontmatter)).tier,
     prepareFrontmatter: page => stabilizeSafetyAssessments(page.frontmatter, state.snapshot.page.frontmatter, state.pins.assessment_at),
     prepare: async prepared => { ready = prepared; return prepared.result; },
   });

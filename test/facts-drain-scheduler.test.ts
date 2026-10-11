@@ -30,10 +30,10 @@ const settle = () => new Promise<void>(r => setTimeout(r, 0));
 const fakeResult = (owner: FactsDrainRunResult['owner']) => ({ owner, outcome: 'drained' } as FactsDrainRunResult);
 
 function intervalStub() {
-  const registered: Array<{ fn: () => void; ms: number; handle: { unrefCalled: boolean; unref(): void } }> = [];
+  const registered: Array<{ fn: () => unknown; ms: number; handle: { unrefCalled: boolean; unref(): void } }> = [];
   return {
     registered,
-    setInterval: (fn: () => void, ms: number) => {
+    setInterval: (fn: () => unknown, ms: number) => {
       const handle = { unrefCalled: false, unref() { this.unrefCalled = true; } };
       registered.push({ fn, ms, handle });
       return handle;
@@ -131,13 +131,12 @@ describe('stdio serve wiring', () => {
     _resetStdoutRedirectForTests();
     expect(h.timers.registered.map(r => r.ms)).toEqual([FACTS_DRAIN_TICK_MS]);
     const tick = h.timers.registered[0].fn;
-    const wait = () => new Promise(r => setTimeout(r, 100));
-    tick(); await wait();
+    await tick();
     expect(calls).toBe(0);
-    tick(); await wait();
+    await tick();
     expect(calls).toBe(1);
     h.stdin.emit('data', Buffer.from('{}'));
-    tick(); await wait();
+    await tick();
     expect(calls).toBe(1);
     h.stdin.emit('end');
     expect(await h.exited).toBe(0);

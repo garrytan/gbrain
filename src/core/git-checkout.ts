@@ -10,9 +10,12 @@
  * not inherit those failures, so this reads only the filesystem:
  *
  * - `not_git`: no `.git` entry (directory or gitdir file) at the directory or
- *   any ancestor, and no `GIT_DIR` in the environment.
- * - `git`: a `.git` entry exists at or above the directory (or `GIT_DIR` is
- *   set); whether Git can use it is the Git probe's question.
+ *   any ancestor below the first world-writable ancestor owned by someone else
+ *   (POSIX). Git refuses a repository found there ("dubious ownership").
+ *   The inherited Git environment is not trusted: every Git spawn sanitizes it
+ *   (`git-env.ts`), so it can't make a plain directory a checkout.
+ * - `git`: a `.git` entry exists at or above the directory, within that
+ *   boundary; whether Git can use it is the Git probe's question.
  * - `unknown`: the directory itself is missing or not a directory, or a
  *   lookup failed for any reason other than absence (EACCES, ELOOP, I/O).
  *   Callers treat it like a failed Git probe.
@@ -21,16 +24,18 @@
  * boundary); this reports `git` there and the Git probe then fails, which
  * callers treat as unavailable: fail closed, never "not a checkout".
  */
-import { lstatSync, statSync } from 'node:fs';
+import { lstatSync, statSync, type Stats } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 
 export type GitCheckoutClass = 'git' | 'not_git' | 'unknown';
 
-export function classifyGitCheckout(dir: string, env: NodeJS.ProcessEnv = process.env): GitCheckoutClass {
-  if (env.GIT_DIR) return 'git';
+export function classifyGitCheckout(dir: string, stat: (path: string) => Pick<Stats, 'uid' | 'mode' | 'isDirectory'> = statSync): GitCheckoutClass {
   let current = resolve(dir);
+  let owner: number;
   try {
-    if (!statSync(current).isDirectory()) return 'unknown';
+    const start = stat(current);
+    if (!start.isDirectory()) return 'unknown';
+    owner = start.uid;
   } catch {
     return 'unknown';
   }
@@ -45,5 +50,12 @@ export function classifyGitCheckout(dir: string, env: NodeJS.ProcessEnv = proces
     const parent = dirname(current);
     if (parent === current) return 'not_git';
     current = parent;
+    if (process.platform === 'win32') continue;
+    try {
+      const ancestor = stat(current);
+      if (ancestor.uid !== owner && (ancestor.mode & 0o002) !== 0) return 'not_git';
+    } catch {
+      return 'unknown';
+    }
   }
 }

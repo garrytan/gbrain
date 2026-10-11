@@ -37,7 +37,7 @@ import { join, resolve } from 'node:path';
 import {
   COLLISION_DOCS, MIGRATION_FILE_RE, MIGRATIONS_DIR, RESTAMP_DOCS, RestampError, STAMPS,
   branchEntrySections, fail, findLeftoverRefs, isGenerated, migrationPayloadKey, nextPatchVersion, parseAddedLines,
-  planRenumber, rebuildChangelog, renumberMigrationText, resolveVersionOnlyHunks, restampTodoLines, versionOfHeader,
+  isVersionToken, planRenumber, rebuildChangelog, renumberMigrationText, resolveVersionOnlyHunks, restampTodoLines, versionOfHeader,
   type BranchMigration, type ChangelogSection, type LeftoverRef, type Renumber,
 } from './lib/restamp.ts';
 import { offlineEnv } from './regen-all.ts';
@@ -344,7 +344,7 @@ function restampTree(ctx: Ctx, state: State, opts: { acceptRefs: boolean; date: 
     const text = ctx.read(stamp.file);
     if (stamp.read(text) !== version) ctx.write(stamp.file, stamp.write(text, version));
   }
-  const olds = new Set([state.branchVersion, state.entry ? versionOfHeader(state.entry.header) ?? '' : ''].filter((v) => v && v !== version));
+  const olds = new Set([state.branchVersion, state.entry ? versionOfHeader(state.entry.header) ?? '' : ''].filter((v) => v && v !== version && isVersionToken(v)));
   if (state.entry) {
     const old = versionOfHeader(state.entry.header) ?? state.branchVersion;
     ctx.write('CHANGELOG.md', rebuildChangelog(ctx.read('CHANGELOG.md'), state.entry, old, version, opts.date));
@@ -440,6 +440,7 @@ function printDryRun(ctx: Ctx, state: State, date: string): void {
     const cur = stamp.read(ctx.git('show', `HEAD:${stamp.file}`));
     L(`  ${stamp.file}: ${cur} -> ${version}${cur === version ? ' (unchanged)' : ''}`);
   }
+  if (state.entry) rebuildChangelog(ctx.git('show', 'HEAD:CHANGELOG.md'), state.entry, versionOfHeader(state.entry.header) ?? state.branchVersion, version, date);
   L(state.entry
     ? `  CHANGELOG.md: "${state.entry.header}" -> "## [${version}] - ${date}", kept above master's entries`
     : '  CHANGELOG.md: this branch has no entry yet; the drift check will stop until /ship writes one');

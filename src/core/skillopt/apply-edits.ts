@@ -28,6 +28,7 @@ import * as fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { dirname } from 'node:path';
 import type { EditOp, EditResult, EditRejectionReason } from './types.ts';
+import { gitChildEnv } from '../git-env.ts';
 
 // ─── Public API ───────────────────────────────────────────────────────────
 
@@ -289,12 +290,13 @@ export function getWorkingTreeStatusForFile(filePath: string): 'clean' | 'dirty'
     const cwd = dirname(filePath);
     // First check we're in a repo.
     try {
-      execFileSync('git', ['rev-parse', '--git-dir'], { cwd, stdio: 'pipe' });
+      execFileSync('git', ['rev-parse', '--git-dir'], { env: gitChildEnv(), cwd, stdio: 'pipe' });
     } catch {
       return 'not_a_repo';
     }
     // Then check status on this specific file.
     const out = execFileSync('git', ['status', '--porcelain', '--', filePath], {
+      env: gitChildEnv(),
       cwd,
       encoding: 'utf8',
       stdio: 'pipe',

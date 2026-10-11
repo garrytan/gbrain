@@ -79,6 +79,7 @@ import { CONTENT_REPAIR_ACTOR, CONTENT_REPAIR_HOLD_CODE, contentRepairCommitSubj
 import { contentPreviewArgv } from '../content-repair/hold-fix.ts';
 import { lineDiff } from './frontmatter.ts';
 import { repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairPlan, type RepairPlanOptions, type RepairResult, type RepairScope } from './core.ts';
+import { gitChildEnv } from '../git-env.ts';
 
 type Tier = 'deterministic' | 'llm';
 type DeterministicRule = 'absent_page' | 'different_type';
@@ -145,7 +146,7 @@ export function titleTokens(title: string): Set<string> {
 function checkoutSlugs(root: string): Set<string> {
   let paths: string[];
   try {
-    paths = execFileSync('git', ['-C', root, 'ls-files', '-z', '--cached', '--others', '--exclude-standard'], { encoding: 'utf8', maxBuffer: 1 << 30, stdio: ['ignore', 'pipe', 'ignore'] }).split('\0').filter(Boolean);
+    paths = execFileSync('git', ['-C', root, 'ls-files', '-z', '--cached', '--others', '--exclude-standard'], { env: gitChildEnv(), encoding: 'utf8', maxBuffer: 1 << 30, stdio: ['ignore', 'pipe', 'ignore'] }).split('\0').filter(Boolean);
   } catch {
     paths = (readdirSync(root, { recursive: true }) as string[]).map(path => path.split('\\').join('/'));
   }

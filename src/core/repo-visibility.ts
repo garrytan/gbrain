@@ -39,6 +39,7 @@ import { dirname, join } from 'node:path';
 import { ensureGbrainHome } from './gbrain-home.ts';
 import { durableSsrfFlags } from './git-remote.ts';
 import { isCredentialInjectingProxy } from './execution-env.ts';
+import { gitChildEnv } from './git-env.ts';
 
 // ── Subprocess seam (canonical home; bootstrap/repo.ts re-exports) ─────────
 
@@ -59,7 +60,7 @@ export const defaultRunner: ExecRunner = async (argv: string[]): Promise<ExecRes
       stdout: 'pipe',
       stderr: 'pipe',
       stdin: 'ignore',
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+      env: gitChildEnv({ GIT_TERMINAL_PROMPT: '0' }),
     });
     const [stdout, stderr, code] = await Promise.all([
       new Response(proc.stdout).text(),

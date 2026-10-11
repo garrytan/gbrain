@@ -387,6 +387,7 @@ test/v0_37_gap_fill.serial.test.ts	Lane D.2 — embed pre-flight catches dim mis
 test/v0_37_gap_fill.serial.test.ts	Lane D.3 — sync surfaces dim-mismatch recipe at incremental AND first-sync catches	2	source-surface-helper
 test/v0_37_gap_fill.serial.test.ts	Lane E.4 — loadRecommendationContext is provider-aware	1	readFileSync,source-surface-helper
 test/v0_37_gap_fill.serial.test.ts	reinit-pglite — backup + reinit	8	source-surface-helper
+test/w13-small-hardening.test.ts	P1.14 paid-consent lint wording	1	exec-scan
 test/worker-supervised-db-probe.test.ts	issue #1801 fix #2 — supervised DB self-defense	5	readFileSync
 test/write-attribution-legacy.test.ts	write attribution inventory	1	readFileSync
 # unknown (detectors present, no attributable suite):
