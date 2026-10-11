@@ -295,6 +295,63 @@ describe('runFactsBackstop — dedup fast-path', () => {
   });
 });
 
+describe('runFactsBackstop — exact duplicates without a resolved entity (#5275)', () => {
+  // The legacy DB-only path used to skip the exact-fingerprint check when the
+  // entity was null or fell back to slugification, so every re-extraction
+  // inserted an identical active row outside the fence-key unique index.
+  const census = async (text: string) => (await engine.executeRaw<{ entity_slug: string | null; n: number }>(
+    `SELECT entity_slug, count(*)::int AS n FROM facts WHERE fact = $1 AND expired_at IS NULL GROUP BY entity_slug ORDER BY entity_slug`, [text]));
+
+  test('a NULL-entity fact re-extracted twice lands once and the repeat reports duplicate with the same id', async () => {
+    chatStub([{ fact: 'unparented-claim-A', kind: 'event', notability: 'high', entity: null }]);
+    const r1 = await runFactsBackstop(meetingPage(), makeCtx({ mode: 'inline', source: 'sync:import' }));
+    expect(r1.mode).toBe('inline');
+    if (r1.mode !== 'inline') return;
+    expect(r1.inserted).toBe(1);
+
+    chatStub([{ fact: 'unparented-claim-A', kind: 'event', notability: 'high', entity: null }]);
+    const r2 = await runFactsBackstop(meetingPage(), makeCtx({ mode: 'inline', source: 'sync:import' }));
+    if (r2.mode !== 'inline') return;
+    expect({ inserted: r2.inserted, duplicate: r2.duplicate, ids: r2.fact_ids }).toEqual({ inserted: 0, duplicate: 1, ids: r1.fact_ids });
+    expect(await census('unparented-claim-A')).toEqual([{ entity_slug: null, n: 1 }]);
+  });
+
+  test('a bare-name entity that falls back to slugification dedups the same way; a fingerprint variant too', async () => {
+    chatStub([{ fact: 'Said hello, twice', kind: 'event', notability: 'high', entity: 'nobodyresolvable' }]);
+    const r1 = await runFactsBackstop(meetingPage(), makeCtx({ mode: 'inline', source: 'sync:import' }));
+    if (r1.mode !== 'inline') return;
+    expect(r1.inserted).toBe(1);
+    // Same fingerprint (whitespace and case differences collapse), different bytes.
+    chatStub([{ fact: 'said  hello, twice', kind: 'event', notability: 'high', entity: 'nobodyresolvable' }]);
+    const r2 = await runFactsBackstop(meetingPage(), makeCtx({ mode: 'inline', source: 'sync:import' }));
+    if (r2.mode !== 'inline') return;
+    expect({ inserted: r2.inserted, duplicate: r2.duplicate }).toEqual({ inserted: 0, duplicate: 1 });
+    expect(await census('Said hello, twice')).toEqual([{ entity_slug: null, n: 1 }]);
+  });
+
+  test('visibility and attribution still separate rows; different text inserts', async () => {
+    chatStub([{ fact: 'unparented-claim-B', kind: 'event', notability: 'high', entity: null }]);
+    const a = await runFactsBackstop(meetingPage(), makeCtx({ mode: 'inline', source: 'sync:import' }));
+    if (a.mode !== 'inline') return;
+    expect(a.inserted).toBe(1);
+    chatStub([{ fact: 'unparented-claim-B', kind: 'event', notability: 'high', entity: null }]);
+    const b = await runFactsBackstop(meetingPage(), makeCtx({ mode: 'inline', source: 'sync:import', visibility: 'world' }));
+    if (b.mode !== 'inline') return;
+    expect(b.inserted).toBe(1);
+    chatStub([{ fact: 'unparented-claim-C', kind: 'event', notability: 'high', entity: null }]);
+    const c = await runFactsBackstop(meetingPage(), makeCtx({ mode: 'inline', source: 'sync:import' }));
+    if (c.mode !== 'inline') return;
+    expect(c.inserted).toBe(1);
+    const rows = await engine.executeRaw<{ fact: string; visibility: string }>(
+      `SELECT fact, visibility FROM facts WHERE fact LIKE 'unparented-claim-%' AND fact <> 'unparented-claim-A' ORDER BY id`);
+    expect(rows).toEqual([
+      { fact: 'unparented-claim-B', visibility: 'private' },
+      { fact: 'unparented-claim-B', visibility: 'world' },
+      { fact: 'unparented-claim-C', visibility: 'private' },
+    ]);
+  });
+});
+
 describe('runFactsBackstop — stub guard routing (v0.34.5)', () => {
   test('bare-name entity routes to legacy DB-only path (no phantom page)', async () => {
     const { mkdtempSync, rmSync, existsSync } = await import('node:fs');

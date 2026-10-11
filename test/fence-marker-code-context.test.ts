@@ -1,11 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import { codeEndAt, indexOfOutsideCode, scanMarkdownCode, unclosedCodeFenceStart } from '../src/core/fence-scan.ts';
 import {
-  TAKES_FENCE_BEGIN, TAKES_FENCE_END, parseTakesFence, stripTakesFence, upsertTakeRow,
+  TAKES_FENCE_BEGIN, TAKES_FENCE_END, parseTakesFence, renderTakesFence, stripTakesFence, upsertTakeRow,
 } from '../src/core/takes-fence.ts';
 import {
-  FACTS_FENCE_BEGIN, FACTS_FENCE_END, parseFactsFence, renderFactsTable, replaceOrInsertFactsFence, stripFactsFence,
+  FACTS_FENCE_BEGIN, FACTS_FENCE_END, parseFactsFence, renderFactsTable, replaceOrInsertFactsFence, stripFactsFence, upsertFactRow,
 } from '../src/core/facts-fence.ts';
+import { escapeFenceCell, parseRowCells } from '../src/core/fence-shared.ts';
 import { sanitizeRemoteBody } from '../src/core/remote-body.ts';
 import { preserveProtectedTakes } from '../src/core/persistence/protected-takes.ts';
 import { compileCanonicalProjections } from '../src/core/persistence/canonical-projections.ts';
@@ -457,5 +458,117 @@ describe('adversarial fence matrix (remote privacy)', () => {
       expect(JSON.stringify(env)).not.toContain(SECRET);
       expect(JSON.stringify(env)).not.toContain('ATTACKER-CLAIM');
     }
+  });
+});
+
+describe('fence markers inside a cell are encoded, never live (#5395)', () => {
+  const rawBegin = '<!--- gbrain:facts:begin -->';
+  const rawEnd = '<!--- gbrain:facts:end -->';
+  const fact = (claim: string, extra: Partial<Parameters<typeof upsertFactRow>[1]> = {}) =>
+    ({ claim, kind: 'fact' as const, confidence: 1, visibility: 'world' as const, notability: 'high' as const, ...extra });
+
+  test('upsertFactRow with a raw marker in row 2 keeps every row and the remote body intact', () => {
+    const claim2 = `the row said ${rawBegin} then ${rawEnd} in plain text`;
+    let body = upsertFactRow('# Page\n\nIntro.\n', fact('row one')).body;
+    body = upsertFactRow(body, fact(claim2)).body;
+    body = upsertFactRow(body, fact('row three', { visibility: 'private' })).body;
+    const parsed = parseFactsFence(body);
+    expect(parsed.warnings).toEqual([]);
+    expect(parsed.facts.map(f => f.claim)).toEqual(['row one', claim2, 'row three']);
+    // Exactly one live begin and one live end marker on the page.
+    expect(body.split(FACTS_FENCE_BEGIN).length - 1).toBe(1);
+    expect(body.split(FACTS_FENCE_END).length - 1).toBe(1);
+    // The remote boundary still pairs the real markers: the private row is
+    // hidden, the world rows and the prose after the fence survive.
+    const remote = sanitizeRemoteBody(`${body}\n\nTail prose.\n`);
+    expect(remote).toContain('Intro.');
+    expect(remote).toContain('Tail prose.');
+    expect(remote).toContain('row one');
+    expect(remote).not.toContain('row three');
+  });
+
+  test('every cell position of the facts fence round-trips a raw marker', () => {
+    const m = 'gbrain:facts:end';
+    const row = fact(`claim ${m}`, { validFrom: `from ${m}`, validUntil: `until ${m}`, source: `src ${m}`, context: `ctx ${m}`, claimMetric: `metric ${m}`, claimValue: 1, claimUnit: `unit ${m}`, claimPeriod: `period ${m}` });
+    const body = upsertFactRow('', row).body;
+    const [f] = parseFactsFence(body).facts;
+    expect(f!.claim).toBe(`claim ${m}`);
+    expect(f!.validFrom).toBe(`from ${m}`);
+    expect(f!.validUntil).toBe(`until ${m}`);
+    expect(f!.source).toBe(`src ${m}`);
+    expect(f!.context).toBe(`ctx ${m}`);
+    expect(f!.claimMetric).toBe(`metric ${m}`);
+    expect(f!.claimUnit).toBe(`unit ${m}`);
+    expect(f!.claimPeriod).toBe(`period ${m}`);
+    // The only bare occurrence left on the page is the live end marker.
+    expect(body.split(m).length - 1).toBe(1);
+  });
+
+  test('the takes fence round-trips raw markers in the claim, source and evidence cells', () => {
+    const m = `${TAKES_FENCE_BEGIN} and ${TAKES_FENCE_END}`;
+    const upserted = upsertTakeRow('', { ...take(`take says ${m}`), source: `src ${m}` }).body;
+    expect(parseTakesFence(upserted).takes.map(t => [t.claim, t.source])).toEqual([[`take says ${m}`, `src ${m}`]]);
+    const body = renderTakesFence([{ ...take(`take says ${m}`), rowNum: 1, source: `src ${m}`, resolvedAt: '2026-01-01', resolvedQuality: 'correct' as const, resolvedOutcome: true, resolvedEvidence: `ev ${m}`, resolvedBy: `by ${m}` }]);
+    const parsed = parseTakesFence(body);
+    expect(parsed.warnings).toEqual([]);
+    expect(parsed.takes).toHaveLength(1);
+    expect(parsed.takes[0]!.claim).toBe(`take says ${m}`);
+    expect(parsed.takes[0]!.source).toBe(`src ${m}`);
+    expect(parsed.takes[0]!.resolvedEvidence).toBe(`ev ${m}`);
+    expect(parsed.takes[0]!.resolvedBy).toBe(`by ${m}`);
+    expect(body.split(TAKES_FENCE_BEGIN).length - 1).toBe(1);
+    expect(body.split(TAKES_FENCE_END).length - 1).toBe(1);
+  });
+
+  test('the codec is injective: a literal entity form and a nested form both survive', () => {
+    const literals = ['gbrain&#58;facts:begin', 'gbrain&amp;#58;takes:end', 'gbrain&amp;amp;#58;facts:end', 'gbrain:takes:begin'];
+    for (const literal of literals) {
+      const claim = `literal ${literal} here`;
+      const body = upsertFactRow('', fact(claim)).body;
+      expect(parseFactsFence(body).facts[0]!.claim).toBe(claim);
+      expect(body).not.toContain('gbrain:takes:begin');
+    }
+    // All four distinct inputs render as four distinct cells.
+    const rendered = literals.map(l => renderFactsTable([{ ...fact(l), rowNum: 1, active: true }]));
+    expect(new Set(rendered).size).toBe(literals.length);
+    // A `&#58;` not followed by the marker suffix is untouched.
+    const plain = 'colon &#58; entity and gbrain&#58;other:begin stay';
+    expect(parseFactsFence(upsertFactRow('', fact(plain)).body).facts[0]!.claim).toBe(plain);
+    expect(upsertFactRow('', fact(plain)).body).toContain(plain);
+  });
+
+  test('encode and decode are inverse over random ampersand runs', () => {
+    const kinds = ['facts', 'takes'];
+    const edges = ['begin', 'end'];
+    let seed = 5395;
+    const rnd = (n: number) => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
+    for (let i = 0; i < 200; i++) {
+      const parts: string[] = [];
+      const n = 1 + rnd(4);
+      for (let j = 0; j < n; j++) {
+        const level = rnd(4);
+        const mid = level === 0 ? ':' : `&${'amp;'.repeat(level - 1)}#58;`;
+        parts.push(`x${rnd(10)} gbrain${mid}${kinds[rnd(2)]}:${edges[rnd(2)]}`);
+      }
+      const text = parts.join(rnd(2) ? ' ' : '');
+      const encoded = escapeFenceCell(text);
+      expect(encoded).not.toMatch(/gbrain:(facts|takes):(begin|end)/);
+      expect(parseRowCells(`| ${encoded} |`)).toEqual([text]);
+      // decode∘encode = id on the encoded image: a second parse of the already-decoded text is a no-op only when it holds no bare form,
+      // and encode∘decode = id on any encoded cell.
+      expect(escapeFenceCell(parseRowCells(`| ${encoded} |`)![0]!)).toBe(encoded);
+    }
+  });
+
+  test('repeated upsert is byte-idempotent and the transcript-escaped form still parses', () => {
+    const claim = `quoted ${rawBegin}`;
+    const once = upsertFactRow('', fact(claim)).body;
+    const twice = upsertFactRow(once, fact('another')).body;
+    expect(parseFactsFence(twice).facts.map(f => f.claim)).toEqual([claim, 'another']);
+    const reRendered = replaceOrInsertFactsFence(twice, renderFactsTable(parseFactsFence(twice).facts));
+    expect(reRendered).toBe(twice);
+    const escaped = 'see gbrain\\:facts:begin in a transcript';
+    const body = upsertFactRow('', fact(escaped)).body;
+    expect(parseFactsFence(body).facts[0]!.claim).toBe(escaped);
   });
 });

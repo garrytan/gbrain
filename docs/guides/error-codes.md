@@ -2422,7 +2422,7 @@ Reasons: `rename_source_changed`.
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| Review the current policy and supply its expected_policy_epoch before changing disclosure. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+| The target already exists and the write named no revision: supply the expected revision read from the page (or the policy epoch) before replacing it. | Without the revision the write cannot tell an intentional replacement from an overwrite of an edit it never saw; nothing was changed. | Correct the request using the message above, then retry. Run: gbrain get --source '{source_id}' -- '{slug}' | agent | `repeat the read that failed` | 1 | no |
 
 ### revision_unavailable
 

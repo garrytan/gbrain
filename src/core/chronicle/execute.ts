@@ -238,7 +238,7 @@ export async function executeChronicleRow(ctx: ChronicleExecContext, row: Chroni
 
   const proposals = result?.events ?? [];
   const { events, dropped } = buildChronicleEvents(proposals, judgeCtx,
-    { slug: pin.slug, visibility: pin.visibility, contentHash: pin.contentHash }, { tz: ctx.tz, now });
+    { slug: pin.slug, visibility: pin.visibility, contentHash: pin.contentHash }, { tz: ctx.tz, now, maxEvents: settings.maxEventsPerPage });
   let generation;
   try {
     generation = await publishChronicleGeneration(engine, {

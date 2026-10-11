@@ -48,6 +48,9 @@ beforeEach(async () => {
 
 const oldDate = () => new Date(Date.now() - 30 * 60 * 60 * 1000).toISOString();
 const recentDate = () => new Date(Date.now() - 60 * 1000).toISOString();
+// #6023: untyped facts that differ in a number token no longer cluster, so
+// fixtures that should share a take vary by a plain word instead of a digit.
+const WORDS = ['alpha', 'beta', 'gamma', 'delta', 'epsilon'] as const;
 function unitVec(): string {
   const a = new Float32Array(1536);
   a[0] = 1.0;
@@ -73,7 +76,7 @@ describe('runPhaseConsolidate', () => {
       await engine.executeRaw(
         `INSERT INTO facts (source_id, entity_slug, fact, kind, source, valid_from, embedding, embedded_at, embedding_model, embedded_text_hash)
          VALUES ('default', 'cons-skip-count', $1, 'fact', 'test', $2::timestamptz, $3::vector, $2::timestamptz, 'openai:text-embedding-3-large', md5($1))`,
-        [`fact ${i}`, oldDate(), unitVec()],
+        [`fact ${WORDS[i]}`, oldDate(), unitVec()],
       );
     }
     const r = await runPhaseConsolidate(engine, {});
@@ -87,7 +90,7 @@ describe('runPhaseConsolidate', () => {
       await engine.executeRaw(
         `INSERT INTO facts (source_id, entity_slug, fact, kind, source, valid_from, embedding, embedded_at, embedding_model, embedded_text_hash)
          VALUES ('default', 'cons-skip-age', $1, 'fact', 'test', $2::timestamptz, $3::vector, $2::timestamptz, 'openai:text-embedding-3-large', md5($1))`,
-        [`fact ${i}`, recentDate(), unitVec()],
+        [`fact ${WORDS[i]}`, recentDate(), unitVec()],
       );
     }
     const r = await runPhaseConsolidate(engine, {});
@@ -102,7 +105,7 @@ describe('runPhaseConsolidate', () => {
       await engine.executeRaw(
         `INSERT INTO facts (source_id, entity_slug, fact, kind, source, valid_from, confidence, embedding, embedded_at, embedding_model, embedded_text_hash)
          VALUES ('default', 'people/alice-example', $1, 'fact', 'test', $2::timestamptz, 0.9, $3::vector, $2::timestamptz, 'openai:text-embedding-3-large', md5($1))`,
-        [`alice fact ${i}`, oldDate(), unitVec()],
+        [`alice fact ${WORDS[i]}`, oldDate(), unitVec()],
       );
     }
     const r = await runPhaseConsolidate(engine, {});
@@ -136,7 +139,7 @@ describe('runPhaseConsolidate', () => {
       await engine.executeRaw(
         `INSERT INTO facts (source_id, entity_slug, fact, kind, source, valid_from, embedding, embedded_at, embedding_model, embedded_text_hash)
          VALUES ('default', 'cons-dryrun', $1, 'fact', 'test', $2::timestamptz, $3::vector, $2::timestamptz, 'openai:text-embedding-3-large', md5($1))`,
-        [`dryrun fact ${i}`, oldDate(), unitVec()],
+        [`dryrun fact ${WORDS[i]}`, oldDate(), unitVec()],
       );
     }
     const r = await runPhaseConsolidate(engine, { dryRun: true });
@@ -159,7 +162,7 @@ describe('runPhaseConsolidate', () => {
       await engine.executeRaw(
         `INSERT INTO facts (source_id, entity_slug, fact, kind, source, valid_from, embedding, embedded_at, embedding_model, embedded_text_hash)
          VALUES ('default', 'no-page', $1, 'fact', 'test', $2::timestamptz, $3::vector, $2::timestamptz, 'openai:text-embedding-3-large', md5($1))`,
-        [`orphan fact ${i}`, oldDate(), unitVec()],
+        [`orphan fact ${WORDS[i]}`, oldDate(), unitVec()],
       );
     }
     const r = await runPhaseConsolidate(engine, {});

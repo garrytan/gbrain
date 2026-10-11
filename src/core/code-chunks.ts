@@ -1,7 +1,7 @@
 import type { BrainEngine } from './engine.ts';
 import type { ChunkInput, CodeEdgeInput } from './types.ts';
 import { chunkCodeTextFull } from './chunkers/code.ts';
-import { findChunkForOffset } from './chunkers/edge-extractor.ts';
+import { findChunkForOffset, type ExtractedEdge } from './chunkers/edge-extractor.ts';
 import { sanitizeRemoteBody } from './remote-body.ts';
 import { credentialSafeProjection } from './credential-projection.ts';
 import { isEmbedSkipped } from './embed-skip.ts';
@@ -31,14 +31,29 @@ export async function installCodeChunkEdges(engine: BrainEngine, slug: string, s
   await engine.executeRaw('UPDATE content_chunks SET edges_backfilled_at=NULL WHERE id = ANY($1::int[])', [ids]);
   const ranges = stored.map(c => ({ id: c.id, startLine: c.start_line ?? 1,
     endLine: c.end_line ?? 1, symbol_name_qualified: c.symbol_name_qualified }));
-  const edges: CodeEdgeInput[] = [];
-  for (const edge of prepared.edges) {
-    const index = findChunkForOffset(edge.callSiteByteOffset, prepared.content, ranges);
+  const edges = mapCodeEdges(prepared.edges, prepared.content, ranges, sourceId);
+  if (edges.length) await engine.addCodeEdges(edges);
+}
+
+/**
+ * The one mapping from extracted call sites to `code_edges_symbol` rows, shared by the inline import
+ * (`importCodeFile`) and the prepared apply (`installCodeChunkEdges`). An edge hangs on the innermost persisted chunk
+ * whose line range holds the call site; a site in a chunk with no id or no qualified symbol (a `merged` run) is
+ * dropped. #5001: a site in a top-level statement lands on the file's `__module__` chunk. `source_id` is stamped from
+ * the normalized import source ('default' for an unscoped import, never null): `getCallersOf` / `getCalleesOf` add
+ * `AND source_id = <scoped>` under a worktree pin or `--source`, and a NULL stamp matched nothing.
+ */
+export function mapCodeEdges(edges: ExtractedEdge[], content: string,
+  ranges: Array<{ id?: number; startLine: number; endLine: number; symbol_name_qualified?: string | null }>,
+  sourceId: string): CodeEdgeInput[] {
+  const out: CodeEdgeInput[] = [];
+  for (const edge of edges) {
+    const index = findChunkForOffset(edge.callSiteByteOffset, content, ranges);
     const from = index === null ? undefined : ranges[index];
-    if (!from?.symbol_name_qualified) continue;
-    edges.push({ from_chunk_id: from.id, to_chunk_id: null, from_symbol_qualified: from.symbol_name_qualified,
+    if (!from?.id || !from.symbol_name_qualified) continue;
+    out.push({ from_chunk_id: from.id, to_chunk_id: null, from_symbol_qualified: from.symbol_name_qualified,
       to_symbol_qualified: edge.toSymbol, edge_type: edge.edgeType, source_id: sourceId,
       ...(edge.memberCall ? { edge_metadata: { member_call: true } } : {}) });
   }
-  if (edges.length) await engine.addCodeEdges(edges);
+  return out;
 }
