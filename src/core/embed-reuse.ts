@@ -11,12 +11,12 @@
 // Pure reuse policy and planner, testable without a DB or API key.
 
 import { stripChunkHeader } from './chunkers/code.ts';
-import { embeddingInputHash, type EmbeddingInputContext, type EmbeddingTier } from './embedding-input-hash.ts';
+import { embeddingInputHash, requiresEmbeddingInputProof, type EmbeddingInputContext, type EmbeddingTier } from './embedding-input-hash.ts';
 
 export function canReuseMarkdownVector(hash: string | null | undefined, storedMode: string | null | undefined,
   tier: EmbeddingTier, provenance: EmbeddingInputContext, chunk: { chunk_text: string; chunk_source?: string | null; model?: string | null }): boolean {
   if (tier === 'none' && storedMode != null && storedMode !== 'none') return false;
-  if (hash == null) return tier === 'none' && storedMode == null && chunk.model === provenance.model;
+  if (hash == null) return tier === 'none' && storedMode == null && !requiresEmbeddingInputProof(provenance.model) && chunk.model === provenance.model;
   return hash === embeddingInputHash(provenance, tier, chunk);
 }
 
