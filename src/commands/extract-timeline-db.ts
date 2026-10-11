@@ -34,7 +34,7 @@ import { readFix } from '../core/ops/op-fix.ts';
 import { createProgress } from '../core/progress.ts';
 import { importAnalyzeEveryPages, maybeRefreshPlannerStats } from '../core/planner-stats.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
-import { filterRefsSince } from './extract.ts';
+import { extractCompletionKey, filterRefsSince } from './extract.ts';
 import { isQuarantined } from '../core/quarantine.ts';
 import { pageSnapshotKey } from '../core/page-snapshot-batch.ts';
 import type { PageSnapshot } from '../core/page-state/types.ts';
@@ -65,6 +65,8 @@ export interface TimelineDbOptions {
   inferDates?: boolean;
   /** Restrict the walk to these slugs (requires sourceIdFilter). */
   slugs?: readonly string[];
+  /** S4 (P2.18): receives `extractCompletionKey` for each page whose timeline write landed (or had nothing to write). */
+  completed?: Set<string>;
 }
 
 /**
@@ -125,13 +127,18 @@ export async function extractTimelineFromDB(engine: BrainEngine, opts: TimelineD
   const analyzeEvery = opts.dryRun ? 0 : await importAnalyzeEveryPages(engine);
   let walked = 0;
 
+  // Unmanaged pages whose rows sit in the unflushed batch, and pages a refused batch held: completion follows the flush.
+  const unflushed = new Set<string>(), refusedPages = new Set<string>();
   async function flush() {
     if (batch.length === 0) return;
-    const snapshot = batch.slice();
+    const snapshot = batch.slice(), held = [...unflushed];
     batch.length = 0;
+    unflushed.clear();
     try {
       result.created += await maintenanceTransaction(engine, tx => tx.addTimelineEntriesBatch(snapshot, { auditSite: 'extract.timeline_db' }));
+      for (const key of held) if (!refusedPages.has(key)) opts.completed?.add(key);
     } catch (e) {
+      for (const key of held) { refusedPages.add(key); opts.completed?.delete(key); }
       const code = refusalCode(e);
       codes.add(code);
       result.refused += snapshot.length;
@@ -157,7 +164,7 @@ export async function extractTimelineFromDB(engine: BrainEngine, opts: TimelineD
           { snapshot, stored: snapshot ? readBatch.stored.get(Number(snapshot.page.id)) ?? [] : [] });
         if (outcome === 'skipped') result.skipped++;
         else if (outcome === 'pending') result.pending++;
-        else if (outcome !== null) { result.created += outcome; result.pages++; }
+        else if (outcome !== null) { result.created += outcome; result.pages++; opts.completed?.add(extractCompletionKey(source_id, slug, snapshot!.revision)); }
       } catch (e) {
         const code = refusalCode(e);
         codes.add(code);
@@ -180,7 +187,9 @@ export async function extractTimelineFromDB(engine: BrainEngine, opts: TimelineD
       const anchor = anchorFor(page, slug);
       if (anchor) entries = [anchor];
     }
-    for (const entry of entries) {
+    const completion = extractCompletionKey(source_id, slug, snapshot!.revision);
+    if (!opts.dryRun) { if (entries.length) unflushed.add(completion); else opts.completed?.add(completion); }
+    for (const [n, entry] of entries.entries()) {
       if (dryRunSeen) {
         const key = `${source_id}::${slug}::${entry.date}::${entry.summary}`;
         if (dryRunSeen.has(key)) continue;
@@ -196,7 +205,7 @@ export async function extractTimelineFromDB(engine: BrainEngine, opts: TimelineD
         result.created++;
       } else {
         batch.push({ slug, date: entry.date, source: entry.source, summary: entry.summary, detail: entry.detail || '', source_id });
-        if (batch.length >= BATCH_SIZE) await flush();
+        if (batch.length >= BATCH_SIZE) { await flush(); if (n < entries.length - 1) unflushed.add(completion); }
       }
     }
     result.pages++;
