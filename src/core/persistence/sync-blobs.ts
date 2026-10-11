@@ -59,6 +59,8 @@ export function readBlobContents(gitRoot: string, blobs: TreeBlob[]): Map<string
 /** Entries one pinned `ls-tree` covers, and the bytes one window's `cat-file --batch` loads at most. */
 export const PINNED_WINDOW = 256;
 const PINNED_WINDOW_BYTES = 8 * 1024 ** 2;
+/** Loaded byte slices one window keeps: a follower batch reads at most four neighbouring entries at once. */
+const PINNED_SLICES_KEPT = 4;
 const COMMIT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 
 /**
@@ -67,7 +69,8 @@ const COMMIT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
  * is the answer that entry's own read would give; a different root or target
  * replaces the window.
  */
-let pinned: { gitRoot: string; target: string; paths: string[]; blobs: Map<string, TreeBlob | null>; contents: Map<string, string> } | null = null;
+let pinned: PinnedWindow | null = null;
+interface PinnedWindow { gitRoot: string; target: string; paths: string[]; blobs: Map<string, TreeBlob | null>; slices: number[] | null; loaded: Array<{ slice: number; contents: Map<string, string> }> }
 let pinnedWindowSize = PINNED_WINDOW;
 /** Test seam: replace the pinned window size (0 reads every entry alone, as before windows; null restores it); returns the restore function. */
 export function __setPinnedWindowForTests(size: number | null): () => void {
@@ -83,8 +86,24 @@ function pinnedWindow(gitRoot: string, target: string, gitPath: string, upcoming
   let found: Map<string, TreeBlob>;
   // A window that cannot be listed (one path git rejects) falls back to this entry alone, which reports its own error.
   try { found = readTreeBlobs(gitRoot, target, paths); } catch { return null; }
-  pinned = { gitRoot, target, paths, blobs: new Map(paths.map(path => [path, found.get(path) ?? null])), contents: new Map() };
+  pinned = { gitRoot, target, paths, blobs: new Map(paths.map(path => [path, found.get(path) ?? null])), slices: null, loaded: [] };
   return pinned;
+}
+
+/**
+ * Where the window's byte slices start: cut in window order by `PINNED_WINDOW_BYTES` alone, so which entry asks first
+ * (concurrent follower freezes finish in any order) never moves a boundary or adds a `cat-file`.
+ */
+function windowSlices(window: PinnedWindow): number[] {
+  const starts: number[] = [];
+  let bytes = 0;
+  window.paths.forEach((path, index) => {
+    const blob = window.blobs.get(path);
+    if (!blob || blob.size > SYNC_READ_BOUND) return;
+    if (!starts.length || bytes + blob.size > PINNED_WINDOW_BYTES) { starts.push(index); bytes = 0; }
+    bytes += blob.size;
+  });
+  return starts;
 }
 
 /**
@@ -101,24 +120,24 @@ export function readPinnedBlob(gitRoot: string, target: string, gitPath: string,
 /**
  * The decoded content of the blob at `gitPath` in the pinned `target`, or null
  * when the window cannot answer it (no blob there, over the sync read bound, or
- * unreadable); the caller then reads it as before. A miss loads this blob and
- * the window's later ones, up to `PINNED_WINDOW_BYTES`, in one `cat-file --batch`.
+ * unreadable); the caller then reads it as before. A miss loads the byte slice
+ * holding this blob in one `cat-file --batch`; the last `PINNED_SLICES_KEPT`
+ * slices stay loaded, so reads in any order cost one process per slice.
  */
 export function readPinnedContent(gitRoot: string, target: string, gitPath: string, upcoming: () => string[]): string | null {
   if (!pinnedWindowSize || !COMMIT_ID.test(target)) return null;
   const window = pinnedWindow(gitRoot, target, gitPath, upcoming);
   const blob = window?.blobs.get(gitPath);
   if (!window || !blob || blob.size > SYNC_READ_BOUND) return null;
-  if (!window.contents.has(blob.oid)) {
-    const slice: TreeBlob[] = [];
-    let bytes = 0;
-    for (const path of window.paths.slice(window.paths.indexOf(gitPath))) {
-      const next = window.blobs.get(path);
-      if (!next || next.size > SYNC_READ_BOUND) continue;
-      if (slice.length && bytes + next.size > PINNED_WINDOW_BYTES) break;
-      bytes += next.size; slice.push(next);
-    }
-    try { window.contents = readBlobContents(gitRoot, slice); } catch { return null; }
+  const starts = window.slices ??= windowSlices(window);
+  const at = window.paths.indexOf(gitPath);
+  const slice = starts.findLastIndex(start => start <= at);
+  let loaded = window.loaded.find(entry => entry.slice === slice);
+  if (!loaded) {
+    const blobs = window.paths.slice(starts[slice], starts[slice + 1] ?? window.paths.length).map(path => window.blobs.get(path))
+      .filter((next): next is TreeBlob => !!next && next.size <= SYNC_READ_BOUND);
+    try { loaded = { slice, contents: readBlobContents(gitRoot, blobs) }; } catch { return null; }
+    window.loaded = [...window.loaded, loaded].slice(-PINNED_SLICES_KEPT);
   }
-  return window.contents.get(blob.oid) ?? null;
+  return loaded.contents.get(blob.oid) ?? null;
 }
