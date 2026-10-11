@@ -23,7 +23,7 @@ import { ERROR_CATALOGUE, type CatalogueName } from '../error-catalogue.ts';
 import { cliRenderContext, renderAction, type Action, type RenderedAction } from '../agent-output.ts';
 import { managedSyncResumeArgs, syncResumeCommand } from '../sync-reconcile.ts';
 import { isWriteCapacityWait, outstandingCapacityOf } from './admission-retry.ts';
-import { clearDrainStep, readDrainStep } from './drain-step.ts';
+import { clearDrainStep, DrainPassAbandoned, readDrainStep } from './drain-step.ts';
 import { PUBLICATION_CEILING_DEFAULT_MS, readPublicationCeilingMs } from './publication-deadline.ts';
 import { isOwnerThisProcess, stampLastSql, WAITING_ON, type ClaimLastSql, type WaitingOn } from './claim-phase.ts';
 
@@ -386,7 +386,7 @@ export async function runDrain(input: DrainInput): Promise<SyncResult> {
     const running = Promise.resolve().then(() => input.pass(passSignal, onProgress));
     let timer: ReturnType<typeof setInterval> | null = null, probing = false, key: string | null = null, keySince = passStartedAt;
     const stopped = new Promise<{ stall: DrainStall }>(resolve => {
-      const stop = (stall: DrainStall) => { if (timer) clearInterval(timer); timer = null; controller.abort(new Error(`drain_stalled: ${stall.cause}`)); resolve({ stall }); };
+      const stop = (stall: DrainStall) => { if (timer) clearInterval(timer); timer = null; controller.abort(new DrainPassAbandoned(`drain_stalled: ${stall.cause}`)); resolve({ stall }); };
       timer = setInterval(() => {
         const quietSince = Math.max(lastCommitAt, passStartedAt);
         if (probing || Date.now() - quietSince < Math.min(noProgressMs, ceilingMs)) return;

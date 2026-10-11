@@ -10,9 +10,15 @@ export interface DrainStepStamp { step: DrainStep; since: number; last_sql: { la
 
 let current: DrainStepStamp | null = null;
 
-/** Enters `step` and throws the pass's abort reason, so an abandoned pass admits and writes nothing more. */
+/** The reason the in-pass governor aborts the pass it abandons. */
+export class DrainPassAbandoned extends Error {}
+
+/**
+ * Enters `step`; a pass the governor abandoned throws here, so it admits and writes nothing more. The caller's own
+ * cancellation is not thrown here: the pass's existing cancel handling still banks work it already admitted.
+ */
 export function stampDrainStep(step: DrainStep, signal?: AbortSignal, now = Date.now()): void {
-  signal?.throwIfAborted();
+  if (signal?.aborted && signal.reason instanceof DrainPassAbandoned) throw signal.reason;
   current = { step, since: now, last_sql: null };
 }
 /** Records the statement the current step is about to send (label only, never text or parameters). */
