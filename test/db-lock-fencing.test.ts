@@ -1,12 +1,13 @@
 /**
  * W0 fix-wave (Tier-1 #1, D5.10) — per-acquisition lock fencing.
  *
- * The refresh/release predicates require (id, holder_pid, acquired_at::text),
- * so a handle from a PREVIOUS acquisition — a PID-reuse impostor, or this
- * process after its row was stolen — can never refresh or delete a
- * successor's row. Pre-fix the predicates were (id, holder_pid) only, and an
- * expired holder could refresh a successor's lock while reporting success
- * (Codex eng-review #1 on the fix-wave plan).
+ * The refresh/release predicates require (id, holder_pid, acquisition_token)
+ * (#6028; before that the acquired_at epoch text as well), so a handle from a
+ * PREVIOUS acquisition — a PID-reuse impostor, or this process after its row
+ * was stolen — can never refresh or delete a successor's row. Pre-fix the
+ * predicates were (id, holder_pid) only, and an expired holder could refresh
+ * a successor's lock while reporting success (Codex eng-review #1 on the
+ * fix-wave plan).
  */
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
@@ -30,11 +31,18 @@ beforeEach(async () => {
   await engine.executeRaw(`DELETE FROM gbrain_cycle_locks WHERE id LIKE 'test-fence-%'`);
 });
 
-/** Simulate a successor stealing the row: rewrite acquisition identity in place. */
+/**
+ * Simulate a successor stealing the row: rewrite the acquisition identity in
+ * place. Since v152 every acquisition mints a fresh acquisition_token and that
+ * token is the fence (#6028): a successor's row always carries a new one.
+ * acquired_at moves with it, as a real takeover's does, but is no longer what
+ * the predicate compares (test/db-lock-token-predicate.test.ts pins both).
+ */
 async function stealRow(lockId: string): Promise<void> {
   await engine.executeRaw(
     `UPDATE gbrain_cycle_locks
         SET holder_pid = holder_pid,
+            acquisition_token = gen_random_uuid(),
             acquired_at = acquired_at + INTERVAL '1 millisecond',
             ttl_expires_at = NOW() + INTERVAL '5 minutes',
             last_refreshed_at = NOW()
