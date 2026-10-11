@@ -1215,6 +1215,7 @@ export async function runExtract(engine: BrainEngine, args: string[], authority?
           );
           setCliExitVerdict(1);
         }
+        if (r.pages_pending) { console.error(`[extract timeline] ${r.pages_pending} entity page(s) still pending (writer busy); rerun the same command to finish them.`); setCliExitVerdict(1); }
       } else if (byMention || ner) {
         // v0.41.18.0 (T7): combined --by-mention + --ner walk shares one
         // gazetteer; saves an entire pass on big brains. When only one

@@ -28,6 +28,7 @@ test/doctor-routing-skill-pack-source.test.ts
 test/embedding-completion-atomic.serial.test.ts
 test/engine-sql-facts-keyset.test.ts
 test/extract-endpoint-revision.serial.test.ts
+test/extract-timeline-from-meetings-managed.test.ts
 test/fence-repair-receipts.test.ts
 test/graduation-copy.test.ts
 test/graduation-digest.test.ts
