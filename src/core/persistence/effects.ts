@@ -13,7 +13,8 @@ import type { Action } from '../agent-output.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
 import { materializePageSnapshot } from '../page-state/materialize.ts';
-import { installPageEmbeddings, readProjectionSnapshot } from '../page-state/projections.ts';
+import { embeddingInputContext, installPageEmbeddings, readProjectionSnapshot } from '../page-state/projections.ts';
+import { acceptedEmbeddingInputHashes, requiresEmbeddingInputProof } from '../embedding-input-hash.ts';
 import { currentEmbeddingSignature, embedBatch } from '../embedding.ts';
 import { assertEmbeddingEnabled, EmbeddingDisabledError } from '../embedding-dim-check.ts';
 import { validateEmbeddingCreds, EmbeddingCredentialError } from '../embed-preflight.ts';
@@ -285,12 +286,24 @@ export async function readEmbeddingEffectProjection(engine: BrainEngine, effect:
         { fix: effectStatusFix(effect) });
     }
     const column = prepared.embeddingColumn;
-    const completion = await tx.executeRaw<{ id: number; complete: boolean }>(`SELECT cc.id,
+    const completionModel = embeddingCompletionModel(column, signature, model) ?? null;
+    const completion = await tx.executeRaw<{ id: number; chunk_index: number; embedding_input_hash: string | null; corpus_generation: string | null; complete: boolean }>(`SELECT cc.id, cc.chunk_index,
+      cc.embedding_input_hash, p.corpus_generation,
       p.embedding_signature=$2 AND cc.${quoteIdentifier(column.name)} IS NOT NULL AND cc.embedded_at IS NOT NULL
         AND cc.embedded_text_hash=md5(cc.chunk_text) AND cc.model IS NOT DISTINCT FROM $3 AS complete
       FROM content_chunks cc JOIN pages p ON p.id=cc.page_id WHERE p.id=$1`,
-    [snapshot.page.id, signature, embeddingCompletionModel(column, signature, model)]);
-    const complete = new Set(completion.filter(chunk => chunk.complete === true).map(chunk => chunk.id));
+    [snapshot.page.id, signature, completionModel]);
+    const proofRequired = requiresEmbeddingInputProof(completionModel);
+    const chunksByIndex = new Map(prepared.chunks.map(chunk => [chunk.chunk_index, chunk]));
+    const provenance = proofRequired ? embeddingInputContext({ column, provenanceModel: completionModel }, prepared.snapshot.page.title,
+      completion[0]?.corpus_generation ?? null, prepared.chunks) : undefined;
+    const complete = new Set(completion.filter(row => {
+      if (row.complete !== true) return false;
+      if (!provenance) return true;
+      const chunk = chunksByIndex.get(row.chunk_index);
+      return !!chunk && !!row.embedding_input_hash
+        && acceptedEmbeddingInputHashes(provenance, prepared.snapshot.page.contextual_retrieval_mode, chunk).includes(row.embedding_input_hash);
+    }).map(chunk => chunk.id));
     const pending = prepared.chunks.filter(chunk => !complete.has(chunk.id));
     return { prepared, pending: pending.length && prepared.snapshot.page.contextual_retrieval_mode === 'per_chunk_synopsis' ? prepared.chunks : pending };
   });
@@ -337,7 +350,9 @@ async function embedPage(engine: BrainEngine, config: GBrainConfig, effect: Pers
         await renew();
         signal.throwIfAborted();
         await assertEmbeddingEffectEnabled(engine, config);
-      }, () => (opts.embedding?.embed ?? embedBatch)(wrapChunkTextsForStoredMode(prepared.snapshot.page, pending), { abortSignal: signal, maxRetries: 0 }));
+      }, () => (opts.embedding?.embed ?? embedBatch)(wrapChunkTextsForStoredMode(prepared.snapshot.page, pending), {
+        abortSignal: signal, maxRetries: 0, documentTitle: prepared.snapshot.page.title,
+      }));
     } catch (error) {
       if (!isEmbeddingZeroNormError(error) || error.vectors.length !== pending.length) throw error;
       refused = error;
