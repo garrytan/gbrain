@@ -8,7 +8,7 @@ import type { BrainEngine } from '../engine.ts';
 import { formatQuestionId, type QuestionScope } from './identity.ts';
 
 export type PinState = 'active' | 'inactive' | 'archived';
-export type InactiveReason = 'awaiting_consent' | 'migrated_disabled' | 'migrated_zero_budget';
+export type InactiveReason = 'awaiting_consent' | 'migrated_disabled' | 'migrated_zero_budget' | 'migrated_enabled';
 export type PublishMode = 'publish' | 'draft';
 export type SentenceOrigin = 'model' | 'owner';
 

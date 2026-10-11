@@ -74,7 +74,7 @@ Every pin, list, status and refresh returns the same fields:
 
 | `blocked_reason` | Meaning | Next action |
 |---|---|---|
-| `awaiting_consent` | The pin was made over MCP (or imported from a disabled `dream.auto_think`) and is not active | The owner runs `gbrain questions pin --id <id>` |
+| `awaiting_consent` | The pin was made over MCP (or imported from `dream.auto_think`) and is not active | The owner runs `gbrain questions pin --id <id>` |
 | `no_model_key` | No chat-model key is configured | The user adds an Anthropic or OpenAI key (`gbrain providers list` shows how) |
 | `budget_exhausted` | This run's refresh budget is spent | Raise `cycle.standing_questions.budget_usd`, or wait for the next run |
 | `refresh_failed` | The last refresh failed; the previous answer is kept with its stale flags | `questions_refresh {id, full: true}` |
@@ -169,13 +169,17 @@ A draft-only pin (`publish_mode: draft`) is refreshed but not served by
 ## Coming from dream.auto_think
 
 The `dream.auto_think` settings became pins when this brain upgraded. Each
-saved question is a pin in the `default` source:
+saved question is a pin in the `default` source. Every migrated pin starts
+inactive, whatever `dream.auto_think.enabled` said, because auto_think never
+ran in the dream cycle and the upgrade starts no paid refresh. Turn one on
+with `gbrain questions pin --id <id>` (`gbrain questions list` shows the ids);
+from then on the dream cycle refreshes it under the migrated budget.
 
 | Old key | Now |
 |---|---|
-| `dream.auto_think.questions` | One pin per question (`origin: auto_think`) |
-| `dream.auto_think.enabled=false` | The pins are inactive until you run `gbrain questions pin --id <id>` |
-| `dream.auto_think.budget` | `cycle.standing_questions.budget_usd`; a zero budget leaves the pins inactive |
+| `dream.auto_think.questions` | One inactive pin per question (`origin: auto_think`) |
+| `dream.auto_think.enabled` | Recorded as the pin's `inactive_reason`: `migrated_disabled` when it was off, `migrated_enabled` when it was on |
+| `dream.auto_think.budget` | `cycle.standing_questions.budget_usd`; a zero budget is recorded as `migrated_zero_budget` |
 | `dream.auto_think.auto_commit=false` | The pins are draft-only |
 | `dream.auto_think.cooldown_days` | Each pin's cooldown |
 | `dream.auto_think.max_per_cycle` | `cycle.standing_questions.max_per_cycle` |

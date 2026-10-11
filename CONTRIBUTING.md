@@ -29,7 +29,9 @@ failure is silent: no error, the field just comes back empty.
 
 If you cloned before either pin existed, your working copy still has the old
 Windows line endings. Bash will fail with `$'\r': command not found`, and
-frontmatter will read as absent. Refresh it once, from the repository root:
+frontmatter will read as absent. Refresh it once, from the repository root.
+`git reset --hard` discards uncommitted changes, so commit them or run
+`git stash -u` first.
 
 ```bash
 git rm --cached -r . -q

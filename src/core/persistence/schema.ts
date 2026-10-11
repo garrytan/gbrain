@@ -117,6 +117,7 @@ export const PERSISTENCE_SCHEMA_STATEMENTS = [
     host_id uuid NOT NULL,
     local_path text NOT NULL,
     coordination_path text NOT NULL,
+    git_durability text CHECK (git_durability IN ('enabled','disabled')),
     PRIMARY KEY(worktree_id,host_id)
   )`,
   `CREATE TABLE IF NOT EXISTS persistence_local_writers (
@@ -192,3 +193,13 @@ export const PERSISTENCE_SCHEMA_STATEMENTS = [
   PERSISTENCE_CONSUMERS_TABLE_SQL,
   MANAGED_WRITER_GUARD_SQL,
 ] as const;
+
+/**
+ * #5182: the per-host Git-durability opt-in column, added by v234 on an
+ * existing brain. Deliberately NOT part of the schema statement list: a fresh
+ * install gets the column from CREATE TABLE above, and replaying an ALTER on
+ * every init would take an ACCESS EXCLUSIVE lock on the bindings table each
+ * time the schema blob runs. NULL means "not recorded" (legacy hook probe
+ * decides); 'enabled'/'disabled' is the operator's explicit setting.
+ */
+export const PERSISTENCE_GIT_DURABILITY_COLUMN_SQL = `ALTER TABLE persistence_host_bindings ADD COLUMN IF NOT EXISTS git_durability text CHECK (git_durability IN ('enabled','disabled'))`;

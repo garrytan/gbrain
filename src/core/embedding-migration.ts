@@ -305,7 +305,7 @@ async function transitionDimPinnedColumn(
   const opclass = columnType === 'halfvec' ? 'halfvec_cosine_ops' : 'vector_cosine_ops';
 
   // #4252: the DROP COLUMN cascade also takes every btree/partial index that
-  // reads the column (facts' idx_facts_unembedded, v233); replayed after the rebuild.
+  // reads the column (facts' idx_facts_unembedded, v236); replayed after the rebuild.
   const dependents = await embeddingDependentIndexes(tx, table);
   await tx.executeRaw(`DROP INDEX IF EXISTS ${indexName}`);
   await tx.executeRaw(`ALTER TABLE ${table} DROP COLUMN IF EXISTS embedding`);

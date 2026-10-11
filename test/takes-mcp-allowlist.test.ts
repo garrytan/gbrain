@@ -30,10 +30,10 @@ beforeAll(async () => {
     title: 'Alice', type: 'person', compiled_truth: '## Takes\n',
   });
   alicePageId = alice.id;
-  // Seed three takes by three holders. Public fact, garry's bet, brain's hunch.
+  // Seed three takes by three holders. Public fact, dana's bet, brain's hunch.
   await engine.addTakesBatch([
     { page_id: alicePageId, row_num: 1, claim: 'CEO of Acme', kind: 'fact', holder: 'world', weight: 1.0 },
-    { page_id: alicePageId, row_num: 2, claim: 'Strong technical founder', kind: 'take', holder: 'garry', weight: 0.85 },
+    { page_id: alicePageId, row_num: 2, claim: 'Strong technical founder', kind: 'take', holder: 'dana', weight: 0.85 },
     { page_id: alicePageId, row_num: 3, claim: 'Seemed burned out in last OH', kind: 'hunch', holder: 'brain', weight: 0.4 },
   ]);
 });
@@ -54,7 +54,7 @@ describe('per-token takes-holder allow-list — takes_list', () => {
     });
     const takes = parseResult(result) as Array<{ holder: string; claim: string }>;
     const holders = takes.map(t => t.holder).sort();
-    expect(holders).toEqual(['brain', 'garry', 'world']);
+    expect(holders).toEqual(['brain', 'dana', 'world']);
   });
 
   test('allow-list ["world"] (default-deny token) returns ONLY world holders', async () => {
@@ -67,13 +67,13 @@ describe('per-token takes-holder allow-list — takes_list', () => {
     expect(takes[0].claim).toBe('CEO of Acme');
   });
 
-  test('allow-list ["world", "garry"] returns world + garry, hides brain hunches', async () => {
+  test('allow-list ["world", "dana"] returns world + dana, hides brain hunches', async () => {
     const result = await dispatchToolCall(engine, 'takes_list', { page_slug: 'people/alice-example' }, {
-      remote: true, sourceId: 'default',      takesHoldersAllowList: ['world', 'garry'],
+      remote: true, sourceId: 'default',      takesHoldersAllowList: ['world', 'dana'],
     });
     const takes = parseResult(result) as Array<{ holder: string }>;
     const holders = takes.map(t => t.holder).sort();
-    expect(holders).toEqual(['garry', 'world']);
+    expect(holders).toEqual(['dana', 'world']);
   });
 
   test('allow-list with no overlap returns empty (no fallback to default)', async () => {
@@ -99,8 +99,8 @@ describe('per-token takes-holder allow-list — takes_search', () => {
       remote: false,
     });
     const hits = parseResult(result) as Array<{ holder: string }>;
-    // 'Strong technical founder' (garry) should match
-    expect(hits.some(h => h.holder === 'garry')).toBe(true);
+    // 'Strong technical founder' (dana) should match
+    expect(hits.some(h => h.holder === 'dana')).toBe(true);
   });
 });
 
@@ -121,7 +121,7 @@ describe('per-token takes-holder allow-list — get_page body channel', () => {
     '\n| # | claim | kind | who | weight | since | source |\n' +
     '|---|---|---|---|---|---|---|\n' +
     '| 1 | CEO of Widget | fact | world | 1.0 | 2017-01 | Crustdata |\n' +
-    '| 2 | Strong technical founder | take | garry | 0.85 | 2026-04-29 | OH |\n' +
+    '| 2 | Strong technical founder | take | dana | 0.85 | 2026-04-29 | OH |\n' +
     '| 3 | Seemed burned out in last OH | hunch | brain | 0.4 | 2026-05-01 | private |\n\n' +
     `${TAKES_FENCE_END}\n` +
     '\nFooter content stays.\n';
@@ -139,7 +139,7 @@ describe('per-token takes-holder allow-list — get_page body channel', () => {
     expect(page.compiled_truth).not.toContain(TAKES_FENCE_END);
     expect(page.compiled_truth).not.toContain('Strong technical founder');
     expect(page.compiled_truth).not.toContain('Seemed burned out');
-    expect(page.compiled_truth).not.toContain('| garry |');
+    expect(page.compiled_truth).not.toContain('| dana |');
     expect(page.compiled_truth).not.toContain('| brain |');
     // Surrounding body kept intact.
     expect(page.compiled_truth).toContain('Footer content stays.');
@@ -156,7 +156,7 @@ describe('per-token takes-holder allow-list — get_page body channel', () => {
 
   test('fuzzy resolution path also strips for remote token', async () => {
     const result = await dispatchToolCall(engine, 'get_page', { slug: 'people/bob-example', fuzzy: true }, {
-      remote: true, sourceId: 'default',      takesHoldersAllowList: ['world', 'garry'],
+      remote: true, sourceId: 'default',      takesHoldersAllowList: ['world', 'dana'],
     });
     const page = parseResult(result) as { compiled_truth: string };
     // Allow-list does not yet re-render filtered rows; whole fence is stripped.
@@ -209,7 +209,7 @@ describe('think op — read-only on remote callers (Lane D landed)', () => {
     // configured machine fires a real LLM call and the warning flips to
     // LLM_OUTPUT_NOT_JSON. runThink then returns gather-only + NO_ANTHROPIC_API_KEY.
     const result = await withoutAnthropicKey(() => dispatchToolCall(engine, 'think', { question: 'q', save: true, take: true }, {
-      remote: true, sourceId: 'default',      takesHoldersAllowList: ['world', 'garry', 'brain'],
+      remote: true, sourceId: 'default',      takesHoldersAllowList: ['world', 'dana', 'brain'],
     }));
     const env = parseResult(result) as {
       remote_persisted_blocked: boolean;

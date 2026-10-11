@@ -12,6 +12,7 @@ import { join, dirname, isAbsolute, resolve } from 'path';
 import { fileURLToPath } from 'url';
 
 import { parseMarkdown } from '../markdown.ts';
+import { gitChildEnv } from '../git-env.ts';
 
 export interface BundleManifest {
   name: string;
@@ -374,7 +375,7 @@ export function changedSlugsSinceVersion(
     const probe = spawnSync(
       'git',
       ['-C', gbrainRoot, 'rev-parse', '--verify', '--quiet', `${ref}^{commit}`],
-      { encoding: 'utf-8' },
+      { env: gitChildEnv(), encoding: 'utf-8' },
     );
     if (probe.status !== 0) continue;
 
@@ -390,7 +391,7 @@ export function changedSlugsSinceVersion(
         '--',
         'skills/',
       ],
-      { encoding: 'utf-8' },
+      { env: gitChildEnv(), encoding: 'utf-8' },
     );
     if (log.status !== 0) return null;
 

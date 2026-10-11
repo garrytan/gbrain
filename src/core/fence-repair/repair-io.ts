@@ -51,6 +51,7 @@ import { clearCandidateParts } from './census-store.ts';
 import { legacyCommitStep, recordUncommittedFenceRepair } from './uncommitted.ts';
 import type { FenceRepairReceipt } from './receipt.ts';
 import type { FenceCtx, FencePage } from './types.ts';
+import { gitChildEnv } from '../git-env.ts';
 
 export type FenceRepairMode = 'managed' | 'legacy' | 'db' | 'mirror';
 
@@ -69,7 +70,7 @@ export interface FenceSource {
 }
 
 function inGit(root: string): boolean {
-  try { execFileSync('git', ['-C', root, 'rev-parse', '--is-inside-work-tree'], { stdio: 'ignore' }); return true; } catch { return false; }
+  try { execFileSync('git', ['-C', root, 'rev-parse', '--is-inside-work-tree'], { env: gitChildEnv(), stdio: 'ignore' }); return true; } catch { return false; }
 }
 
 /**

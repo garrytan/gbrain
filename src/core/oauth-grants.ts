@@ -9,6 +9,7 @@ import { generateToken, hashToken } from './utils.ts';
 import { hasScope, parseScopeString } from './scope.ts';
 import { TOKEN_TTL_MAX_SECONDS, intersectGrantedScopes } from './grants/model.ts';
 import { safeHexEqual } from './timing-safe.ts';
+import { clientHoldsAuthorization, GrantError, recordFirstConsentInTransaction } from './grants/service.ts';
 
 export type OAuthTransaction = <T>(fn: (sql: SqlQuery) => Promise<T>) => Promise<T>;
 type ClientRow = Record<string, unknown>;
@@ -59,7 +60,7 @@ function policyDigest(row: ClientRow): string {
     'source_id', 'federated_read', 'bound_tools', 'bound_source_id', 'bound_brain_id',
     'bound_slug_prefixes', 'bound_max_concurrent', 'budget_usd_per_day', 'surface', 'token_ttl',
     'allowed_operations', 'delegated_slug_prefixes', 'delegated_namespace', 'grant_profile',
-    'grant_revision', 'grant_repair_reasons'];
+    'grant_revision', 'grant_repair_reasons', 'registered_via'];
   return hashToken(JSON.stringify(fields.map(field => row[field] ?? null)));
 }
 
@@ -78,6 +79,12 @@ export interface OAuthConsentDetails {
   delegatedSlugPrefixes: string[] | null;
   delegatedNamespace: string | null;
   expiresAt: number;
+  /**
+   * #6202: `editable` only for a self-registered client's first consent
+   * (`registered_via='dcr'`, revision 0, no `client_credentials`, a source
+   * grant); `options` are the active sources then, `[]` otherwise.
+   */
+  sourceChoice: { editable: boolean; options: Array<{ id: string; name: string }> };
 }
 interface PendingAuthorization {
   details: OAuthConsentDetails;
@@ -158,6 +165,12 @@ export class OAuthGrants {
     if (!Array.isArray(row.redirect_uris) || !row.redirect_uris.some(uri => typeof uri === 'string' && redirectUriMatches(params.redirectUri, uri))) {
       throw new InvalidRequestError('Redirect URI does not match registered client');
     }
+    const editable = row.registered_via === 'dcr' && Number(row.grant_revision) === 0
+      && !row.grant_types.includes('client_credentials') && row.source_grant !== 'none'
+      && !await clientHoldsAuthorization(this.options.sql, clientId);
+    const options = editable
+      ? (await this.options.sql`SELECT id, name FROM sources WHERE archived = false ORDER BY id`).map(r => ({ id: String(r.id), name: String(r.name) }))
+      : [];
     // No await between the capacity check and insert: concurrent DB reads cannot overfill the store or a client's budget.
     this.assertCapacity(clientId);
     const id = generateToken('');
@@ -172,6 +185,7 @@ export class OAuthGrants {
       delegatedSlugPrefixes: Array.isArray(row.delegated_slug_prefixes) ? [...row.delegated_slug_prefixes] as string[] : null,
       delegatedNamespace: typeof row.delegated_namespace === 'string' ? row.delegated_namespace : null,
       resource: resource?.toString() ?? null, expiresAt: this.now() + 10 * 60_000,
+      sourceChoice: { editable, options },
     };
     this.pending.set(id, {
       details, params: { ...params, scopes: [...details.scopes], resource },
@@ -194,8 +208,12 @@ export class OAuthGrants {
     try { this.details(id); return true; } catch { return false; }
   }
 
-  async decide(id: string, approve: boolean): Promise<string> {
-    this.details(id);
+  async decide(id: string, approve: boolean, choice?: { sourceId: string }): Promise<string> {
+    const { sourceChoice } = this.details(id);
+    if (choice !== undefined && (!approve || !sourceChoice.editable || !sourceChoice.options.some(o => o.id === choice.sourceId))) {
+      // Refused before the claim: the request stays pending and the owner can reload it.
+      throw new OAuthConsentError(403, 'invalid_consent', 'Reload this request and review it again before approving.');
+    }
     const pending = this.pending.get(id)!;
     pending.status = 'processing'; // claim synchronously before the first await
     const redirect = new URL(pending.params.redirectUri);
@@ -209,6 +227,15 @@ export class OAuthGrants {
       const code = await this.locked(pending.details.clientId, async (sql, row) => {
         if (pending.details.expiresAt <= this.now()) throw new OAuthConsentError(410, 'authorization_expired', 'This request expired. Restart the connection from your client.');
         if (policyDigest(row) !== pending.policy) throw new OAuthConsentError(409, 'client_policy_changed', 'Client permissions changed. Restart the connection and review the new request.');
+        if (sourceChoice.editable) {
+          // The first consent always consumes eligibility (revision 0 → 1), with or without a new source.
+          try {
+            await recordFirstConsentInTransaction(sql, pending.details.clientId, choice?.sourceId, 'owner');
+          } catch (error) {
+            if (error instanceof GrantError) throw new OAuthConsentError(409, 'client_policy_changed', 'Client permissions changed. Restart the connection and review the new request.');
+            throw error;
+          }
+        }
         const code = generateToken('gbrain_code_');
         await sql`
           INSERT INTO oauth_codes (code_hash, client_id, scopes, code_challenge,

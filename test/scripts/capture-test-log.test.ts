@@ -59,7 +59,11 @@ process.stderr.write('stderr tail');
 
   it('can feed captured unit and E2E records directly to the weight miner', async () => {
     const unit = await run(`
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+const artifact = join(import.meta.dir, 'timings', 'execution.log');
 console.log('##[group]test/fixture.test.ts:');
+while (!existsSync(artifact) || !readFileSync(artifact, 'utf8').includes('##[group]test/fixture.test.ts:')) await Bun.sleep(1);
 await Bun.sleep(20);
 console.log(' 0 fail');
 console.log('Ran 1 test across 1 file. [20ms]');

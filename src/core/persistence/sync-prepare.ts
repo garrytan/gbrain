@@ -418,7 +418,7 @@ export async function prepareManagedSyncMutation(unbounded: BrainEngine, row: Wr
   const source = { sourceId: row.source_id };
   enterClaimStep(clock, 'page_snapshot', undefined, 'db');
   const snapshot = await engine.readPageSnapshot(row.slug, { ...source, includeDeleted: true });
-  assertPageRevision(snapshot, p.expected_revision === null ? {} : { expectedRevision: p.expected_revision });
+  assertPageRevision(snapshot, { expectedRevision: p.expected_revision }); // null asserts the admitted-absent page is still absent (#5385)
   const recordedOrigin = moved?.slug === row.slug ? moved.sourcePath : p.sourcePath!;
   const foreignOrigin = snapshot?.page.source_path != null && !sameSyncOrigin(snapshot.page.source_path, recordedOrigin, originScope, snapshot.page.slug);
   if ((snapshot?.page.id ?? null) !== row.page_id || (p.unownedDeletion ? !foreignOrigin : foreignOrigin)) {

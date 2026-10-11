@@ -11,6 +11,7 @@ import { DEFAULT_SHARED_PACK_ID, packagedSharedSkillPolicy, packagedSharedSkills
 import { publicationEnabled, setSharedSkillPolicy } from './policy.ts';
 import type { BrainEngine } from '../engine.ts';
 import { assertPackagedSkillSource, sharedSkillSourcePolicy } from './setup-source-policy.ts';
+import { gitChildEnv } from '../git-env.ts';
 
 export async function isNewContentDatabase(engine: BrainEngine): Promise<boolean> {
   const [row] = await engine.executeRaw<{ fresh: boolean }>("SELECT to_regclass('public.pages') IS NULL AND to_regclass('public.config') IS NULL AND to_regclass('public.persistence_brain') IS NULL AS fresh");
@@ -80,7 +81,7 @@ export async function setupSharedBrainContent(ctx: OperationContext, options: Sh
     receipt.root = source.local_path;
     receipt.repository_kind = source.local_path ? 'content_directory' : 'db_only';
     if (source.local_path) {
-      const git = spawnSync('git', ['-C', source.local_path, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', timeout: 15_000 });
+      const git = spawnSync('git', ['-C', source.local_path, 'rev-parse', '--show-toplevel'], { env: gitChildEnv(), encoding: 'utf8', timeout: 15_000 });
       if (git.status === 0 && resolve(git.stdout.trim()) === resolve(source.local_path)) receipt.repository_kind = 'git';
     }
     receipt.pending_actions = [sourcePolicy.reason];
@@ -127,7 +128,7 @@ export async function setupSharedBrainContent(ctx: OperationContext, options: Sh
   receipt.root = root;
   receipt.owned_root = prior?.owned_root ?? (!existingRoot && (!!options.fresh || !!options.root));
   receipt.fresh_root_activation = prior?.fresh_root_activation ?? (!existingRoot && !!options.fresh);
-  const gitProbe = existsSync(join(root, '.git')) ? spawnSync('git', ['-C', root, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', timeout: 15_000 }) : null;
+  const gitProbe = existsSync(join(root, '.git')) ? spawnSync('git', ['-C', root, 'rev-parse', '--show-toplevel'], { env: gitChildEnv(), encoding: 'utf8', timeout: 15_000 }) : null;
   receipt.repository_kind = gitProbe?.status === 0 && resolve(gitProbe.stdout.trim()) === root ? 'git' : 'content_directory';
   const existed = existsSync(root);
   if (prior?.root && prior.root !== root) {
@@ -176,13 +177,13 @@ export async function setupSharedBrainContent(ctx: OperationContext, options: Sh
       throw opError('local_conflict', 'Git initialization is allowed only in a newly owned empty content directory.',
         `${root} is not a new empty directory gbrain created; run gbrain init without --git and initialize Git there yourself if the user wants it.`);
     }
-    const git = spawnSync('git', ['init', '--quiet', root], { encoding: 'utf8', timeout: 15_000 });
+    const git = spawnSync('git', ['init', '--quiet', root], { env: gitChildEnv(), encoding: 'utf8', timeout: 15_000 });
     if (!git.error && git.status === 0) receipt.repository_kind = 'git';
     else receipt.pending_actions.push('Git initialization was unavailable; install Git and explicitly initialize this content directory later.');
   }
   if (receipt.repository_kind === 'content_directory' && !receipt.pending_actions.length) receipt.pending_actions.push('Optional: initialize Git explicitly; configure an off-host backup separately.');
   if (receipt.owned_root && receipt.repository_kind === 'content_directory') {
-    const enclosing = spawnSync('git', ['-C', root, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', timeout: 15_000 });
+    const enclosing = spawnSync('git', ['-C', root, 'rev-parse', '--show-toplevel'], { env: gitChildEnv(), encoding: 'utf8', timeout: 15_000 });
     if (enclosing.status === 0 && resolve(enclosing.stdout.trim()) !== root) {
       throw opError('local_conflict', 'The new content directory is inside another Git worktree. Choose a separate root or explicitly initialize Git here; setup will not claim its parent repository.',
         `${root} is inside the Git worktree ${enclosing.stdout.trim()}. Pass --content-root a path outside any repository, or add --git so the content directory gets its own repository.`);

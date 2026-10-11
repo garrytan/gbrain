@@ -391,6 +391,16 @@ CREATE INDEX IF NOT EXISTS idx_chunks_symbol_qualified
 CREATE INDEX IF NOT EXISTS content_chunks_stale_idx
   ON content_chunks(page_id, chunk_index) WHERE embedding IS NULL;
 
+-- #6370: indexing and the title query read text through gbrain_fts_input(),
+-- which splits CJK/ASCII-alnum boundaries (a no-op on text without CJK).
+-- BEGIN GENERATED from src/core/fts-language.ts (FTS_INPUT_FUNCTION_SQL). Edit that file, then run: bun run build:schema
+CREATE OR REPLACE FUNCTION gbrain_fts_input(t text) RETURNS text
+  LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE SET search_path = pg_catalog
+AS \$fn\$
+  SELECT regexp_replace(regexp_replace(t, '([一-鿿぀-ゟ゠-ヿ가-힯])([A-Za-z0-9])', '\\1 \\2', 'g'), '([A-Za-z0-9])([一-鿿぀-ゟ゠-ヿ가-힯])', '\\1 \\2', 'g')
+\$fn\$;
+-- END GENERATED from src/core/fts-language.ts (FTS_INPUT_FUNCTION_SQL)
+
 -- v0.20.0 Cathedral II: chunk-grain FTS trigger.
 -- Weight 'A' on doc_comment + symbol_name_qualified; weight 'B' on chunk_text.
 -- NL queries ("how do we handle errors") rank doc-comment hits above body text.
@@ -399,9 +409,9 @@ CREATE INDEX IF NOT EXISTS content_chunks_stale_idx
 CREATE OR REPLACE FUNCTION update_chunk_search_vector() RETURNS TRIGGER SET search_path = pg_catalog, public AS \$fn\$
 BEGIN
   NEW.search_vector :=
-    setweight(to_tsvector('english', COALESCE(NEW.doc_comment, '')), 'A') ||
-    setweight(to_tsvector('english', COALESCE(NEW.symbol_name_qualified, '')), 'A') ||
-    setweight(to_tsvector('english', COALESCE(NEW.chunk_text, '')), 'B');
+    setweight(to_tsvector('english', gbrain_fts_input(COALESCE(NEW.doc_comment, ''))), 'A') ||
+    setweight(to_tsvector('english', gbrain_fts_input(COALESCE(NEW.symbol_name_qualified, ''))), 'A') ||
+    setweight(to_tsvector('english', gbrain_fts_input(COALESCE(NEW.chunk_text, ''))), 'B');
   RETURN NEW;
 END;
 \$fn\$ LANGUAGE plpgsql;
@@ -1139,17 +1149,15 @@ CREATE OR REPLACE FUNCTION update_page_search_vector() RETURNS trigger SET searc
 DECLARE
   timeline_text TEXT;
 BEGIN
-  -- Gather timeline_entries text for this page
   SELECT coalesce(string_agg(summary || ' ' || detail, ' '), '')
   INTO timeline_text
   FROM timeline_entries
   WHERE page_id = NEW.id;
 
-  -- Build weighted tsvector
   NEW.search_vector :=
-    setweight(to_tsvector('english', coalesce(NEW.title, '')), 'A') ||
-    setweight(to_tsvector('english', coalesce(NEW.timeline, '')), 'C') ||
-    setweight(to_tsvector('english', coalesce(timeline_text, '')), 'C');
+    setweight(to_tsvector('english', gbrain_fts_input(coalesce(NEW.title, ''))), 'A') ||
+    setweight(to_tsvector('english', gbrain_fts_input(coalesce(NEW.timeline, ''))), 'C') ||
+    setweight(to_tsvector('english', gbrain_fts_input(coalesce(timeline_text, ''))), 'C');
 
   RETURN NEW;
 END;
@@ -1994,6 +2002,7 @@ CREATE TABLE IF NOT EXISTS persistence_host_bindings (
     host_id uuid NOT NULL,
     local_path text NOT NULL,
     coordination_path text NOT NULL,
+    git_durability text CHECK (git_durability IN ('enabled','disabled')),
     PRIMARY KEY(worktree_id,host_id)
   );
 CREATE TABLE IF NOT EXISTS persistence_local_writers (

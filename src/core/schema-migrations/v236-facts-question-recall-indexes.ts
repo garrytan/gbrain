@@ -3,8 +3,8 @@ import { factsFtsIndexSql, getFtsLanguage } from '../fts-language.ts';
 
 // Applied by src/core/migrate.ts on the next initSchema(); see docs/ENGINES.md
 // ("Canonical schema sources") for when schema.sql or a TS fragment also changes.
-export const v233: Migration = {
-  version: 233,
+export const v236: Migration = {
+  version: 236,
   name: 'facts_question_recall_indexes',
   // recall `question` (src/core/search/fact-relevance.ts) on a large brain.
   //

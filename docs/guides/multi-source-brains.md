@@ -223,6 +223,7 @@ gbrain sources unfederate <id>
 gbrain sources mirror-readonly <id>
 gbrain sources mirror-writable <id>
 gbrain sources refresh <id> [--dry-run] [--resume|--abandon]   Managed brains: fast-forward the checkout and sync.
+gbrain sources set-strategy <id> <markdown|code|auto>
 ```
 
 ### Read-only mirror sources
@@ -266,6 +267,27 @@ The autopilot cycle syncs the checkout as it is and reports
 `upstream_refresh: "skipped_managed"`; `gbrain doctor` (`sync_freshness`) says
 "upstream unknown" when the checkout was not fetched in the last 24 hours. See
 [`managed_pull_skipped`](write-refusals.md#managed_pull_skipped).
+
+### Code sources: persist the sync strategy
+
+Every sync of a source (`sync --all`, autopilot, the dream cycle, the MCP
+`sync` op) uses the strategy stored on the source when the call names none.
+Unset, that is `markdown`, which imports only Markdown and deletes the page of
+a code file that changes. Record `code` (code only) or `auto` (Markdown and
+code) once for a code repository:
+
+```bash
+gbrain sources set-strategy api code
+gbrain sync --source api --full   # re-classify files unchanged since the last sync
+```
+
+`gbrain sources list --json` shows `strategy` per source (`null` when unset).
+An explicit `gbrain sync --strategy` still wins for that run. A source with an
+unfinished managed sync run refuses the change (`sync_run_unfinished`) until
+the run finishes (`gbrain sync --source <id> --no-pull` resumes it) or is
+retired ([managed sync orphans](repair.md#managed-sync-orphans)): that run's
+frozen manifest was classified under the old strategy. Connector sources
+(GitHub, Google) materialize Markdown and take no strategy.
 
 ## The git requirement for --path sources
 

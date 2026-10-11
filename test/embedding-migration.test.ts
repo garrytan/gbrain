@@ -383,7 +383,7 @@ describe('applyEmbeddingMigration', () => {
     expect(await embeddingColWidth('facts')).toBe(target);
   });
 
-  test('#4252: a dim change keeps the facts btree indexes that read the embedding column (v233 idx_facts_unembedded)', async () => {
+  test('#4252: a dim change keeps the facts btree indexes that read the embedding column (v236 idx_facts_unembedded)', async () => {
     const target = colDim === 512 ? 256 : 512;
     const factIndexes = async () => (await engine.executeRaw<{ indexname: string }>(
       `SELECT indexname FROM pg_indexes WHERE tablename = 'facts' AND indexname = 'idx_facts_unembedded'`)).map(r => r.indexname);

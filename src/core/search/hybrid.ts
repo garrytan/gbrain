@@ -944,10 +944,11 @@ export interface HybridSearchOpts extends SearchOpts {
    * v0.42.20.0 (Fix 3, #1775) INTERNAL — shared query-embed deadline threaded
    * from `hybridSearchCached` into the inner `hybridSearch` so the cache-lookup
    * embed and the inner embed share ONE wall-clock budget (worst case ~one
-   * timeout, not two). Direct `hybridSearch` callers leave it undefined and get
-   * a fresh per-call deadline. Not part of the public contract.
+   * timeout, not two). A getter: the deadline starts at the first embed
+   * request. Direct `hybridSearch` callers leave it undefined and get a fresh
+   * per-call deadline. Not part of the public contract.
    */
-  _queryEmbedDeadline?: QueryEmbedDeadline;
+  _queryEmbedDeadline?: () => QueryEmbedDeadline;
   /**
    * #5691 INTERNAL — the brain's `embedding_query_prefix`, read once per
    * request (by `hybridSearchCached`, or by `hybridSearch` when undefined) and
@@ -1010,8 +1011,8 @@ const QUERY_EMBED_TIMEOUT_MS = (() => {
 
 /**
  * Floor for the remaining shared-deadline budget at each embed call (codex).
- * The shared deadline is absolute from `hybridSearchCached` entry, so slow
- * expansion/keyword (or a 6s cache-lookup stall) before the inner embed could
+ * The shared deadline is absolute from the first embed request, so a 6s
+ * cache-lookup stall (or slow work between two embeds) before the inner embed could
  * leave ~0 budget and starve a HEALTHY embed into a false keyword-only result.
  * Flooring guarantees every embed gets at least this long, so a fast healthy
  * embed (~0.5s) always succeeds. Worst case under a stalled provider on the
@@ -1029,6 +1030,17 @@ export interface QueryEmbedDeadline {
 
 export function makeQueryEmbedDeadline(ms = QUERY_EMBED_TIMEOUT_MS): QueryEmbedDeadline {
   return { signal: AbortSignal.timeout(ms), deadlineAt: Date.now() + ms };
+}
+
+/**
+ * #6400 (a): a shared query-embed deadline that starts at the FIRST embed
+ * request, not when the search starts. Every call returns the same deadline,
+ * so the cache-lookup embed and the vector-arm embeds still share one budget,
+ * but lexical work and expansion before the first embed no longer spend it.
+ */
+export function lazyQueryEmbedDeadline(ms = QUERY_EMBED_TIMEOUT_MS): () => QueryEmbedDeadline {
+  let dl: QueryEmbedDeadline | undefined;
+  return () => (dl ??= makeQueryEmbedDeadline(ms));
 }
 
 /**
@@ -1218,8 +1230,10 @@ export async function hybridSearchCached(
   // opts._queryEmbedDeadline). On a stalled provider the cache-lookup embed
   // times out (→ cacheStatus 'disabled', fall through), then the inner embed
   // sees the already-elapsed budget and fails fast → keyword fallback. Worst
-  // case ~one timeout (~6s), comfortably under the CLI 10s force-exit.
-  const queryEmbedDl = makeQueryEmbedDeadline();
+  // case ~one timeout (~6s), comfortably under the CLI 10s force-exit. The
+  // budget starts at the first embed request (#6400), so lexical work and
+  // expansion before the vector arm don't spend it.
+  const queryEmbedDl = lazyQueryEmbedDeadline();
   if (semanticCache && !skipCache) {
     try {
       const { isAvailable } = await import('../ai/gateway.ts');
@@ -1233,7 +1247,7 @@ export async function hybridSearchCached(
         // v0.42.20.0 (Fix 3) — bounded by the shared deadline; on timeout this
         // throws → caught below → cacheStatus 'disabled' → falls through to the
         // inner hybridSearch (which reuses the same elapsed deadline).
-        queryEmbedding = await embedQueryBounded(query, queryPrefix ? { queryPrefix } : undefined, queryEmbedDl);
+        queryEmbedding = await embedQueryBounded(query, queryPrefix ? { queryPrefix } : undefined, queryEmbedDl());
       } else {
         cacheStatus = 'disabled';
       }

@@ -7,8 +7,10 @@
  * src/commands/doctor/registry.ts and src/core/doctor-categories.ts.
  */
 
+import { renderFragment, sqlFragment, trustedSql } from '../../../core/engine-sql/fragment.ts';
 import { startHeartbeat } from '../../../core/progress.ts';
 import { quarantineFilterFragment } from '../../../core/quarantine.ts';
+import { entityTypePredicateSql, resolveEntityTypes } from '../../../core/schema-pack/entity-types.ts';
 import { MIN_ENTITY_PAGES_FOR_COVERAGE } from '../../../core/types.ts';
 import type { Check } from '../../doctor.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
@@ -29,16 +31,21 @@ async function runGraphCoverage(ctx: DoctorContext): Promise<Check[]> {
   progress.heartbeat('graph_coverage');
   try {
     const health = await engine.getHealth();
-    const entityCount = (await engine.executeRaw<{ count: number }>(
-      // deleted_at IS NULL: a brain whose only entity pages are soft-deleted has
-      // zero LIVE entities, and must take the short-circuit below rather than
-      // warn about coverage on pages the rest of the system treats as gone.
-      // buildGazetteer (src/core/by-mention.ts) already filters this way, so
-      // without it the two disagree about whether entity pages exist at all.
-      // #4280: quarantined shells are excluded too — parity with onboard's
-      // VISIBLE_ENTITY_PREDICATE, which never counted them.
-      `SELECT COUNT(*)::int AS count FROM pages WHERE deleted_at IS NULL AND type IN ('entity', 'person', 'company', 'organization') AND ${quarantineFilterFragment('pages')}`,
-    ))[0]?.count ?? 0;
+    // #4772: the entity types come from the active schema pack(s), per source,
+    // through the same policy getHealth binds. A pack that does not load is a
+    // warn below, never a legacy-list reading.
+    const entityTypes = await resolveEntityTypes(engine, null);
+    const isEntity = entityTypePredicateSql('pages', entityTypes.filter);
+    const quarantine = trustedSql(quarantineFilterFragment('pages'));
+    // deleted_at IS NULL: a brain whose only entity pages are soft-deleted has
+    // zero LIVE entities, and must take the short-circuit below rather than
+    // warn about coverage on pages the rest of the system treats as gone.
+    // buildGazetteer (src/core/by-mention.ts) already filters this way, so
+    // without it the two disagree about whether entity pages exist at all.
+    // #4280: quarantined shells are excluded too — parity with onboard's
+    // VISIBLE_ENTITY_PREDICATE, which never counted them.
+    const countSql = renderFragment(sqlFragment`SELECT COUNT(*)::int AS count FROM pages WHERE pages.deleted_at IS NULL AND ${isEntity} AND ${quarantine}`);
+    const entityCount = (await engine.executeRaw<{ count: number }>(countSql.text, countSql.params))[0]?.count ?? 0;
 
     // Compute coverage against eligible entities only — exclude test fixtures
     // (`tools/gbrain/test/*`) and template stubs (`templates/new-person`) so
@@ -50,29 +57,37 @@ async function runGraphCoverage(ctx: DoctorContext): Promise<Check[]> {
     // entity_link_coverage (inbound EXISTS, target 70%): a brain of
     // inbound-only entities (meetings link TO people) read ok there and
     // warn here. Same in/out predicate + 70% target both places now.
-    const eligibleStats = (await engine.executeRaw<{ entities: number; connected: number; timeline: number }>(
-      `WITH eligible AS (
-        SELECT id FROM pages
-        WHERE deleted_at IS NULL
-          AND type IN ('entity','person','company','organization')
-          AND ${quarantineFilterFragment('pages')}
-          AND slug NOT LIKE 'tools/gbrain/test/%'
-          AND slug <> 'templates/new-person'
+    const eligibleSql = renderFragment(sqlFragment`WITH eligible AS (
+        SELECT pages.id FROM pages
+        WHERE pages.deleted_at IS NULL
+          AND ${isEntity}
+          AND ${quarantine}
+          AND pages.slug NOT LIKE 'tools/gbrain/test/%'
+          AND pages.slug <> 'templates/new-person'
       )
       SELECT
         (SELECT count(*)::int FROM eligible) AS entities,
         (SELECT count(*)::int FROM eligible e
            WHERE EXISTS (SELECT 1 FROM links l WHERE l.from_page_id = e.id)
               OR EXISTS (SELECT 1 FROM links l WHERE l.to_page_id = e.id)) AS connected,
-        (SELECT count(DISTINCT page_id)::int FROM timeline_entries WHERE page_id IN (SELECT id FROM eligible)) AS timeline`,
-    ))[0] ?? { entities: entityCount, connected: 0, timeline: 0 };
+        (SELECT count(DISTINCT page_id)::int FROM timeline_entries WHERE page_id IN (SELECT id FROM eligible)) AS timeline`);
+    const eligibleStats = (await engine.executeRaw<{ entities: number; connected: number; timeline: number }>(eligibleSql.text, eligibleSql.params))[0]
+      ?? { entities: entityCount, connected: 0, timeline: 0 };
 
     const eligibleEntityCount = Number(eligibleStats.entities ?? entityCount);
     const linkCoverage = eligibleEntityCount > 0 ? Number(eligibleStats.connected ?? 0) / eligibleEntityCount : 0;
     const timelineCoverage = eligibleEntityCount > 0 ? Number(eligibleStats.timeline ?? 0) / eligibleEntityCount : 0;
     const linkPct = (linkCoverage * 100).toFixed(0);
     const timelinePct = (timelineCoverage * 100).toFixed(0);
-    if (entityCount === 0) {
+    if (entityTypes.status === 'pack_unavailable') {
+      const where = entityTypes.unresolved.filter(Boolean);
+      checks.push({
+        name: 'graph_coverage',
+        status: 'warn',
+        message: `Entity types unknown: the active schema pack${where.length ? ` for source${where.length > 1 ? 's' : ''} ${where.map((id) => `'${id}'`).join(', ')}` : ''} did not load, so entity coverage cannot be graded. Run \`gbrain schema active${where.length ? ' --source <id>' : ''}\` to debug.`,
+        details: { unresolved_sources: where },
+      });
+    } else if (entityCount === 0) {
       // Markdown-only / journal / wiki brain — no entity pages to compute
       // coverage against. Coverage formula is structurally inapplicable.
       checks.push({
@@ -162,13 +177,17 @@ async function runOrphanRatio(ctx: DoctorContext): Promise<Check[]> {
     const { getOrphansData } = await import('../../orphans.ts');
     const srcId = orphanRatioSourceId;
     const inSource = srcId ? ` in source '${srcId}'` : '';
-    const entityCount = (await engine.executeRaw<{ count: number }>(
-      `SELECT COUNT(*)::int AS count FROM pages WHERE type IN ('entity', 'person', 'company', 'organization') AND deleted_at IS NULL${srcId ? ' AND source_id = $1' : ''}`,
-      srcId ? [srcId] : [],
-    ))[0]?.count ?? 0;
+    // #4772: entity types per the pack of the asked source (brain-wide: every source's pack).
+    const entityTypes = await resolveEntityTypes(engine, srcId ? [srcId] : null);
+    const countSql = renderFragment(sqlFragment`SELECT COUNT(*)::int AS count FROM pages
+      WHERE ${entityTypePredicateSql('pages', entityTypes.filter)} AND pages.deleted_at IS NULL
+        ${srcId ? sqlFragment`AND pages.source_id = ${srcId}::text` : sqlFragment``}`);
+    const entityCount = (await engine.executeRaw<{ count: number }>(countSql.text, countSql.params))[0]?.count ?? 0;
     // Brain-wide (no --source): <100 entities is vacuous — small brains
     // naturally show a high orphan ratio; not actionable signal. Skip.
-    if (entityCount < 100 && !srcId) {
+    // #4772: with the pack unavailable the count is unknown, not small, so
+    // the ratio is answered with a caveat instead of a vacuous ok.
+    if (entityTypes.status === 'resolved' && entityCount < 100 && !srcId) {
       checks.push({
         name: 'orphan_ratio',
         status: 'ok',
@@ -183,9 +202,11 @@ async function runOrphanRatio(ctx: DoctorContext): Promise<Check[]> {
       const ratio = data.total_linkable > 0 ? data.total_orphans / data.total_linkable : 0;
       const pct = (ratio * 100).toFixed(0);
       const caveat =
-        entityCount < 100
-          ? ` — low scale (${entityCount} entity pages <100), interpret with caution`
-          : '';
+        entityTypes.status === 'pack_unavailable'
+          ? ' — entity count unknown (the active schema pack did not load; run gbrain schema active)'
+          : entityCount < 100
+            ? ` — low scale (${entityCount} entity pages <100), interpret with caution`
+            : '';
       // #5877: --by-mention only runs against the database (`--source db`);
       // the bare command exits 2 on the default fs source.
       const hint =
@@ -292,6 +313,7 @@ export const timelineHistoryEntry: DoctorEntry = {
     'git_held_files',
     'frontmatter_hook',
     'orphan_persistence_bindings',
+    'foreign_ownership_marker',
     'unbound_source',
     'writer_version',
     'self_capture',

@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 227725,
-    "stdoutSha256": "24cb0e080443004b0f3ff1da85ceba65b562d28c79c0cedd6bf4cb3943f68a7e",
+    "stdoutBytes": 230438,
+    "stdoutSha256": "9a3dc5c29fd6080932aa7461f7ca2e9f2579a917182e92565c312b781c99fc10",
     "toolNames": [
       "remember",
       "entity",
@@ -1661,6 +1661,8 @@
         "mutating": true,
         "name": "add_tag",
         "parameters": {
+          "expected_revision": "string?",
+          "force": "boolean?",
           "request_id": "string?",
           "slug": "string",
           "tag": "string"
@@ -1668,6 +1670,14 @@
         "required_scopes": [],
         "schema": {
           "properties": {
+            "expected_revision": {
+              "description": "Revision read; omit to merge onto the current page.",
+              "type": "string"
+            },
+            "force": {
+              "description": "Ignore the revision.",
+              "type": "boolean"
+            },
             "request_id": {
               "description": "UUID; retry with it on timeout.",
               "type": "string"
@@ -1696,6 +1706,8 @@
         "mutating": true,
         "name": "remove_tag",
         "parameters": {
+          "expected_revision": "string?",
+          "force": "boolean?",
           "request_id": "string?",
           "slug": "string",
           "tag": "string"
@@ -1703,6 +1715,14 @@
         "required_scopes": [],
         "schema": {
           "properties": {
+            "expected_revision": {
+              "description": "Revision read; omit to merge onto the current page.",
+              "type": "string"
+            },
+            "force": {
+              "description": "Ignore the revision.",
+              "type": "boolean"
+            },
             "request_id": {
               "description": "UUID; retry with it on timeout.",
               "type": "string"
@@ -2106,6 +2126,8 @@
         "parameters": {
           "date": "string",
           "detail": "string?",
+          "expected_revision": "string?",
+          "force": "boolean?",
           "request_id": "string?",
           "slug": "string",
           "source": "string?",
@@ -2121,6 +2143,14 @@
             "detail": {
               "description": "Longer text.",
               "type": "string"
+            },
+            "expected_revision": {
+              "description": "Revision read; omit to merge onto the current page.",
+              "type": "string"
+            },
+            "force": {
+              "description": "Ignore the revision.",
+              "type": "boolean"
             },
             "request_id": {
               "description": "UUID; retry with it on timeout.",
@@ -4136,7 +4166,7 @@
               "type": "boolean"
             },
             "since": {
-              "description": "Start of temporal window (YYYY-MM-DD or YYYY-MM)",
+              "description": "Start of temporal window (YYYY-MM-DD or YYYY-MM). Omit both bounds and a question naming one explicit date (2026-09-15, 2026-09, September 2026) is bounded to it; the result says window_source.",
               "type": "string"
             },
             "take": {
@@ -4227,6 +4257,8 @@
         "name": "takes_add",
         "parameters": {
           "claim": "string",
+          "expected_revision": "string?",
+          "force": "boolean?",
           "holder": "string",
           "kind": "string",
           "local_dir": "string?",
@@ -4242,6 +4274,14 @@
             "claim": {
               "description": "The claim text (one line).",
               "type": "string"
+            },
+            "expected_revision": {
+              "description": "Revision read; omit to merge onto the current page.",
+              "type": "string"
+            },
+            "force": {
+              "description": "Ignore the revision.",
+              "type": "boolean"
             },
             "holder": {
               "description": "Who HOLDS this belief (said/clearly implied it): world | people/<slug> | companies/<slug> | brain. Remote callers: must be in the caller's takes-holder allow-list.",
@@ -4299,6 +4339,8 @@
         "mutating": true,
         "name": "takes_update",
         "parameters": {
+          "expected_revision": "string?",
+          "force": "boolean?",
           "local_dir": "string?",
           "request_id": "string?",
           "row_num": "number",
@@ -4310,6 +4352,14 @@
         "required_scopes": [],
         "schema": {
           "properties": {
+            "expected_revision": {
+              "description": "Revision read; omit to merge onto the current page.",
+              "type": "string"
+            },
+            "force": {
+              "description": "Ignore the revision.",
+              "type": "boolean"
+            },
             "local_dir": {
               "description": "Trusted CLI directory hint; must equal the registered source root.",
               "type": "string"
@@ -4355,6 +4405,8 @@
         "name": "takes_resolve",
         "parameters": {
           "evidence": "string?",
+          "expected_revision": "string?",
+          "force": "boolean?",
           "local_dir": "string?",
           "quality": "string",
           "request_id": "string?",
@@ -4370,6 +4422,14 @@
             "evidence": {
               "description": "What evidence resolved this (free text).",
               "type": "string"
+            },
+            "expected_revision": {
+              "description": "Revision read; omit to merge onto the current page.",
+              "type": "string"
+            },
+            "force": {
+              "description": "Ignore the revision.",
+              "type": "boolean"
             },
             "local_dir": {
               "description": "Trusted CLI directory hint; must equal the registered source root.",
@@ -4427,6 +4487,8 @@
         "name": "takes_supersede",
         "parameters": {
           "claim": "string",
+          "expected_revision": "string?",
+          "force": "boolean?",
           "holder": "string?",
           "kind": "string?",
           "local_dir": "string?",
@@ -4443,6 +4505,14 @@
             "claim": {
               "description": "The replacement claim text.",
               "type": "string"
+            },
+            "expected_revision": {
+              "description": "Revision read; omit to merge onto the current page.",
+              "type": "string"
+            },
+            "force": {
+              "description": "Ignore the revision.",
+              "type": "boolean"
             },
             "holder": {
               "description": "Override holder (default: inherit). Remote callers: an override must be in the allow-list.",
@@ -4503,6 +4573,8 @@
         "mutating": true,
         "name": "takes_remove",
         "parameters": {
+          "expected_revision": "string?",
+          "force": "boolean?",
           "local_dir": "string?",
           "request_id": "string?",
           "row_num": "number",
@@ -4511,6 +4583,14 @@
         "required_scopes": [],
         "schema": {
           "properties": {
+            "expected_revision": {
+              "description": "Revision read; omit to merge onto the current page.",
+              "type": "string"
+            },
+            "force": {
+              "description": "Ignore the revision.",
+              "type": "boolean"
+            },
             "local_dir": {
               "description": "Trusted CLI directory hint; must equal the registered source root.",
               "type": "string"

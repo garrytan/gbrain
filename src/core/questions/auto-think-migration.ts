@@ -1,10 +1,14 @@
 /**
  * dream.auto_think -> pinned questions (C4 migration). Maps all seven legacy
- * keys without creating consent the owner never gave:
+ * keys without creating consent the owner never gave. Every migrated pin
+ * imports inactive: the auto_think phase had no caller, so a setting that
+ * never spent must not start paid refreshes on upgrade. The owner activates
+ * one by pinning it again with its id (`gbrain questions list` shows it).
  *
  *   dream.auto_think.questions      one pin per question (source `default`, no scope)
- *   dream.auto_think.enabled=false  pins import inactive (`migrated_disabled`)
- *   dream.auto_think.budget = 0     pins import inactive (`migrated_zero_budget`);
+ *   dream.auto_think.enabled=false  inactive_reason `migrated_disabled`
+ *   dream.auto_think.budget = 0     inactive_reason `migrated_zero_budget`
+ *   enabled, positive budget        inactive_reason `migrated_enabled`;
  *                                   a positive budget seeds cycle.standing_questions.budget_usd
  *   dream.auto_think.auto_commit    false (the default) keeps draft-only publishing
  *   dream.auto_think.cooldown_days  per-pin cooldown (default 30, as before)
@@ -51,7 +55,7 @@ export function noteAutoThinkReplacement(key: string): void {
 export interface AutoThinkMigrationReport {
   questions: number;
   inserted: number;
-  state: 'active' | 'inactive' | null;
+  state: 'inactive' | null;
   publish_mode: 'publish' | 'draft' | null;
   config_set: string[];
 }
@@ -97,8 +101,8 @@ export async function migrateAutoThinkToPins(engine: BrainEngine): Promise<AutoT
   const model = (await read('models.auto_think')) || (await read('dream.auto_think.model')) || null;
   const lastCompletion = await read('dream.auto_think.last_completion_ts');
   const anchor = lastCompletion && Number.isFinite(Date.parse(lastCompletion)) ? new Date(Date.parse(lastCompletion)).toISOString() : null;
-  const inactiveReason = !enabled ? 'migrated_disabled' : budget <= 0 ? 'migrated_zero_budget' : null;
-  report.state = inactiveReason ? 'inactive' : 'active';
+  const inactiveReason = !enabled ? 'migrated_disabled' : budget <= 0 ? 'migrated_zero_budget' : 'migrated_enabled';
+  report.state = 'inactive';
   report.publish_mode = autoCommit ? 'publish' : 'draft';
 
   for (const question of questions) {

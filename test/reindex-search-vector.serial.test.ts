@@ -122,7 +122,7 @@ describe('runReindexSearchVector', () => {
 
     // 1 inventory + 2 CREATE + 2 backfill batches (mock returns no rows, so
     // the keyset loop terminates after the first batch per table) + the facts
-    // keyword index drop and rebuild (v233) = 7 calls
+    // keyword index drop and rebuild (v236) = 7 calls
     expect(state.calls.length).toBe(7);
     expect(state.calls[1]).toContain('CREATE OR REPLACE FUNCTION update_page_search_vector');
     expect(state.calls[1]).toContain("to_tsvector('pt_br'");

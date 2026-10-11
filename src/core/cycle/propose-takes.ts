@@ -55,6 +55,8 @@ import { GBrainError } from '../types.ts';
 import { isConfigTruthy } from '../config.ts';
 import { matchingCloseBracket } from '../llm-json.ts';
 import { TAKE_KIND_VALUES } from '../takes-fence.ts';
+import { attributionChecksEnabled } from './attribution-checks.ts';
+import { downgradeAssistantOnlyHolders } from './propose-takes-attribution.ts';
 import type { OperationContext } from '../operations.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { PhaseStatus, CyclePhase } from '../cycle.ts';
@@ -296,6 +298,8 @@ async function listCandidatePages(
   const where = [
     'deleted_at IS NULL',
     "type IS DISTINCT FROM 'extract_receipt'",
+    // #5211: an atom is a fragment of a page that is itself a candidate; a legacy atom carries no writer stamp.
+    "type IS DISTINCT FROM 'atom'",
     // #5212: never propose takes from the dream cycle's own output.
     "COALESCE(frontmatter->>'dream_generated', '') <> 'true'",
     "COALESCE(frontmatter->>'extracted_by', '') NOT LIKE 'extract_atoms%'",
@@ -756,7 +760,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
     }
 
     const extractor = opts.extractor ?? defaultExtractor;
-    const { attributionRules, dateGrounding } = await takesPromptFlags(engine);
+    const [{ attributionRules, dateGrounding }, attributionChecks] = await Promise.all([takesPromptFlags(engine), attributionChecksEnabled(engine)]);
     const promptVersion = opts.promptVersion ?? `${PROPOSE_TAKES_PROMPT_VERSION}${attributionRules ? PROPOSE_TAKES_ATTRIBUTION_PROMPT_SUFFIX : ''}`;
     const pageLimit = opts.pageLimit ?? 100;
     const skipPagesWithFence = opts.skipPagesWithFence ?? false;
@@ -1000,6 +1004,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
       }
       result.llm_calls_succeeded += 1;
       llmHalt.reset();
+      if (attributionChecks) proposals = downgradeAssistantOnlyHolders(proposals, body);
 
       // Write proposals to take_proposals. #2138: the idempotency key is
       // per-CLAIM — take_proposals_idempotency_idx folds md5(claim_text) into

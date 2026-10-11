@@ -12,6 +12,8 @@
  * and nothing degenerate is ever written.
  */
 import { AIConfigError } from './errors.ts';
+import { modelMatchKey } from './dims.ts';
+import type { Recipe } from './types.ts';
 
 export const EMBEDDING_ZERO_NORM = 'embedding_zero_norm';
 export const EMBEDDING_ZERO_NORM_DOCS = 'docs/guides/write-refusals.md#embedding_zero_norm';
@@ -104,4 +106,26 @@ export function screenAlignedEmbeddings(out: (Float32Array | null)[], model: str
   });
   if (failures.length) throw new EmbeddingZeroNormError(failures, out, model);
   return out as Float32Array[];
+}
+
+/**
+ * PR #5921 / wave 14 P3.18: fit a Matryoshka model's native-width response to the brain's width by the rule its
+ * card documents (keep the first `expected` coordinates, L2-normalize), when the recipe's embedding touchpoint
+ * declares the model (`matryoshka`) with that native width and lists `expected` among its prefixes. Every other
+ * vector returns as it came, so the caller's dim-mismatch check still decides. A prefix whose norm overflows is
+ * refused here; a zero or non-finite prefix returns unnormalized and `screenAlignedEmbeddings` refuses it per item.
+ */
+export function fitMatryoshkaPrefix(recipe: Recipe, modelId: string, vector: number[], expected: number): number[] {
+  const declared = recipe.touchpoints?.embedding?.matryoshka?.[modelMatchKey(modelId)];
+  if (!declared || !Array.isArray(vector) || vector.length !== declared.native || expected === declared.native || !declared.prefixes.includes(expected)) return vector;
+  const prefix = vector.slice(0, expected);
+  if (degenerateEmbeddingReason(prefix)) return prefix;
+  let sum = 0;
+  for (const value of prefix) sum += value * value;
+  const norm = Math.sqrt(sum);
+  if (!Number.isFinite(norm)) {
+    throw new AIConfigError(`Embedding provider returned a ${expected}-dim prefix with a non-finite norm for ${modelId}.`,
+      'Retry after checking provider output; a vector whose norm overflows is not safe to index.');
+  }
+  return prefix.map(value => value / norm);
 }

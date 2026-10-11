@@ -308,7 +308,7 @@ for (const kind of testBackends()) {
       }
     });
 
-    test('unembedded also counts another embedding model and a stale text hash, through the v233 indexes', async () => {
+    test('unembedded also counts another embedding model and a stale text hash, through the v236 indexes', async () => {
       await fact('othermodel', { text: 'OTHERMODEL Alice Example coffee roast', daysAgo: 31 });
       await fact('stalehash', { text: 'STALEHASH Alice Example coffee roast', daysAgo: 32 });
       await engine.executeRaw(`UPDATE facts SET embedding_model = 'other:model' WHERE id = $1`, [ids.othermodel]);
@@ -320,7 +320,7 @@ for (const kind of testBackends()) {
       }
     });
 
-    test('v233: the keyword document matches idx_facts_fts and the uncomparable probes have their indexes', async () => {
+    test('v236: the keyword document matches idx_facts_fts and the uncomparable probes have their indexes', async () => {
       const names = (await engine.executeRaw<{ indexname: string }>(
         `SELECT indexname FROM pg_indexes WHERE tablename = 'facts' AND indexname IN ('idx_facts_fts', 'idx_facts_unembedded', 'idx_facts_embedding_model') ORDER BY indexname`)).map(r => r.indexname);
       expect(names).toEqual(['idx_facts_embedding_model', 'idx_facts_fts', 'idx_facts_unembedded']);

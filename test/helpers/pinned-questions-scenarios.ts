@@ -173,8 +173,15 @@ export function registerPinnedQuestionSuite(label: string, getEngine: () => Brai
             .toEqual({ tool, leaked: false });
           if (tool === 'get_page') expect(result.isError).toBe(true);
         }
-        for (const tool of ['questions_list', 'questions_status', 'questions_refresh', 'questions_unpin', 'questions_pin']) {
-          const { result, body } = await mcp(engine, tool, { id: pinned.receipt.id, question: QUESTION }, g);
+        const id = pinned.receipt.id;
+        for (const [tool, params] of [
+          ['questions_list', { include_archived: true }],
+          ['questions_status', { id }],
+          ['questions_refresh', { id, full: true }],
+          ['questions_unpin', { id }],
+          ['questions_pin', { id, question: QUESTION }],
+        ] as Array<[string, Record<string, unknown>]>) {
+          const { result, body } = await mcp(engine, tool, params, g);
           expect({ tool, isError: result.isError, code: body.code }).toEqual({ tool, isError: true, code: 'question_owner_only' });
           expect(JSON.stringify(body)).not.toContain(CANARY);
         }
@@ -584,7 +591,7 @@ export function registerPinnedQuestionSuite(label: string, getEngine: () => Brai
       } finally { __setChatTransportForTests(null); await reset(engine); }
     });
 
-    run('enabled with a zero budget imports inactive; enabled with auto_commit imports active and published', async (engine) => {
+    run('enabled with a zero budget imports inactive; enabled with auto_commit imports inactive and published', async (engine) => {
       try {
         await reset(engine);
         await engine.setConfig('dream.auto_think.questions', JSON.stringify(['Who leads acme-example?']));
@@ -597,9 +604,37 @@ export function registerPinnedQuestionSuite(label: string, getEngine: () => Brai
         await engine.setConfig('dream.auto_think.questions', JSON.stringify(['Who leads acme-example?']));
         await engine.setConfig('dream.auto_think.enabled', 'true');
         await engine.setConfig('dream.auto_think.auto_commit', 'true');
-        expect(await migrateAutoThinkToPins(engine)).toMatchObject({ state: 'active', publish_mode: 'publish' });
-        expect((await migrated(engine))[0]).toMatchObject({ state: 'active', publish_mode: 'publish', inactive_reason: null, cooldown_days: 30 });
+        expect(await migrateAutoThinkToPins(engine)).toMatchObject({ state: 'inactive', publish_mode: 'publish' });
+        expect((await migrated(engine))[0]).toMatchObject({ state: 'inactive', publish_mode: 'publish', inactive_reason: 'migrated_enabled', cooldown_days: 30 });
         expect(questionSlug('Who leads acme-example?', { source: 'default' })).toMatch(/^questions\/who-leads-acme-example-[0-9a-f]{8}$/);
+      } finally { await reset(engine); }
+    });
+
+    run('an enabled auto_think imports inactive pins that standing_questions skips until the owner activates one', async (engine) => {
+      const question = 'Which widgets did acme-example ship this quarter?';
+      try {
+        await reset(engine);
+        await engine.setConfig('dream.auto_think.questions', JSON.stringify([question]));
+        await engine.setConfig('dream.auto_think.enabled', 'true');
+        await engine.setConfig('dream.auto_think.budget', '2.5');
+        expect(await migrateAutoThinkToPins(engine)).toMatchObject({ inserted: 1, state: 'inactive' });
+        expect((await migrated(engine))[0]).toMatchObject({ state: 'inactive', inactive_reason: 'migrated_enabled' });
+        expect(await engine.getConfig('cycle.standing_questions.budget_usd')).toBe('2.5');
+        const id = `default:${questionSlug(question, { source: 'default' })}`;
+        const status = await questionStatus(localCtx(engine, 'default'), { id });
+        expect(status).toMatchObject({ state: 'inactive', blocked_reason: 'awaiting_consent', fix: { argv: ['gbrain', 'questions', 'pin', '--id', id] } });
+
+        const before = stubChat();
+        const idle = await runPhaseStandingQuestions(engine, { dryRun: false, chat: before.fn });
+        expect(before.calls.filter(c => c.includes(question))).toHaveLength(0);
+        expect((idle.details as { outcomes: Array<{ id: string }> }).outcomes.map(o => o.id)).not.toContain(id);
+
+        const activated = await pinQuestion(localCtx(engine, 'default'), { id, defer: true });
+        expect(activated).toMatchObject({ created: false, activated: true, receipt: { state: 'active' } });
+        const after = stubChat();
+        const ran = await runPhaseStandingQuestions(engine, { dryRun: false, chat: after.fn });
+        expect((ran.details as { outcomes: Array<{ id: string }> }).outcomes.map(o => o.id)).toContain(id);
+        expect(after.calls.filter(c => c.includes(question)).length).toBeGreaterThan(0);
       } finally { await reset(engine); }
     });
   });

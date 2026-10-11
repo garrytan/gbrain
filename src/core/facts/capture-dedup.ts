@@ -35,6 +35,8 @@ export const CAPTURE_LANES = ['hook:writeback', 'sweep:corpus', 'hook:compact'] 
 export const CAPTURE_DEDUP_WINDOW_MS = 15 * 60 * 1000;
 /** Shadow-mode near-duplicate threshold (measured, never a drop). */
 export const NEAR_DUPLICATE_THRESHOLD = 0.92;
+/** The bar consolidate clusters untyped facts at (#6023). Explicit-lane supersession reads the per-model threshold instead (supersession-threshold.ts). */
+export const EXPLICIT_DUPLICATE_THRESHOLD = 0.95;
 const CAPTURE_DEDUP_SCAN_LIMIT = 50;
 
 export function isCaptureLane(source: string | null | undefined): boolean {

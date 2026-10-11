@@ -10,6 +10,7 @@
  */
 import type { BrainEngine } from '../../core/engine.ts';
 import { cliRenderContext, renderAction } from '../../core/agent-output.ts';
+import { writeJsonDocument } from '../../core/cli-force-exit.ts';
 import { opError } from '../../core/ops/contract.ts';
 import { readSyncStatus, unblockSync } from '../../core/persistence/sync-status.ts';
 import { HOLD_ATTEMPTS_NEEDS_HUMAN } from '../../core/persistence/sync-fault-class.ts';
@@ -82,7 +83,7 @@ export async function runSyncStatus(engine: BrainEngine, args: string[]): Promis
   const status = await readSyncStatus(engine, sourceId);
   const ctx = cliRenderContext();
   const rendered = { ...status, holds: status.holds.map(hold => ({ ...hold, fix: renderAction(hold.fix, ctx) })), next: status.next ? renderAction(status.next, ctx) : null };
-  if (args.includes('--json')) { console.log(JSON.stringify(rendered, null, 2)); return; }
+  if (args.includes('--json')) return writeJsonDocument(JSON.stringify(rendered, null, 2));
   const c = status.cursor;
   console.log(`Source ${sourceId}: ${c ? c.done ? `last run finished at ${c.index}/${c.total} (pinned ${c.pinned_target?.slice(0, 8) ?? '?'})` : `cursor ${c.index}/${c.total} at pinned target ${c.pinned_target?.slice(0, 8) ?? '?'}`
     + `${c.last_advance_at ? `, last advance ${c.last_advance_at}` : ''}` : 'no managed cursor'}`);
@@ -102,7 +103,7 @@ export async function runSyncUnblock(engine: BrainEngine, args: string[]): Promi
   const rendered = { ...outcome,
     applied: outcome.applied.map(entry => entry.action === 'repair' ? { ...entry, repair: { ...entry.repair, next: renderAction(entry.repair.next, ctx) } } : entry),
     refused: outcome.refused.map(entry => ({ ...entry, fix: renderAction(entry.fix, ctx) })), next: outcome.next ? renderAction(outcome.next, ctx) : null };
-  if (args.includes('--json')) { console.log(JSON.stringify(rendered, null, 2)); return; }
+  if (args.includes('--json')) return writeJsonDocument(JSON.stringify(rendered, null, 2));
   const repaired = outcome.applied.filter(entry => entry.action === 'repair').length;
   console.log(`Source ${sourceId}: ${outcome.applied.length} held file(s) ${outcome.apply ? `${repaired ? 'repaired or ' : ''}scheduled for a re-screen` : `would be ${repaired ? 'repaired or ' : ''}scheduled for a re-screen (preview; add --apply)`}, ${outcome.refused.length} refused.`);
   for (const entry of outcome.applied) {

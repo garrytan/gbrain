@@ -44,6 +44,7 @@ import { requestIndexesRepair } from './request-indexes.ts';
 import { connectorFencesRepair } from './connector-fences.ts';
 import { takeSupersessionRepair } from './take-supersession.ts';
 import { orphanBindingsRepair } from './orphan-bindings.ts';
+import { managedSyncOrphansRepair } from './managed-sync-orphans.ts';
 import { embeddingEffectsRepair } from './embedding-effects.ts';
 import { googleFileModesRepair } from './google-file-modes.ts';
 import { staleAtomsRepair } from './stale-atoms.ts';
@@ -250,6 +251,13 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
     summary: 'ANALYZE the hot tables (pages, links, facts, takes, content_chunks, timeline_entries) whose planner statistics are stale (F4b), '
       + 'so search and graph reads stop planning as slow nested loops. PGLite also resets each table\'s pending row count; Postgres runs each '
       + 'ANALYZE with a 60 s statement and 2 s lock timeout. No journal admission and no user data changes. Brain-wide.',
+  },
+  'managed-sync-orphans': {
+    handler: managedSyncOrphansRepair, embeds: 'none', checks: ['sync_failures'], explicit_only: true, preview_bound: true,
+    summary: 'Retire managed sync bookkeeping nothing current can resume or clear (#5459): failure rows whose cursor key has no cursor, and unfinished '
+      + 'cursors recorded by a principal that is no longer an active local writer (or superseded pre-options cursors) whose pending request is terminal. '
+      + 'Bookkeeping only (op_checkpoints); no journal admission. The preview prints a hash; --apply --expect <hash> retires exactly that set. '
+      + 'A cursor with a live pending request, or one the live writer can still resume, is kept and counted.',
   },
 };
 

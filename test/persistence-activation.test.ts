@@ -85,7 +85,12 @@ test('activation fsyncs source and selected datastore refusal records before bec
   expect(JSON.parse(readFileSync(join(root, '.gbrain-managed'), 'utf8'))).toMatchObject({ managed: true, version: 1 });
   expect(await managedPersistenceEnabled(engine)).toBe(true);
   await expect(engine.putPage('legacy', { type: 'note', title: 'Example', compiled_truth: 'Unsupported legacy write', timeline: '', frontmatter: {} }, { sourceId })).rejects.toThrow('writer_coordinator_required');
-  expect(await activatePersistence(engine, { confirmQuiesced: true })).toMatchObject({ enabled: true, activated: false });
+  // #5514: a second activation says why it changed nothing and where the missing owner process is.
+  const again = await activatePersistence(engine, { confirmQuiesced: true });
+  expect(again).toMatchObject({ enabled: true, activated: false, reason: 'already_enabled' });
+  expect(again.why).toContain('gbrain serve');
+  expect(again.fix?.argv).toEqual(['gbrain', 'sources', 'writer', 'status', '--probe', '--json']);
+  expect(await activatePersistence(engine, { confirmQuiesced: true, expectedState: (await reviewedWriterIntent(engine, "writer_activate")).expected_state })).toMatchObject({ enabled: true, activated: false, reason: "already_enabled" });
   const later = join(home, 'later-canonical'); mkdirSync(later);
   await claimWorktree(engine, `${sourceId}-later`, later);
   expect(registeredManagedRoots()).toContain(later);

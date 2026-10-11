@@ -182,6 +182,7 @@
       "oauth_clients.oauth_clients_complete_agent_grant": "c CHECK (((NOT (COALESCE(scope, ''::text) ~ '(^|[[:space:]])agent([[:space:]]|$)'::text)) OR ((COALESCE(cardinality(bound_tools), 0) > 0) AND (source_id IS NOT NULL) AND (bound_source_id IS NOT NULL) AND (bound_source_id = source_id) AND COALESCE((source_id = ANY (federated_read)), false) AND (((delegated_namespace = 'job'::text) AND (delegated_slug_prefixes IS NULL)) OR ((delegated_namespace = 'prefixes'::text) AND (COALESCE(cardinality(delegated_slug_prefixes), 0) > 0))) AND (bound_max_concurrent > 0))))",
       "oauth_clients.oauth_clients_min_trust_check": "c CHECK (((min_trust IS NULL) OR (min_trust = ANY (ARRAY['user_confirmed'::text, 'operator_curated'::text, 'tool_observed'::text, 'agent_written'::text, 'unknown'::text, 'external_untrusted'::text]))))",
       "oauth_clients.oauth_clients_pkey": "p PRIMARY KEY (client_id)",
+      "oauth_clients.oauth_clients_registered_via_check": "c CHECK ((registered_via = 'dcr'::text))",
       "oauth_clients.oauth_clients_source_grant_check": "c CHECK ((source_grant = 'none'::text))",
       "oauth_clients.oauth_clients_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE RESTRICT",
       "oauth_clients.trust_generation_update": "t TRIGGER DEFERRABLE INITIALLY DEFERRED",
@@ -253,6 +254,7 @@
       "persistence_graduation.persistence_graduation_singleton_check": "c CHECK ((singleton = 1))",
       "persistence_graduation.persistence_graduation_state_check": "c CHECK ((state = ANY (ARRAY['quiesced'::text, 'cutover'::text, 'rolled_back'::text, 'copying'::text, 'verifying'::text, 'verified'::text, 'authoritative'::text, 'verify_failed'::text, 'rollback_fenced'::text, 'rollback_approved'::text, 'source_restoring'::text, 'abandoned'::text])))",
       "persistence_graduation.persistence_graduation_trigger_bypass_check": "c CHECK (((trigger_bypass IS NULL) OR (trigger_bypass = ANY (ARRAY['session_replication_role'::text, 'disable_trigger'::text]))))",
+      "persistence_host_bindings.persistence_host_bindings_git_durability_check": "c CHECK ((git_durability = ANY (ARRAY['enabled'::text, 'disabled'::text])))",
       "persistence_host_bindings.persistence_host_bindings_pkey": "p PRIMARY KEY (worktree_id, host_id)",
       "persistence_host_bindings.persistence_host_bindings_worktree_id_fkey": "f FOREIGN KEY (worktree_id) REFERENCES persistence_worktrees(id)",
       "persistence_local_writers.persistence_local_writers_credential_hash_key": "u UNIQUE (credential_hash)",
@@ -444,6 +446,7 @@
       "gbrain_fact_fingerprint_v1(claim text)": "RETURNS text kind=f lang=sql volatility=i secdef=false config=[] body_sha256=aa955a02d3c695f237e1771f0ffded2fa8e5c7b795c42b87f7fd239ae35e213c",
       "gbrain_fact_normalize(claim text)": "RETURNS text kind=f lang=sql volatility=i secdef=false config=[] body_sha256=595b1e012edeb66edbec72a2a8b1d046a8360a386bfce2fd903e50e3f78af37b",
       "gbrain_forget_page_retrievals()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=0f053c08f9d5a4512d10406f7b20b9c60ec43d9bbea48b28b7e4cf7187ee191b",
+      "gbrain_fts_input(t text)": "RETURNS text kind=f lang=sql volatility=i secdef=false config=[search_path=pg_catalog] body_sha256=c73d0dbc333c6dccc9714a6b8d1b7785f48170556b9024002ddca1c80b25d87d",
       "gbrain_graduation_fence()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=cd4642fe8deee2a3c14ef41f53862f0a449b2d8a10e47177bd4f5d2e05ce8803",
       "gbrain_guard_effect_protocol()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=e8b5589dafd4a355106104daffdf57c7776d34fe18c5b5f5336a27de188688a1",
       "gbrain_guard_protocol_activation()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=f27354966c25d961fcecbffebba0e45747ad3de23575351319f6aee4f9aefd47",
@@ -462,8 +465,8 @@
       "gbrain_stamp_trust_tier()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=4610c2e064a0d34dbb66981dd49f15fb6b0b85407327983cde76b905cd626598",
       "gbrain_stamp_version_attribution()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=1b28a0e5769198d86490dc20b2aee80b7e6595670428a63ac9c6825cd2a35b10",
       "gbrain_stamp_write_attribution()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=50e9b0e5bf37eeae6555dd16c8104cb0807be6c05a79e0c82237d45162c21dc2",
-      "update_chunk_search_vector()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=e12c37d5489202aaf708560db42e6c0c7c8886d198d412e1c5d915c3ae782559",
-      "update_page_search_vector()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=1ff2515e6d6626907c0a6b660e31bd13bf51fe38fc585f7380d57ed746dc3357"
+      "update_chunk_search_vector()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=b870de46705a62891bb318ecdeca1d0d5ea1f8da9a9a79c4cec6569e515dbdeb",
+      "update_page_search_vector()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=f255236df404045eebb7bc67cda1339c5be26cf508a95bca2595c8ee8f064784"
     },
     "grants": {
       "access_tokens": [
@@ -2405,7 +2408,8 @@
           "28 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
           "29 source_grant text/text NULL",
           "30 takes_holders ARRAY/_text NULL",
-          "31 min_trust text/text NULL"
+          "31 min_trust text/text NULL",
+          "32 registered_via text/text NULL"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },
@@ -2737,7 +2741,8 @@
           "1 worktree_id uuid/uuid NOT NULL",
           "2 host_id uuid/uuid NOT NULL",
           "3 local_path text/text NOT NULL",
-          "4 coordination_path text/text NOT NULL"
+          "4 coordination_path text/text NOT NULL",
+          "5 git_durability text/text NULL"
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },

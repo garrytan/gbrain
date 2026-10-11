@@ -309,33 +309,76 @@ it('GitHub refresh verifies every eligible job before replacing the complete lan
   const dir = mkdtempSync(join(tmpdir(), 'gbrain-mine-github-'));
   try {
     const bin = join(dir, 'bin');
+    const artifacts = join(dir, 'artifacts');
     mkdirSync(bin);
+    mkdirSync(artifacts);
     const fakeGh = join(bin, 'gh');
-    writeFileSync(fakeGh, '#!/bin/sh\ncase "$*" in\n  "run view 123 --json conclusion,headSha,jobs") cat "$FIXTURE_GH_INFO" ;;\n  "run view 123 --log") cat "$FIXTURE_GH_LOG" ;;\n  *) exit 2 ;;\nesac\n');
+    writeFileSync(fakeGh, '#!/bin/sh\ncase "$*" in\n  "run view 123 --json conclusion,headSha,jobs") cat "$FIXTURE_GH_INFO" ;;\n  "run download 123 --name timings-unit-"*) [ -f "$FIXTURE_GH_ARTIFACTS/$5.log" ] && cp "$FIXTURE_GH_ARTIFACTS/$5.log" "$7/unit.log" ;;\n  *) exit 2 ;;\nesac\n');
     chmodSync(fakeGh, 0o755);
     const info = join(dir, 'run.json');
-    const input = join(dir, 'unit.log');
     const out = join(dir, 'weights.json');
     const meta = join(dir, 'weights.metadata.json');
-    const line = (job: string, text: string) => `${job}\tRun test shard\t2026-05-25T11:26:50.000Z ${text}\n`;
-    const complete = (job: string, file: string) => line(job, `##[group]${file}:`) + line(job, '0 fail') + line(job, 'Ran 1 test across 1 file. [1ms]');
-    const one = complete('test (1)', 'test/one.test.ts');
+    const line = (job: string, text: string) => `${job}\tcapture\t2026-05-25T11:26:50.000Z ${text}\n`;
+    const complete = (job: string, file: string) => line(job, '##[gbrain-capture-start]') + line(job, `::group::${file}:`) + line(job, '0 fail')
+      + line(job, 'Ran 1 test across 1 file. [1ms]') + line(job, '##[gbrain-capture-complete] exit=0');
+    const artifact = (shard: number, body: string | null) => {
+      const path = join(artifacts, `timings-unit-${shard}.log`);
+      if (body === null) rmSync(path, { force: true }); else writeFileSync(path, body);
+    };
+    artifact(1, complete('test (1)', 'test/one.test.ts'));
     writeFileSync(info, JSON.stringify({ conclusion: 'success', headSha: 'fixture-commit', jobs: [{ name: 'test (1)', conclusion: 'success' }, { name: 'test (2)', conclusion: 'success' }, { name: 'verify', conclusion: 'success' }] }));
     writeFileSync(out, '{"test/old.test.ts":42}\n');
     writeFileSync(meta, '{"existing":true}\n');
     const args = [join(import.meta.dir, '../../scripts/mine-shard-weights.ts'), '--run', '123', '--out', out];
-    const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, FIXTURE_GH_INFO: info, FIXTURE_GH_LOG: input };
-    for (const partial of [one, one + line('test (2)', 'snapshot setup started')]) {
-      writeFileSync(input, partial);
+    const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, FIXTURE_GH_INFO: info, FIXTURE_GH_ARTIFACTS: artifacts };
+    for (const partial of [null, line('test (2)', '##[gbrain-capture-start]') + line('test (2)', 'snapshot setup started') + line('test (2)', '##[gbrain-capture-complete] exit=0')]) {
+      artifact(2, partial);
       expect(spawnSync(process.execPath, args, { env, encoding: 'utf8' }).status).not.toBe(0);
       expect(readFileSync(out, 'utf8')).toBe('{"test/old.test.ts":42}\n');
       expect(readFileSync(meta, 'utf8')).toBe('{"existing":true}\n');
     }
-    writeFileSync(input, one + complete('test (2)', 'test/two.test.ts'));
+    artifact(2, complete('test (2)', 'test/two.test.ts'));
     const result = spawnSync(process.execPath, args, { env, encoding: 'utf8' });
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(readFileSync(out, 'utf8'))).toEqual({ 'test/one.test.ts': 0, 'test/two.test.ts': 0 });
     expect(JSON.parse(readFileSync(meta, 'utf8'))).toMatchObject({ commit: 'fixture-commit', measuredFiles: 2, totalFiles: 2, mergeExisting: false });
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+it('GitHub unit refresh requires each shard capture artifact to record a successful completion', () => {
+  const job = 'test (1)';
+  const github = (text: string) => `${job}\tUNKNOWN STEP\t2026-10-10T06:00:01.000Z ${text}\n`;
+  const captured = (text: string) => `${job}\tcapture\t2026-10-10T06:00:01.000Z ${text}\n`;
+  const body = (line: (text: string) => string) => line('::group::test/one.test.ts:') + line(' 0 fail') + line('Ran 1 test across 1 file. [1ms]');
+  const opts = { expectedJobs: [job], requireCapture: true };
+  for (const raw of [body(github), body(captured), captured('##[gbrain-capture-start]') + body(captured),
+    captured('##[gbrain-capture-start]') + body(captured) + captured('##[gbrain-capture-complete] exit=1')]) {
+    expect(() => mineWeights(raw, 'unit', opts)).toThrow('capture completion');
+  }
+  expect([...mineWeights(captured('##[gbrain-capture-start]') + body(captured) + captured('##[gbrain-capture-complete] exit=0'), 'unit', opts).keys()]).toEqual(['test/one.test.ts']);
+  expect(mineWeights(body(github), 'unit', { expectedJobs: [job] }).size).toBe(1);
+});
+
+it('GitHub serial refresh reads each job log by id instead of the whole-run log', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gbrain-mine-serial-'));
+  try {
+    const bin = join(dir, 'bin');
+    mkdirSync(bin);
+    writeFileSync(join(bin, 'gh'), '#!/bin/sh\ncase "$*" in\n  "run view 123 --json conclusion,headSha,jobs") cat "$FIXTURE_GH_INFO" ;;\n  "run view 123 --job 77 --log") cat "$FIXTURE_GH_LOG" ;;\n  *) exit 2 ;;\nesac\n', { mode: 0o755 });
+    const info = join(dir, 'run.json');
+    const log = join(dir, 'serial.log');
+    const out = join(dir, 'weights.json');
+    const job = 'serial-tests (1)';
+    const line = (text: string) => `${job}\tUNKNOWN STEP\t2026-10-10T06:00:01.000Z ${text}\n`;
+    writeFileSync(log, line('[serial-tests] PASS 4s test/a.serial.test.ts (1pass)') + line('[serial-tests] all 1 file(s) passed in 4s (pool=4)'));
+    const args = [join(import.meta.dir, '../../scripts/mine-shard-weights.ts'), '--lane', 'serial', '--run', '123', '--out', out];
+    const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, FIXTURE_GH_INFO: info, FIXTURE_GH_LOG: log };
+    writeFileSync(info, JSON.stringify({ conclusion: 'success', headSha: 'fixture-commit', jobs: [{ name: job, conclusion: 'success' }] }));
+    expect(spawnSync(process.execPath, args, { env, encoding: 'utf8' }).stderr).toContain('serial: missing job identity');
+    writeFileSync(info, JSON.stringify({ conclusion: 'success', headSha: 'fixture-commit', jobs: [{ name: job, conclusion: 'success', databaseId: 77 }] }));
+    const result = spawnSync(process.execPath, args, { env, encoding: 'utf8' });
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(readFileSync(out, 'utf8'))).toEqual({ 'test/a.serial.test.ts': 4 });
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

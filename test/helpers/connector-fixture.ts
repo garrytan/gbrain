@@ -69,8 +69,7 @@ export function createConnectorFixture() {
   let closePostgres: (() => Promise<void>) | undefined;
   const env = { GBRAIN_HOME: home, CONNECTOR_TEST_TOKEN: 'synthetic-local-fixture' };
   const setup = async () => {
-    // Paused-owner fixtures stop on a 1.5 s wait budget instead of the production 30 s.
-    connectorWaitBudget.ms = testWaitMs(1_500);
+    connectorWaitBudget.ms = CONNECTOR_WAIT_BUDGET_MS;
     if (backends.includes('pglite')) {
       engines.push(await connectTemplateBrain(join(home, 'database')));
     }
@@ -171,9 +170,10 @@ export async function settleConnectorWrites(engine: BrainEngine, sourceId: strin
  * published (a healthy owner) runs on the production budget, so a slow host waits for the owner instead of
  * stopping the sweep `writer_pending`. A committed write returns at once, so this costs nothing on a fast host.
  */
-export async function withHealthyOwnerBudget<T>(run: () => Promise<T>): Promise<T> {
+/** A run that expects `writer_pending` against a paused owner stops on a 1.5 s budget instead of the production 30 s. */
+export async function withPausedOwnerBudget<T>(run: () => Promise<T>): Promise<T> {
   const budget = connectorWaitBudget.ms;
-  connectorWaitBudget.ms = CONNECTOR_WAIT_BUDGET_MS;
+  connectorWaitBudget.ms = testWaitMs(1_500);
   try { return await run(); } finally { connectorWaitBudget.ms = budget; }
 }
 

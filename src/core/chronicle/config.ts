@@ -67,6 +67,9 @@ export const CHRONICLE_NUMERIC_KEYS = {
     meaning: 'seconds a page must stay unchanged before automatic extraction' },
   'chronicle.judge_max_tokens': { fallback: 4000, min: 1, max: 128_000, integer: true,
     meaning: 'output-token cap for one extraction call' },
+  // #5329 (e): the judge's array had no length bound; the surplus is counted `events_dropped.over_cap`, never written.
+  'chronicle.max_events_per_page': { fallback: 25, min: 1, max: 1000, integer: true,
+    meaning: 'events published from one page extraction; later proposals are dropped as over_cap' },
 } as const satisfies Record<string, NumericKeySpec>;
 
 export type ChronicleNumericKey = keyof typeof CHRONICLE_NUMERIC_KEYS;
@@ -116,6 +119,8 @@ export interface ChronicleSettings {
   recentDays: number;
   settleSeconds: number;
   judgeMaxTokens: number;
+  /** #5329: events published from one page extraction; the rest of the judge's proposals are counted `over_cap`. */
+  maxEventsPerPage: number;
   /** When the automatic path activated on this brain (stamped by the first decision or phase run); null when unset or unreadable. */
   activatedAt: Date | null;
   /** Stored values outside the valid range; each fell back to its default. */
@@ -145,6 +150,7 @@ export async function chronicleSettings(engine: BrainEngine): Promise<ChronicleS
     recentDays: values['chronicle.auto_recent_days'],
     settleSeconds: values['chronicle.auto_settle_seconds'],
     judgeMaxTokens: values['chronicle.judge_max_tokens'],
+    maxEventsPerPage: values['chronicle.max_events_per_page'],
     activatedAt: activatedAt && !Number.isNaN(activatedAt.getTime()) ? activatedAt : null,
     invalid,
   };
