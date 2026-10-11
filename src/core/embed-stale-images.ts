@@ -18,8 +18,10 @@ import type { BrainEngine } from './engine.ts';
 import { importImageFile } from './import-file.ts';
 import { safeChunksFilter } from './search/safe-chunks.ts';
 import { serr } from './console-prefix.ts';
+import { gitChildEnv } from './git-env.ts';
+import { embedCostStopVerdict, noteEmbedCostStop, type EmbedCostCap, type EmbedCostStopFields } from './embed-cost-cap.ts';
 
-export interface StaleImageSweepResult {
+export interface StaleImageSweepResult extends EmbedCostStopFields {
   candidates: number;
   rebuilt: number;
   /** Candidates the importer left unchanged (complete by its own check, or refused). */
@@ -31,7 +33,7 @@ export interface StaleImageSweepResult {
 
 export async function embedStaleImages(
   engine: BrainEngine,
-  opts: { sourceId?: string; dryRun: boolean },
+  opts: { sourceId?: string; dryRun: boolean; costCap?: EmbedCostCap | null },
 ): Promise<StaleImageSweepResult> {
   const ocrWanted = process.env.GBRAIN_EMBEDDING_IMAGE_OCR === 'true';
   const params: unknown[] = [ocrWanted];
@@ -52,16 +54,22 @@ export async function embedStaleImages(
   if (opts.dryRun) return result;
   const repoPath = await engine.getConfig('sync.repo_path').catch(() => null);
   const gitRoots = new Map<string, string | null>();
+  const cap = opts.costCap;
   for (const row of rows) {
+    // Fix wave 13 P1.18: the approved cap stops the sweep before the next image; a refused image is not a failure.
+    if (cap?.hit()) break;
     const root = row.local_path ?? (row.source_id === 'default' ? repoPath : null);
     const file = root && row.source_path ? locateSourceFile(root, row.source_path, gitRoots) : null;
     if (!file) { result.missingFile++; continue; }
     try {
-      const imported = await importImageFile(engine, file, row.source_path!, { sourceId: row.source_id });
+      const run = () => importImageFile(engine, file, row.source_path!, { sourceId: row.source_id });
+      const imported = cap ? await cap.metered(run) : await run();
       if (imported.status === 'imported') result.rebuilt++;
+      else if (cap?.hit()) break;
       else if (imported.status === 'error') fail(row, imported.error ?? 'import failed');
       else result.skipped++;
     } catch (e) {
+      if (cap?.hit()) break;
       fail(row, e instanceof Error ? e.message : String(e));
     }
   }
@@ -69,18 +77,21 @@ export async function embedStaleImages(
 }
 
 /** The `gbrain embed --stale --images` CLI surface (dispatched from commands/embed.ts). */
-export async function runEmbedStaleImagesCli(engine: BrainEngine, args: string[]): Promise<StaleImageSweepResult> {
+export async function runEmbedStaleImagesCli(engine: BrainEngine, args: string[], costCap: EmbedCostCap | null = null): Promise<StaleImageSweepResult> {
   if (!args.includes('--stale') || process.env.GBRAIN_EMBEDDING_MULTIMODAL !== 'true') {
     serr('Usage: gbrain embed --stale --images [--source <id>] [--dry-run] [--json] (requires GBRAIN_EMBEDDING_MULTIMODAL=true)');
     process.exit(1);
   }
   const srcI = args.indexOf('--source');
   const dryRun = args.includes('--dry-run');
-  const result = await embedStaleImages(engine, { sourceId: srcI >= 0 ? args[srcI + 1] : undefined, dryRun });
+  const result = await embedStaleImages(engine, { sourceId: srcI >= 0 ? args[srcI + 1] : undefined, dryRun, costCap });
+  const capped = costCap?.hit();
+  if (capped) noteEmbedCostStop(result, capped, args);
   if (args.includes('--json')) console.log(JSON.stringify(result));
   else console.log(`[embed] images: ${result.candidates} incomplete, ${dryRun ? '(dry run) nothing rebuilt'
     : `${result.rebuilt} rebuilt, ${result.skipped} unchanged, ${result.missingFile} missing source file, ${result.failures} failed`}`);
   if (result.failures > 0) serr(`[embed] first image failure: ${result.failure_samples[0]}`);
+  if (capped) (args.includes('--json') ? serr : console.log)(embedCostStopVerdict(result, capped));
   return result;
 }
 
@@ -91,7 +102,7 @@ function locateSourceFile(root: string, sourcePath: string, gitRoots: Map<string
   if (existsSync(direct)) return direct;
   if (!gitRoots.has(root)) {
     try {
-      gitRoots.set(root, execFileSync('git', ['-C', root, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim());
+      gitRoots.set(root, execFileSync('git', ['-C', root, 'rev-parse', '--show-toplevel'], { env: gitChildEnv(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim());
     } catch { gitRoots.set(root, null); }
   }
   const gitRoot = gitRoots.get(root);

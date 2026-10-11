@@ -12,7 +12,7 @@
  * Real PGLite; failures injected by wrapping executeRaw / refreshPageBody.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, spyOn, test } from 'bun:test';
-import { mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -91,7 +91,11 @@ describe('facts write-path failures (B-21)', () => {
   });
 
   test('a failed page-cache mirror after a fence write is reported', async () => {
-    await importFromContent(engine, 'people/alice-example', '---\ntitle: Alice Example\ntype: person\n---\n# Alice Example\n', { noEmbed: true });
+    const alice = '---\ntitle: Alice Example\ntype: person\n---\n# Alice Example\n';
+    await importFromContent(engine, 'people/alice-example', alice, { noEmbed: true });
+    // The page has its file (#6398: a DB-only page is never fenced or mirrored).
+    mkdirSync(join(brainDir, 'people'), { recursive: true });
+    writeFileSync(join(brainDir, 'people/alice-example.md'), alice);
     // The mirror runs on the maintenance transaction's engine, so the fault is injected there too.
     const failing = (base: BrainEngine): BrainEngine => new Proxy(base, {
       get(target, prop, receiver) {
