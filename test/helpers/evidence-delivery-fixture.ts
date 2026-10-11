@@ -94,15 +94,26 @@ export function offPathMcpBytes(res: { content: { type: string; text: string }[]
 
 const leanRetrieval = (meta: Record<string, unknown>) => ({ ...meta, rows: 'lean' });
 
+/** Recall's additive `facts_order` (MEMORY_VERBS v1), which every response carries right after `total`; these captures are all newest-first. */
+function withFactsOrder(payload: Record<string, unknown>): Record<string, unknown> {
+  if ('facts_order' in payload || !('total' in payload)) return payload;
+  return Object.fromEntries(Object.entries(payload).flatMap(([k, v]) => k === 'total' ? [[k, v], ['facts_order', 'newest']] : [[k, v]]));
+}
+
 /**
  * The cost wave changes remote output on purpose: C1 projects remote
  * search/query rows to lean rows (and reports `rows: "lean"` in the retrieval
- * meta), and C2 serializes MCP content[0] as compact JSON. The frozen
- * pre-feature bytes stay as captured; this applies exactly those two declared
- * transforms to them, so every other byte of the capture is still compared.
+ * meta), and C2 serializes MCP content[0] as compact JSON. Recall's question
+ * ranking adds `facts_order` to every recall response. The frozen pre-feature
+ * bytes stay as captured; this applies exactly those declared transforms to
+ * them, so every other byte of the capture is still compared.
  */
 export function withCostWave(key: string, frozen: string): string {
   const base = key.replace(/:chunk$/, '');
+  if (base === 'recall' || base === 'recall-budget') {
+    const v = JSON.parse(frozen) as { result: Record<string, unknown>; meta: unknown };
+    return JSON.stringify({ ...v, result: withFactsOrder(v.result) });
+  }
   if (base === 'search-remote') {
     const v = JSON.parse(frozen) as { result: Record<string, unknown>[]; meta: Array<{ key: string; value: Record<string, unknown> }> };
     return JSON.stringify({
@@ -114,7 +125,7 @@ export function withCostWave(key: string, frozen: string): string {
   const res = JSON.parse(frozen) as { content: Array<{ type: string; text: string }>; _meta?: Record<string, Record<string, unknown>> };
   const body = JSON.parse(res.content[0].text);
   const lean = base === 'mcp-search' || base === 'mcp-query';
-  res.content[0].text = JSON.stringify(lean ? (body as Record<string, unknown>[]).map(leanRow) : body);
+  res.content[0].text = JSON.stringify(lean ? (body as Record<string, unknown>[]).map(leanRow) : base === 'mcp-recall' ? withFactsOrder(body) : body);
   if (lean && res._meta?.retrieval) res._meta.retrieval = leanRetrieval(res._meta.retrieval);
   return JSON.stringify(res);
 }

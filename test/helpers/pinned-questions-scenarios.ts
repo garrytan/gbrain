@@ -167,8 +167,13 @@ export function registerPinnedQuestionSuite(label: string, getEngine: () => Brai
           ['context_pack', { entities: ENTITY }],
           ['recall', { query: QUESTION }],
         ] as Array<[string, Record<string, unknown>]>) {
-          const { text, result } = await mcp(engine, tool, params, g);
+          const { text: raw, result } = await mcp(engine, tool, params, g);
           const echoed = params.slug === slug;
+          // recall's recall_hint (W1 TC7) echoes the caller's own call with `question` added; pin that echo exactly, then scan the rest.
+          const hint = (result._meta?.gbrain_notices as Array<{ code: string; fix?: { mcp?: unknown } }> | undefined)?.find(n => n.code === 'recall_hint');
+          if (hint) expect(hint.fix?.mcp).toEqual({ tool: 'recall', arguments: { ...params, question: params.query } });
+          const text = result.content.map(c => (c as { text?: string }).text ?? '').map(t => hint && t.startsWith('[gbrain notice recall_hint ') ? t.replaceAll(QUESTION, '') : t).join('\n');
+          expect(hint ? raw.length > text.length : raw === text).toBe(true);
           expect({ tool, leaked: text.includes(CANARY) || (!echoed && text.includes(slug)) || text.includes(QUESTION) || text.includes('pinned_questions') })
             .toEqual({ tool, leaked: false });
           if (tool === 'get_page') expect(result.isError).toBe(true);

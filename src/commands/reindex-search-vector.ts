@@ -1,6 +1,7 @@
 /**
- * `gbrain reindex-search-vector` — recreate FTS trigger functions and
- * backfill existing rows under the language configured via
+ * `gbrain reindex-search-vector` — recreate FTS trigger functions,
+ * backfill existing rows and replace the facts keyword index
+ * (`idx_facts_fts`, migration v237) under the language configured via
  * GBRAIN_FTS_LANGUAGE.
  *
  * Why this command exists: schema migration v123 (configurable_fts_language)
@@ -48,6 +49,7 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { getFtsLanguage, FTS_REINDEX_MARKER_KEY, pageSearchVectorTriggerFnSql, chunkSearchVectorTriggerFnSql } from '../core/fts-language.ts';
 import { checkpointKey } from '../core/backfill-base.ts';
+import { ensureFactsFtsIndex } from '../core/facts/fts-index.ts';
 import { consentGate } from '../core/consent-cli.ts';
 import type { ConsentEnv } from '../core/consent.ts';
 import { createProgress } from '../core/progress.ts';
@@ -116,7 +118,7 @@ export async function runReindexSearchVector(
       console.log(JSON.stringify(result, null, 2));
     } else {
       console.log(`[dry-run] Would recreate 2 trigger functions with language='${lang}'`);
-      console.log(`[dry-run] Would backfill ${pagesCount} pages + ${chunksCount} chunks`);
+      console.log(`[dry-run] Would backfill ${pagesCount} pages + ${chunksCount} chunks and rebuild the facts keyword index`);
       console.log(`[dry-run] Skipping all DB writes. Applying needs the user's approval (gbrain reindex-search-vector asks).`);
     }
     return result;
@@ -193,6 +195,9 @@ export async function runReindexSearchVector(
   await backfillChunkVectors(engine, { lang, checkpoint: CHECKPOINT_NAME.content_chunks, tick: n => progress.tick(n) });
   progress.finish();
 
+  // The facts keyword index is an expression index under a literal language: build the new one beside it and swap (no row rewrite, no gap).
+  await ensureFactsFtsIndex(engine, { lang, version: 0, notice: line => process.stderr.write(line) });
+
   // Both backfills returned: the index is whole again under `lang`.
   await engine.unsetConfig(checkpointKey(CHECKPOINT_NAME.pages));
   await engine.unsetConfig(checkpointKey(CHECKPOINT_NAME.content_chunks));
@@ -211,7 +216,7 @@ export async function runReindexSearchVector(
     console.log(JSON.stringify(result, null, 2));
   } else {
     console.log(`✅ Recreated 2 trigger functions with language='${lang}'`);
-    console.log(`✅ Backfilled ${pagesCount} pages + ${chunksCount} chunks (${result.durationMs}ms)`);
+    console.log(`✅ Backfilled ${pagesCount} pages + ${chunksCount} chunks and rebuilt the facts keyword index (${result.durationMs}ms)`);
   }
 
   return result;

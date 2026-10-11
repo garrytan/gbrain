@@ -1,6 +1,6 @@
 {
   "golden": {
-    "count": 231,
+    "count": 232,
     "gaps": [
       17,
       18,
@@ -34,6 +34,7 @@
       "chunkSearchVectorTriggerFnSql": "93ed4e29aa058949621b4198fe1ec317218f4b9ec0db0626ec6dc7001032047d",
       "clampOAuthTokenTtls": "b1e94ea8f5b3c3870a56b0f6d00d0a274c2e9dcad912b828848aec250732645f",
       "dropInvalidConcurrentIndex": "6864d844b7dfb2fbecdd0fb9c73e06248473376feb794b3fe58f036c70d2d44c",
+      "ensureFactsFtsIndex": "95e723314ac30cea2db48e0e167c554ef1fa06df80cae765faa2a080a3a655c2",
       "getFtsLanguage": "0d790b4c4af1f67a2a1bbd59470beb13f434917b381931baf8404a41c5d903db",
       "grantFromRow": "2d0603bb0f964d7e45e04aa76bac54cd4f6f63c91a8d9f028b60b4792bc1695e",
       "hnswMaxDimsForType": "a187cdcc520f813b7c39da97ce53da58509232ed9f851627ef41abfe1b68bd26",
@@ -51,7 +52,7 @@
       "sqlQueryForEngine": "71fb1ccec1b22cdc1662876dbd8c17ed81e9ab83485c6965cdf5caa4fc4a4ab5",
       "verifyProjectionStatistics": "0d231b04ecfbc5a4109d6fca9567bf4e8c9e9db6c3fbbb35212e026579ed6f67"
     },
-    "latest": 236,
+    "latest": 237,
     "records": [
       {
         "handler": {
@@ -3572,6 +3573,30 @@
         "transaction": "absent",
         "verify": "absent",
         "version": 236
+      },
+      {
+        "handler": {
+          "form": "arrow",
+          "helpers": [
+            "buildIndexOnline",
+            "dropInvalidConcurrentIndex",
+            "ensureFactsFtsIndex",
+            "getFtsLanguage",
+            "migrationNotice",
+            "quietMigrationNotices"
+          ],
+          "sha256": "a12195bd1365d15b7ace35de35648a71abb4cf2774893823b97941d91c956b2e"
+        },
+        "idempotent": true,
+        "name": "facts_question_recall_indexes",
+        "sql": {
+          "length": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 237
       }
     ],
     "versions": [
@@ -3805,7 +3830,8 @@
       233,
       234,
       235,
-      236
+      236,
+      237
     ]
   },
   "normalizer": "migrations-record-v1"

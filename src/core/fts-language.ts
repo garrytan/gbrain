@@ -109,6 +109,23 @@ export function applyFtsLanguagePolicy(sql: string): string {
   return sql.replaceAll(`to_tsvector('${DEFAULT_LANGUAGE}',`, `to_tsvector('${lang}',`);
 }
 
+/**
+ * The facts keyword document: fact text plus the entity slug's words, under
+ * a literal text search configuration so `idx_facts_fts` can serve it (an
+ * expression index matches only the same literal configuration, never a
+ * bound parameter). The index (facts/fts-index.ts) and the question-recall
+ * keyword arm both build it here.
+ */
+export function factsFtsDocument(alias: string | null, lang: string = getFtsLanguage()): string {
+  const col = (c: string) => alias ? `${alias}.${c}` : c;
+  return `to_tsvector('${lang}'::regconfig, ${col('fact')} || ' ' || replace(COALESCE(${col('entity_slug')}, ''), '-', ' '))`;
+}
+
+/** The facts keyword GIN index over active facts under `lang`, named `name` (facts/fts-index.ts builds and swaps it). */
+export function factsFtsIndexSql(name: string, lang: string): string {
+  return `CREATE INDEX IF NOT EXISTS ${name} ON facts USING gin (${factsFtsDocument(null, lang)}) WHERE expired_at IS NULL`;
+}
+
 const CJK_CLASS = `[${CJK_SLUG_CHARS}]`;
 
 /**

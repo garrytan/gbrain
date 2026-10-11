@@ -512,7 +512,17 @@ export const RESPONSE_SCHEMAS: Record<VerbName, Record<string, unknown>> = {
             provenance: { type: 'string' },
             valid_until: { type: ['string', 'null'] },
             visibility: { type: 'string', enum: ['private', 'world'] },
+            relevance: { type: 'number', description: 'Present when `question` was passed: cosine + term share + 0.1 when dated (about 0 to 2.1). A ranking score within this response, not a probability; not comparable across calls.' },
           },
+        },
+      },
+      facts_order: { type: 'string', enum: ['relevance', 'newest'], description: 'How facts[] is ordered: relevance (question passed) or newest. A server without question ranking omits it.' },
+      facts_degraded: {
+        type: 'object',
+        description: 'Present when question ranking ran without full semantic matching.',
+        properties: {
+          reason: { type: 'string', description: 'Why the cosine arm did not run: keyword_only_no_embedding_provider, keyword_only_embedding_disabled, embed_timeout, embed_unavailable, no_query_terms or facts_embedding_column_missing.' },
+          unembedded: { type: 'integer', description: 'Facts in scope without a comparable embedding (ranked by word overlap only).' },
         },
       },
       results: {

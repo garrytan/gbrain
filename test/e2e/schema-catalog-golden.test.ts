@@ -182,10 +182,11 @@ describe.skipIf(skip)('Postgres catalog goldens (E4, E2E)', () => {
     }
   });
 
-  test('non-default FTS language changes only function bodies', () => {
+  test('non-default FTS language changes only function bodies and the facts keyword index', () => {
     const diff = diffCatalogSnapshots(requireCaptured('engine:default'), requireCaptured('engine:fts-portuguese'));
     expect(diff.length).toBeGreaterThan(0);
-    expect([...new Set(diff.map((d) => d.section))]).toEqual(['functions']);
+    expect([...new Set(diff.map((d) => d.section))].sort()).toEqual(['functions', 'indexes']);
+    expect(diff.filter((d) => d.section === 'indexes').map((d) => d.key)).toEqual(['idx_facts_fts']);
   });
 
   test('T-G13: PG <-> PGLite column parity stays name-based (existing drift contract)', async () => {

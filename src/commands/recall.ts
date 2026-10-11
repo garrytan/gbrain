@@ -13,6 +13,7 @@
  *   gbrain recall --include-expired
  *   gbrain recall --as-context              # prompt-injection-ready markdown
  *   gbrain recall --json                    # structured output
+ *   gbrain recall --question "<q>"          # facts ranked by relevance to the question
  *
  *   gbrain forget <fact-id>                  # durable withdrawal (forget_fact / forget verb)
  *   gbrain forget <fact-id> --purge          # owner-only purge (src/commands/forget-purge.ts)
@@ -72,6 +73,7 @@ interface ParsedFlags {
   // MEMORY_VERBS v1 [c4]: recall's verb params, routed through the recall OP
   // (this hand-rolled CLI otherwise ignores unknown flags silently).
   query: string | null;
+  question: string | null;
   budgetTokens: number | null;
   budgetPolicy: string | null;
   sourceExplicit: boolean;
@@ -104,6 +106,7 @@ function parseFlags(args: string[]): ParsedFlags {
     source: 'default',
     limit: 50,
     query: null,
+    question: null,
     budgetTokens: null,
     budgetPolicy: null,
     sourceExplicit: false,
@@ -142,6 +145,8 @@ function parseFlags(args: string[]): ParsedFlags {
       out.limit = Number(raw); continue;
     }
     if (a === '--query') { out.query = args[++i] ?? null; continue; }
+    if (a === '--question') { out.question = args[++i] ?? null; continue; }
+    if (a.startsWith('--question=')) { out.question = a.slice('--question='.length); continue; }
     if (a === '--budget-tokens') { rawBudget = args[++i]; continue; }
     if (a === '--budget-policy') {
       const next = args[i + 1];
@@ -178,10 +183,10 @@ function parseFlags(args: string[]): ParsedFlags {
   return out;
 }
 
-/** Only `--query`/`--budget-tokens` without --budget-policy runs the recall op in-process; every other form has a thin-client path. */
+/** Only `--query`/`--budget-tokens` without --budget-policy or --question runs the recall op in-process; every other form has a thin-client path. */
 export function recallNeedsLocalEngine(args: string[]): boolean {
   const flags = parseFlags(args);
-  return flags.budgetPolicy === null && (flags.query !== null || flags.budgetTokens !== null);
+  return flags.budgetPolicy === null && flags.question === null && (flags.query !== null || flags.budgetTokens !== null);
 }
 
 function parseSinceParam(raw: string): Date | null {
@@ -267,16 +272,18 @@ async function resolveSourceForRecall(
 
 export async function runRecall(engine: BrainEngine, args: string[]): Promise<void> {
   const flags = parseFlags(args);
-  if (flags.budgetPolicy !== null) {
+  if (flags.budgetPolicy !== null || flags.question !== null) {
     const { MEMORY_VERBS_VERSION, operationsByName, verbError } = await import('../core/operations.ts');
     const { validateParams } = await import('../mcp/validate-params.ts');
     const { reportPersistenceCliError } = await import('./persistence-delegate.ts');
+    const option = flags.budgetPolicy !== null ? '--budget-policy' : '--question';
     try {
-      const error = validateParams(operationsByName.recall, { budget_policy: flags.budgetPolicy })
+      const error = (flags.budgetPolicy !== null ? validateParams(operationsByName.recall, { budget_policy: flags.budgetPolicy }) : null)
         ?? (flags.watchSeconds !== null || flags.sinceLastRun || flags.rollup || flags.asContext
-          ? '--budget-policy cannot be combined with --watch, --since-last-run, --rollup, or --as-context.' : null);
-      if (error) throw verbError('invalid_params', error,
-        'Use --budget-policy facts_first or query_first on a one-shot recall, or omit the policy for CLI-only behavior.');
+          ? `${option} cannot be combined with --watch, --since-last-run, --rollup, or --as-context.` : null);
+      if (error) throw verbError('invalid_params', error, flags.budgetPolicy !== null
+        ? 'Use --budget-policy facts_first or query_first on a one-shot recall, or omit the policy for CLI-only behavior.'
+        : 'Use --question on a one-shot recall, or drop it for the watch, cursor, rollup and context renders.');
       const selector = flags.sourceExplicit ? flags.source : process.env.GBRAIN_SOURCE || undefined;
       if (selector !== undefined && !SOURCE_ID_RE.test(selector)) {
         throw verbError('invalid_params', 'recall requires a concrete source id matching [a-z0-9-]{1,32}.',
@@ -320,7 +327,7 @@ export async function runRecall(engine: BrainEngine, args: string[]): Promise<vo
 
   // MEMORY_VERBS v1 [c4]: the verb params route through the recall OP so the
   // CLI and MCP exercise the same arm (query/budget packing/superset envelope).
-  if (flags.query !== null || flags.budgetTokens !== null) {
+  if (flags.query !== null || flags.budgetTokens !== null || flags.question !== null) {
     await runRecallVerb(engine, flags, sourceId);
     return;
   }
@@ -352,26 +359,30 @@ async function runRecallVerb(engine: BrainEngine, flags: ParsedFlags, sourceId?:
     remote: false as const,
     sourceId: sourceId ?? 'default',
   };
+  const oneShot = flags.budgetPolicy !== null || flags.question !== null;
   const params = {
     ...(flags.entity ? { entity: flags.entity } : {}),
+    ...(flags.question !== null ? { question: flags.question } : {}),
     ...(flags.query ? { query: flags.query } : {}),
     ...(flags.budgetTokens ? { budget_tokens: flags.budgetTokens } : {}),
     ...(flags.since ? { since: flags.since.toISOString() } : {}),
     ...(flags.grep ? { grep: flags.grep } : {}),
     include_expired: flags.includeExpired,
     limit: flags.limit,
-    ...(flags.budgetPolicy !== null ? {
-      budget_policy: flags.budgetPolicy,
+    ...(oneShot ? {
+      ...(flags.budgetPolicy !== null ? { budget_policy: flags.budgetPolicy } : {}),
       ...(sourceId !== undefined ? { source_id: sourceId } : {}),
       ...(flags.sessionId ? { session_id: flags.sessionId } : {}),
       ...(flags.supersessions ? { supersessions: true } : {}),
       ...(flags.pending ? { include_pending: true } : {}),
     } : {}),
   };
-  const result = (flags.budgetPolicy !== null && isThinClient(ctx.config)
+  const result = (oneShot && isThinClient(ctx.config)
     ? unpackToolResult(await callRemoteTool(ctx.config, 'recall', params, { timeoutMs: 30_000 }))
     : await op.handler(ctx, params)) as {
-    facts: Array<{ fact_id: string; fact: string; kind: string; entity_slug: string | null; provenance: string }>;
+    facts: Array<{ fact_id: string; fact: string; kind: string; entity_slug: string | null; provenance: string; relevance?: number }>;
+    facts_order?: 'relevance' | 'newest';
+    facts_degraded?: { reason?: string; unembedded?: number };
     results?: Array<{ slug: string; title: string | null; evidence: string; chunk: string | null }>;
     search_degraded?: string;
     budget_tokens?: number;
@@ -379,15 +390,19 @@ async function runRecallVerb(engine: BrainEngine, flags: ParsedFlags, sourceId?:
     dropped_count?: number;
   };
 
+  // An older server ignores `question` (warn-mode params) and answers without facts_order.
+  const unranked = flags.question !== null && result.facts_order !== 'relevance'
+    ? 'note: this brain did not rank facts by the question (its server predates question ranking); facts are newest first.' : null;
   if (flags.json) {
     process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+    if (unranked) process.stderr.write(unranked + '\n');
     return;
   }
   const lines: string[] = [];
   if (result.facts.length) {
-    lines.push('Facts:');
+    lines.push(result.facts_order === 'relevance' ? 'Facts (ranked by relevance to the question):' : 'Facts:');
     for (const f of result.facts) {
-      lines.push(`  #${f.fact_id} [${f.kind}]${f.entity_slug ? ` (${f.entity_slug})` : ''} ${f.fact} — ${f.provenance}`);
+      lines.push(`  #${f.fact_id} [${f.kind}]${f.entity_slug ? ` (${f.entity_slug})` : ''} ${f.fact} — ${f.provenance}${typeof f.relevance === 'number' ? ` (relevance ${f.relevance.toFixed(2)})` : ''}`);
     }
   }
   if (result.results?.length) {
@@ -397,7 +412,12 @@ async function runRecallVerb(engine: BrainEngine, flags: ParsedFlags, sourceId?:
       if (r.chunk) lines.push(`    ${r.chunk.replace(/\s+/g, ' ').slice(0, 160)}`);
     }
   }
-  if (!lines.length) lines.push('Nothing recalled.');
+  if (!lines.length) lines.push(result.facts_order === 'relevance' ? 'No saved fact matched the question.' : 'Nothing recalled.');
+  if (unranked) lines.push(unranked);
+  if (result.facts_degraded) {
+    const d = result.facts_degraded;
+    lines.push(`note: fact ranking degraded (${[d.reason, d.unembedded ? `${d.unembedded} fact(s) without a comparable embedding` : null].filter(Boolean).join('; ')})`);
+  }
   if (result.search_degraded) lines.push(`note: search degraded (${result.search_degraded})`);
   if (result.budget_tokens !== undefined) {
     lines.push(`budget: ${result.budget_used}/${result.budget_tokens} tokens used, ${result.dropped_count} dropped`);
