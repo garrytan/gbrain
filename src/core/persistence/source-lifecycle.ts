@@ -146,7 +146,16 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
   if(input.expectedIncarnation&&input.expectedIncarnation!==before?.incarnation) throw opError('source_changed','The source was replaced.',
     `Source '${input.sourceId}' was removed and re-added after expected_incarnation was read, so nothing was changed. Read its current incarnation with the command in fix and confirm the ${input.operation} still applies before running it again.`,
     {fix:ownerStatusFix(input.sourceId)});
-  if(input.dryRun) return {dry_run:true,operation:input.operation,source_id:input.sourceId,source_incarnation:before?.incarnation??null,path:root?.source??before?.local_path??null};
+  // #5200 (W14 P1.4): only an operation that compares or records checkout bytes hashes the manifest (add at an existing
+  // root, claim, rebind, restore; reclone hashes in topology-clone.ts). Retiring a source (archive, remove, purge) compares
+  // nothing, so when every binding already carries a verified digest it skips the walk and refreshes the stored manifest's
+  // canonical_stamp in place; a symlink that appeared in the checkout after the claim no longer refuses a retire its dry
+  // run said would succeed. A binding claimed before activation has no digest yet, and the retire records that first
+  // manifest (clone recovery needs it), so its dry run says so.
+  const retire=['archive','remove','purge'].includes(input.operation);
+  const manifestRequired=!retire||(await engine.executeRaw<{digest:string|null}>(
+    `SELECT w.manifest->>'digest' AS digest FROM persistence_source_bindings b JOIN persistence_worktrees w ON w.id=b.worktree_id WHERE b.source_id=$1`,[input.sourceId])).some(row=>!row.digest);
+  if(input.dryRun) return {dry_run:true,operation:input.operation,source_id:input.sourceId,source_incarnation:before?.incarnation??null,path:root?.source??before?.local_path??null,manifest_required:manifestRequired};
   return withTopologyLocks(engine,input.sourceId,async bindings=>{
     // Hash canonical bytes while holding native exclusion, without a database
     // connection checked out. The final transaction rejects new pending mirrors.
@@ -156,9 +165,10 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
       if(!existsSync(path)) {
         if(input.operation==='add'&&input.createDirectory&&path===root?.worktree)continue;
         // #5219: retiring may skip a vanished checkout; the transaction proves the source is empty and its sole member.
-        if(['archive','remove','purge'].includes(input.operation)&&!root){missingCheckout=path;continue;}
+        if(retire&&!root){missingCheckout=path;continue;}
         throw missingCheckoutError(input.sourceId,path);
       }
+      if(!manifestRequired)continue;
       const manifest=worktreeManifest(path,{progress:humanManifestProgress()});
       manifests.set(path,manifest);
     }
@@ -272,6 +282,7 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
       for(const id of worktrees){
         const [host]=await tx.executeRaw<{local_path:string}>('SELECT local_path FROM persistence_host_bindings WHERE worktree_id=$1::uuid AND host_id=$2::uuid',[id,localHostId()]);
         if(host&&manifests.has(host.local_path)) await tx.executeRaw('UPDATE persistence_worktrees SET manifest=$2::text::jsonb WHERE id=$1::uuid',[id,JSON.stringify({...manifests.get(host.local_path),canonical_stamp:await topologyCanonicalStamp(tx,id)})]);
+        else if(!manifestRequired&&host) await tx.executeRaw(`UPDATE persistence_worktrees SET manifest=COALESCE(manifest,'{}'::jsonb)||jsonb_build_object('canonical_stamp',$2::text) WHERE id=$1::uuid`,[id,await topologyCanonicalStamp(tx,id)]);
       }
       // This durable registry intentionally retains old checkout paths, so
       // stale installations cannot write after a source moved or disappeared.
