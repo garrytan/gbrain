@@ -1713,6 +1713,16 @@
             "status": "ok"
           },
           {
+            "category": "brain",
+            "details": {
+              "checkouts": 1,
+              "tracked": []
+            },
+            "message": "1 Git checkout(s) track no ownership marker (markers on disk stay untracked and are denied on push).",
+            "name": "tracked_ownership_marker",
+            "status": "ok"
+          },
+          {
             "category": "ops",
             "message": "System One is off (every decide slot is off; nothing is sent).",
             "name": "decide_health",
@@ -4744,6 +4754,16 @@
             "category": "ops",
             "message": "No configured collectors declare output paths",
             "name": "db_only_collector_collision",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "checkouts": 1,
+              "tracked": []
+            },
+            "message": "1 Git checkout(s) track no ownership marker (markers on disk stay untracked and are denied on push).",
+            "name": "tracked_ownership_marker",
             "status": "ok"
           },
           {
