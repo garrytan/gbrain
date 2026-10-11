@@ -677,9 +677,9 @@ describe('bold-time-dash pattern (normalized Slack Markdown)', () => {
       '2026-04-09T09:15:00Z',
     );
     expect(withoutTimezone.timezone_warning).toContain('bold-time-dash');
-    // Current time-only policy records the captured wall-clock fields with Z;
-    // timezone metadata suppresses the warning but does not convert the time.
-    expect(withTimezone.messages[0].timestamp).toBe('2026-04-09T09:15:00Z');
+    // #5430 (W14 P1.9): a declared zone converts the wall-clock time (09:15
+    // PDT is 16:15Z) and suppresses the warning; before, it only suppressed.
+    expect(withTimezone.messages[0].timestamp).toBe('2026-04-09T16:15:00Z');
     expect(withTimezone.timezone_warning).toBeUndefined();
   });
 
