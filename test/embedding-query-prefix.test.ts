@@ -157,6 +157,9 @@ describe('doctor advisory', () => {
     expect(suggestedQueryPrefix('openai-compatible:intfloat/multilingual-e5-large')?.value).toBe('query: ');
     expect(suggestedQueryPrefix('openai-compatible:BAAI/bge-large-en-v1.5')?.family).toBe('BGE');
     expect(suggestedQueryPrefix('ollama:nomic-embed-text')?.value).toBe('search_query: ');
+    // PR #6062 (query half, @xorets): EmbeddingGemma's model card asks for the task prompt in front of each query.
+    expect(suggestedQueryPrefix('ollama:embeddinggemma:300m')).toEqual({ family: 'EmbeddingGemma', value: 'task: search result | query: ' });
+    expect(suggestedQueryPrefix('openai-compatible:google/embeddinggemma-300m')?.family).toBe('EmbeddingGemma');
     expect(suggestedQueryPrefix('openai:text-embedding-3-large')).toBeNull();
     expect(suggestedQueryPrefix('openai-compatible:BAAI/bge-m3')).toBeNull();
   });

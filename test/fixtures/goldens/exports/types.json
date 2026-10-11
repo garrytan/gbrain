@@ -237,6 +237,7 @@
           "embed_coverage: number",
           "embed_coverage_score: number",
           "entity_page_count: number",
+          "entity_types_status: \"resolved\" | \"pack_unavailable\"",
           "link_coverage: number | null",
           "link_density_score: number",
           "linkable_page_count: number",
@@ -3619,6 +3620,7 @@
           "origin_field?: string | undefined",
           "origin_slug?: string | undefined",
           "origin_source_id?: string | undefined",
+          "resolution_type?: \"qualified\" | \"unqualified\" | undefined",
           "to_slug: string",
           "to_source_id?: string | undefined"
         ],
@@ -3669,7 +3671,7 @@
       {
         "kind": "interface",
         "members": [
-          "expectedRevision?: string | undefined",
+          "expectedRevision?: string | null | undefined",
           "force?: boolean | undefined"
         ],
         "name": "PageMutationPrecondition"
@@ -3718,7 +3720,7 @@
         "members": [
           "allowEmptyOverwrite?: boolean | undefined",
           "contextualRetrieval?: { mode: string; corpusGeneration: string | null; } | undefined",
-          "expectedRevision?: string | undefined",
+          "expectedRevision?: string | null | undefined",
           "force?: boolean | undefined",
           "inline?: boolean | undefined",
           "sourceId?: string | undefined"
@@ -7708,7 +7710,8 @@
           "temporal?: { reference_date: string; time_zone: string; } | undefined",
           "unverified_quotes?: { text: string; reason: string; }[] | undefined",
           "usage?: { input_tokens: number; output_tokens: number; } | null | undefined",
-          "warnings: string[]"
+          "warnings: string[]",
+          "window_source?: \"caller\" | \"question\" | undefined"
         ],
         "name": "ThinkResult"
       },
@@ -7883,6 +7886,7 @@
           "embed_coverage: number",
           "embed_coverage_score: number",
           "entity_page_count: number",
+          "entity_types_status: \"resolved\" | \"pack_unavailable\"",
           "link_coverage: number | null",
           "link_density_score: number",
           "linkable_page_count: number",

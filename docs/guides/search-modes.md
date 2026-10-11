@@ -242,7 +242,7 @@ their operator before continuing a real setup.
 
 ## Query instruction prefix
 
-Instruction-style embedding models (Qwen3-Embedding, e5, BGE v1.5, nomic-embed)
+Instruction-style embedding models (Qwen3-Embedding, e5, BGE v1.5, nomic-embed, EmbeddingGemma)
 expect a query instruction in front of each search query and none in front of
 documents. GBrain sends no instruction unless you set one for the brain;
 nothing is guessed from the model id at query time. `gbrain doctor` reports
@@ -256,6 +256,7 @@ you can run as printed.
 | e5 | `query: ` |
 | BGE v1.5 | `Represent this sentence for searching relevant passages: ` |
 | nomic-embed | `search_query: ` |
+| EmbeddingGemma | `task: search result \| query: ` |
 
 **Set.** Quote the value so trailing spaces and newlines survive the shell;
 a newline needs ANSI-C quoting:
@@ -277,8 +278,10 @@ bytes, and `gbrain doctor` stops reporting `embedding_query_prefix`.
 **Unset.** `gbrain config unset embedding_query_prefix` restores bare query
 embeddings on the next query.
 
-nomic-embed also expects `search_document: ` in front of documents. GBrain does
-not prefix documents, so on nomic the query prefix is a partial fix (#3783).
+nomic-embed also expects `search_document: ` in front of documents, and
+EmbeddingGemma's card formats documents as `title: {title} | text: {text}`.
+GBrain does not prefix or format documents, so on those models the query prefix
+is a partial fix (#3783, #5215).
 
 ## Choosing a lookup verb (search vs query vs get)
 

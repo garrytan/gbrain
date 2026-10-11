@@ -85,6 +85,9 @@ describe('legacy facts helpers on an unmanaged brain', () => {
   test('writeSingleFact DB-only supersession: the new fact is maintenance-created and the old fact keeps its creator', () => withFixedEmbeddings(async () => {
     for (const engine of engines) {
       const brain = await unmanagedBrain(engine);
+      // #5504: an entity the resolver can only slugify stores entity_slug NULL, so the page must exist for the
+      // supersession candidate (keyed on the entity) to be found; the write itself stays DB-only (no local root).
+      await importFromContent(engine, 'people/alice-example', '---\ntype: person\ntitle: Alice\n---\nA person.\n', { sourceId: brain.sourceId, sourcePath: 'people/alice-example.md', noEmbed: true });
       const old = await creatorFact(brain, 'Prefers morning meetings', { entity: 'people/alice-example' });
 
       const written = await writeSingleFact(engine, brain.sourceId, { fact: 'Prefers afternoon meetings', provenance: 'test', entity: 'people/alice-example' });
