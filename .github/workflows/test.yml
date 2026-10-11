@@ -212,7 +212,7 @@ jobs:
       # test/persistence-administration.test.ts is not on this row yet: on
       # windows-latest Bun 1.4.2 segfaults ("Segmentation fault at address
       # 0x42") in its private-IPC test right after the native lock probe; the
-      # crash is Bun's, tracked separately, and the #5332 bound it exercised is
+      # crash is Bun's, tracked in #6462, and the #5332 bound it exercised is
       # covered by the forced probe inside postgres-disconnect-bounded.
       - name: Teardown bounds that used to park the Windows unit run (#5332)
         run: bun test --timeout 120000 test/postgres-disconnect-bounded.test.ts
