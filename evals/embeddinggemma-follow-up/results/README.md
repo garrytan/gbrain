@@ -1,12 +1,16 @@
 # EmbeddingGemma real-model results
 
-This is the completed A/B/C run for the bounded prototype at upstream base
-`f95338f94d3c679b5d0cb1182de052cce4b8e44f`. The readable [report](report.json)
+This is the frozen A/B/C result from the initial bounded prototype at upstream
+base `f95338f94d3c679b5d0cb1182de052cce4b8e44f`. The readable [report](report.json)
 contains the selected model, frozen corpus/query/label hashes, configuration,
 first-repeat per-query Top 5 results, aggregate metrics, language slices,
 latencies, and limitations. [The full evidence bundle](evidence.json.gz)
 preserves the original sanitized harness output byte-for-byte after gzip
 decompression, including vectors, exact wire inputs and repeated rankings.
+The later source proposal and operator documentation are tracked in
+[system issue #200](https://github.com/xorets/ubuntu-server-system/issues/200);
+they do not change these historical results or establish that the feature has
+shipped or received maintainer approval.
 
 The raw evidence SHA-256 is
 `7712f60e7a627e6d6b8000d17c58e4b6dc94161a3f46be25508e445c1aa46dc0`.
@@ -46,9 +50,7 @@ harness fields from these external observations.
 No labels, prompts or corpus content were tuned after the run. The harness
 reports no token usage or cost, so this experiment makes no cost-savings claim
 or comparison against a stronger implementation. The result is evidence for
-the pending upstream decision, not production acceptance. Full-title callers,
-provenance, title invalidation, legacy-vector handling, a safe refresh path,
-and the upstream PR remain gated on maintainer direction. Issue #159 remains
+the pending upstream decision, not production acceptance. Issue #159 remains
 open, and production migration remains under #99. No full CI pass is claimed.
 
 ## Reproduction and integrity
@@ -84,5 +86,7 @@ unique-query reporting.
 
 A pilot blank-title discrimination result was initially attributed to upstream
 and later corrected. Separate initial formatter, gateway and wrapper
-behavioral reversals were valid. Full-title callers, provenance, legacy-vector
-handling, migration and upstream PR remain gated pending maintainer direction.
+behavioral reversals were valid. This records the bounded prototype stage;
+later source-proposal behavior and refresh documentation are tracked in system
+issue #200. Maintainer direction, upstream contribution acceptance, release
+and production migration remain pending.
