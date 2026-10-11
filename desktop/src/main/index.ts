@@ -1,4 +1,6 @@
-import { app, dialog, nativeTheme, shell } from 'electron';
+import { readModelServices, saveModelServicesLive, syncServiceModels } from './models/model-services.js';
+import { refreshRunningGateway } from './models/model-runtime-refresh.js';
+import { app, dialog, nativeTheme, shell, net } from 'electron';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { readAdvancedModelConfig, writeAdvancedModelConfig } from './advanced-model-config.js';
@@ -198,8 +200,10 @@ const setupController: SetupController = new SetupController({
   syncModelDefaults: options => syncModelDefaultsToConfigFile(runtime(), options),
   sendStartupProgress,
   hideStartupProgress,
+  log: message => logger?.write('desktop', message),
   waitEmbeddingRebuildChoice,
   applyTheme: theme => systemSettingsController.applyTheme(theme),
+  reloadLiveModels: () => refreshRunningGateway(sidecarController),
 });
 
 const windowController: WindowController = new WindowController({
@@ -296,7 +300,6 @@ async function exportDiagnosticBundle(): Promise<{ path: string; fileName: strin
 }
 
 async function openSettingsPanel(panel: SettingsPanel): Promise<void> {
-  await windowController.showShell();
   windowController.current?.webContents.send('desktop:show-panel', panel);
   windowController.reveal();
 }
@@ -306,7 +309,7 @@ async function openAdmin(hash = ''): Promise<void> {
   if (!mainWindow) return;
   if (getSetupInfo().needsSetup) {
     await openSettingsPanel('basic');
-    showNotification('请先完成基础配置', '数据库与模型配置完成后才能打开管理控制台。');
+    showNotification('请先完成基础配置', '数据库与模型配置完成后才能打开知识工作台。');
     return;
   }
   if (setupController.inProgress) {
@@ -314,10 +317,8 @@ async function openAdmin(hash = ''): Promise<void> {
     showNotification('PMBrain 正在完成配置', '请等待当前配置与数据库迁移完成。');
     return;
   }
-  const activeSidecar = await sidecarController.ensureReady();
-  const url = await activeSidecar.createAdminLink();
-  const suffix = hash ? (hash.startsWith('#') ? hash : `#${hash}`) : '';
-  await mainWindow.loadURL(`${url}${suffix}`);
+  await sidecarController.ensureReady();
+  mainWindow.webContents.send('desktop:navigate', hash.replace(/^#/, '') || 'import');
   windowController.reveal();
 }
 
@@ -368,9 +369,20 @@ if (!app.requestSingleInstanceLock()) {
       },
     };
     registerDesktopIpcHandlers({
+      productRequest: async request => {
+        const sidecar = sidecarController.current;
+        if (!sidecar || !['starting', 'ready'].includes(sidecarController.state?.phase ?? '')) throw new Error('PMBrain 本地服务尚未就绪');
+        const response = await sidecar.adminResponse(request.path, {
+          method: request.method,
+          headers: request.headers,
+          body: request.body as BodyInit | undefined,
+          redirect: 'error',
+        });
+        return { status: response.status, contentType: response.headers.get('content-type') || 'application/json', body: await response.text() };
+      },
       assertTrustedSender: event => {
         const senderUrl = event.senderFrame?.url || event.sender.getURL();
-        if (!isTrustedDesktopShellUrl(senderUrl, windowController.trustContext())) {
+        if (event.sender !== windowController.current?.webContents || event.senderFrame !== event.sender.mainFrame || !isTrustedDesktopShellUrl(senderUrl, windowController.trustContext())) {
           throw new Error('已拒绝来自非 PMBrain 桌面设置页的方法调用。');
         }
       },
@@ -381,13 +393,14 @@ if (!app.requestSingleInstanceLock()) {
       setTheme: value => systemSettingsController.setTheme(value),
       systemSettings: () => systemSettingsController.currentState(),
       saveSystemSettings: payload => systemSettingsController.save(payload),
+      saveDesktopBehavior: input => systemSettingsController.saveDesktopBehavior(input),
       memoryWriteback: () => systemSettingsController.memoryWriteback(),
       saveMemoryWriteback: payload => systemSettingsController.saveMemoryWriteback(payload),
       sharedAccess: () => sharedAccessController.read(),
       createSharedIntegration: payload => sharedAccessController.create(payload),
       revokeSharedIntegration: credentialName => sharedAccessController.revoke(credentialName),
       updateState: () => updateController.currentState,
-      setup: () => setupController.currentState(),
+      setup: configurationOnly => setupController.currentState(configurationOnly),
       listDockerDatabases: () => databaseRuntime.listManagedPostgresDatabases(getSetupInfo().current.databaseUrl),
       activateDockerDatabase: containerName => databaseRuntime.activateManagedPostgresDatabase(containerName),
       integrations: probe => probe
@@ -396,6 +409,12 @@ if (!app.requestSingleInstanceLock()) {
       launchIntegration: client => launchDesktopIntegration(client, path => shell.openPath(path)),
       inspectKnowledgeSourceDirectory,
       initializeKnowledgeSourceGit,
+      modelServices: readModelServices,
+      syncServiceModels: (service, kind) => syncServiceModels(service, net.fetch.bind(net) as typeof fetch, kind),
+      saveModelServices: input => {
+        if (setupController.inProgress || databaseTransferController.inProgress) throw new Error('配置或数据库操作进行中，请稍后再保存');
+        return saveModelServicesLive(input, () => refreshRunningGateway(sidecarController));
+      },
       providerModels: listDesktopProviderModels,
       testModelConnection,
       advancedModelConfig: () => readAdvancedModelConfig(runtime()),

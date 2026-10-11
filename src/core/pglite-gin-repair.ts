@@ -32,7 +32,6 @@ export interface GinIndexInfo {
 export const SEARCH_GIN_FALLBACK_INDEXES: GinIndexInfo[] = [
   { schema: 'public', name: 'idx_pages_search', indexDef: 'CREATE INDEX IF NOT EXISTS idx_pages_search ON pages USING GIN (search_vector)' },
   { schema: 'public', name: 'idx_pages_trgm', indexDef: 'CREATE INDEX IF NOT EXISTS idx_pages_trgm ON pages USING GIN (title gin_trgm_ops)' },
-  { schema: 'public', name: 'idx_pages_compiled_truth_trgm', indexDef: 'CREATE INDEX IF NOT EXISTS idx_pages_compiled_truth_trgm ON pages USING GIN (compiled_truth gin_trgm_ops)' },
   { schema: 'public', name: 'idx_pages_slug_trgm', indexDef: 'CREATE INDEX IF NOT EXISTS idx_pages_slug_trgm ON pages USING GIN (slug gin_trgm_ops)' },
   { schema: 'public', name: 'idx_pages_frontmatter', indexDef: 'CREATE INDEX IF NOT EXISTS idx_pages_frontmatter ON pages USING GIN (frontmatter)' },
   { schema: 'public', name: 'idx_chunks_text_trgm', indexDef: 'CREATE INDEX IF NOT EXISTS idx_chunks_text_trgm ON content_chunks USING GIN (chunk_text gin_trgm_ops)' },

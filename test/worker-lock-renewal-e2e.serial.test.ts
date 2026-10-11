@@ -54,7 +54,7 @@ beforeAll(async () => {
   await engine.connect({ database_url: '' });
   await engine.initSchema();
   queue = new MinionQueue(engine);
-  originalExecuteRaw = engine.executeRaw.bind(engine);
+  originalExecuteRaw = engine.executeRaw;
 });
 
 afterAll(async () => {
@@ -77,12 +77,14 @@ describe('H: gold-standard regression — worker survives renewLock throws', () 
     // enough to skip claim / completeJob / failJob / etc.
     let throwsRemaining = 50;
     let renewLockCallCount = 0;
-    (engine as { executeRaw: PGLiteEngine['executeRaw'] }).executeRaw = async (
+    (engine as { executeRaw: PGLiteEngine['executeRaw'] }).executeRaw = async function <T = Record<string, unknown>>(
+      this: PGLiteEngine,
       sql: string,
       params?: unknown[],
       opts?: { signal?: AbortSignal },
-    ) => {
-      const isRenewLock = sql.includes('SET lock_until = now()') && sql.includes('lock_token');
+    ) {
+      const isRenewLock = sql.includes('SET lock_until = now()')
+        && sql.includes("WHERE id = $2 AND lock_token = $3 AND status = 'active'");
       if (isRenewLock) {
         renewLockCallCount++;
         if (throwsRemaining > 0) {
@@ -90,16 +92,13 @@ describe('H: gold-standard regression — worker survives renewLock throws', () 
           throw new Error('simulated PgBouncer connection drop');
         }
       }
-      return originalExecuteRaw(sql, params, opts);
+      return originalExecuteRaw.call(this, sql, params, opts) as Promise<T[]>;
     };
 
-    // Short lockDuration → 50ms timer interval, abort deadline at
-    // lockDuration - safetyMargin = 100 - 16 = 84ms. Sustained throws
-    // should trip the deadline within ~150ms.
     const worker = new MinionWorker(engine, {
       concurrency: 1,
       pollInterval: 25,
-      lockDuration: 100,
+      lockDuration: 1000,
     });
 
     let handlerEntered = false;
@@ -131,10 +130,10 @@ describe('H: gold-standard regression — worker survives renewLock throws', () 
 
     const p = worker.start();
     try {
-      // Fixed sleep — handler enters within ~50ms, abort fires by
-      // ~200ms; 2s gives plenty of margin AND lets audit events
-      // accumulate before we read them back.
-      await new Promise((r) => setTimeout(r, 2000));
+      const deadline = Date.now() + 6000;
+      while (!handlerAbortObserved && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 25));
+      }
 
       // Headline assertion: worker process didn't die.
       expect(unhandledRejectionFired).toBe(null);

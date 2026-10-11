@@ -232,6 +232,40 @@ describe('runLockRenewalTick: time-based abort', () => {
   });
 });
 
+describe('本进程还在写数据库时，续锁超时不再把自己取消', () => {
+  test('续锁调用一直没返回，超过 25 秒也不中止，也不记成放弃', async () => {
+    const audit = freshAudit();
+    const timer = makeFakeTimer();
+    const deps: LockRenewalDeps = {
+      renewLock: () => new Promise<boolean>(() => {}),
+      audit: audit.sink,
+      now: () => 26_000,
+      setTimeout: timer.setTimeout,
+    };
+    const state = makeState({ lastSuccessfulRenewalAt: 0, ownsExecution: () => true });
+    const tickPromise = runLockRenewalTick(deps, state);
+    await new Promise((resolve) => setImmediate(resolve));
+    timer.runAll();
+    await expect(tickPromise).resolves.toEqual({ kind: 'ok' });
+    expect(state.consecutiveFailures).toBe(0);
+    expect(audit.log.failures).toHaveLength(0);
+    expect(audit.log.gaveUps).toHaveLength(0);
+  });
+
+  test('数据库连接真的断了，即使任务还在本进程里，仍然中止', async () => {
+    const audit = freshAudit();
+    const deps: LockRenewalDeps = {
+      renewLock: async () => { throw new Error('Connection terminated'); },
+      audit: audit.sink,
+      now: () => 26_000,
+      setTimeout: makeFakeTimer().setTimeout,
+    };
+    const state = makeState({ lastSuccessfulRenewalAt: 0, ownsExecution: () => true });
+    await expect(runLockRenewalTick(deps, state)).resolves.toEqual({ kind: 'should_abort', reason: 'lock-renewal-failed' });
+    expect(audit.log.gaveUps).toHaveLength(1);
+  });
+});
+
 describe('runLockRenewalTick: lock_lost (token mismatch)', () => {
   test('case 5 — renewLock returns false: lock_lost, NO audit event', async () => {
     const audit = freshAudit();

@@ -36,9 +36,9 @@ export class TrayController {
     this.tray.setContextMenu(Menu.buildFromTemplate([
       { label: '显示 PMBrain', click: this.dependencies.openDesktop },
       {
-        label: '打开管理控制台',
+        label: '打开知识工作台',
         click: () => void this.dependencies.openAdmin()
-          .catch(error => this.dependencies.reportError('无法打开管理控制台', error)),
+          .catch(error => this.dependencies.reportError('无法打开知识工作台', error)),
       },
       {
         label: '系统设置',

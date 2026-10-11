@@ -161,8 +161,8 @@ Bash 环境缺失而未跑完的项目要明确报告为“部分验证”，不
 
 用户明确要求的功能变更或 Bug 修复完成后：
 
-1. 同步递增根 `package.json` 和 `VERSION`；
-2. 修改桌面端时同步递增 `desktop/package.json`；
+1. 以 `desktop/package.json` 为产品唯一版本来源，递增后运行 `bun run version:sync`；
+2. 根 `package.json`、`VERSION` 和发布清单仅同步同一个版本，不单独递增浏览器或 Core 版本；
 3. 在对应子项目的中文 `变更台账.md` 或 `Bug修复台账.md` 倒序记录时间、版本、
    标题、描述、是否完成和最终结果；
 4. 列出实现结果与原计划不一致的地方；

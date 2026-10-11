@@ -1,0 +1,636 @@
+{
+  "schema_version": 1,
+  "reviewed_at": "2026-10-11",
+  "product_version": "1.4.55",
+  "subsystem": "entity-relations",
+  "status": "release-blocked-pending-package-acceptance",
+  "upstream": {
+    "version": "0.60.102.0",
+    "commit": "5b5891069413b28b2fe3a50675116d67d5a1e145",
+    "read_only": true
+  },
+  "scope": [
+    "plain-mention policy and incremental index",
+    "derived aliases",
+    "revision-conditional relationship publication",
+    "indexed source-local reference resolution",
+    "producer-scoped derived-link reconciliation",
+    "wanted-link persistence",
+    "complete ingest, filing and quality contracts; durable shared Minion Agent tools and receipts",
+    "evidence-backed entity/source relationships and final graph reconciliation",
+    "Reasoning output headroom, bounded truncation retry, endpoint option rejection and durable restricted JSON ingest"
+  ],
+  "integrations": [
+    "src/core/pglite-engine.ts",
+    "src/core/postgres-engine.ts",
+    "src/core/migrate.ts",
+    "src/core/pglite-schema.ts",
+    "src/schema.sql",
+    "src/core/operations.ts",
+    "src/core/extract-ner.ts",
+    "src/commands/extract.ts",
+    "src/commands/extract-stale.ts",
+    "src/core/cycle.ts",
+    "src/core/cycle/capture-entities.ts",
+    "src/core/import-file.ts",
+    "src/core/schema-pack/load-active.ts",
+    "src/core/schema-pack/manifest-v1.ts",
+    "src/core/schema-pack/link-inference.ts"
+  ],
+  "adapters": [
+    "src/core/pmbrain-adapters",
+    "src/core/link-reconciliation.ts",
+    "src/product/tasks/imported-entity-capture.ts",
+    "src/product/tasks/runtime.ts"
+  ],
+  "adaptations": [
+    "Source-local then shared default; no implicit foreign entity linking",
+    "Chinese common-word and single-Han suppression",
+    "existing PGLite owner, transactions and persistent product task queue",
+    "existing PMBrain Dream phase order, model routing, token and CNY budget",
+    "wanted links use the existing PMBrain markdown parser; qualified Source intent is retained",
+    "an established empty entity catalog invalidates only matching pages when its first entity appears",
+    "explicitly linked pairs become due so obsolete plain-mention duplicates are removed",
+    "column-specific search, generation and revision triggers avoid rereading Chinese bodies for metadata writes",
+    "revision backfill batches of 100 with progress, cancellation and durable restart",
+    "successful imports enqueue directly; startup and task completion drain durable pending requests",
+    "configurable mentions.chinese_stopwords invalidates index policy fingerprints",
+    "explicit links run before plain mentions in the stale sweep to avoid duplicate edges",
+    "default Dream skips calibration stages and captures entities before patterns; discovery tools return bounded summaries",
+    "optional page_aliases projection rolls back its savepoint and skips only the missing-alias-table error for pre-v110 compatibility",
+    "base pack concept path prefixes remain explicit after PMBrain changes unknown document types to note",
+    "pre-ingested original documents retain their raw pages; current Source then shared default is enforced by the same Core resolver",
+    "protected ingest tools validate provenance and page read revisions; target parsing, link publication and SQL readback run deterministically",
+    "per-document six normal tool rounds plus at most one bounded truncation recovery and 120000 input tokens; ordinary output budget 20000, recognized thinking-model default 128000, explicit operator limits retained; last call reserves verification; unknown CNY prices do not enforce an amount cap",
+    "generated fact-line provenance suppresses stale derived links while preserving original entity text and manual relationships",
+    "only scoped imported-document requests auto-run; legacy unscoped UUID requests remain pending and do not silently rescan a knowledge base",
+    "Minion entity receipts and the subsequent Mention/NER/reconciliation checkpoint are separate so interruption resumes without repeated model extraction",
+    "Early terminal ingest receipts are read-only validated within the original loop and token budget; persisted correction and complete receipts resume without repeated writes. Gateway usage includes prior persisted turns.",
+    "PGLite process owner routes nonce-scoped job and cycle lease renewals through the open transaction and reapplies all renewals after rollback; product Host bypasses a new transaction only for its own acquired cycle locks.",
+    "Only successful import snapshots are reclaimed on runtime restart through the existing managed artifact path guard; paused and incomplete snapshots and resource limits remain unchanged.",
+    "Product Quick Maintenance scans working-tree changes, stores successful raw-file receipts atomically, and defaults to selective local Git commits while preserving user staging and CLI committed-only defaults.",
+    "Product task relation receipts record actual INSERT IDs inside the originating transaction; historical tasks without receipts retain explicit attribution limits.",
+    "Product Quick Maintenance owns scoped post-import entity capture in the same durable task; Dream cycles queue behind earlier maintenance without replacing GBrain locks or Agent phases. Shared owner-linked usage survives Source switches and explicit continuation; skipped and failed verification remain visible.",
+    "PMBrain 1.4.50 reuses shared Gateway and ingest validators: thinking defaults to 32000 output tokens; length retries once at double cap within existing calls/token/cost limits and persists both usages. Bad document receipts remain pending while other pages continue. Endpoint-specific Qwen controls and schema are removed once on explicit rejection; tool rejection selects durable restricted JSON tools without changing Source/evidence checks.",
+    "PMBrain 1.4.51 removes the new global default chat timeout. Entity ingest has separate configurable call/job deadlines; truncation recovery respects known output/context ceilings, actual remaining cost/tokens and final verification reserves without consuming normal tool rounds. Abort causes and per-page usage/limits are retained; Ollama stream errors preserve tool rejection for durable JSON fallback.",
+    "PMBrain 1.4.53 adapts Cherry context-management ideas in the Workbench: per-request budgets, immutable tool shares, structural output trimming and full-exchange compaction. Gateway request shaping is opt-in; readonly concurrency is explicit, capped at four, preserves result order and persist-before-execute for each tool. Default callers, non-idempotent writes and crash replay stay serial. Ollama native tools receive bounded context windows; reasoning-only output is not a tool answer. No knowledge data/schema, Core retrieval, Minion phases or upstream-pinned hashes are changed.",
+    "PMBrain 1.4.54 adds opt-in request lifecycle boundaries, same-request stream recovery and per-endpoint validated JSON/DSML tool normalization. Canonical tool history is preserved while Workbench uses a budgeted projection with one output reservation and a protocol-free final answer. Existing Core/Minion timeout, replay, write ordering and default serial execution remain unchanged. No knowledge schema/data, retrieval or upstream-pinned hash changes."
+  ],
+  "deferred": [
+    "whole-repository GBrain upgrade",
+    "managed canonical filesystem and write capability subsystem",
+    "temporal relationship validity storage",
+    "entity-card and wanted-pages product UI; coverage/referrers modules have no new menu",
+    "automatic legacy concept-page retyping",
+    "production 44-percent precision and page-770 stall diagnosis",
+    "Windows release package acceptance",
+    "upstream attendance evidence gate; existing PMBrain attendance parser retained",
+    "whole-repository Agent/runtime upgrade and external enrichment; the full ingest contracts run on the existing shared Core Minion runtime",
+    "production repair of task 8989 and its historical 25 unresolved references; production knowledge was read only"
+  ],
+  "verification": {
+    "ci_verified_source_commit": "052ae879dc67ed6f21f1b41536bde303f549ebaf",
+    "ci_runs": {
+      "Test": "https://github.com/zhengyunhui123-dev/PMBrain/actions/runs/37954543247",
+      "E2E Tests": "https://github.com/zhengyunhui123-dev/PMBrain/actions/runs/37954542342",
+      "Heavy Tests": "https://github.com/zhengyunhui123-dev/PMBrain/actions/runs/37954542601",
+      "Core User Journeys": "https://github.com/zhengyunhui123-dev/PMBrain/actions/runs/37954542272"
+    },
+    "files": [
+      "test/gbrain-relation-lifecycle.serial.test.ts",
+      "test/relation-schema-upgrade.serial.test.ts",
+      "test/imported-entity-capture-runtime.serial.test.ts",
+      "test/extract-by-mention-resume.test.ts",
+      "test/dream-relation-integration.serial.test.ts",
+      "test/entity-capture-skill.serial.test.ts",
+      "test/entity-capture-budget.serial.test.ts",
+      "test/database-write-amplification.serial.test.ts",
+      "test/cjk-page-candidates.test.ts",
+      "test/mentions-pass.test.ts",
+      "test/mentions-parity.serial.test.ts",
+      "test/page-revision-backfill.test.ts",
+      "test/page-state-engine.test.ts",
+      "test/derived-link-reconciliation.test.ts",
+      "test/wanted-links.test.ts",
+      "test/entity-ingest-workflow.serial.test.ts",
+      "test/entity-ingest-gateway.serial.test.ts",
+      "test/entity-ingest-completion.serial.test.ts",
+      "test/pglite-worker-engine.serial.test.ts",
+      "test/task-resource-limits.serial.test.ts",
+      "test/source-git-selective.test.ts",
+      "test/task-relations.serial.test.ts",
+      "test/quick-git-relations.serial.test.ts",
+      "test/e2e/quick-git-relations.test.ts",
+      "test/maintenance-task-orchestration.serial.test.ts",
+      "test/e2e/maintenance-task-orchestration.test.ts",
+      "test/e2e/task-resource-limits.test.ts",
+      "test/ai/model-compatibility.test.ts",
+      "test/model-compatibility.serial.test.ts",
+      "test/extraction-model-compatibility.serial.test.ts",
+      "test/e2e/model-compatibility-ingest.test.ts",
+      "test/e2e/model-compatibility-capture.test.ts",
+      "test/e2e/model-compatibility-extraction.test.ts"
+    ],
+    "check": "bun run check:gbrain-subsystems",
+    "upstream_check": "bun run check:gbrain-subsystems --upstream D:/cursor-claude/gbrain",
+    "real_copy": "D:/pmbrain-acceptance/p0-20261008-142",
+    "real_page_count": 3142,
+    "real_interrupt_copy": "D:/pmbrain-acceptance/p0-20261008-interrupt",
+    "real_upgrade_schema": 134,
+    "real_checks": [
+      "3142-page upgrade",
+      "100-page cancel and new-process resume",
+      "100-page process.exit and new-process resume",
+      "13 original table hashes unchanged",
+      "new/edit/later-target/delete/recreate lifecycle",
+      "six Chinese query before/after regression; top20 may reorder"
+    ],
+    "current_dream_copy": "D:/pmbrain-acceptance/dream-1444-final-validation",
+    "current_dream_evidence": ".codex/dream-1444/",
+    "current_dream_boundary": "PMBrain 1.4.46 tester errors reproduced with isolated scripted Qwen-compatible and shared SDK paths; real provider Qwen and tester full Sidecar logs pending. Test receipts recorded under .codex/feedback-1446-*.log. Prior real MiMo document/lifecycle and full 3142-page upgrade evidence belongs to 1.4.44/45. Exact new SHA CI and installer remain pending.",
+    "current_dream_lifecycle_copy": "D:/pmbrain-acceptance/dream-1444-lifecycle",
+    "current_dream_ui_copy": "D:/pmbrain-acceptance/dream-1444-ui",
+    "latest_real_upgrade_copy": "D:/pmbrain-acceptance/upgrade-1444-20261009",
+    "latest_real_upgrade_baseline": "D:/backups/20261008T063834266Z-1.4.42-cc4c98c6",
+    "latest_real_upgrade_boundary": "Source Schema 130 with nullable revision column; full 3142-page migration, committed batches survive process.exit and cancellation. Migration-owned revision UUIDs are validated separately from all protected columns. Logs: .codex/dream-1444/upgrade-*.log.",
+    "previous_exact_sha_ci": {
+      "sha": "eda3ce7a3a22cb2a4503013260dc72a4a4fc4299",
+      "Test": "success",
+      "E2E": "success",
+      "Core_User_Journeys": "success",
+      "Heavy": "success"
+    },
+    "feedback_1446": {
+      "scripted_provider": "Qwen-compatible and shared SDK; tester endpoint not available",
+      "native_worker_stop_resume": {
+        "files": 120,
+        "assertions": 134,
+        "total_seconds": 210.46,
+        "log": ".codex/feedback-1446-stop-resume-final.log"
+      },
+      "runtime_snapshot_startup": {
+        "pglite": "1 pass / 8 assertions",
+        "postgres": "1 pass / 8 assertions",
+        "logs": [
+          ".codex/feedback-1446-runtime-cleanup.log",
+          ".codex/dream-1446/pg-runtime-cleanup.log"
+        ]
+      },
+      "current_old_copy_startup": "D:/pmbrain-acceptance/upgrade-1444-20261009; three native launches, 15.25-25.63 seconds",
+      "local_ci": {
+        "verify": 40,
+        "tests": 235,
+        "assertions": 564,
+        "exit_code": 0,
+        "log": ".codex/feedback-1446-ci-preview-complete.log"
+      },
+      "limitations": [
+        "exact new SHA Actions and installer pending",
+        "tester full Sidecar logs and actual Qwen endpoint pending",
+        "one compiled Windows WASM gate timeout remains unexplained; final gate passed",
+        "small-file native-worker batch performance remains an optimization boundary"
+      ]
+    },
+    "model_compatibility_1450": {
+      "provider": "isolated OpenAI-compatible/Ollama scripted endpoints; actual tester endpoint pending",
+      "pglite": {
+        "tests": 30,
+        "assertions": 196,
+        "log": ".codex/model-compatibility-pglite.log"
+      },
+      "postgres": {
+        "tests": 30,
+        "assertions": 196,
+        "log": ".codex/model-compatibility-postgres.log",
+        "isolated_container_reclaimed": true
+      },
+      "wire": {
+        "tests": 15,
+        "assertions": 89,
+        "log": ".codex/model-compatibility-wire.log"
+      },
+      "existing_regressions": {
+        "tests": 103,
+        "assertions": 298,
+        "log": ".codex/model-compatibility-regressions.log"
+      },
+      "verify_checks": 40,
+      "ci_preview": {
+        "tests": 235,
+        "assertions": 564,
+        "log": ".codex/model-compatibility-ci-preview.log"
+      },
+      "boundary": "Current code/resources and local checks; exact pushed SHA Actions and Windows installer acceptance pending user submission/package"
+    },
+    "model_compatibility_1451": {
+      "status": "targeted-local-validation-passed-native-stress-failure-retained",
+      "providers": "isolated real HTTP DeepSeek/MiMo/Qwen3.6/Ollama scripted endpoints; actual user endpoint pending",
+      "pglite": {
+        "tests": 41,
+        "assertions": 271,
+        "log": ".codex/repair-1451/pglite.log"
+      },
+      "postgres": {
+        "tests": 41,
+        "assertions": 271,
+        "log": ".codex/repair-1451/postgres.log",
+        "isolated_container_reclaimed": true
+      },
+      "protocol": {
+        "tests": 16,
+        "assertions": 59,
+        "log": ".codex/repair-1451/protocol.log"
+      },
+      "recipes": {
+        "tests": 39,
+        "assertions": 390,
+        "log": ".codex/repair-1451/recipes.log"
+      },
+      "existing_regressions": {
+        "tests": 84,
+        "assertions": 258,
+        "log": ".codex/repair-1451/regressions.log"
+      },
+      "desktop": {
+        "tests": 21,
+        "assertions": 69,
+        "log": ".codex/repair-1451/desktop-tests-final.log"
+      },
+      "http_shutdown": {
+        "tests": 2,
+        "assertions": 4,
+        "log": ".codex/repair-1451/http-shutdown-after.log"
+      },
+      "task_runtime_focused": {
+        "pglite": {
+          "tests": 5,
+          "assertions": 27,
+          "log": ".codex/repair-1451/runtime-focused-pglite.log"
+        },
+        "postgres": {
+          "tests": 5,
+          "assertions": 27,
+          "log": ".codex/repair-1451/runtime-postgres.log",
+          "isolated_container_reclaimed": true
+        }
+      },
+      "core_user_journeys": {
+        "tests": 6,
+        "version": "1.4.51",
+        "environment": "Windows current workspace unpacked Desktop with isolated user home",
+        "log": ".codex/repair-1451/journeys-acceptance.log",
+        "runtime_log": ".codex/repair-1451/journeys-acceptance/user-home/electron-user-data/logs/pmbrain-2026-10-10.log",
+        "normal_stop_ms": [
+          928,
+          387,
+          212
+        ],
+        "forced_stop": false
+      },
+      "verify_checks": 40,
+      "ci_preview": {
+        "tests": 235,
+        "assertions": 564,
+        "exit_code": 0,
+        "log": ".codex/repair-1451/ci-preview.log"
+      },
+      "retained_failures": {
+        "task_runtime_full_windows": "Bun 1.3.14+0d9b296a native Internal assertion failure in ordinary and baseline full-file stress runs; focused passes do not replace this run",
+        "logs": [
+          ".codex/repair-1451/product-runtime-final.log",
+          ".codex/repair-1451/product-runtime-baseline.log"
+        ],
+        "original_windows_ci": "Restart stalled before Sidecar spawn; improved preflight logs and reproduced shutdown fixes do not prove the unique initiating cause of that historic run"
+      },
+      "boundary": "Exact new SHA Actions, real user models and Windows installer acceptance remain pending user submission and package. Endpoint capability registry and model diagnostics are phase two."
+    }
+  },
+  "files": [
+    {
+      "path": "src/core/mentions/policy.ts",
+      "upstream_path": "src/core/mentions/policy.ts",
+      "mode": "copied",
+      "sha256": "b39f879ff7bf6f3be225867d1ef137450ca8bc29d394cbb7bf38b9ea30857f98",
+      "upstream_sha256": "b39f879ff7bf6f3be225867d1ef137450ca8bc29d394cbb7bf38b9ea30857f98"
+    },
+    {
+      "path": "src/core/mentions/aliases.ts",
+      "upstream_path": "src/core/mentions/aliases.ts",
+      "mode": "copied",
+      "sha256": "ba48b7d91a9f0796c43f348f4309bf6a7a94d736aaaadd2e0e4f8326d9f63494",
+      "upstream_sha256": "ba48b7d91a9f0796c43f348f4309bf6a7a94d736aaaadd2e0e4f8326d9f63494"
+    },
+    {
+      "path": "src/core/mentions/pass.ts",
+      "upstream_path": "src/core/mentions/pass.ts",
+      "mode": "adapted",
+      "sha256": "5fa188c028302c7d02a564d16a92f73fef7f8d54bc9cf17f12458acb43983062",
+      "upstream_sha256": "fde8f033481a3fa776b235dbf40a899196c09ee6f20b8c3adf66f724a0d3e6e6"
+    },
+    {
+      "path": "src/core/mentions/stale.ts",
+      "upstream_path": "src/core/mentions/stale.ts",
+      "mode": "copied",
+      "sha256": "e40c1d02ea6f0e5579c339fb5c93e75f714403334ce62e3d58cf0fd8113176db",
+      "upstream_sha256": "e40c1d02ea6f0e5579c339fb5c93e75f714403334ce62e3d58cf0fd8113176db"
+    },
+    {
+      "path": "src/core/mentions/coverage.ts",
+      "upstream_path": "src/core/mentions/coverage.ts",
+      "mode": "adapted",
+      "sha256": "70a34c7f6b170974633bfaa790623f5600f1f3f1ec81af3e4bba479beba03c2b",
+      "upstream_sha256": "d52dc9a4d94185cdea1abf1850c38253d0936a73e825527ec7bfe7750e60a461"
+    },
+    {
+      "path": "src/core/mentions/referrers.ts",
+      "upstream_path": "src/core/mentions/referrers.ts",
+      "mode": "adapted",
+      "sha256": "fa09dccddc9ce3f60ae52710c1e87d935c5aa77a5f55014d8840459fdfc23ee5",
+      "upstream_sha256": "8650e8f673321fd7b5e58f5f816d5e6b512c650718a33b0ee529ed977f45f52d"
+    },
+    {
+      "path": "src/core/mentions/upgrade-notice.ts",
+      "upstream_path": "src/core/mentions/upgrade-notice.ts",
+      "mode": "adapted",
+      "sha256": "0d84125e43b992e213d460d2ac33c791a9fd2d5e52d56fa4932f3a9fb36f565e",
+      "upstream_sha256": "1b8c442437726d999f7d2edb316194a5005343fbc99901888b6f2794a1ed474b"
+    },
+    {
+      "path": "src/core/mentions/schema.ts",
+      "upstream_path": "src/core/migrate.ts",
+      "mode": "adapted",
+      "sha256": "03eff79ec11dbe95a610424d710173e91099fa2ac485f829d9fc746002602ca8",
+      "upstream_sha256": "a40b338a59821997b55f86cb93beb0912252161471c5c0493884bdd3097b2c14"
+    },
+    {
+      "path": "src/core/by-mention.ts",
+      "upstream_path": "src/core/by-mention.ts",
+      "mode": "adapted",
+      "sha256": "fb89f77da243f1f0e8f389e65b1b14f68dee1512fc33aec922849d6d7242d22a",
+      "upstream_sha256": "9c3fa3d8131dca7d28be8338530a2acb3267ced62170c26b790b011f87716f0f"
+    },
+    {
+      "path": "src/core/entity-name-quality.ts",
+      "upstream_path": "src/core/entity-name-quality.ts",
+      "mode": "copied",
+      "sha256": "e3e86bc49d5845e80041493fecd18620f1528da7a945daa1858c101e03a19b08",
+      "upstream_sha256": "e3e86bc49d5845e80041493fecd18620f1528da7a945daa1858c101e03a19b08"
+    },
+    {
+      "path": "src/core/source-local-reference-index.ts",
+      "upstream_path": "src/core/source-local-reference-index.ts",
+      "mode": "adapted",
+      "sha256": "c8a8b0644e0a8e7e78e9808054587629ee2b21f90913fbf677053c93a7af2255",
+      "upstream_sha256": "d6d03734aaa2c47772db0e09b890d78b8200b94d311bb200ceee400845d9e368"
+    },
+    {
+      "path": "src/core/latin-fold.ts",
+      "upstream_path": "src/core/latin-fold.ts",
+      "mode": "copied",
+      "sha256": "2a8c9fc63c1fbcd9851de8846e4ceca9dc132be488f930cbd7768a6479703fd2",
+      "upstream_sha256": "2a8c9fc63c1fbcd9851de8846e4ceca9dc132be488f930cbd7768a6479703fd2"
+    },
+    {
+      "path": "src/core/text-safe.ts",
+      "upstream_path": "src/core/text-safe.ts",
+      "mode": "copied",
+      "sha256": "d65725f3dbdf9eac050ec9affc4205b9b22eebd3bb67c2890d5ebee8e562f5f1",
+      "upstream_sha256": "d65725f3dbdf9eac050ec9affc4205b9b22eebd3bb67c2890d5ebee8e562f5f1"
+    },
+    {
+      "path": "src/core/derived-links.ts",
+      "upstream_path": "src/core/derived-links.ts",
+      "mode": "adapted",
+      "sha256": "d62082cfd400ef74ddd3aec305b7a43e2bb1ce8518bc579117964ea959c605de",
+      "upstream_sha256": "6fd08fe7d6c2a76f9a028515d8367d3a65df5b2e021a488b5115d5ea25331e42"
+    },
+    {
+      "path": "src/core/wanted-links.ts",
+      "upstream_path": "src/core/wanted-links.ts",
+      "mode": "adapted",
+      "sha256": "375e5b778fc3ae1fff07f1113d2204460c6760d82ce9476e3073913379953125",
+      "upstream_sha256": "6a19102d0d0cd17b7b2698aa3907ec9d25d38a68f0bbfd195b03911604a9d314"
+    },
+    {
+      "path": "src/core/wanted-links-store.ts",
+      "upstream_path": "src/core/wanted-links-store.ts",
+      "mode": "adapted",
+      "sha256": "cf9ff9d54fc6ed35815d8fd9537cbf6822369b4b79f05ee1eeb001cddc9e0bca",
+      "upstream_sha256": "42ca92b87adda09e5668a6740e8524fd5c40f1cf8c6b517e44758a67e3011534"
+    },
+    {
+      "path": "src/core/reference-basename.ts",
+      "upstream_path": "src/core/link-extraction.ts",
+      "mode": "adapted",
+      "sha256": "6547f890396ea1b65811794304114aba68f947e13c21b6a07eaeb1d25f7c082c",
+      "upstream_sha256": "621f4ae7944eb41d5b13c733019c3c5ee3481d465d4e9bf66a3cf4922a5e40e6"
+    },
+    {
+      "path": "src/core/page-state/schema.ts",
+      "upstream_path": "src/core/page-state/schema.ts",
+      "mode": "adapted",
+      "sha256": "97798c1961075ba55426158ce9a2680863bdf43b5d90c4e7b6d756d5b9963741",
+      "upstream_sha256": "7b898fa02f943f7bb4688457b33916e784103343abea61d74861490f73b8ca6c"
+    },
+    {
+      "path": "src/core/page-state/revision-backfill-schema.ts",
+      "upstream_path": "src/core/page-state/revision-backfill-schema.ts",
+      "mode": "adapted",
+      "sha256": "c0b0a43a35d3c564dfa7c600b114a34b3694f40d4bd506eaa549ecd14e21632b",
+      "upstream_sha256": "5827a613bb63c3a3a45c2900eb89545e602752ca32cba1d663063a89553c906a"
+    },
+    {
+      "path": "src/core/page-state/transactions.ts",
+      "upstream_path": "src/core/page-state/transactions.ts",
+      "mode": "adapted",
+      "sha256": "23f4e5ce53418abd5a06e4ecf8d6952630bf49b0f0c4db22f66f8508780b8722",
+      "upstream_sha256": "61d02dcae98c33be29294881042099db0c376a4fec4a4f227b594da810e6d28d"
+    },
+    {
+      "path": "src/core/pmbrain-adapters/wanted-links-schema.ts",
+      "upstream_path": "src/core/migrate.ts",
+      "mode": "adapted",
+      "sha256": "5d3635dfd432f85c41043127c8fe1013e3976741c45d7d7b3d84c9078971582f",
+      "upstream_sha256": "a40b338a59821997b55f86cb93beb0912252161471c5c0493884bdd3097b2c14"
+    },
+    {
+      "path": "src/core/schema-pack/engine-resolution.ts",
+      "upstream_path": "src/core/schema-pack/engine-resolution.ts",
+      "mode": "adapted",
+      "sha256": "25182b335f4ec8002531190d0c137e3987fe13ca290f3c8cd40b1aa944e7b322",
+      "upstream_sha256": "6c4c43e94a896fa4dba63e9ba1143581c43a31aa83cda37d9394e8282038c503"
+    },
+    {
+      "path": "src/core/schema-pack/base/gbrain-base-v2.yaml",
+      "upstream_path": "src/core/schema-pack/base/gbrain-base-v2.yaml",
+      "mode": "adapted",
+      "sha256": "c8c6bdf2bf13cef0e0c70c320c8d82799bd9a77df536bf570e21c5b23ceb9239",
+      "upstream_sha256": "da8b690c8f8a3861585f1da463a41bfed4ac209d06dcb867889fbd57a3b08732"
+    },
+    {
+      "path": "src/core/schema-pack/base/company-brain.yaml",
+      "upstream_path": "src/core/schema-pack/base/company-brain.yaml",
+      "mode": "copied",
+      "sha256": "349c06411dc46545dd7a1372fe170757ab4dbf4f49de8d3673325916ab1c3cc2",
+      "upstream_sha256": "349c06411dc46545dd7a1372fe170757ab4dbf4f49de8d3673325916ab1c3cc2"
+    },
+    {
+      "path": "test/mentions-policy-aliases.test.ts",
+      "upstream_path": "test/mentions-policy-aliases.test.ts",
+      "mode": "adapted",
+      "sha256": "a44feb084a9b41dba34924ada13c767c49f61aa5454ae1be4bc0b333e38a5420",
+      "upstream_sha256": "ba6fb252a6ee6454cab36f74421d7ee12ccdddda246e5bd1b5d602c99eef18ae"
+    },
+    {
+      "path": "test/by-mention-hangul.test.ts",
+      "upstream_path": "test/by-mention-hangul.test.ts",
+      "mode": "adapted",
+      "sha256": "b3f08e0597527198cb5a6ccace8597495314286957f9e1a3f133172847182710",
+      "upstream_sha256": "dba023c619866ef5202b84086900055486c280bd53b09e3a5a0ffbac2598d2a1"
+    },
+    {
+      "path": "test/source-local-reference-index.test.ts",
+      "upstream_path": "test/source-local-reference-index.test.ts",
+      "mode": "copied",
+      "sha256": "a111bcf817c4a41a0c037583b2e65d0ec3353808f5282fc151e7c0dea3bdfedb",
+      "upstream_sha256": "a111bcf817c4a41a0c037583b2e65d0ec3353808f5282fc151e7c0dea3bdfedb"
+    },
+    {
+      "path": "src/core/link-reconciliation.ts",
+      "upstream_path": "src/core/link-reconciliation.ts",
+      "mode": "adapted",
+      "sha256": "5be4dd539afc6399cc83bf4c0ae8243565844bb6576db2d1cb6bccb9635be7eb",
+      "upstream_sha256": "758f40bb70004f5307abd1a0a94af3ef7b82d8f6abe5aa2b5f95e9f2d0a5cbc8"
+    },
+    {
+      "path": "src/core/extract-timeline-from-meetings.ts",
+      "upstream_path": "src/core/extract-timeline-from-meetings.ts",
+      "mode": "adapted",
+      "sha256": "d2e24390dd51b8553d8db78d15e8e9bd4f60e3f7929c20c3904770b267bdd6a1",
+      "upstream_sha256": "0760f8e748d83cd9cf092d6113b86b8ad9724d092d629d9a6b6ca1230bd7425b"
+    },
+    {
+      "path": "test/mentions-pass.test.ts",
+      "upstream_path": "test/mentions-pass.test.ts",
+      "mode": "adapted",
+      "sha256": "7062672af233072a0c912971c0a9839f56750005d528c896e1af94d6215f084b",
+      "upstream_sha256": "2ca208dc79c836569996f42eee0c291914009724a75f1751082b9acae0ebb982"
+    },
+    {
+      "path": "test/page-revision-backfill.test.ts",
+      "upstream_path": "test/page-revision-backfill-5216.test.ts",
+      "mode": "adapted",
+      "sha256": "26874cd78d459b6ae7b6cbd857f9212a2262e6e0d2d8806a8d87c334c81d8aff",
+      "upstream_sha256": "a5a9637ad45452b19cefc3f34cf94c85abec737a38a4a79ed14581875723e300"
+    },
+    {
+      "path": "test/derived-link-reconciliation.test.ts",
+      "upstream_path": "test/derived-link-reconciliation.test.ts",
+      "mode": "adapted",
+      "sha256": "f09f58d8ecd2e2796c07eac1ad4285996314480286647091e9ed8560380b1746",
+      "upstream_sha256": "e2909e2b48f0b2a527ad1aa23ba8e9b6153cefc8d60b817210858ab23cc43fbb"
+    },
+    {
+      "path": "test/page-state-engine.test.ts",
+      "upstream_path": "test/page-state-engine.test.ts",
+      "mode": "adapted",
+      "sha256": "e8dbc10ea4fbf35c645c4d5cd109119d0664a8ec03d0575b1c61dbf51802d9c2",
+      "upstream_sha256": "19dc26de8049d79049112268853fb0d67422a0a576097d0a22be10cfbccac6ef"
+    },
+    {
+      "path": "test/wanted-links.test.ts",
+      "upstream_path": "test/wanted-links.test.ts",
+      "mode": "adapted",
+      "sha256": "f7e3939b887e2d87dbc573aead45a1fcf3331ebdc2f6c91471f8b5c74c9920e8",
+      "upstream_sha256": "bffecc5c7a10a759f1f50b32c96729470e5f06a66d7e7a09307b34a71b30b8d2"
+    },
+    {
+      "path": "test/helpers/mention-brain.ts",
+      "upstream_path": "test/helpers/mention-brain.ts",
+      "mode": "adapted",
+      "sha256": "4cfa3a47d303146be01049f0b836d50e30dcfd3e52821f95004cbe074ef1c6af",
+      "upstream_sha256": "0ac41dcd76fe84cbf63ec4a74fe747cc3ce46322ce70c59a978ce8e0fe697d97"
+    },
+    {
+      "path": "test/helpers/wanted-links-scenarios.ts",
+      "upstream_path": "test/helpers/wanted-links-scenarios.ts",
+      "mode": "adapted",
+      "sha256": "aa7c7cd02c9f21384e3be966b4727753460911a6032d668f7483389993bf8dd3",
+      "upstream_sha256": "4480203fc156b7f15c1d2b4eb2a884de4d2fba8c7fb464091485ad8f05e09b81"
+    },
+    {
+      "path": "test/mentions-parity.serial.test.ts",
+      "upstream_path": "test/e2e/mentions-parity.test.ts",
+      "mode": "adapted",
+      "sha256": "69da8b3b56a4a24a9913cc2cedcdb783b7ff73129390822cdb87e9a0ee7156cc",
+      "upstream_sha256": "ff29cad7df86e3b91115eca9858942ed0ff87a56543653fa79ed2395f31c293d"
+    },
+    {
+      "path": "skills/ingest/SKILL.md",
+      "upstream_path": "skills/ingest/SKILL.md",
+      "mode": "copied",
+      "sha256": "887d1dc43d1dd4d541172b40ce64385090813132ef80fc05c4616b5c32087448",
+      "upstream_sha256": "887d1dc43d1dd4d541172b40ce64385090813132ef80fc05c4616b5c32087448"
+    },
+    {
+      "path": "skills/_brain-filing-rules.md",
+      "upstream_path": "skills/_brain-filing-rules.md",
+      "mode": "copied",
+      "sha256": "5a5792a290e7f48e0123744e3460ea02514d7a514113827a9dde462935565d17",
+      "upstream_sha256": "5a5792a290e7f48e0123744e3460ea02514d7a514113827a9dde462935565d17"
+    },
+    {
+      "path": "skills/conventions/quality.md",
+      "upstream_path": "skills/conventions/quality.md",
+      "mode": "copied",
+      "sha256": "8aa681001114689d34268ccadaf0e2ff07b8f68aa5987c093a8c4a7a744f12a6",
+      "upstream_sha256": "8aa681001114689d34268ccadaf0e2ff07b8f68aa5987c093a8c4a7a744f12a6"
+    },
+    {
+      "path": "src/core/ai/gateway.ts",
+      "upstream_path": "src/core/ai/gateway.ts",
+      "mode": "adapted",
+      "sha256": "e79a38c1ff3392eac2afc4364a47ce27acbbeb4a02cf8e84220eb6550a4af837",
+      "upstream_sha256": "622b81db5282117c6e2b32b566e2e35c36117400d416051011dbcc0e8e9c565f"
+    },
+    {
+      "path": "src/core/ai/errors.ts",
+      "upstream_path": "src/core/ai/errors.ts",
+      "mode": "adapted",
+      "sha256": "29d0d5ab52afacc4cdeb11b80cd4046599cd425068e1cd65e2e69f1352182bf0",
+      "upstream_sha256": "3418cebc6a10174cf252e130855fc529b4b0a89a67ed4da68113f56fb772c701"
+    },
+    {
+      "path": "src/core/facts/extract.ts",
+      "upstream_path": "src/core/facts/extract.ts",
+      "mode": "adapted",
+      "sha256": "3cf6b3e978210e3e5f79a558f8f6e748e577c68beb46a38d6a6064851105d033",
+      "upstream_sha256": "1e9a5aec6a3f4c7ad159687d4d6f934519c29687a71ef757272971909da17978"
+    },
+    {
+      "path": "src/core/cycle/extract-atoms.ts",
+      "upstream_path": "src/core/cycle/extract-atoms.ts",
+      "mode": "adapted",
+      "sha256": "050256b42b7fb49452be6606cd0f4f7996a8b0c919de4d02d16a39e74f73d047",
+      "upstream_sha256": "d0f3a747b615808b92be26486b7842e7cbc509724f273484d25de78a4c85127a"
+    }
+  ],
+  "migration_namespace": {
+    "key": "pmbrain.schema.version",
+    "table": "pmbrain_schema_migrations",
+    "legacy_version_mirror": true,
+    "crosswalk": {
+      "131": 150,
+      "132": 206,
+      "133": 214
+    },
+    "latest": 134
+  },
+  "test_adaptations": {
+    "mentions-parity": "index, aliases and links; entity-card UI outside scope",
+    "page-state-engine": "relationship revisions, nested transactions and Source incarnation; full canonical CAS write API deferred",
+    "derived-link-reconciliation": "nine upstream producer replacement cases; PMBrain parser and Source adapters retained",
+    "wanted-links": "six upstream business scenarios through existing PMBrain writer API",
+    "page-revision-backfill": "upstream #5216 rollout cases; interruption uses AbortSignal and native transaction fault adapter"
+  }
+}

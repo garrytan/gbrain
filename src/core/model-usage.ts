@@ -60,6 +60,7 @@ const PHASE_REQUIRES_GENERATIVE: Record<CyclePhase, boolean> = {
   grade_takes: true,
   calibration_profile: true,
   conversation_facts_backfill: true,
+  capture_entities: true,
   // Runtime is heuristic-only today (LLM path deferred); do not block local suggest.
   'schema-suggest': false,
   drift: true,
@@ -84,6 +85,7 @@ const PHASE_LABEL_ZH: Record<CyclePhase, string> = {
   calibration_profile: '认知校准画像',
   drift: '漂移检测',
   conversation_facts_backfill: '会话事实回填',
+  capture_entities: '识别实体',
   enrich_thin: '补全薄弱页面',
   embed: '向量化',
   orphans: '孤立页检查',

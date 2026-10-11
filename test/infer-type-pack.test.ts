@@ -44,7 +44,7 @@ const PARITY_FIXTURES: ReadonlyArray<{ path: string; expected: string; reason: s
   // Stronger-signal wins: writing/ inside projects/
   { path: 'projects/blog/writing/essay.md', expected: 'writing', reason: 'writing/ wins over projects/' },
   // Fallback: paths not matching any prefix
-  { path: 'random/path.md', expected: 'concept', reason: 'no prefix match → concept default' },
+  { path: 'random/path.md', expected: 'note', reason: 'no prefix match stays note' },
 ];
 
 describe('inferTypeFromPack (T7a) — gbrain-base parity', () => {
@@ -80,8 +80,8 @@ describe('inferTypeFromPack (T7a) — gbrain-base parity', () => {
     });
     expect(inferTypeFromPack('researchers/alice.md', pack)).toBe('researcher');
     expect(inferTypeFromPack('papers/smith-2024.md', pack)).toBe('paper');
-    // Paths NOT in the pack's prefixes default to 'concept'.
-    expect(inferTypeFromPack('people/alice.md', pack)).toBe('concept');
+    // Paths NOT in the pack's prefixes stay note. Missing type is not guessed as concept.
+    expect(inferTypeFromPack('people/alice.md', pack)).toBe('note');
   });
 
   test('pack with empty page_types falls back to gbrain-base defaults', () => {
@@ -99,9 +99,9 @@ describe('inferTypeFromPack (T7a) — gbrain-base parity', () => {
     expect(inferTypeFromPack('media/foo.md', emptyPack)).toBe('media');
   });
 
-  test('undefined filePath returns concept default', () => {
+  test('undefined filePath stays note', () => {
     const pack = loadPackFromFile(GBRAIN_BASE_PATH);
-    expect(inferTypeFromPack(undefined, pack)).toBe('concept');
+    expect(inferTypeFromPack(undefined, pack)).toBe('note');
   });
 
   test('case-insensitive matching', () => {

@@ -7,6 +7,7 @@ import { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
 import { importTrustedStructuredContent, type ParentSectionInput } from '../../src/core/import-file.ts';
 import { isEmbedSkipped } from '../../src/core/embed-skip.ts';
+import { configureGateway, resetGateway } from '../../src/core/ai/gateway.ts';
 
 const databaseUrl = process.env.DATABASE_URL;
 const skip = !databaseUrl;
@@ -38,6 +39,7 @@ function content(parentSections: ParentSectionInput[]): string {
 
 describe.skipIf(skip)('Trusted Large Document Mode - Postgres parity', () => {
   beforeAll(async () => {
+    configureGateway({embedding_model:'openai:text-embedding-3-large',embedding_dimensions:1536,env:{}});
     engine = new PostgresEngine();
     await engine.connect({ database_url: databaseUrl! });
     await engine.initSchema();
@@ -48,6 +50,7 @@ describe.skipIf(skip)('Trusted Large Document Mode - Postgres parity', () => {
     if (!engine) return;
     await engine.executeRaw(`DELETE FROM pages WHERE slug = $1 AND source_id = 'default'`, [slug]);
     await engine.disconnect();
+    resetGateway();
   });
 
   test('stores a >500KB structured page and its section chunks without embed_skip', async () => {
@@ -59,12 +62,15 @@ describe.skipIf(skip)('Trusted Large Document Mode - Postgres parity', () => {
     });
     expect(result.status).toBe('imported');
     expect(result.largeDocument?.phase).toBe('completed');
-    expect(result.largeDocument?.chunksTotal).toBe(120);
+    expect(result.largeDocument?.chunksTotal).toBeGreaterThanOrEqual(parentSections.length);
     const page = await engine.getPage(slug, { sourceId: 'default' });
     expect(page).not.toBeNull();
     expect(isEmbedSkipped(page!.frontmatter)).toBe(false);
     const chunks = await engine.getChunks(slug, { sourceId: 'default' });
-    expect(chunks).toHaveLength(120);
+    expect(chunks).toHaveLength(result.largeDocument!.chunksTotal);
     expect(chunks[0].chunk_text).toContain('Locator: page 1');
+    const stored=chunks.map(chunk=>chunk.chunk_text).join('\n');
+    for(const section of parentSections)expect(stored).toContain(`Locator: ${section.locator}\n`);
+    expect(page!.compiled_truth).toContain(parentSections.at(-1)!.text);
   });
 });

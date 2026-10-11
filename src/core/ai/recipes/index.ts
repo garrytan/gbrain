@@ -52,6 +52,9 @@ const ALL: Recipe[] = [
 export const RECIPES: Map<string, Recipe> = new Map(ALL.map(r => [r.id, r]));
 
 export function getRecipe(id: string): Recipe | undefined {
+  if (/^service-[a-z0-9][a-z0-9-]{0,63}$/.test(id)) {
+    return { ...customOpenAI, id, name: id, auth_env: { required: [], optional: [`PMBRAIN_${id.replace(/-/g, '_').toUpperCase()}_API_KEY`] } };
+  }
   return RECIPES.get(id);
 }
 

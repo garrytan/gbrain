@@ -247,6 +247,9 @@ export interface RerankerTouchpoint {
 
 export interface ChatTouchpoint {
   models: string[];
+  thinking_by_default?: boolean | ((modelId:string)=>boolean);
+  max_output_tokens?: number | ((modelId:string)=>number|undefined);
+  supports_structured_outputs?: boolean;
   supports_vision?: boolean;
   vision_models?: string[];
   /** Provider returns native function/tool calling. */
@@ -411,6 +414,7 @@ export interface AIGatewayConfig {
   expansion_model?: string;
   /** Default chat model for `gateway.chat()` callers (subagent default). */
   chat_model?: string;
+  chat_output_limits?: Record<string,number>;
   ocr_enabled?: boolean;
   ocr_model?: string;
   /**

@@ -1,9 +1,11 @@
 import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../core/engine.ts';
+import { PMBRAIN_SCHEMA_VERSION_KEY } from '../core/pmbrain-adapters/migration-ledger.ts';
 import { LEGACY_TABLE_RULES, inspectDuplicateFactsIds, isRegisteredHistoricalBackup, rewriteLegacyRow } from './full-engine-compatibility.ts';
 
 const PAGE_SIZE = 100;
-const OPERATIONAL_TABLES = new Set(['gbrain_cycle_locks', 'subagent_rate_leases']);
+const OPERATIONAL_TABLES = new Set(['gbrain_cycle_locks', 'subagent_rate_leases', 'pmbrain_schema_migrations']);
+const SCHEMA_CONFIG_KEYS = ['version', PMBRAIN_SCHEMA_VERSION_KEY];
 const CRITICAL_TABLES = new Set(['pages', 'content_chunks', 'facts', 'takes', 'sources', 'files', 'links', 'page_links', 'raw_data']);
 
 interface ColumnInfo {
@@ -441,12 +443,12 @@ export async function transferCompleteBrain(source: BrainEngine, target: BrainEn
       await resetSequences(transaction, plan);
       options.onTableVerified?.(plan.name, copied.length, ordered.length, verified.rows);
     }
-    const sourceConfig = await source.executeRaw<{ key: string; value: string }>("SELECT key, value FROM config WHERE key <> 'version' ORDER BY key");
-    await transaction.executeRaw("DELETE FROM config WHERE key <> 'version'");
+    const sourceConfig = await source.executeRaw<{ key: string; value: string }>('SELECT key, value FROM config WHERE key <> ALL($1::text[]) ORDER BY key', [SCHEMA_CONFIG_KEYS]);
+    await transaction.executeRaw('DELETE FROM config WHERE key <> ALL($1::text[])', [SCHEMA_CONFIG_KEYS]);
     for (const entry of sourceConfig) {
       await transaction.executeRaw('INSERT INTO config (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value', [entry.key, entry.value]);
     }
-    const targetConfig = await transaction.executeRaw<{ key: string; value: string }>("SELECT key, value FROM config WHERE key <> 'version' ORDER BY key");
+    const targetConfig = await transaction.executeRaw<{ key: string; value: string }>('SELECT key, value FROM config WHERE key <> ALL($1::text[]) ORDER BY key', [SCHEMA_CONFIG_KEYS]);
     if (JSON.stringify(sourceConfig) !== JSON.stringify(targetConfig)) throw new Error('数据库配置校验失败');
     for (const plan of ordered) await transaction.executeRaw(`ALTER TABLE ${identifier(plan.name)} ENABLE TRIGGER USER`);
     return copied;

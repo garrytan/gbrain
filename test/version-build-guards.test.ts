@@ -31,9 +31,9 @@ describe('release build guards', () => {
     expect(validateVersionContract({
       versionFile: '\uFEFF1.2.13\r\n',
       corePackage: '1.2.13',
-      desktopPackage: '1.1.13',
+      desktopPackage: '1.2.13',
       manifestCore: '1.2.13',
-      manifestDesktop: '1.1.13',
+      manifestDesktop: '1.2.13',
       manifestSidecar: '1.2.13',
     })).toEqual([]);
   });
@@ -68,6 +68,7 @@ describe('release build guards', () => {
       manifestDesktop: '1.1.12',
       manifestSidecar: '1.2.10',
     })).toEqual([
+      'desktop/package.json=1.1.13, VERSION=1.2.12',
       'package.json=1.2.13, VERSION=1.2.12',
       'release-manifest core=1.2.11, VERSION=1.2.12',
       'release-manifest sidecar=1.2.10, VERSION=1.2.12',

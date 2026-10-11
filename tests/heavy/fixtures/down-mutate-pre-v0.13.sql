@@ -21,5 +21,7 @@ ALTER TABLE links DROP COLUMN IF EXISTS origin_page_id;
 
 -- Mark the brain at a pre-v0.13 version so the migration runner walks forward.
 UPDATE config SET value = '10' WHERE key = 'version';
+UPDATE config SET value = '10' WHERE key = 'pmbrain.schema.version';
+DELETE FROM pmbrain_schema_migrations WHERE namespace = 'pmbrain' AND version > 10;
 
 COMMIT;

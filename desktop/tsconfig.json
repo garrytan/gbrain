@@ -10,5 +10,6 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["src/**/*.ts", "../src/types/**/*.d.ts", "electron.vite.config.ts"]
+  "include": ["src/**/*.ts", "../src/types/**/*.d.ts", "electron.vite.config.ts"],
+  "exclude": ["src/renderer/ui.ts"]
 }

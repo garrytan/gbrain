@@ -9,6 +9,8 @@ export function adminKnowledgeViewFilter(view: string | undefined, params: (stri
   const generated = Object.entries(KNOWLEDGE_GENERATED_MARKERS).map(([key, values]) =>
     `COALESCE(p.frontmatter->>'${key}', '') IN (${values.map(bind).join(', ')})`,
   ).join(' OR ');
-  const structured = `(NOT (${materialOutput}) AND (${generated}))`;
+  const ingest = `EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(p.frontmatter->'pmbrain_ingest_provenance') = 'array' THEN p.frontmatter->'pmbrain_ingest_provenance' ELSE '[]'::jsonb END) AS origin(record)
+    WHERE ${['line','sourceId','slug','pageId','bodyHash'].map(key=>`jsonb_typeof(record->'${key}') = 'string' AND COALESCE(record->>'${key}', '') <> ''`).join(' AND ')})`;
+  const structured = `(NOT (${materialOutput}) AND (${generated} OR ${ingest}))`;
   return `NOT (${insight}) AND ${view === 'materials' ? `NOT ${structured}` : structured}`;
 }

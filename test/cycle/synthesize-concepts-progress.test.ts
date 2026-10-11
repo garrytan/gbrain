@@ -4,9 +4,10 @@
 // concept-group loop (one tick per concept written). Cycle.ts owns
 // start/finish; phase only ticks.
 
-import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { runPhaseSynthesizeConcepts } from '../../src/core/cycle/synthesize-concepts.ts';
+import { resetGateway } from '../../src/core/ai/gateway.ts';
 import { resetPgliteState } from '../helpers/reset-pglite.ts';
 import type { ProgressReporter } from '../../src/core/progress.ts';
 import type { ChatResult, ChatOpts } from '../../src/core/ai/gateway.ts';
@@ -24,7 +25,12 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  resetGateway();
   await resetPgliteState(engine);
+});
+
+afterEach(() => {
+  resetGateway();
 });
 
 function makeMockReporter(): {

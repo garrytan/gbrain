@@ -118,12 +118,12 @@ export async function runSubagentsInline(
           1000 + Math.floor(Math.random() * 2000),
         );
       } else {
-        const timedOut = abort.signal.aborted;
+        const timedOut = abort.signal.aborted&&abort.signal.reason instanceof Error&&abort.signal.reason.message==='timeout';
         const attemptsExhausted = job.attempts_made + 1 >= job.max_attempts;
         await queue.failJob(
           job.id,
           lockToken,
-          timedOut ? 'timeout exceeded' : error instanceof Error ? error.message : String(error),
+          timedOut ? (job.data.ingest_context?'ingest_provider_timeout: entity subtask timeout exceeded':'timeout exceeded') : error instanceof Error ? error.message : String(error),
           timedOut || error instanceof UnrecoverableError || attemptsExhausted ? 'dead' : 'delayed',
           0,
         );

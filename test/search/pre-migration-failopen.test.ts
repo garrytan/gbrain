@@ -4,24 +4,29 @@
  * mid-upgrade (migration not yet run) still ingests and searches normally.
  */
 
-import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll, beforeEach, spyOn } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
+import { PostgresEngine } from '../../src/core/postgres-engine.ts';
+import type { BrainEngine } from '../../src/core/engine.ts';
+import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
 import { resetPgliteState } from '../helpers/reset-pglite.ts';
 import { applyAliasHop } from '../../src/core/search/hybrid.ts';
 import { importFromContent } from '../../src/core/import-file.ts';
 import type { SearchResult } from '../../src/core/types.ts';
 
-let engine: PGLiteEngine;
+const databaseUrl = process.env.PMBRAIN_RELATION_TEST_DATABASE_URL;
+let engine: BrainEngine;
 
 beforeAll(async () => {
-  engine = new PGLiteEngine();
-  await engine.connect({});
+  if (databaseUrl) assertSafeE2eDatabaseUrl(databaseUrl);
+  engine = databaseUrl ? new PostgresEngine() : new PGLiteEngine();
+  await engine.connect(databaseUrl ? { database_url: databaseUrl } : {});
   await engine.initSchema();
 });
-afterAll(async () => { await engine.disconnect(); });
+afterAll(async () => { await engine.initSchema(); await engine.disconnect(); });
 
 beforeEach(async () => {
-  await resetPgliteState(engine);
+  await resetPgliteState(engine as PGLiteEngine);
   // Simulate a pre-v110 brain: drop the page_aliases table entirely.
   await engine.executeRaw('DROP TABLE IF EXISTS page_aliases');
 });
@@ -41,6 +46,19 @@ describe('pre-migration (no page_aliases table) fail-open', () => {
     const md = `---\ntype: note\ntitle: X\naliases: [Hall of Light]\n---\nbody`;
     const res = await importFromContent(engine, 'p/x', md, { sourceId: 'default', noEmbed: true });
     expect(res.status).toBe('imported'); // page write succeeded despite no alias table
+    expect((await engine.getPage('p/x', { sourceId: 'default' }))?.frontmatter.aliases).toEqual(['Hall of Light']);
+  });
+
+  test('alias projection errors other than a missing table still fail and roll back the import', async () => {
+    const injected = Object.assign(new Error('alias constraint rejected'), { code: '23514' });
+    const write = spyOn(engine, 'setPageAliases').mockRejectedValue(injected);
+    try {
+      await expect(importFromContent(engine, 'p/rejected', '# Rejected\nbody', { sourceId: 'default', noEmbed: true }))
+        .rejects.toThrow('alias constraint rejected');
+      expect(await engine.getPage('p/rejected', { sourceId: 'default' })).toBeNull();
+    } finally {
+      write.mockRestore();
+    }
   });
 
   test('resolveAliases throws table-missing (caller is responsible for catching)', async () => {

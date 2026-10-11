@@ -14,6 +14,7 @@ import {
   DreamRunResponseSchema,
   DreamScheduleResponseSchema,
   DreamSettingsResponseSchema,
+  EntityCaptureBudgetResponseSchema,
   GenerativeUsageResponseSchema,
   ImportRunResponseSchema,
   ImportUploadRunResponseSchema,
@@ -41,6 +42,7 @@ import type {
   DreamRunResponse,
   DreamScheduleResponse,
   DreamSettingsResponse,
+  EntityCaptureBudgetResponse,
   GenerativeUsageResponse,
   ImportRunResponse,
   ImportRunRequest,
@@ -52,6 +54,7 @@ import type {
 } from '../../shared/contracts/index.ts';
 
 interface ContractParser { parse(value: unknown): unknown }
+import { productFetch } from './lib/product-fetch';
 
 const BASE = '';
 
@@ -66,7 +69,7 @@ export function isPgliteBusyError(error: unknown): boolean {
 // no auto-reauth via saved token, no localStorage/sessionStorage read.
 // The HttpOnly cookie set by /admin/login is the only session credential.
 async function apiFetch<T = any>(path: string, options?: RequestInit, schema?: ContractParser): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await productFetch(`${BASE}${path}`, {
     ...options,
     credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
@@ -89,7 +92,7 @@ async function apiFetch<T = any>(path: string, options?: RequestInit, schema?: C
 
 // v0.36.1.0 (T15 / E6) — SVG fetch (text/plain payload, NOT JSON).
 async function apiFetchText(path: string) {
-  const res = await fetch(`${BASE}${path}`, { credentials: 'same-origin' });
+  const res = await productFetch(`${BASE}${path}`, { credentials: 'same-origin' });
   if (res.status === 401) {
     window.location.hash = '#login';
     throw new Error('Unauthorized');
@@ -99,7 +102,7 @@ async function apiFetchText(path: string) {
 }
 
 async function apiUploadFile<T>(path: string, file: File, schema: ContractParser): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await productFetch(`${BASE}${path}`, {
     method: 'POST',
     credentials: 'same-origin',
     headers: {
@@ -194,7 +197,11 @@ export const api = {
     apiFetch('/admin/api/capture-runs', { method: 'POST', body: JSON.stringify({ content, sourceId }) }),
   runs: () => apiFetch('/admin/api/runs'),
   run: (id: string) => apiFetch(`/admin/api/runs/${encodeURIComponent(id)}`),
+  runRelations: (id: string, after = 0): Promise<import('../../shared/task-progress').TaskRelations> => apiFetch(`/admin/api/runs/${encodeURIComponent(id)}/relations?after=${after}`),
+  knowledgeGraphEdge: (id: number): Promise<import('./lib/knowledge-graph').KnowledgeGraphData> => apiFetch(`/admin/api/knowledge-graph/edge/${id}`),
+  runFiles: (id: string, after = 0): Promise<import('../../shared/task-progress').SyncFileDetails> => apiFetch(`/admin/api/runs/${encodeURIComponent(id)}/files?after=${after}`),
   cancelRun: (id: string) => apiFetch(`/admin/api/runs/${encodeURIComponent(id)}/cancel`, { method: 'POST' }),
+  retryRun: (id: string) => apiFetch(`/admin/api/runs/${encodeURIComponent(id)}/retry`, { method: 'POST' }),
   startActionRun: (action: string, extra?: { catchUp?: boolean; forceReembed?: boolean }) =>
     apiFetch('/admin/api/runs/action', { method: 'POST', body: JSON.stringify({ action, ...extra }) }),
   searchIndexHealth: () => apiFetch<{
@@ -209,7 +216,7 @@ export const api = {
     rebuilt: string[];
     message: string;
   }>('/admin/api/search-index-repair', { method: 'POST' }),
-  taskCenter: () => apiFetch('/admin/api/task-center'),
+  taskCenter: (summary = false) => apiFetch(`/admin/api/task-center${summary ? '?summary=1' : ''}`),
   terminatePgliteOwner: (pid: number) => apiFetch('/admin/api/pglite-owner/terminate', {
     method: 'POST',
     body: JSON.stringify({ pid }),
@@ -230,11 +237,14 @@ export const api = {
     apiFetch('/admin/api/export-runs', { method: 'POST', body: JSON.stringify({ rootPath }) }),
   dreamOverview: () => apiFetch<DreamOverviewResponse>('/admin/api/dream/overview', undefined, DreamOverviewResponseSchema),
   dreamSettings: () => apiFetch<DreamSettingsResponse>('/admin/api/dream/settings', undefined, DreamSettingsResponseSchema),
-  saveDreamSettings: (body: { outputDir: string; dualWrite: boolean; includeUncommitted: boolean }) =>
+  saveDreamSettings: (body: { outputDir: string; dualWrite: boolean; includeUncommitted: boolean; autoGitCommit?: boolean }) =>
     apiFetch<DreamSettingsResponse>('/admin/api/dream/settings', { method: 'POST', body: JSON.stringify(body) }, DreamSettingsResponseSchema),
   dreamSchedule: () => apiFetch<DreamScheduleResponse>('/admin/api/dream/schedule', undefined, DreamScheduleResponseSchema),
   saveDreamSchedule: (body: { enabled: boolean; time: string }) =>
     apiFetch<DreamScheduleResponse>('/admin/api/dream/schedule', { method: 'POST', body: JSON.stringify(body) }, DreamScheduleResponseSchema),
+  entityCaptureBudget: () => apiFetch<EntityCaptureBudgetResponse>('/admin/api/dream/entity-capture-budget', undefined, EntityCaptureBudgetResponseSchema),
+  saveEntityCaptureBudget: (costCap: number | 'unlimited') =>
+    apiFetch<EntityCaptureBudgetResponse>('/admin/api/dream/entity-capture-budget', { method: 'POST', body: JSON.stringify({ costCap }) }, EntityCaptureBudgetResponseSchema),
   generativeUsage: () => apiFetch<GenerativeUsageResponse>('/admin/api/model-usage/generative', undefined, GenerativeUsageResponseSchema),
   saveGenerativeUsage: (enabled: boolean) =>
     apiFetch<GenerativeUsageResponse>('/admin/api/model-usage/generative', { method: 'POST', body: JSON.stringify({ enabled }) }, GenerativeUsageResponseSchema),

@@ -15,18 +15,31 @@ describe('core user journeys cover packaged Desktop openability', () => {
     const script = readFileSync(join(ROOT, 'test/user-journeys/core_journeys.py'), 'utf8');
     expect(script).toContain('--packaged');
     expect(script).toContain('win-unpacked');
-    expect(script).toContain("run-pill");
+    expect(script).toContain(".materials-drawer .product-task-progress");
     expect(script).toContain('已完成');
-    expect(script).toContain('正在导入');
-    expect(script).toContain('pills.at(-1)');
+    expect(script).toContain('materials-progress');
+    expect(script).toContain('len(outcomes) != 2');
+    expect(script).toContain('desktop-runtime.log');
     expect(script).toContain('build:sidecar');
     expect(script).toContain('build:dir');
     expect(script).not.toContain('importButton?.disabled');
   });
 
-  test('the embedding switch journey explicitly chooses the continue-rebuild path', () => {
+  test('the embedding switch journey clears old vectors immediately after the first confirm', () => {
     const script = readFileSync(join(ROOT, 'test/user-journeys/core_journeys.py'), 'utf8');
-    expect(script).toContain('page.locator("#setup-wait-actions").wait_for(state="visible"');
-    expect(script).toContain('page.locator("#setup-wait-continue").click()');
+    const start = script.indexOf('def embedding_switch_journey');
+    const next = script.indexOf('\ndef ', start + 1);
+    const journey = script.slice(start, next === -1 ? undefined : next);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(journey).toContain('page.once("dialog", lambda dialog: dialog.accept())');
+    expect(journey).toContain('page.locator("#save-setup").click()');
+    expect(journey).toContain('page.locator("#setup-wait").wait_for(state="hidden"');
+    expect(journey).toContain('run.get("kind") == "embed_stale"');
+    expect(journey).toContain(".get('catchUp')");
+    expect(journey).not.toContain('#setup-wait-actions');
+    expect(journey).not.toContain('#setup-wait-continue');
+    expect(journey).not.toContain('#setup-wait-defer');
+    expect(script).not.toContain('page.locator("#setup-wait-actions").wait_for');
+    expect(script).not.toContain('page.locator("#setup-wait-continue").click()');
   });
 });

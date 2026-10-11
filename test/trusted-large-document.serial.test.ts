@@ -17,6 +17,7 @@ mock.module('../src/core/embedding.ts', () => ({
     return texts.map(() => new Float32Array(1536));
   },
   embedMultimodal: async () => [],
+  embedQuery: async () => new Float32Array(1536),
   getEmbeddingDimensions: () => 1536,
 }));
 

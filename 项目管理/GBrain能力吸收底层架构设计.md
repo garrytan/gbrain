@@ -1,5 +1,46 @@
 # PMBrain 吸收 GBrain 记忆与连接能力：底层架构设计
 
+## 2026-10-08 持续移植关系内核：PMBrain 1.4.42
+
+用户已批准本轮规划。以下是当前关系子系统的执行边界；后文是历史批准件，不能据其 `implemented` 状态推断整个 GBrain 已完整吸收。产品准入以《GBrain能力成熟度台账》为准。
+
+关系内核固定 GBrain `0.60.102.0` / `5b5891069413b28b2fe3a50675116d67d5a1e145`。旧全项目基线只作历史追溯，准入及后续移植以子系统清单为准。37 项逐文件来源、上游与本地 SHA-256、复制和适配分类保存在 `.upstream/gbrain-subsystems.json`；不能再用一个版本号代替所有子系统的对齐情况。
+
+| 层 | 责任与实现 | 允许改变的范围 |
+|---|---|---|
+| 产品框架 | Admin、Desktop、CLI/MCP 入口、产品后台任务 | 交互、配置和成果展示；界面共同调用 Core，不另写实体规则 |
+| GBrain 关系内核 | `core/mentions/*`、`by-mention.ts`、`derived-links.ts`、`source-local-reference-index.ts`、`page-state/*`、`wanted-links*` | 按固定上游代码移植；改动必须记录来源与行为差异 |
+| PMBrain 适配 | `core/pmbrain-adapters/*`、`link-reconciliation.ts`、原生双引擎接线、产品任务桥 | 中文词表、当前 Source → default、PGLite 单所有者、已有模型与费用预算、旧接口兼容 |
+
+```mermaid
+flowchart TD
+  A[原始资料导入] --> B[共享 import-file 事务]
+  B --> C[页面修订和别名投影]
+  B --> D[按 Source 保存实体识别请求]
+  D --> E[现有产品队列与 capture_entities Agent]
+  E --> F[写实体页与显式关系]
+  F --> G[GBrain 持久提及索引]
+  G --> H[受影响旧页与新页]
+  H --> I[NER 和索引链接对账]
+  I --> J[保存图谱并复用现有查询接口]
+```
+
+首轮初始化或策略版本变化需要建立索引；正常不变的第二轮处理 0 个页面。增加实体或别名后，保存词表差异并只发布受影响页面；中文新增名称的候选预筛仍沿用上游每批 500 页读取并实际分词匹配，不能宣传为中文完全不读取其他页。显式指定 prioritySlugs 的旧接口保留定向重扫语义。
+
+默认普通提及类型为 person/company/organization/entity，另外遵守当前 Source 的 Pack `primitive: entity` 和显式类型配置；concept/project 默认不参与。concept/project 仍可由 Agent 建页，通过 Markdown、WikiLink、frontmatter 和适用的 NER 关系连接。中文高频词与单汉字只限制普通提及，不阻止显式链接、建页或 typed NER。
+
+写页、别名投影和修订属于同一事务；关系发布核对来源页、目标页修订及 Source incarnation。关系对账仅处理本次来源产生的派生边，保留人工和 typed NER；NER 后在同一轮去掉被显式或 typed NER 覆盖的普通提及。未出现的显式目标存入 wanted_links，目标出现后来源页重新抽取。
+
+导入只在成功提交后留下持久请求并直接入队，取消 2 秒轮询；启动和任务结束时继续排持久待处理请求。由现有产品后台按 Source 合并、等待可用模型、最多一个并行实体任务。请求转为任务和清除标记在同一事务，软件重启可恢复。沿用模型、Token/人民币预算与失败详情；付费模型失败或退出时不自动重试。自动任务是本次用户明确授权的产品接入，不以模拟提供商证据把能力晋级为稳定。中文默认词表保留，mentions.chinese_stopwords 可覆盖，配置变化进入索引策略指纹。
+
+迁移采用 PMBrain 独立命名空间：pmbrain.schema.version 为准，version 保留旧接口镜像，pmbrain_schema_migrations 记录已执行编号及上游对照（131→150、132→206、133→214）。已安装旧编号原样承接，不与上游编号混用。整库复制保留目标引擎版本和台账，只搬知识及应用设置。升级时先移除正文三字索引及修复宽触发器，再按 100 页提交修订和断点；取消/退出不回改已提交 UUID。标题、Slug 与分块索引及正文检索兜底保留。
+
+本轮不搬整个新引擎或 GBrain ingest Agent；保留 PMBrain 已批准的 capture Agent、阶段顺序、任务执行进程和双引擎。未接 GBrain managed canonical filesystem、完整写能力授权系统、时态边有效区间、实体卡/待建页新界面。coverage/referrers/upgrade-notice 随内核保存，尚未接新产品入口。用户数据不批量回改；历史 concept 疑似误分类仅用只读报告，由原始声明判断。
+
+以后升级流程：固定一个上游 SHA → 对本清单模块与依赖做 diff → 更新来源和适配说明 → 双引擎旧库迁移、Source 隔离、别名、修订竞争、幂等及导入任务验收 → 刷新清单 → `bun run check:gbrain-subsystems --upstream D:/cursor-claude/gbrain`。`verify` 已包含本地清单校验。新能力另行通过成熟度和中文产品价值评审。
+
+当前本地验收包含双引擎增量关联与并发版本、Schema 130/133 升级、导入后台任务与重启重载、六类上游测试及跨引擎快照。两份 3142 页真实副本完整到 134，主动取消和直接结束进程后续跑，原 13 张表旧列哈希一致、版本号不重复生成；真实副本文档新增/修改/删除闭环和维护通过，中文六查询读性能改善但前 20 条部分重排。page-state-engine 和 derived-link-reconciliation 测试只搬现有接口可执行部分；没有接 managed canonical filesystem、出勤证据门及时态边区间。没有复现真实库的 44% 或原第 770 页那次任务。准确 SHA 的 GitHub CI、真实付费提供商及正式安装包仍需后续验收。
+
 | 字段 | 值 |
 |---|---|
 | 作者 | Grok (planning) · 产品负责人已批准 |

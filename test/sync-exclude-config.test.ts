@@ -320,10 +320,10 @@ describe('sync.exclude — multi-pattern value, conservative posture, getConfig 
     // The catch branch proper — distinct from the empty-string case the
     // first describe covers. The persisted 'raw/…' scope is still in config,
     // but the read blows up, so this run must behave as if no scope existed.
-    const originalGetConfig = mpEngine.getConfig.bind(mpEngine);
-    mpEngine.getConfig = (async (key: string): Promise<string | null> => {
+    const originalGetConfig = mpEngine.getConfig;
+    mpEngine.getConfig = (async function (this: PGLiteEngine, key: string): Promise<string | null> {
       if (key === 'sync.exclude') throw new Error('config table unavailable (injected)');
-      return originalGetConfig(key);
+      return originalGetConfig.call(this, key);
     }) as typeof mpEngine.getConfig;
 
     try {
@@ -340,4 +340,3 @@ describe('sync.exclude — multi-pattern value, conservative posture, getConfig 
     }
   }, 60_000);
 });
-

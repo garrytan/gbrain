@@ -6,11 +6,15 @@ import { registerChatUsageSink, makeEngineChatUsageSink } from './ai/chat-usage.
  * Create an engine instance based on config.
  * Uses dynamic imports so PGLite WASM is never loaded for Postgres users.
  */
-export async function createEngine(config: EngineConfig): Promise<BrainEngine> {
+export async function createEngine(config: EngineConfig, options: { pgliteWorker?: boolean } = {}): Promise<BrainEngine> {
   const engineType = config.engine || 'postgres';
 
   const engine = await (async (): Promise<BrainEngine> => { switch (engineType) {
     case 'pglite': {
+      if (options.pgliteWorker) {
+        const { WorkerPgliteEngine } = await import('../product/database/worker-engine.ts');
+        return new WorkerPgliteEngine() as unknown as BrainEngine;
+      }
       const { PGLiteEngine } = await import('./pglite-engine.ts');
       return new PGLiteEngine();
     }

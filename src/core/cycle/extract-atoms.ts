@@ -58,6 +58,7 @@ import { writeReceipt } from '../extract/receipt-writer.ts';
 import { throwIfAborted } from '../abort-check.ts';
 import { upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { parseLlmJson } from '../llm-json.ts';
+import {defaultMaxOutputTokens,isThinkingModel} from '../ai/model-compatibility.ts';
 import { resolveAtomSlug } from './atom-identity.ts';
 import { resolveCycleDate } from './cycle-date.ts';
 import {
@@ -527,7 +528,10 @@ export async function runPhaseExtractAtoms(
             content: `Source: ${originLabel}\n\n---\n\n${promptContent}`,
           },
         ],
-        maxTokens: 2000,
+        maxTokens:isThinkingModel(resolvedModel.model)?defaultMaxOutputTokens(resolvedModel.model):2000,
+        retryLength:true,
+        disableReasoning:true,
+        responseSchema:{name:'atoms',schema:{type:'array',items:{type:'object'}}},
         abortSignal: opts.signal,
       });
       // Post-await yield: closes the "long LLM call past TTL" hazard
@@ -536,6 +540,9 @@ export async function runPhaseExtractAtoms(
       await maybeYield();
 
       estimatedSpendUsd = budgetTracker.totalSpent;
+      if(result.stopReason==='length')throw new Error('atoms_output_truncated: output truncated after bounded retry');
+      if(result.stopReason==='refusal'||result.stopReason==='content_filter')throw new Error(`atoms_${result.stopReason}`);
+      if(!parseLlmJson<unknown[]>(result.text,{array:true}))throw new Error('atoms_parse_failed: invalid JSON');
 
       const atoms = parseAtomsResponse(result.text);
       if (atoms.length === 0) {

@@ -112,6 +112,7 @@ function defaultPackLocator(name: string): string | null {
     // Ships as install default (Lane E T17) + via gbrain onboard pack
     // upgrade flow (the unify-types Minion handler).
     'gbrain-base-v2',
+    'company-brain',
   ];
   if (BUNDLED.includes(name)) {
     const file = `${name}.yaml`;
@@ -295,4 +296,9 @@ function buildResolutionInput(input: LoadActivePackInput): ResolutionInput {
     gbrainYml: input.gbrainYml,
     homeConfig,
   };
+}
+
+export async function loadResolvedPackByName(name:string):Promise<ResolvedPack>{
+  const manifest=await loadPackManifestByName(name);
+  return await resolvePack(manifest,loadPackManifestByName,{loadByPath:n=>_packLocator(n)});
 }

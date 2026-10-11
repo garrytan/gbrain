@@ -39,11 +39,11 @@ describe('runReindexAliases', () => {
 
   test('--dry-run writes nothing', async () => {
     await seed('p/x', ['some alias']);
+    const before = await engine.executeRaw('SELECT * FROM page_aliases ORDER BY source_id, alias_norm, slug');
     const result = await runReindexAliases(engine, ['--dry-run', '--json']);
     expect(result.dry_run).toBe(true);
     expect(result.aliases_written).toBe(1); // would-write count
-    const m = await engine.resolveAliases(['some alias'], { sourceId: 'default' });
-    expect(m.size).toBe(0); // nothing actually written
+    expect(await engine.executeRaw('SELECT * FROM page_aliases ORDER BY source_id, alias_norm, slug')).toEqual(before);
   });
 
   test('idempotent: second run converges, no duplicates', async () => {

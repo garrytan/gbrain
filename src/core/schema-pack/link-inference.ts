@@ -39,7 +39,7 @@
 // universe.
 
 import type { SchemaPackManifest } from './manifest-v1.ts';
-import { PageRegexBudget } from './redos-guard.ts';
+import { PageRegexBudget, runRegexBounded } from './redos-guard.ts';
 
 /**
  * Try to resolve a link verb from the active pack's declared
@@ -57,39 +57,38 @@ export function inferLinkTypeFromPack(
   pageType: string,
   context: string,
   budget?: PageRegexBudget,
+  targetType?: string,
+  opts: { ner?: boolean } = {},
 ): string | null {
-  // Pass 1: page-type-bound verbs (e.g. meeting → attended). These
-  // are deterministic; no regex needed.
-  for (const lt of pack.link_types) {
-    if (lt.inference?.page_type && lt.inference.page_type === pageType) {
-      return lt.name;
-    }
-  }
-  // Pass 2: regex matchers under the ReDoS guard.
-  // Caller passes a PageRegexBudget instance so cumulative regex
-  // time on this page stays capped at LINK_EXTRACTION_TOTAL_BUDGET_MS.
-  for (const lt of pack.link_types) {
-    const pattern = lt.inference?.regex;
-    if (!pattern) continue;
+  const rules = [
+    ...pack.link_types.filter(lt => lt.inference?.page_type),
+    ...pack.link_types.filter(lt => !lt.inference?.page_type),
+  ];
+  for (const lt of rules) {
+    const rule = lt.inference;
+    if (!rule || (!rule.page_type && !rule.target_type && !rule.regex)) continue;
+    if (rule.ner_only && !opts.ner) continue;
+    if (rule.page_type && rule.page_type !== pageType) continue;
+    if (rule.target_type && rule.target_type !== targetType) continue;
+    const pattern = rule.regex;
+    if (!pattern) return lt.name;
     if (budget) {
       const match = budget.runBounded(lt.name, pattern, context);
-      if (match === undefined) {
-        // Budget exhausted — caller's surrounding logic falls through
-        // to mentions per design.
-        return null;
-      }
+      if (match === undefined) return null;
       if (match !== null) return lt.name;
     } else {
-      // No budget provided (test contexts) — run the regex directly.
       try {
-        if (new RegExp(pattern).test(context)) return lt.name;
+        if (runRegexBounded(pattern, context) !== null) return lt.name;
       } catch {
-        // Malformed pattern — skip and continue. Pack validation
-        // should have caught this at load.
+        // Timed out, oversize, or malformed. Skip and keep looking.
       }
     }
   }
   return null;
+}
+
+export function ownsAttendanceInference(pack: Pick<SchemaPackManifest, 'link_types'> | null | undefined): boolean {
+  return !!pack?.link_types.some(lt => lt.name === 'attended' && lt.inference?.regex);
 }
 
 /**

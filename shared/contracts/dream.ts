@@ -6,6 +6,7 @@ export const DreamSettingsResponseSchema = z.object({
   outputDir: z.string(),
   dualWrite: z.boolean(),
   includeUncommitted: z.boolean(),
+  autoGitCommit: z.boolean().optional(),
   defaultBrainDir: z.string().nullable(),
   resolvedOutputDir: z.string().nullable(),
   directoryExists: z.boolean(),
@@ -114,7 +115,14 @@ export const DreamOverviewResponseSchema = z.object({
 
 export const DreamRunResponseSchema = RunAcceptedResponseSchema;
 
+export const EntityCaptureBudgetResponseSchema = z.object({
+  costCapCny: z.number().positive().nullable(),
+  maxInputTokens: z.number().int().positive(),
+  maxOutputTokens: z.number().int().positive(),
+});
+
 export type DreamSettingsResponse = z.infer<typeof DreamSettingsResponseSchema>;
 export type DreamScheduleResponse = z.infer<typeof DreamScheduleResponseSchema>;
 export type DreamOverviewResponse = z.infer<typeof DreamOverviewResponseSchema>;
 export type DreamRunResponse = z.infer<typeof DreamRunResponseSchema>;
+export type EntityCaptureBudgetResponse = z.infer<typeof EntityCaptureBudgetResponseSchema>;

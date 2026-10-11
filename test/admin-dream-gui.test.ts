@@ -167,7 +167,8 @@ describe('Dream GUI product contract', () => {
 
   test('advanced observability remains available behind details', () => {
     expect(dream).toContain('查看阶段、模型与 Token');
-    expect(dream).toContain('原始日志与命令');
+    expect(dream).not.toContain('原始日志与命令');
+    expect(readFileSync('admin/src/product/TaskTechnicalLogs.tsx', 'utf8')).toContain('<summary>技术日志</summary>');
     expect(dream).toContain('查看运行诊断');
   });
 
@@ -657,6 +658,8 @@ describe('Dream GUI product contract', () => {
         pages_added: 3,
         links_created: 5,
         phantoms_redirected: 1,
+        consolidate_takes_written: 8,
+        facts_consolidated: 16,
       },
     });
 
@@ -671,11 +674,13 @@ describe('Dream GUI product contract', () => {
     expect(outcome.knowledgeItems).toContain('concepts/search-quality');
     expect(outcome.extractionItems).toContain('事实：写入 4 条，来自 projects/updated');
     expect(outcome.extractionItems).toContain('观点：搜索质量需要用固定问题集持续验证（来自 projects/updated）');
+    expect(outcome.extractionItems).toContain('长期判断：形成 8 条，合并 16 条事实。');
     expect(outcome.failureItems).toContain('读取最近新增和更新的内容：1 个文件未处理成功');
     expect(outcome.failureItems).toContain('观点提炼：1 个页面未处理成功');
     expect(dream).toContain('本次成果');
     expect(dream).toContain('查看本次整理内容');
-    expect(dream).toContain('<summary>执行日志</summary>');
+    expect(dream).toContain('taskLink(run)');
+    expect(dream).not.toContain('<summary>执行日志</summary>');
   });
 
   test('Dream settings explain relative paths with a resolved directory preview', () => {
@@ -689,7 +694,9 @@ describe('Dream GUI product contract', () => {
   test('selected run mode survives the data reload after a run completes', () => {
     expect(dream).toContain("const DREAM_RUN_MODE_KEY = 'pmbrain.dream.runMode'");
     expect(dream).toContain('window.localStorage.setItem(DREAM_RUN_MODE_KEY, mode)');
-    expect(dream).toContain('if (!data) setLoading(true)');
+    const loadingHook = dream.slice(dream.indexOf('function useDreamData()'), dream.indexOf('function DreamShell('));
+    expect(loadingHook).not.toContain('setLoading(true)');
+    expect(loadingHook).toContain('if (pending.current) return');
   });
 
   test('PGLite can run AI meeting organization inline while Postgres ensures Worker availability', () => {
@@ -728,5 +735,15 @@ describe('Dream GUI product contract', () => {
 
   test('the overview does not duplicate a non-actionable start button', () => {
     expect(dream).not.toContain("scrollIntoView({ behavior: 'smooth' })");
+  });
+  test('快速与深度整理显示实际关系分项和原生错误，不将补扫失败显示为零成果', () => {
+    const phase = {phase:'extract',status:'warn',details:{linksCreated:8,relationLinksCreated:2,mentionLinksCreated:4,nerLinksCreated:2,by_mention:true,typed_ner:true,relationHistoricalRemaining:3,ner_error:'native database failure'}} as any;
+    expect(phaseSummaryZh(phase)).toContain('正文实体关联 4 条、关系类型关联 2 条');
+    expect(phaseSummaryZh(phase)).toContain('历史仍有 3 页待补扫');
+    expect(phaseSummaryZh({phase:'orphans',status:'warn',details:{total_orphans:3,total_pages:5}} as any)).toContain('3 个尚未被其他知识引用的页面');
+    for (const kind of ['dream_quick','dream_full']) {
+      const run = {...completedRun({status:'partial',phases:[phase],totals:{links_created:8}}),kind};
+      expect(buildDreamOutcome(run).failureItems).toContain('关系类型判断：native database failure');
+    }
   });
 });

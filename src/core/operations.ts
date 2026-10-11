@@ -5,7 +5,7 @@ import { readVersions, readLinks, readPageRefs } from './search/read-enrichment.
  */
 
 import { lstatSync, realpathSync } from 'fs';
-import { resolve, relative, sep } from 'path';
+import { resolve, relative, sep, isAbsolute } from 'path';
 import type { BrainEngine } from './engine.ts';
 import { clampSearchLimit } from './engine.ts';
 import type { Link, PageType, SearchResult } from './types.ts';
@@ -19,7 +19,8 @@ import { expandQuery } from './search/expansion.ts';
 import { dedupResults } from './search/dedup.ts';
 import { captureEvalCandidate, isEvalCaptureEnabled, isEvalScrubEnabled } from './eval-capture.ts';
 import type { HybridSearchMeta } from './types.ts';
-import { extractPageLinks, isAutoLinkEnabled, isAutoTimelineEnabled, parseTimelineEntries, makeResolver, type UnresolvedFrontmatterRef } from './link-extraction.ts';
+import { extractPageLinks, isAutoLinkEnabled, isAutoTimelineEnabled, parseTimelineEntries, makeResolver, loadExtractionPack, loadPageTypeMap, pageTypeAt, type UnresolvedFrontmatterRef } from './link-extraction.ts';
+import { lineGrammarOptions } from './line-grammar.ts';
 import { isFactsBackstopEligible } from './facts/eligibility.ts';
 import { stripTakesFence } from './takes-fence.ts';
 import { stripFactsFence } from './facts-fence.ts';
@@ -140,7 +141,7 @@ export function validateUploadPath(filePath: string, root: string, strict = true
     throw new OperationError('invalid_params', `Confinement root not accessible: ${root}`);
   }
   const rel = relative(realRoot, real);
-  if (rel === '' || rel.startsWith('..') || rel.startsWith(`..${sep}`) || resolve(realRoot, rel) !== real) {
+  if (rel === '' || isAbsolute(rel) || rel.startsWith('..') || rel.startsWith(`..${sep}`) || resolve(realRoot, rel) !== real) {
     throw new OperationError('invalid_params', `Upload path must be within the working directory: ${filePath}`);
   }
   return real;
@@ -192,6 +193,31 @@ export function matchesSlugAllowList(slug: string, prefixes: readonly string[]):
     }
   }
   return false;
+}
+
+export function assertSubagentWriteSlug(
+  ctx: OperationContext,
+  slug: string,
+  opName: 'put_page' | 'add_timeline_entry' = 'put_page',
+): void {
+  if (ctx.viaSubagent !== true) return;
+  if (typeof ctx.subagentId !== 'number' || Number.isNaN(ctx.subagentId)) {
+    throw new OperationError('permission_denied', `${opName} via subagent requires ctx.subagentId`);
+  }
+  const allowList = ctx.allowedSlugPrefixes;
+  if (allowList && allowList.length > 0) {
+    if (!matchesSlugAllowList(slug, allowList)) {
+      throw new OperationError(
+        'permission_denied',
+        `${opName} slug '${slug}' is not within the trusted-workspace allow-list (${allowList.join(', ')})`,
+      );
+    }
+    return;
+  }
+  const prefix = `wiki/agents/${ctx.subagentId}/`;
+  if (!slug.startsWith(prefix) || slug.length === prefix.length) {
+    throw new OperationError('permission_denied', `${opName} via subagent must write under '${prefix}...'`);
+  }
 }
 
 /**
@@ -518,29 +544,7 @@ const put_page: Operation = {
     // FAIL-CLOSED: `viaSubagent=true` enforces the check even if the
     // dispatcher forgot to populate `subagentId`. Agent-originated writes
     // without an owning subagent id are rejected outright.
-    if (ctx.viaSubagent === true) {
-      if (typeof ctx.subagentId !== 'number' || Number.isNaN(ctx.subagentId)) {
-        throw new OperationError('permission_denied', 'put_page via subagent requires ctx.subagentId');
-      }
-      const allowList = ctx.allowedSlugPrefixes;
-      if (allowList && allowList.length > 0) {
-        // Trusted-workspace path: explicit allow-list bounds writes.
-        // Set only by cycle.ts (synthesize/patterns) which submits subagent
-        // jobs under PROTECTED_JOB_NAMES — MCP cannot reach this branch.
-        if (!matchesSlugAllowList(slug, allowList)) {
-          throw new OperationError(
-            'permission_denied',
-            `put_page slug '${slug}' is not within the trusted-workspace allow-list (${allowList.join(', ')})`
-          );
-        }
-      } else {
-        // Legacy default: agent-namespace confinement.
-        const prefix = `wiki/agents/${ctx.subagentId}/`;
-        if (!slug.startsWith(prefix) || slug.length === prefix.length) {
-          throw new OperationError('permission_denied', `put_page via subagent must write under '${prefix}...'`);
-        }
-      }
-    }
+    assertSubagentWriteSlug(ctx, slug, 'put_page');
 
     if (ctx.dryRun) return { dry_run: true, action: 'put_page', slug: p.slug };
     // Skip embedding when the AI gateway has no embedding provider configured.
@@ -873,179 +877,8 @@ async function runAutoLink(
   parsed: { type: PageType; compiled_truth: string; timeline: string; frontmatter: Record<string, unknown> },
   opts?: { sourceId?: string },
 ): Promise<{ created: number; removed: number; errors: number; unresolved: UnresolvedFrontmatterRef[] }> {
-  const fullContent = parsed.compiled_truth + '\n' + parsed.timeline;
-  // v0.31.8 (codex OV-2): thread sourceId through every read + write inside
-  // reconcileLinks. Without this the FS walker reads cross-source links/slugs
-  // but writes scoped to one source — phantom stale-deletions and duplicate
-  // inserts. opts.sourceId is set when caller knows the source (put_page from
-  // a multi-source-aware handler); when omitted, every read returns the
-  // pre-v0.31.8 cross-source view (back-compat for any existing caller).
-  const currentSourceId = opts?.sourceId ?? 'default';
-  const sourceOpts = { sourceId: currentSourceId };
-
-  // Live-mode resolver: per-put throwaway cache, pg_trgm + optional search.
-  const resolver = makeResolver(engine, { mode: 'live', sourceId: opts?.sourceId });
-  const { candidates, unresolved } = await extractPageLinks(
-    slug, fullContent, parsed.frontmatter, parsed.type, resolver,
-  );
-
-  // Resolve which targets exist (skip refs to non-existent pages to avoid FK
-  // violation churn in addLink). One getAllSlugs call upfront, O(1) lookup.
-  // v0.31.8 (D12): scoped to the source when opts.sourceId is set so wikilink
-  // resolution doesn't span unrelated sources.
-  const candidateSourceIds = new Set<string>([currentSourceId]);
-  for (const candidate of candidates) {
-    candidateSourceIds.add(candidate.fromSourceId ?? currentSourceId);
-    candidateSourceIds.add(candidate.targetSourceId ?? currentSourceId);
-  }
-  const slugSnapshots = new Map<string, Set<string>>();
-  await Promise.all([...candidateSourceIds].map(async sourceId => {
-    slugSnapshots.set(sourceId, await engine.getAllSlugs({ sourceId }));
-  }));
-  const valid = candidates.filter(c =>
-    slugSnapshots.get(c.targetSourceId ?? currentSourceId)?.has(c.targetSlug)
-    && (!c.fromSlug || slugSnapshots.get(c.fromSourceId ?? currentSourceId)?.has(c.fromSlug))
-  );
-
-  // Split candidates by direction. Outgoing (fromSlug === slug or unset) are
-  // this page's own edges, reconciled against getLinks(slug). Incoming
-  // (fromSlug !== slug — frontmatter with `direction: incoming`) are edges
-  // where this page is the TO side; reconciled against getBacklinks(slug)
-  // but SCOPED to the frontmatter edges this page authored via
-  // (link_source='frontmatter' AND origin_slug = slug). We never touch
-  // frontmatter edges authored by OTHER pages.
-  const out = valid.filter(c =>
-    !c.fromSlug || (c.fromSlug === slug && (c.fromSourceId ?? currentSourceId) === currentSourceId)
-  );
-  const inc = valid.filter(c => !out.includes(c));
-
-  // Run getLinks + addLink/removeLink loops inside a single transaction so that
-  // concurrent put_page calls on the same slug can't race the reconciliation:
-  // without this, two simultaneous writes both read stale `existingKeys` and
-  // re-create links the other side just removed (lost-update).
-  //
-  // Row-level locks alone aren't enough: both writers can read the same
-  // `existingKeys` set BEFORE either mutates a row, so the union-of-writes
-  // race survives. A transaction-scoped advisory lock keyed on the slug
-  // hash serializes the entire reconciliation across processes. Falls
-  // through on engines that don't support pg_advisory_xact_lock (PGLite is
-  // single-process so there's no cross-process concern there anyway).
-  const result = await engine.transaction(async (tx) => {
-    try {
-      await tx.executeRaw(`SELECT pg_advisory_xact_lock(hashtext($1)::bigint)`, [`auto_link:${slug}`]);
-    } catch {
-      // engine doesn't support advisory locks — fall through
-    }
-    const existingOut = await tx.getLinks(slug, sourceOpts);
-    // Incoming: we only look at frontmatter edges WE authored (origin_slug=slug).
-    // Non-frontmatter and other-page frontmatter edges survive untouched.
-    const existingInRaw = await tx.getBacklinks(slug, sourceOpts);
-    const existingIn = existingInRaw.filter(
-      l => l.link_source === 'frontmatter'
-        && l.origin_slug === slug
-        && (l.origin_source_id ?? currentSourceId) === currentSourceId,
-    );
-
-    // Reconcilable outgoing edges: markdown + our own frontmatter edges.
-    // Manual edges (link_source='manual') are NEVER touched by reconciliation.
-    const reconcilableOut = existingOut.filter(
-      l => l.link_source === 'markdown' || l.link_source == null ||
-           (l.link_source === 'frontmatter'
-             && l.origin_slug === slug
-             && (l.origin_source_id ?? currentSourceId) === currentSourceId),
-    );
-
-    const outKeys = new Set(out.map(c =>
-      `${c.targetSourceId ?? currentSourceId}\u0000${c.targetSlug}\u0000${c.linkType}\u0000${c.linkSource ?? 'markdown'}`
-    ));
-    const incKeys = new Set(inc.map(c =>
-      `${c.fromSourceId ?? currentSourceId}\u0000${c.fromSlug}\u0000${c.linkType}`
-    ));
-
-    let created = 0, removed = 0, errors = 0;
-
-    // Add outgoing edges.
-    for (const c of out) {
-      try {
-        await tx.addLink(
-          slug, c.targetSlug, c.context, c.linkType,
-          c.linkSource, c.originSlug, c.originField,
-          {
-            fromSourceId: currentSourceId,
-            toSourceId: c.targetSourceId ?? currentSourceId,
-            originSourceId: c.originSourceId ?? currentSourceId,
-            resolutionType: c.resolutionType,
-          },
-        );
-        const existKey = `${c.targetSourceId ?? currentSourceId}\u0000${c.targetSlug}\u0000${c.linkType}\u0000${c.linkSource ?? 'markdown'}`;
-        const exists = reconcilableOut.some(l =>
-          `${l.to_source_id ?? currentSourceId}\u0000${l.to_slug}\u0000${l.link_type}\u0000${l.link_source ?? 'markdown'}` === existKey
-        );
-        if (!exists) created++;
-      } catch {
-        errors++;
-      }
-    }
-
-    // Add incoming edges (other page → slug).
-    for (const c of inc) {
-      try {
-        await tx.addLink(
-          c.fromSlug!, c.targetSlug, c.context, c.linkType,
-          'frontmatter', c.originSlug, c.originField,
-          {
-            fromSourceId: c.fromSourceId ?? currentSourceId,
-            toSourceId: c.targetSourceId ?? currentSourceId,
-            originSourceId: c.originSourceId ?? currentSourceId,
-            resolutionType: c.resolutionType,
-          },
-        );
-        const existKey = `${c.fromSourceId ?? currentSourceId}\u0000${c.fromSlug}\u0000${c.linkType}`;
-        const exists = existingIn.some(l =>
-          `${l.from_source_id ?? currentSourceId}\u0000${l.from_slug}\u0000${l.link_type}` === existKey
-        );
-        if (!exists) created++;
-      } catch {
-        errors++;
-      }
-    }
-
-    // Remove stale outgoing (markdown or our-frontmatter, not in desired set).
-    for (const l of reconcilableOut) {
-      const key = `${l.to_source_id ?? currentSourceId}\u0000${l.to_slug}\u0000${l.link_type}\u0000${l.link_source ?? 'markdown'}`;
-      if (!outKeys.has(key)) {
-        try {
-          await tx.removeLink(slug, l.to_slug, l.link_type, l.link_source ?? undefined, {
-            fromSourceId: currentSourceId,
-            toSourceId: l.to_source_id ?? currentSourceId,
-          });
-          removed++;
-        } catch {
-          errors++;
-        }
-      }
-    }
-
-    // Remove stale incoming (our frontmatter → slug, not in desired set).
-    for (const l of existingIn) {
-      const key = `${l.from_source_id ?? currentSourceId}\u0000${l.from_slug}\u0000${l.link_type}`;
-      if (!incKeys.has(key)) {
-        try {
-          await tx.removeLink(l.from_slug, slug, l.link_type, 'frontmatter', {
-            fromSourceId: l.from_source_id ?? currentSourceId,
-            toSourceId: currentSourceId,
-          });
-          removed++;
-        } catch {
-          errors++;
-        }
-      }
-    }
-
-    return { created, removed, errors };
-  });
-
-  return { ...result, unresolved };
+  const { prepareLinkReconciliation } = await import('./link-reconciliation.ts');
+  return (await prepareLinkReconciliation(engine))(slug,opts?.sourceId ?? 'default');
 }
 
 const patch_page: Operation = {
@@ -2236,6 +2069,7 @@ const add_timeline_entry: Operation = {
   mutating: true,
   scope: 'write',
   handler: async (ctx, p) => {
+    assertSubagentWriteSlug(ctx, p.slug as string, 'add_timeline_entry');
     if (ctx.dryRun) return { dry_run: true, action: 'add_timeline_entry', slug: p.slug };
     const date = p.date as string;
     // Reject anything that isn't a strict YYYY-MM-DD with year 1900-2199 and
@@ -2388,9 +2222,11 @@ const list_skills: Operation = {
   },
   handler: async (ctx, params) => {
     const catalog = await import('./skill-catalog.ts');
-    const publish = await catalog.readMcpPublishSkills(ctx);
-    catalog.assertPublishEnabled(ctx, publish);
-    const override = await catalog.readMcpSkillsDir(ctx);
+    if (ctx.viaSubagent !== true) {
+      const publish = await catalog.readMcpPublishSkills(ctx);
+      catalog.assertPublishEnabled(ctx, publish);
+    }
+    const override = ctx.skillsDir ?? await catalog.readMcpSkillsDir(ctx);
     const resolved = catalog.resolveSkillsDir(ctx, override);
     return catalog.buildSkillCatalog(
       resolved.dir,
@@ -2414,9 +2250,11 @@ const get_skill: Operation = {
   },
   handler: async (ctx, params) => {
     const catalog = await import('./skill-catalog.ts');
-    const publish = await catalog.readMcpPublishSkills(ctx);
-    catalog.assertPublishEnabled(ctx, publish);
-    const override = await catalog.readMcpSkillsDir(ctx);
+    if (ctx.viaSubagent !== true) {
+      const publish = await catalog.readMcpPublishSkills(ctx);
+      catalog.assertPublishEnabled(ctx, publish);
+    }
+    const override = ctx.skillsDir ?? await catalog.readMcpSkillsDir(ctx);
     const resolved = catalog.resolveSkillsDir(ctx, override);
     return catalog.getSkillDetail(resolved.dir, String(params.name ?? ''));
   },

@@ -38,6 +38,7 @@ import type { BrainEngine } from '../../engine.ts';
 import type { GBrainConfig } from '../../config.ts';
 import { loadConfig } from '../../config.ts';
 import { buildBrainTools, filterAllowedTools } from '../tools/brain-allowlist.ts';
+import { entityIngestTools, verifyIngestResult, validateIngestCompletion, checkIngestCallBudget, ingestFinalPrompt,finalizeBeforeIngestBudget,ingestAbortKind } from '../../pmbrain-adapters/entity-ingest-workflow.ts';
 import {
   acquireLease,
   releaseLease,
@@ -55,6 +56,8 @@ import { classifyCapabilities } from '../../ai/capabilities.ts';
 import { randomUUIDv7 } from 'bun';
 import { createHash } from 'node:crypto';
 import { parseLlmJson } from '../../llm-json.ts';
+import {defaultMaxOutputTokens} from '../../ai/model-compatibility.ts';
+import {isToolCallingRejection,classifyChatError} from '../../ai/errors.ts';
 
 // ── Defaults ────────────────────────────────────────────────
 
@@ -194,7 +197,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
     // invocations and any code path that bypasses the queue's capability check.
     if (data.model) {
       const verdict = classifyCapabilities(data.model);
-      if (verdict === 'unusable:no_tools') {
+      if (verdict === 'unusable:no_tools' && !data.ingest_context) {
         throw new Error(
           `subagent job rejected: data.model "${data.model}" lacks native tool calling. ` +
           `The subagent loop dispatches brain ops via tool calls — without tool support the loop has no way to run.`,
@@ -231,7 +234,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
     // embedders). Never bypass it because the host's ambient model config
     // happens to name a non-Anthropic provider.
     const useGatewayLoop = !deps.client && !deps.makeAnthropic
-      && (gatewayLoopExplicit || !isAnthropicProvider(model));
+      && (gatewayLoopExplicit || !isAnthropicProvider(model)||!!data.ingest_context);
 
     // Build the tool registry bound to THIS job as the owning subagent.
     // brain_id (per-call brain override; children inherit parent's unless
@@ -239,14 +242,20 @@ export function makeSubagentHandler(deps: SubagentDeps) {
     // allow-list — flows through buildBrainTools → the put_page schema
     // description AND the OperationContext, so the model's tool schema and
     // the server-side check stay in sync).
-    const registry = deps.toolRegistry ?? buildBrainTools({
+    const baseRegistry = deps.toolRegistry ?? buildBrainTools({
       subagentId: ctx.id,
       engine,
       config,
       brainId: data.brain_id,
       allowedSlugPrefixes: data.allowed_slug_prefixes,
       sourceId: data.source_id,
+      skillsDir: data.skills_dir,
+      allowEntityLinks: !!data.ingest_context,
     });
+    const scopedRegistry = data.ingest_context ? entityIngestTools(baseRegistry,data.ingest_context) : baseRegistry;
+    const registry = data.discovery_profile === 'entity_capture'
+      ? (await import('../../cycle/entity-capture-tools.ts')).boundedEntityCaptureTools(scopedRegistry)
+      : scopedRegistry;
     const toolDefs = data.allowed_tools && data.allowed_tools.length > 0
       ? filterAllowedTools(registry, data.allowed_tools)
       : registry;
@@ -291,9 +300,9 @@ export function makeSubagentHandler(deps: SubagentDeps) {
         toolDefs,
         maxTurns,
       });
-      return data.mode === 'oneshot'
+      return verifyIngestResult(engine,data,data.mode === 'oneshot'
         ? { ...result, synth_mode_used: 'agentic_fallback', fallback_reason: oneshotFallbackReason }
-        : { ...result, synth_mode_used: 'agentic' };
+        : { ...result, synth_mode_used: 'agentic' },ctx.id);
     }
 
     // ── Load prior state (replay) ───────────────────────────
@@ -360,12 +369,17 @@ export function makeSubagentHandler(deps: SubagentDeps) {
           )
           .map(b => b.text)
           .join('\n');
-        return {
+        const correction=await validateIngestCompletion(engine,data,finalText,ctx.id,assistantTurns<maxTurns);
+        if(correction){
+          const blocks=[{type:'text',text:correction}] as ContentBlock[];
+          await persistMessage(engine,ctx.id,{message_idx:nextMessageIdx++,role:'user',content_blocks:blocks,tokens_in:null,tokens_out:null,tokens_cache_read:null,tokens_cache_create:null,model:null});
+          anthroMessages.push({role:'user',content:blocks as any});
+        }else return verifyIngestResult(engine,data,{
           result: finalText,
           turns_count: assistantTurns,
           stop_reason: 'end_turn',
           tokens: tokenTotals,
-        };
+        },ctx.id);
       }
       if (pendingToolUses.length > 0) {
         const synthesizedResults: ContentBlock[] = [];
@@ -475,6 +489,9 @@ export function makeSubagentHandler(deps: SubagentDeps) {
       // ordering is load-bearing: a budget throw must NOT consume a
       // lease slot, because the lease is the rate-limit pacer for the
       // entire fleet.
+      const finalIngestTurn=!!data.ingest_context&&(assistantTurns===maxTurns-1||await finalizeBeforeIngestBudget(engine,ctx.id,data,systemPrompt,anthroMessages,toolDefs.map(t=>t.input_schema)));
+      const callMessages=finalIngestTurn?[{role:'user' as const,content:await ingestFinalPrompt(engine,ctx.id,data)}]:anthroMessages;
+      await checkIngestCallBudget(engine,ctx.id,data,systemPrompt,callMessages,finalIngestTurn?[]:toolDefs.map(t=>t.input_schema),finalIngestTurn);
       const lease = await acquireLease(engine, rateLeaseKey, ctx.id, maxConcurrent, { ttlMs: leaseTtlMs });
       if (!lease.acquired) {
         // No slots — treat as a renewable error so the worker re-claims
@@ -496,12 +513,12 @@ export function makeSubagentHandler(deps: SubagentDeps) {
           // `model` stays qualified everywhere else (persistence, recipe
           // lookup at recipeIdFromModel(), capability gate).
           model: stripProviderPrefix(model),
-          max_tokens: 4096,
+          max_tokens: Math.min(4096,data.usage_limits?.output??4096),
           system: [
-            { type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } },
+            { type: 'text', text: finalIngestTurn?`${systemPrompt}\nThis is the final verification turn. Return the requested JSON receipt. Tools are unavailable.`:systemPrompt, cache_control: { type: 'ephemeral' } },
           ] as any,
-          messages: anthroMessages,
-          ...(toolDefs.length > 0
+          messages: callMessages,
+          ...(toolDefs.length > 0 && !finalIngestTurn
             ? {
                 tools: toolDefs.map((t, i) => {
                   const def: any = {
@@ -595,8 +612,16 @@ export function makeSubagentHandler(deps: SubagentDeps) {
           .filter(b => b.type === 'text' && typeof b.text === 'string')
           .map(b => b.text as string)
           .join('\n');
+        const correction=await validateIngestCompletion(engine,data,finalText,ctx.id,!finalIngestTurn&&assistantTurns<maxTurns);
+        if(correction){
+          const blocks=[{type:'text',text:correction}] as ContentBlock[];
+          await persistMessage(engine,ctx.id,{message_idx:nextMessageIdx++,role:'user',content_blocks:blocks,tokens_in:null,tokens_out:null,tokens_cache_read:null,tokens_cache_create:null,model:null});
+          anthroMessages.push({role:'user',content:blocks as any});
+          continue;
+        }
         break;
       }
+      if(finalIngestTurn)throw new UnrecoverableError('ingest final receipt attempted more tools; unfinished document is resumable');
 
       // 5. Dispatch each tool_use. Two-phase persist (pending → complete/failed).
       const toolResults: ContentBlock[] = [];
@@ -718,14 +743,14 @@ export function makeSubagentHandler(deps: SubagentDeps) {
       anthroMessages.push({ role: 'user', content: toolResults as any });
     }
 
-    return {
+    return verifyIngestResult(engine,data,{
       result: finalText,
       turns_count: assistantTurns,
       stop_reason: stopReason,
       tokens: tokenTotals,
       synth_mode_used: data.mode === 'oneshot' ? 'agentic_fallback' : 'agentic',
       ...(data.mode === 'oneshot' && oneshotFallbackReason ? { fallback_reason: oneshotFallbackReason } : {}),
-    };
+    },ctx.id);
   };
 }
 
@@ -785,6 +810,27 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
 
   // Load prior state (replay support via D5 shim for legacy v1 rows).
   const priorMessages = await loadPriorMessages(engine, ctx.id);
+  const terminal = priorMessages.at(-1);
+  if (data.ingest_context && terminal?.role === 'assistant'&&!terminal.content_blocks.some(block=>(block as any).truncated)) {
+    const adapted = adaptContentBlocksToChatBlocks(terminal.content_blocks);
+    const blocks = typeof adapted === 'string' ? [{type:'text' as const,text:adapted}] : adapted;
+    if (!blocks.some(block => block.type === 'tool-call')) {
+      const text = blocks.filter((block): block is {type:'text';text:string} => block.type === 'text').map(block => block.text).join('\n');
+      const turns = priorMessages.filter(message => message.role === 'assistant'&&!message.content_blocks.some(block=>(block as any).truncated)).length;
+      const correction = await validateIngestCompletion(engine,data,text,ctx.id,turns < maxTurns);
+      if (!correction) return verifyIngestResult(engine,data,{
+        result:text,turns_count:turns,stop_reason:'end_turn',tokens:{
+          in:priorMessages.reduce((sum,message)=>sum+(message.tokens_in??0),0),
+          out:priorMessages.reduce((sum,message)=>sum+(message.tokens_out??0),0),
+          cache_read:priorMessages.reduce((sum,message)=>sum+(message.tokens_cache_read??0),0),
+          cache_create:priorMessages.reduce((sum,message)=>sum+(message.tokens_cache_create??0),0),
+        },
+      },ctx.id);
+      const feedback: PersistedMessage = {message_idx:priorMessages.length,role:'user',content_blocks:[{type:'text',text:correction}],tokens_in:null,tokens_out:null,tokens_cache_read:null,tokens_cache_create:null,model:null};
+      await persistMessage(engine,ctx.id,feedback);
+      priorMessages.push(feedback);
+    }
+  }
   const priorTools = await loadPriorToolsV2(engine, ctx.id);
   const priorToolsByStableKey = new Map<string, { status: 'pending' | 'complete' | 'failed'; output?: unknown; error?: string }>();
   for (const row of priorTools) {
@@ -854,7 +900,20 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
     tools: chatTools,
     toolHandlers,
     maxTurns,
-    abortSignal: ctx.signal,
+    maxTokens: Math.min(defaultMaxOutputTokens(model),data.usage_limits?.output??Infinity),
+    modelOutputLimit:data.model_output_limit,
+    turnTimeoutMs:data.ingest_context?data.turn_timeout_ms??300_000:undefined,
+    lengthRetryLimit:data.ingest_context?({messages,maxTokens,finalTurn})=>checkIngestCallBudget(engine,ctx.id,data,systemPrompt,messages,finalTurn?[]:chatTools,!!finalTurn,maxTokens,true):undefined,
+    retryLength:!!data.ingest_context,
+    jsonToolCalls:!!data.ingest_context&&(data.ingest_json_tools===true||classifyCapabilities(model)==='unusable:no_tools'),
+    disableReasoning:!!data.ingest_context,
+    finalizeOnLastTurn:!!data.ingest_context,
+    prepareFinalMessages:data.ingest_context?async()=>[{role:'user',content:await ingestFinalPrompt(engine,ctx.id,data)}]:undefined,
+    shouldFinalize:data.ingest_context?messages=>finalizeBeforeIngestBudget(engine,ctx.id,data,systemPrompt,messages,chatTools):undefined,
+    validateCompletion:data.ingest_context?(text,canContinue)=>validateIngestCompletion(engine,data,text,ctx.id,canContinue):undefined,
+    beforeModelCall: async ({messages,finalTurn,maxTokens})=>{await checkIngestCallBudget(engine,ctx.id,data,systemPrompt,messages,finalTurn?[]:chatTools,!!finalTurn,maxTokens);},
+    reportLengthStop: !!data.ingest_context,
+    abortSignal: AbortSignal.any([ctx.signal,ctx.shutdownSignal]),
     cacheSystem,
     // ALWAYS pass replayState (even on fresh runs) so the gateway loop's
     // messageIdx counter starts at `nextMessageIdx` (1 on fresh, after the
@@ -867,7 +926,7 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
     replayState: {
       priorMessages: priorChatMessages,
       priorTools: priorToolsByStableKey,
-      nextTurnIdx: priorChatMessages.filter(m => m.role === 'assistant').length,
+      nextTurnIdx: priorChatMessages.filter(m => m.role === 'assistant'&&!(Array.isArray(m.content)&&m.content.some(block=>block.type==='text'&&block.truncated))).length,
       nextMessageIdx,
     },
     onAssistantTurn: async (turnIdx, messageIdx, blocks, usage, modelStr) => {
@@ -946,9 +1005,19 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
     onHeartbeat: heartbeat,
     });
   } catch (error) {
+    if(data.ingest_context&&(ctx.signal.aborted||ctx.shutdownSignal.aborted))throw new UnrecoverableError(`ingest_provider_${ctx.shutdownSignal.aborted?'service_shutdown':ingestAbortKind(ctx.signal)}: ${error instanceof Error?error.message:String(error)}`);
+    if(data.ingest_context&&!data.ingest_json_tools&&isToolCallingRejection(error)){
+      await engine.executeRaw("UPDATE minion_jobs SET data=(CASE WHEN jsonb_typeof(data)='string' THEN (data #>> '{}')::jsonb ELSE data END)||'{\"ingest_json_tools\":true}'::jsonb WHERE id=$1",[ctx.id]);
+      return runSubagentViaGateway({...args,data:{...data,ingest_json_tools:true}});
+    }
     const detail = promptTooLongDetail(error);
     if (detail !== null) {
       throw new UnrecoverableError(`prompt_too_long: ${detail}`);
+    }
+    if(data.ingest_context&&!ctx.signal.aborted){
+      const kind=classifyChatError(error);
+      if(kind==='parse')throw new UnrecoverableError(`ingest_provider_parse: ${error instanceof Error?error.message:String(error)}`);
+      if(kind!=='failure')throw new Error(`ingest_provider_${kind}: ${error instanceof Error?error.message:String(error)}`);
     }
     throw error;
   }
@@ -957,7 +1026,7 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
   // calls. Treating that as "completed" makes Dream report success while
   // patterns/reflections were never written. Throw a retryable error instead;
   // jobs that executed at least one tool keep their existing completion rules.
-  if (result.totalTurns === 0 && result.finalText.trim() === '') {
+  if (result.totalTurns === 1 && result.stopReason==='end' && result.finalText.trim() === '') {
     throw new Error(
       `subagent returned an empty first turn without calling a tool (${model}); retry with the configured fallback`,
     );
@@ -973,8 +1042,9 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
         ? 'refusal'
         : result.stopReason === 'content_filter'
           ? 'refusal'
+          : result.stopReason === 'length'?'length'
           : result.stopReason === 'aborted'
-            ? 'error'
+            ? ctx.shutdownSignal.aborted?'service_shutdown':ingestAbortKind(ctx.signal)
             : 'end_turn';
 
   return {
@@ -982,10 +1052,10 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
     turns_count: result.totalTurns,
     stop_reason: stopReason,
     tokens: {
-      in: result.totalUsage.input_tokens,
-      out: result.totalUsage.output_tokens,
-      cache_read: result.totalUsage.cache_read_tokens,
-      cache_create: result.totalUsage.cache_creation_tokens,
+      in: priorMessages.reduce((sum, message) => sum + (message.tokens_in ?? 0), 0) + result.totalUsage.input_tokens,
+      out: priorMessages.reduce((sum, message) => sum + (message.tokens_out ?? 0), 0) + result.totalUsage.output_tokens,
+      cache_read: priorMessages.reduce((sum, message) => sum + (message.tokens_cache_read ?? 0), 0) + result.totalUsage.cache_read_tokens,
+      cache_create: priorMessages.reduce((sum, message) => sum + (message.tokens_cache_create ?? 0), 0) + result.totalUsage.cache_creation_tokens,
     },
   };
 }
@@ -1032,7 +1102,7 @@ function adaptContentBlocksToChatBlocks(blocks: unknown): ChatBlock[] | string {
     const block = b as Record<string, unknown>;
     const t = block.type;
     if (t === 'text' && typeof block.text === 'string') {
-      out.push({ type: 'text', text: block.text });
+      out.push({ type: 'text', text: block.text,...(block.truncated===true?{truncated:true,outputLimit:typeof block.outputLimit==='number'?block.outputLimit:undefined,lengthRetry:block.lengthRetry===true,finalVerification:block.finalVerification===true}:{}) });
     } else if (t === 'tool_use' && typeof block.id === 'string' && typeof block.name === 'string') {
       // v1 Anthropic shape
       out.push({

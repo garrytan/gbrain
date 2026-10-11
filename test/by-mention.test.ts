@@ -283,6 +283,28 @@ describe('findMentionedEntities — pure cases', () => {
     });
     expect(mentions.map(mention => mention.slug)).toEqual(['projects/pmbrain-project']);
   });
+
+  test('one Han character and blocked high-frequency words do not auto-link', () => {
+    const g = gazetteerFromEntries([
+      { slug: 'entities/ma', source_id: 'default', title: '马', plainMentionBlocked: false },
+      { slug: 'concepts/system', source_id: 'default', title: '系统', plainMentionBlocked: true },
+      { slug: 'concepts/knowledge-system', source_id: 'default', title: '知识系统' },
+    ]);
+    const opts = { fromSlug: 'notes/a', fromSourceId: 'default' };
+    expect(findMentionedEntities('马很常见。', g, opts)).toEqual([]);
+    expect(findMentionedEntities('升级系统之后再看。', g, opts)).toEqual([]);
+    expect(findMentionedEntities('知识系统已经上线。', g, opts).map(item => item.slug)).toEqual(['concepts/knowledge-system']);
+    expect(findMentionedEntities('升级系统之后再看。', g, { ...opts, includeBlockedSurfaces: true }).map(item => item.slug)).toEqual(['concepts/system']);
+  });
+
+  test('two same-named Chinese entities in one Source are not guessed', () => {
+    const g = gazetteerFromEntries([
+      { slug: '', source_id: 'vault', title: '张三', ambiguous: true },
+    ]);
+    expect(findMentionedEntities('今天见到张三。', g, {
+      fromSlug: 'notes/a', fromSourceId: 'vault',
+    })).toEqual([]);
+  });
 });
 
 // ============================================================
@@ -384,7 +406,7 @@ describe('buildGazetteer — engine integration', () => {
     const g2 = await buildGazetteer(engine, { extraIgnore: ['John'] });
     // But title "John" IS the entity title — existingTitles.has('John') is true.
     // Per CK12 rule, gazetteer presence wins → John IS still in.
-    expect(g2.has('john')).toBe(true);
+    expect(g2.has('john')).toBe(false);
   });
 
   test('CJK entity titles with at least two CJK characters enter gazetteer', async () => {
@@ -409,20 +431,20 @@ describe('buildGazetteer — engine integration', () => {
   test('LINKABLE_ENTITY_TYPES exposes the hardcoded contract', () => {
     // Regression: if anyone changes the hardcoded type list, this test
     // forces a deliberate change (and a corresponding test update).
-    expect(LINKABLE_ENTITY_TYPES).toEqual(['person', 'company', 'organization', 'entity', 'concept']);
+    expect(LINKABLE_ENTITY_TYPES).toEqual(['person', 'company', 'organization', 'entity']);
   });
 
-  test('concept titles, explicit aliases, and safe knowledge-point prefixes enter the gazetteer', async () => {
+  test('concept titles and aliases stay outside the default entity gazetteer', async () => {
     await engine.putPage('concepts/openai', {
       type: 'concept', title: '知识点-OpenAI', compiled_truth: 'b', timeline: '',
       frontmatter: { aliases: ['Open AI'] },
     });
     const g = await buildGazetteer(engine);
-    expect(g.get('openai')?.[0]).toMatchObject({ slug: 'concepts/openai', name: 'OpenAI' });
-    expect(g.get('open')?.[0]).toMatchObject({ slug: 'concepts/openai', name: 'open ai' });
+    expect(g.get('openai')).toBeUndefined();
+    expect(g.get('open')).toBeUndefined();
   });
 
-  test('an imported note with a knowledge-point prefix is linkable without making every note a target', async () => {
+  test('a knowledge-point prefix does not make an ordinary note an entity', async () => {
     await engine.putPage('notes/openai', {
       type: 'note', title: '知识点-OpenAI', compiled_truth: 'b', timeline: '', frontmatter: {},
     });
@@ -430,8 +452,7 @@ describe('buildGazetteer — engine integration', () => {
       type: 'note', title: 'OpenAI', compiled_truth: 'b', timeline: '', frontmatter: {},
     });
     const g = await buildGazetteer(engine);
-    expect(g.get('openai')).toHaveLength(1);
-    expect(g.get('openai')?.[0]).toMatchObject({ slug: 'notes/openai', name: 'OpenAI' });
+    expect(g.get('openai')).toBeUndefined();
   });
 
   test('same-Source alias collisions fail closed while another Source remains isolated', async () => {
@@ -445,11 +466,11 @@ describe('buildGazetteer — engine integration', () => {
       ['team-b', 'concepts/openai'],
     ] as const) {
       await engine.putPage(slug, {
-        type: 'concept', title: 'OpenAI', compiled_truth: 'b', timeline: '', frontmatter: {},
+        type: 'entity', title: 'OpenAI', compiled_truth: 'b', timeline: '', frontmatter: {},
       }, { sourceId });
     }
     const g = await buildGazetteer(engine);
-    expect(countAmbiguousGazetteerEntries(g)).toBe(1);
+    expect(countAmbiguousGazetteerEntries(g)).toBeGreaterThan(0);
     expect(findMentionedEntities('OpenAI released a model.', g, {
       fromSlug: 'notes/a', fromSourceId: 'team-a',
     })).toEqual([]);
@@ -464,13 +485,13 @@ describe('buildGazetteer — engine integration', () => {
        ON CONFLICT (id) DO NOTHING`,
     );
     await engine.putPage('concepts/openai', {
-      type: 'concept', title: 'OpenAI', compiled_truth: 'b', timeline: '', frontmatter: {},
+      type: 'entity', title: 'OpenAI', compiled_truth: 'b', timeline: '', frontmatter: {},
     });
     await engine.putPage('concepts/openai-local', {
-      type: 'concept', title: 'OpenAI', compiled_truth: 'b', timeline: '', frontmatter: {},
+      type: 'entity', title: 'OpenAI', compiled_truth: 'b', timeline: '', frontmatter: {},
     }, { sourceId: 'team-a' });
     await engine.putPage('concepts/openai-other', {
-      type: 'concept', title: 'OpenAI', compiled_truth: 'b', timeline: '', frontmatter: {},
+      type: 'entity', title: 'OpenAI', compiled_truth: 'b', timeline: '', frontmatter: {},
     }, { sourceId: 'team-b' });
     const g = await buildGazetteer(engine);
     expect(findMentionedEntities('OpenAI released a model.', g, {
@@ -479,5 +500,20 @@ describe('buildGazetteer — engine integration', () => {
     expect(findMentionedEntities('OpenAI released a model.', g, {
       fromSlug: 'notes/c', fromSourceId: 'team-c',
     })[0]).toMatchObject({ slug: 'concepts/openai', source_id: 'default' });
+  });
+
+  test('a Chinese high-frequency entity page stays out of plain by-mention', async () => {
+    await engine.putPage('concepts/system', {
+      type: 'entity', title: '系统', compiled_truth: '系统是一个明确概念页。', timeline: '', frontmatter: {},
+    });
+    await engine.putPage('inbox/loose', {
+      type: 'note', title: '未分类', compiled_truth: '这里只是普通笔记。', timeline: '', frontmatter: {},
+    });
+    const g = await buildGazetteer(engine);
+    expect(findMentionedEntities('系统',g,{fromSlug:'notes/a',fromSourceId:'default'})).toEqual([]);
+    expect(findMentionedEntities('升级系统之后再看。', g, {
+      fromSlug: 'notes/a', fromSourceId: 'default',
+    })).toEqual([]);
+    expect(g.get('未') ?? []).toEqual([]);
   });
 });

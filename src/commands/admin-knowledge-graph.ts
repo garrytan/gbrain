@@ -84,6 +84,16 @@ async function loadKnowledgeGraphNodes(engine: BrainEngine, pageIds: number[]): 
   });
 }
 
+export async function getAdminKnowledgeGraphEdge(engine: BrainEngine, id: number) {
+  if (!Number.isSafeInteger(id) || id <= 0) throw new Error('invalid_edge_id');
+  const edges = await engine.executeRaw<KnowledgeGraphEdge>(`SELECT l.id, l.from_page_id, l.to_page_id,
+    l.link_type, l.context, l.link_source FROM links l
+    JOIN pages f ON f.id=l.from_page_id AND f.deleted_at IS NULL
+    JOIN pages t ON t.id=l.to_page_id AND t.deleted_at IS NULL WHERE l.id=$1`, [id]);
+  const nodes = await loadKnowledgeGraphNodes(engine, edges.flatMap(edge => [edge.from_page_id, edge.to_page_id]));
+  return { nodes, edges };
+}
+
 export async function searchAdminKnowledgeGraphPages(
   engine: BrainEngine,
   query: { query?: string; sourceId?: string; limit?: number },

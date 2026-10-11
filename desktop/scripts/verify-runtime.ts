@@ -9,6 +9,8 @@ const projectRoot = resolve(desktopRoot, '..');
 const runtimeRoot = join(desktopRoot, 'build', 'extraResources', 'pmbrain-runtime');
 const contract = getDesktopRuntimeContract();
 const bunPath = join(runtimeRoot, contract.runtimeExecutableName);
+if (!existsSync(join(runtimeRoot, 'task-worker.js')) || statSync(join(runtimeRoot, 'task-worker.js')).size === 0) throw new Error('Sidecar runtime is missing task-worker.js');
+if (!existsSync(join(runtimeRoot, 'database-worker.js')) || statSync(join(runtimeRoot, 'database-worker.js')).size === 0) throw new Error('Sidecar runtime is missing database-worker.js');
 const schemaPackSource = join(projectRoot, 'src', 'core', 'schema-pack', 'base');
 const bundledSchemaPacks = readdirSync(schemaPackSource).filter(name => name.endsWith('.yaml'));
 if (!bundledSchemaPacks.includes('gbrain-base-v2.yaml')) {

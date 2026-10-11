@@ -1,0 +1,86 @@
+.product-task-progress { border: 1px solid var(--product-line, var(--border)); border-radius: 12px; background: var(--product-panel, var(--bg-card)); padding: 20px; color: inherit; }
+.product-task-progress header { display: flex; justify-content: space-between; align-items: start; gap: 16px; }
+.product-task-progress h3 { margin: 0; font-size: 16px; font-weight: 600; }
+.product-task-progress header p { margin: 5px 0 18px; font-size: 12px; color: var(--product-muted, var(--text-muted)); overflow-wrap: anywhere; }
+.product-task-state { font-size: 12px; color: var(--product-muted, var(--text-muted)); white-space: nowrap; }
+.product-task-state.state-running, .product-task-state.state-queued { color: var(--accent); }
+.product-task-state.state-completed { color: var(--success, #34a864); }
+.product-task-state.state-failed, .product-task-error { color: var(--danger, #db6666); }
+.product-task-current { display: flex; justify-content: space-between; gap: 16px; font-size: 13px; margin-bottom: 10px; }
+.product-task-current b { font-weight: 500; }
+.product-task-bar { height: 4px; background: color-mix(in srgb, var(--accent) 12%, transparent); border-radius: 4px; overflow: hidden; }
+.product-task-bar i { display: block; height: 100%; background: var(--accent); border-radius: inherit; transition: width .3s; }
+.product-task-bar.indeterminate i { animation: task-progress-pulse 1.6s ease-in-out infinite; }
+@keyframes task-progress-pulse { 50% { opacity: .35; } }
+.product-task-caption { margin: 9px 0 16px; font-size: 12px; color: var(--product-muted, var(--text-muted)); }
+.product-task-steps { list-style: none; margin: 18px 0; padding: 0; display: grid; gap: 13px; }
+.product-task-steps li { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--product-muted, var(--text-muted)); }
+.product-task-steps small { margin-left: auto; font-size: 11px; }
+.product-task-steps .step-running, .product-task-steps .step-completed { color: inherit; }
+.product-task-steps .step-running svg { color: var(--accent); }
+.task-is-active .product-task-steps .step-running svg { animation: task-spin 2s linear infinite; }
+.product-task-steps .step-completed svg { color: var(--accent); }
+.product-task-steps .step-failed { color: var(--danger, #db6666); }
+@keyframes task-spin { to { transform: rotate(360deg); } }
+.product-task-metrics { display: flex; flex-wrap: wrap; gap: 22px; padding: 16px 0 0; margin: 16px 0 0; border-top: 1px solid var(--product-line, var(--border)); }
+.product-task-metrics dt { font-size: 12px; color: var(--product-muted, var(--text-muted)); }
+.product-task-metrics dd { margin: 5px 0 0; font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.product-task-progress footer { display: flex; align-items: center; justify-content: space-between; margin-top: 16px; color: var(--product-muted, var(--text-muted)); }
+.product-task-progress button, .diagnostic-actions button, .diagnostic-tabs button { border: 1px solid var(--product-line, var(--border)); border-radius: 8px; background: transparent; color: inherit; padding: 7px 12px; font: inherit; font-size: 12px; cursor: pointer; }
+.product-task-activity, .product-task-notice { position: fixed; bottom: 18px; right: 24px; z-index: 80; display: flex; align-items: center; gap: 8px; border: 1px solid var(--product-line); border-radius: 10px; background: var(--product-panel); color: inherit; padding: 10px 14px; font: inherit; font-size: 12px; box-shadow: 0 4px 18px #0002; }
+.product-task-activity { cursor: pointer; }
+.product-task-activity svg { color: var(--accent); animation: task-spin 2s linear infinite; }
+.product-task-notice { bottom: 65px; }
+.product-task-notice button { background: none; border: 0; color: inherit; font: inherit; cursor: pointer; }
+.task-table-wrap { overflow-x: auto; border: 1px solid var(--product-line, var(--border)); border-radius: 12px; background: var(--product-panel, var(--bg-card)); }
+.task-table { border-collapse: collapse; width: 100%; text-align: left; font-size: 13px; }
+.task-table th { font-size: 12px; font-weight: 500; color: var(--product-muted, var(--text-muted)); }
+.task-table td, .task-table th { padding: 16px 18px; border-bottom: 1px solid var(--product-line, var(--border)); }
+.task-table tr:last-child td { border-bottom: 0; }
+.task-table td:first-child button { background: none; border: 0; padding: 0; color: inherit; font: inherit; font-weight: 600; cursor: pointer; }
+.task-table td small { display: block; margin-top: 5px; color: var(--product-muted, var(--text-muted)); }
+.task-table .product-task-bar { width: 100px; margin-top: 6px; }
+.task-table-actions { display: flex; gap: 8px; }
+.task-table-actions button { font-size: 12px; }
+.task-center-page .task-status-grid { margin-bottom: 24px; }
+.task-center-page .task-status-card { background: var(--product-panel, var(--bg-card)); box-shadow: none; }
+.task-center-page .task-mode-strip { display: none; }
+.task-detail-drawer .product-task-progress { margin: 20px 0; }
+.product-task-round { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 20px; margin: 18px 0; }
+.product-task-round h4 { margin: 0 0 10px; font-size: 14px; font-weight: 600; }
+.product-task-round ul { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.8; }
+.product-task-round p { margin: 0; color: var(--product-muted,var(--text-muted)); font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
+.product-task-round .product-task-round-reason { margin-top: 10px; }
+.product-task-round-statistics { margin: 18px 0; font-size: 13px; }
+.product-task-round-statistics > summary { cursor: pointer; color: var(--product-muted,var(--text-muted)); }
+.diagnostics-page { width: min(1040px, 100%); padding: 28px 32px 40px; }
+.diagnostics-page h1 { margin: 0; font-size: 24px; }
+.diagnostics-page > p { color: var(--product-muted); font-size: 13px; margin: 10px 0 24px; }
+.diagnostic-tabs { display: flex; gap: 8px; margin-bottom: 24px; }
+.diagnostic-tabs button[aria-selected="true"] { background: color-mix(in srgb, var(--accent) 12%, transparent); border-color: var(--accent); }
+.diagnostic-card { padding: 22px; border: 1px solid var(--product-line); border-radius: 12px; background: var(--product-panel); margin-bottom: 16px; }
+.diagnostic-card h2 { margin: 0 0 8px; font-size: 15px; }
+.diagnostic-card p { color: var(--product-muted); font-size: 13px; line-height: 1.7; }
+.diagnostic-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
+.diagnostics-page .pm-page { padding: 0; }
+.diagnostics-page select { width: 100%; margin-bottom: 18px; }
+.material-cell-progress { display: inline-flex; align-items: center; color: var(--accent); vertical-align: middle; }
+.material-cell-progress svg { animation: task-spin 1s linear infinite; }
+.material-import-row { background: color-mix(in srgb, var(--accent) 4%, transparent); }
+.material-task-link { margin-left: 10px; padding: 0; border: 0; background: transparent; color: var(--accent); font-size: inherit; }
+@media (prefers-reduced-motion: reduce) { .material-cell-progress svg { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .product-task-bar i, .product-task-steps svg, .product-task-activity svg { animation: none !important; transition: none; } }
+.product-active-files { display: grid; gap: 12px; margin: 16px 0; }
+.product-active-files article { padding: 12px; border: 1px solid var(--border); border-radius: 10px; overflow-wrap: anywhere; }
+.product-active-files p { margin: 6px 0; font-size: 13px; color: var(--product-muted, var(--text-muted)); }
+.product-active-files small { color: var(--product-muted, var(--text-muted)); }
+.product-task-relations { margin: 16px 0; }
+.product-task-relations > button { color: var(--pm-success, #73b77d); }
+.product-task-relation-table { overflow-x: auto; margin-top: 12px; }
+.product-task-relation-table table { width: 100%; border-collapse: collapse; text-align: left; }
+.product-task-relation-table th, .product-task-relation-table td { padding: 10px 8px; border-bottom: 1px solid var(--pm-border, #383838); vertical-align: top; min-width: 110px; }
+.product-task-relation-table td:last-child { min-width: 180px; white-space: pre-wrap; }
+.product-task-relation-table small { display: block; opacity: .7; overflow-wrap: anywhere; }
+.product-task-relation-table tr.is-clickable { cursor: pointer; }
+.product-task-relation-table tr.is-clickable:hover, .product-task-relation-table tr.is-clickable:focus-visible { background: var(--bg-hover); outline: 1px solid var(--accent); }
+.product-task-git { margin: 12px 0; overflow-wrap: anywhere; }

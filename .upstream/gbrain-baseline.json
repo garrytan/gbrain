@@ -36,5 +36,8 @@
       "classification": "D",
       "status": "deferred"
     }
-  ]
+  ],
+  "status": "deprecated-historical-snapshot",
+  "superseded_by": ".upstream/gbrain-subsystems.json",
+  "notice": "仅保存历史审计，当前关系内核以子系统清单的固定 SHA 和适配记录为准。"
 }

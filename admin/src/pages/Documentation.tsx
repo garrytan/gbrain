@@ -24,18 +24,64 @@ function extractHeadings(markdown: string) {
     .filter(Boolean) as Array<{ level: number; text: string; id: string }>;
 }
 
-function InlineMarkdown({ text }: { text: string }) {
-  const parts = text.split(/(`[^`]+`|\*\*[^*]+\*\*|\[[^\]]+\]\(https?:\/\/[^)]+\))/g).filter(Boolean);
+export interface MarkdownCitation {
+  title: string;
+  sourceId: string | null;
+  slug: string;
+  snippet: string;
+}
+
+export function inlineCitationIndex(token: string): number | null {
+  const match = /^\[(\d+)\]$/.exec(token);
+  if (!match) return null;
+  const index = Number(match[1]);
+  return Number.isInteger(index) && index > 0 ? index : null;
+}
+
+function CitationMark({ index, citation }: { index: number; citation: MarkdownCitation }) {
+  const [card, setCard] = useState<{ top: number; left: number } | null>(null);
+  const show = (target: HTMLElement) => {
+    const rect = target.getBoundingClientRect();
+    const width = 280;
+    const left = Math.min(Math.max(8, rect.left), window.innerWidth - width - 8);
+    const below = rect.bottom + 8;
+    const top = below + 168 > window.innerHeight ? Math.max(8, rect.top - 168) : below;
+    setCard({ top, left });
+  };
+  const where = [citation.sourceId, citation.slug].filter(Boolean).join(' / ');
+  return <button
+    type="button"
+    className="wb-cite"
+    aria-label={`参考 ${index}：${citation.title}`}
+    onMouseEnter={event => show(event.currentTarget)}
+    onMouseLeave={() => setCard(null)}
+    onFocus={event => show(event.currentTarget)}
+    onBlur={() => setCard(null)}
+  >
+    {index}
+    {card && <span className="wb-cite-card" style={{ top: card.top, left: card.left }} role="tooltip">
+      <b>{citation.title}</b>
+      {where && <small>{where}</small>}
+      {citation.snippet && <p>{citation.snippet}</p>}
+    </span>}
+  </button>;
+}
+
+function InlineMarkdown({ text, citations }: { text: string; citations?: MarkdownCitation[] }) {
+  const parts = text.split(/(`[^`]+`|\*\*[^*]+\*\*|\[\d+\]|\[[^\]]+\]\(https?:\/\/[^)]+\))/g).filter(Boolean);
   return <>{parts.map((part, index) => {
     if (part.startsWith('`') && part.endsWith('`')) return <code key={`${part}-${index}`}>{part.slice(1, -1)}</code>;
-    if (part.startsWith('**') && part.endsWith('**')) return <strong key={`${part}-${index}`}>{part.slice(2, -2)}</strong>;
+    if (part.startsWith('**') && part.endsWith('**')) return <strong key={`${part}-${index}`}><InlineMarkdown text={part.slice(2, -2)} citations={citations} /></strong>;
+    const citationIndex = inlineCitationIndex(part);
+    const citation = citationIndex && citations ? citations[citationIndex - 1] : undefined;
+    if (citation && citationIndex) return <CitationMark key={`${part}-${index}`} index={citationIndex} citation={citation} />;
     const link = /^\[([^\]]+)\]\((https?:\/\/[^)]+)\)$/.exec(part);
     if (link) return <a key={`${link[2]}-${index}`} href={link[2]} target="_blank" rel="noreferrer">{link[1]}</a>;
     return <React.Fragment key={`${part}-${index}`}>{part}</React.Fragment>;
   })}</>;
 }
 
-export function MarkdownArticle({ markdown }: { markdown: string }) {
+export function MarkdownArticle({ markdown, citations }: { markdown: string; citations?: MarkdownCitation[] }) {
   const blocks: React.ReactNode[] = [];
   const lines = markdown.split('\n');
   let list: string[] = [];
@@ -44,7 +90,7 @@ export function MarkdownArticle({ markdown }: { markdown: string }) {
 
   const flushList = () => {
     if (list.length === 0) return;
-    blocks.push(<ul key={`list-${blocks.length}`}>{list.map((item, index) => <li key={`${item}-${index}`}><InlineMarkdown text={item} /></li>)}</ul>);
+    blocks.push(<ul key={`list-${blocks.length}`}>{list.map((item, index) => <li key={`${item}-${index}`}><InlineMarkdown text={item} citations={citations} /></li>)}</ul>);
     list = [];
   };
 
@@ -76,9 +122,9 @@ export function MarkdownArticle({ markdown }: { markdown: string }) {
       blocks.push(
         <div className="markdown-table-wrap" key={`table-${index}`}>
           <table>
-            <thead><tr>{table.headers.map((cell, cellIndex) => <th key={`${cell}-${cellIndex}`}><InlineMarkdown text={cell} /></th>)}</tr></thead>
+            <thead><tr>{table.headers.map((cell, cellIndex) => <th key={`${cell}-${cellIndex}`}><InlineMarkdown text={cell} citations={citations} /></th>)}</tr></thead>
             <tbody>{table.rows.map((row, rowIndex) => (
-              <tr key={`row-${rowIndex}`}>{row.map((cell, cellIndex) => <td key={`${cellIndex}-${cell}`}><InlineMarkdown text={cell} /></td>)}</tr>
+              <tr key={`row-${rowIndex}`}>{row.map((cell, cellIndex) => <td key={`${cellIndex}-${cell}`}><InlineMarkdown text={cell} citations={citations} /></td>)}</tr>
             ))}</tbody>
           </table>
         </div>,
@@ -91,9 +137,9 @@ export function MarkdownArticle({ markdown }: { markdown: string }) {
       flushList();
       const id = slugifyHeading(heading[2].trim(), index);
       const level = heading[1].length;
-      if (level === 1) blocks.push(<h1 id={id} key={id}><InlineMarkdown text={heading[2].trim()} /></h1>);
-      if (level === 2) blocks.push(<h2 id={id} key={id}><InlineMarkdown text={heading[2].trim()} /></h2>);
-      if (level === 3) blocks.push(<h3 id={id} key={id}><InlineMarkdown text={heading[2].trim()} /></h3>);
+      if (level === 1) blocks.push(<h1 id={id} key={id}><InlineMarkdown text={heading[2].trim()} citations={citations} /></h1>);
+      if (level === 2) blocks.push(<h2 id={id} key={id}><InlineMarkdown text={heading[2].trim()} citations={citations} /></h2>);
+      if (level === 3) blocks.push(<h3 id={id} key={id}><InlineMarkdown text={heading[2].trim()} citations={citations} /></h3>);
       continue;
     }
     const bullet = /^[-*]\s+(.+)$/.exec(line);
@@ -103,14 +149,14 @@ export function MarkdownArticle({ markdown }: { markdown: string }) {
     }
     flushList();
     if (/^>{1}\s?/.test(line)) {
-      blocks.push(<blockquote key={`quote-${index}`}><InlineMarkdown text={line.replace(/^>\s?/, '')} /></blockquote>);
+      blocks.push(<blockquote key={`quote-${index}`}><InlineMarkdown text={line.replace(/^>\s?/, '')} citations={citations} /></blockquote>);
       continue;
     }
     if (/^\s*---+\s*$/.test(line)) {
       blocks.push(<hr key={`rule-${index}`} />);
       continue;
     }
-    if (line.trim()) blocks.push(<p key={`p-${index}`}><InlineMarkdown text={line} /></p>);
+    if (line.trim()) blocks.push(<p key={`p-${index}`}><InlineMarkdown text={line} citations={citations} /></p>);
   }
   flushList();
   flushCode();

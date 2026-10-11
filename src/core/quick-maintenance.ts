@@ -40,7 +40,7 @@ export function resolveQuickMaintenancePhases(): CyclePhase[] {
   return ALL_PHASES.filter((p) => QUICK_PHASE_SET.has(p));
 }
 
-export type QuickMaintenanceOpts = Omit<CycleOpts, 'phases' | 'includeByMention' | 'includeHistoricalMarkdownCatchUp' | 'forcePackPhases'>;
+export type QuickMaintenanceOpts = Omit<CycleOpts, 'phases' | 'includeByMention' | 'includeNer' | 'includeHistoricalMarkdownCatchUp' | 'forcePackPhases'>;
 
 /**
  * Run one Quick Maintenance cycle.
@@ -54,8 +54,9 @@ export async function runQuickMaintenance(
 ): Promise<CycleReport> {
   return runCycle(engine, {
     ...opts,
-    phases: resolveQuickMaintenancePhases(),
+    phases: opts.captureEntitySlugs?.length ? ALL_PHASES.filter(phase => QUICK_PHASE_SET.has(phase) || phase === 'capture_entities') : resolveQuickMaintenancePhases(),
     includeByMention: true,
+    includeNer: true,
     includeHistoricalMarkdownCatchUp: true,
     // Quick Maintenance is the product's one-click Source sync. Keep the
     // generic cycle default unchanged, but include committed local documents
@@ -111,7 +112,7 @@ export function combineQuickMaintenanceReports(
     }
   }
 
-  const phases = resolveQuickMaintenancePhases().map((phaseName) => {
+  const phases = ALL_PHASES.filter(phase => QUICK_PHASE_SET.has(phase) || (phase === 'capture_entities' && reports.some(item => item.report.phases.some(row => row.phase === phase)))).map((phaseName) => {
     const sourcePhases = reports.flatMap(({ sourceId, report }) => {
       const phase = report.phases.find(item => item.phase === phaseName);
       return phase ? [{ sourceId, phase }] : [];
@@ -124,6 +125,17 @@ export function combineQuickMaintenanceReports(
     const failedSources = sourcePhases.filter(item => item.phase.status === 'fail').length;
     const details = {
       ...mergePhaseDetails(phaseResults),
+      ...(phaseName === 'capture_entities' ? {
+        stop_reason: phaseResults.find(phase => phase.details.stop_reason !== 'completed')?.details.stop_reason ?? 'completed',
+        cost_cap_cny: phaseResults.every(phase => phase.details.cost_cap_cny == null) ? null : Math.max(0, ...phaseResults.map(phase => Number(phase.details.cost_cap_cny ?? 0))),
+        cost_cap_enforced: phaseResults.every(phase => phase.details.cost_cap_enforced === true),
+        report_line: phaseResults.map(phase => phase.details.report_line).filter(Boolean).join('\n'),
+        unresolved_references: phaseResults.flatMap(phase => Array.isArray(phase.details.unresolved_references) ? phase.details.unresolved_references : []),
+      } : {}),
+      ...Object.fromEntries(['relation_backfill_error', 'by_mention_error', 'ner_error'].flatMap(key => {
+        const errors = sourcePhases.filter(item => item.phase.details[key]).map(item => `${item.sourceId}: ${String(item.phase.details[key])}`);
+        return errors.length ? [[key, errors.join('; ')]] : [];
+      })),
       sources_processed: sourcePhases.length,
       sources_failed: failedSources,
       source_results: sourcePhases.map(({ sourceId, phase }) => ({

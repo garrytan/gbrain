@@ -110,7 +110,7 @@ export class MinionQueue {
       if (typeof submittedModel === 'string' && submittedModel.length > 0) {
         const { classifyCapabilities } = await import('../ai/capabilities.ts');
         const verdict = classifyCapabilities(submittedModel);
-        if (verdict === 'unusable:no_tools') {
+        if (verdict === 'unusable:no_tools' && !data.ingest_context) {
           throw new Error(
             `subagent job rejected: data.model "${submittedModel}" lacks native tool calling. ` +
             `The subagent loop dispatches brain ops via tool calls — without tool support the loop has no way to run. ` +
@@ -146,6 +146,18 @@ export class MinionQueue {
           [opts.idempotency_key]
         );
         if (existing.length > 0) return rowToMinionJob(existing[0]);
+      }
+
+      if(opts?.maxQueueSize!==undefined){
+        if(!Number.isSafeInteger(opts.maxQueueSize)||opts.maxQueueSize<1)throw new Error('队列容量必须为正整数');
+        const queueName=opts.queue??'default';
+        await tx.executeRaw("SELECT pg_advisory_xact_lock(hashtext('minion_capacity:' || $1))",[queueName]);
+        if(opts.idempotency_key){
+          const existing=await tx.executeRaw<Record<string,unknown>>('SELECT * FROM minion_jobs WHERE idempotency_key=$1',[opts.idempotency_key]);
+          if(existing.length)return rowToMinionJob(existing[0]);
+        }
+        const rows=await tx.executeRaw<{count:string}>("SELECT count(*)::text AS count FROM minion_jobs WHERE queue=$1 AND status NOT IN ('completed','failed','dead','cancelled')",[queueName]);
+        if(Number(rows[0].count)>=opts.maxQueueSize)throw new Error(`资源保护：队列容量已达到 ${opts.maxQueueSize}，已拒绝新任务。请先完成或停止已有任务。`);
       }
 
       // 1b. Submission-time single-flight for named jobs. Unlike maxWaiting,
@@ -1284,12 +1296,18 @@ export class MinionQueue {
   }
 
   /** Detect and handle stalled jobs. Single CTE, no off-by-one. Returns affected jobs. */
-  async handleStalled(): Promise<{ requeued: MinionJob[]; dead: MinionJob[] }> {
-    const rows = await this.engine.executeRaw<Record<string, unknown> & { action: string }>(
+  async handleStalled(activeJobIds: readonly number[] = [], queue?:string): Promise<{ requeued: MinionJob[]; dead: MinionJob[] }> {
+    return this.engine.transaction(async tx => {
+    const exclude = activeJobIds.length > 0 ? 'AND id <> ALL($1::int[])' : '';
+    const params:unknown[] = activeJobIds.length > 0 ? [activeJobIds] : [];
+    const queueFilter=queue===undefined?'':`AND queue=$${params.push(queue)}`;
+    const rows = await tx.executeRaw<Record<string, unknown> & { action: string }>(
       `WITH stalled AS (
         SELECT id, stalled_counter, max_stalled
         FROM minion_jobs
         WHERE status = 'active' AND lock_until < now()
+        ${exclude}
+        ${queueFilter}
         FOR UPDATE SKIP LOCKED
       ),
       requeued AS (
@@ -1307,7 +1325,8 @@ export class MinionQueue {
         WHERE id IN (SELECT id FROM stalled WHERE stalled_counter + 1 >= max_stalled)
         RETURNING *, 'dead' as action
       )
-      SELECT * FROM requeued UNION ALL SELECT * FROM dead_lettered`
+      SELECT * FROM requeued UNION ALL SELECT * FROM dead_lettered`,
+      params,
     );
 
     const requeued: MinionJob[] = [];
@@ -1317,7 +1336,19 @@ export class MinionQueue {
       if (r.action === 'requeued') requeued.push(job);
       else dead.push(job);
     }
+    for(const job of dead){
+      if(job.parent_job_id===null)continue;
+      const parentId=job.parent_job_id;
+        const childDone:ChildDoneMessage={type:'child_done',child_id:job.id,job_name:job.name,result:null,outcome:'dead',error:job.error_text??'max stalled count exceeded'};
+        await tx.executeRaw(`INSERT INTO minion_inbox(job_id,sender,payload) SELECT $1,'minions',$2::jsonb
+          WHERE EXISTS(SELECT 1 FROM minion_jobs WHERE id=$1 AND status NOT IN ('completed','failed','dead','cancelled'))`,[job.parent_job_id,childDone]);
+        const scoped=new MinionQueue(tx);
+        if(job.on_child_fail==='fail_parent')await scoped.failParent(parentId,job.id,job.error_text??'max stalled count exceeded');
+        else if(job.on_child_fail==='remove_dep')await scoped.removeChildDependency(job.id);
+        await scoped.resolveParent(parentId);
+    }
     return { requeued, dead };
+    });
   }
 
   /**

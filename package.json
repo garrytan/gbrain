@@ -30,9 +30,10 @@
     "./ingestion/test-harness": "./src/core/ingestion/test-harness.ts"
   },
   "scripts": {
+    "version:sync": "bun run scripts/sync-product-version.ts",
     "dev": "bun run src/cli.ts",
-    "build": "bun build --compile --outfile bin/pmbrain src/cli.ts && bun build --compile --outfile bin/gbrain src/cli.ts",
-    "build:all": "bun build --compile --target=bun-darwin-arm64 --outfile bin/pmbrain-darwin-arm64 src/cli.ts && bun build --compile --target=bun-linux-x64 --outfile bin/pmbrain-linux-x64 src/cli.ts && bun build --compile --target=bun-windows-x64 --outfile bin/pmbrain-windows-x64 src/cli.ts && bun build --compile --target=bun-darwin-arm64 --outfile bin/gbrain-darwin-arm64 src/cli.ts && bun build --compile --target=bun-linux-x64 --outfile bin/gbrain-linux-x64 src/cli.ts && bun build --compile --target=bun-windows-x64 --outfile bin/gbrain-windows-x64 src/cli.ts",
+    "build": "bun build --compile --outfile bin/pmbrain src/cli-bootstrap.ts src/product/tasks/task-worker.ts src/product/database/database-worker.ts && bun build --compile --outfile bin/gbrain src/cli-bootstrap.ts src/product/tasks/task-worker.ts src/product/database/database-worker.ts",
+    "build:all": "bun build --compile --target=bun-darwin-arm64 --outfile bin/pmbrain-darwin-arm64 src/cli-bootstrap.ts src/product/tasks/task-worker.ts src/product/database/database-worker.ts && bun build --compile --target=bun-linux-x64 --outfile bin/pmbrain-linux-x64 src/cli-bootstrap.ts src/product/tasks/task-worker.ts src/product/database/database-worker.ts && bun build --compile --target=bun-windows-x64 --outfile bin/pmbrain-windows-x64 src/cli-bootstrap.ts src/product/tasks/task-worker.ts src/product/database/database-worker.ts && bun build --compile --target=bun-darwin-arm64 --outfile bin/gbrain-darwin-arm64 src/cli-bootstrap.ts src/product/tasks/task-worker.ts src/product/database/database-worker.ts && bun build --compile --target=bun-linux-x64 --outfile bin/gbrain-linux-x64 src/cli-bootstrap.ts src/product/tasks/task-worker.ts src/product/database/database-worker.ts && bun build --compile --target=bun-windows-x64 --outfile bin/gbrain-windows-x64 src/cli-bootstrap.ts src/product/tasks/task-worker.ts src/product/database/database-worker.ts",
     "build:admin": "cd admin && bun run build && cd .. && bun run scripts/normalize-admin-dist.ts && bun run scripts/build-admin-embedded.ts && bun run scripts/build-release-manifest.ts",
     "build:release-manifest": "bun run scripts/build-release-manifest.ts",
     "desktop:dev": "cd desktop && bun run dev",
@@ -54,6 +55,7 @@
     "check:cli-exec": "bash scripts/check-cli-executable.sh",
     "check:all": "bun run verify",
     "check:version-sync": "bun run scripts/check-version-sync.ts",
+    "check:gbrain-subsystems": "bun run scripts/check-gbrain-subsystems.ts",
     "check:pmbrain-env": "bun run scripts/check-pmbrain-env-prefix.ts",
     "check:gateway-routed": "bash scripts/check-gateway-routed-no-direct-anthropic.sh",
     "check:worker-pool-atomicity": "bash scripts/check-worker-pool-atomicity.sh",
@@ -162,5 +164,5 @@
     "bun": ">=1.3.10"
   },
   "license": "MIT",
-  "version": "1.3.86"
+  "version": "1.4.55"
 }

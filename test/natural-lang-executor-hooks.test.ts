@@ -18,7 +18,7 @@ async function waitFor(predicate: () => boolean, timeoutMs = 3_000): Promise<voi
 
 describe('natural language child-process hooks', () => {
   test('keeps the generic default while allowing long-running maintenance to opt out', () => {
-    expect(resolveRunTimeoutMs(undefined)).toBe(10 * 60 * 1000);
+    expect(resolveRunTimeoutMs(undefined)).toBe(6 * 60 * 60 * 1000);
     expect(resolveRunTimeoutMs(120_000)).toBe(120_000);
     expect(resolveRunTimeoutMs(null)).toBeNull();
     expect(resolveRunTimeoutMs(undefined, 'embed_stale')).toBeNull();

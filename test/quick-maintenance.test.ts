@@ -20,7 +20,7 @@ import {
   resolveQuickMaintenancePhases,
   runQuickMaintenance,
 } from '../src/core/quick-maintenance.ts';
-import { ALL_PHASES } from '../src/core/cycle.ts';
+import { ALL_PHASES, DEFAULT_PHASES } from '../src/core/cycle.ts';
 import { runByMentionCore } from '../src/commands/extract.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -128,7 +128,7 @@ describe('Quick Maintenance phase contracts (TEST 6–7)', () => {
   });
 
   test('Full Dream still uses full ALL_PHASES set', () => {
-    expect(resolveDreamPresetPhases('full')).toEqual([...ALL_PHASES]);
+    expect(resolveDreamPresetPhases('full')).toEqual([...DEFAULT_PHASES]);
   });
 
   test('Meeting preset phase order unchanged', () => {
@@ -433,7 +433,7 @@ describe('by-mention relations (TEST 3–4)', () => {
     expect(result.historicalRemaining).toBeGreaterThan(0);
     expect(result.timeBudgetReached).toBe(true);
     const checkpointRows = await engine.executeRaw<{ c: number }>(
-      `SELECT COUNT(*)::int AS c FROM op_checkpoints WHERE op = 'extract-by-mention'`,
+      `SELECT COUNT(*)::int AS c FROM page_mention_state s JOIN pages p ON p.id=s.page_id WHERE s.mention_revision=p.knowledge_revision`,
     );
     expect(Number(checkpointRows[0]?.c ?? 0)).toBeGreaterThan(0);
     const links = await engine.executeRaw<{ from_slug: string }>(

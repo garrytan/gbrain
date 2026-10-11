@@ -120,8 +120,8 @@ function recordWriteFailure(slug: string, sourceId: string, warnings: string[], 
  * Stub-create body for a new entity page. Minimum frontmatter so the
  * page validates as gbrain-canonical markdown and survives an
  * `importFromFile` round-trip. Type inferred from slug prefix
- * (e.g. `people/alice` → 'person'); unknown prefixes fall back to
- * 'concept' which is the most permissive PageType.
+ * (e.g. `people/alice` → 'person'); unknown prefixes stay `note`
+ * and do not enter the entity gazetteer as concepts.
  */
 function stubEntityPage(slug: string): string {
   const prefix = slug.split('/')[0];
@@ -130,7 +130,7 @@ function stubEntityPage(slug: string): string {
     prefix === 'companies' ? 'company' :
     prefix === 'deals'     ? 'deal' :
     prefix === 'topics'    ? 'concept' :
-    /* fallback */           'concept';
+    /* fallback */           'note';
   const tail = slug.split('/').slice(1).join('/');
   const title = tail
     .replace(/[-_/]+/g, ' ')

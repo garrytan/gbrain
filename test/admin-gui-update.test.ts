@@ -108,11 +108,13 @@ describe('Admin GUI update contract', () => {
     expect(settingsSource).toContain('dualWrite: previousValue');
   });
 
-  test('knowledge organization settings expose explicit uncommitted sync opt-in', () => {
-    expect(settingsSource).toContain('includeUncommitted');
-    expect(settingsSource).toContain('包含未提交内容');
-    expect(settingsSource).toContain('默认关闭');
-    expect(settingsSource).toContain('saveIncludeUncommitted');
+  test('knowledge organization syncs local changes and exposes enabled local Git commits', () => {
+    expect(settingsSource).toContain('快速维护包含本地新增、修改和删除的文件');
+    expect(settingsSource).toContain('快速维护时自动 Git 提交');
+    expect(settingsSource).toContain('checked={settings.autoGitCommit !== false}');
+    expect(settingsSource).toContain('saveAutoGitCommit(event.target.checked)');
+    expect(settingsSource).toContain('autoGitCommit: previousValue');
+    expect(settingsSource).toContain('默认开启，只在本地提交；普通文件夹无需 Git');
   });
 
   test('dark mode covers code blocks and Dream contrast-sensitive content', () => {

@@ -1,98 +1,115 @@
-# Brain 归档规则 — 所有写入大脑的技能必须遵守
+# Brain Filing Rules -- MANDATORY for all skills that write to the brain
 
-## 规则
+## The Rule
 
-内容的**主要主题**决定它放在哪里。不是格式、不是来源、不是正在运行的技能。
+The PRIMARY SUBJECT of the content determines where it goes. Not the format,
+not the source, not the skill that's running.
 
-## 决策协议
+## Decision Protocol
 
-1. 识别主要主题（一个人？公司？概念？政策问题？）
-2. 归档到与主题匹配的目录中
-3. 从相关目录交叉链接
-4. 当有疑问时：你会搜索什么来再次找到这个页面？
+1. Identify the primary subject (a person? company? concept? policy issue?)
+2. File in the directory that matches the subject
+3. Cross-link from related directories
+4. When in doubt: what would you search for to find this page again?
 
-## 常见错误归档模式 — 请勿执行这些操作
+## Common Misfiling Patterns -- DO NOT DO THESE
 
-| 错误 | 正确 | 为什么 |
-|-------|-------|-------|
-| 主题分析 -> `sources/` | -> 适当的主题目录 | sources/ 仅用于原始数据 |
-| 关于一个人的文章 -> `sources/` | -> `people/` | 主要主题是一个人 |
-| 会议衍生的公司信息 -> 仅 `meetings/` | -> 同时更新 `companies/` | 实体传播是强制性的 |
-| 关于一家公司的研究 -> `sources/` | -> `companies/` | 主要主题是一家公司 |
-| 可重用的框架/论文 -> `sources/` | -> `concepts/` | 它是一种心智模型 |
-| 关于政策的推文线程 -> `media/` | -> `civic/` 或 `concepts/` | media/ 用于内容操作 |
+| Wrong | Right | Why |
+|-------|-------|-----|
+| Analysis of a topic -> `sources/` | -> appropriate subject directory | sources/ is for raw data only |
+| Article about a person -> `sources/` | -> `people/` | Primary subject is a person |
+| Meeting-derived company info -> `meetings/` only | -> ALSO update `companies/` | Entity propagation is mandatory |
+| Research about a company -> `sources/` | -> `companies/` | Primary subject is a company |
+| Reusable framework/thesis -> `sources/` | -> `concepts/` | It's a mental model |
+| Tweet thread about policy -> `media/` | -> `civic/` or `concepts/` | media/ is for content ops |
 
-## 特许例外：合成输出是独特的
+## Sanctioned exception: synthesis output is sui generis
 
-"按主要主题归档"规则适用于原始摄取。合成输出如果是独一无二的（针对单个来源和特定读者定制的）（个性化书籍镜像、与一个问题绑定的战略阅读手册）不能干净地放入任何主题目录：按主题归档会丢失"这是书籍"维度；按作者归档会将作者页面与合成页面混淆。
+The "file by primary subject" rule is for raw ingest. Synthesized output that
+is one-of-one to a single source AND a specific reader (a personalized book
+mirror, a strategic-reading playbook tied to one problem) does not fit any
+subject directory cleanly: filing by topic loses the "this is the book"
+dimension; filing by author muddles authorship pages with synthesis pages.
 
-`media/<format>/<slug>` 下的格式前缀路径是特许例外：
+Format-prefixed paths under `media/<format>/<slug>` are the sanctioned
+exception:
 
-- `media/books/<slug>-personalized.md`（书籍镜像输出）
-- `media/articles/<slug>-personalized.md`（长篇文章个性化）
+- `media/books/<slug>-personalized.md` (book-mirror output)
+- `media/articles/<slug>-personalized.md` (long-form article personalization)
 
-如果你发现自己想要 `media/<format>/` 用于原始摄取，那仍然是上表中的反模式。例外很窄：合成的、独一无二的、对单个来源独特的。
+If you find yourself wanting `media/<format>/` for raw ingest, that is still
+the anti-pattern in the table above. The exception is narrow: synthesized,
+one-of-one, sui generis to a single source.
 
-## `sources/` 实际用于什么
+## What `sources/` Is Actually For
 
-`sources/` 仅用于：
-- 批量数据导入（API 转储、CSV 导出、快照）
-- 馈送多个大脑页面的原始数据（例如，客人导出、联系人同步）
-- 定期捕获（季度快照、同步导出）
+`sources/` is ONLY for:
+- Bulk data imports (API dumps, CSV exports, snapshots)
+- Raw data that feeds multiple brain pages (e.g., a guest export, contact sync)
+- Periodic captures (quarterly snapshots, sync exports)
 
-如果内容具有明确的主要主题（一个人、公司、概念、政策问题），它**不**进入 sources/。 period。
+If the content has a clear primary subject (a person, company, concept, policy
+issue), it does NOT go in sources/. Period.
 
-## 显著性门控
+## Notability Gate
 
-不是所有东西都值得拥有大脑页面。在创建新的实体页面之前：
-- **人员：** 你会再次与他们互动吗？他们与你的工作相关吗？
-- **公司：** 他们与你的工作或兴趣相关吗？
-- **概念：** 这是一个值得以后参考的可重用心智模型吗？
-- **当有疑问时，不要创建。** 缺失的页面可以稍后创建。垃圾页面浪费注意力并降低搜索质量。
+Not everything deserves a brain page. Before creating a new entity page:
+- **People:** Will you interact with them again? Are they relevant to your work?
+- **Companies:** Are they relevant to your work or interests?
+- **Concepts:** Is this a reusable mental model worth referencing later?
+- **When in doubt, DON'T create.** A missing page can be created later.
+  A junk page wastes attention and degrades search quality.
 
-## 铁律：反向链接（强制性的）
+## Iron Law: Back-Linking (MANDATORY)
 
-每次提及具有大脑页面的人或公司都必须从该实体的页面**创建反向链接**到提及他们的页面。这是双向的：新页面链接到实体，并且实体的页面链接回来。
+Every mention of a person or company with a brain page MUST create a back-link
+FROM that entity's page TO the page mentioning them. This is bidirectional:
+the new page links to the entity, AND the entity's page links back.
 
-反向链接格式（附加到时间线或另请参阅）：
+Format for back-links (append to Timeline or See Also):
 ```
-- **YYYY-MM-DD** | 在 [页面标题](path/to/page.md) 中引用 -- 简要上下文
+- **YYYY-MM-DD** | Referenced in [page title](path/to/page.md) -- brief context
 ```
 
-未链接的提及是破碎的大脑。图谱就是智能。
+An unlinked mention is a broken brain. The graph is the intelligence.
 
-## 引用要求（强制性的）
+## Citation Requirements (MANDATORY)
 
-写入大脑页面的每个事实都必须带有内联 `[Source: ...]` 引用。
+Every fact written to a brain page must carry an inline `[Source: ...]` citation.
 
-三种格式：
-- **直接归属：** `[Source: User, {context}, YYYY-MM-DD]`
-- **API/外部：** `[Source: {provider}, YYYY-MM-DD]` 或 `[Source: {publication}, {URL}]`
-- **合成：** `[Source: compiled from {list of sources}]`
+Three formats:
+- **Direct attribution:** `[Source: User, {context}, YYYY-MM-DD]`
+- **API/external:** `[Source: {provider}, YYYY-MM-DD]` or `[Source: {publication}, {URL}]`
+- **Synthesis:** `[Source: compiled from {list of sources}]`
 
-来源优先级（从高到低）：
-1. 用户的直接陈述（最高权威）
-2. 编译真相（预先存在的大脑合成）
-3. 时间线条目（原始证据）
-4. 外部来源（API 丰富、网络搜索 -- 最低）
+Source precedence (highest to lowest):
+1. User's direct statements (highest authority)
+2. Compiled truth (pre-existing brain synthesis)
+3. Timeline entries (raw evidence)
+4. External sources (API enrichment, web search -- lowest)
 
-当来源冲突时，用两个引用注明矛盾。不要静默选择一个。
+When sources conflict, note the contradiction with both citations. Don't
+silently pick one.
 
-## 原始来源保存
+## Raw Source Preservation
 
-每个摄取的项目都应保存其原始来源以用于溯源。
+Every ingested item should have its raw source preserved for provenance.
 
-**大小路由（通过 `gbrain files upload-raw` 自动）：**
-- **< 100 MB 文本/PDF**：保留在大脑仓库中（git 跟踪）在大脑页面旁边的 `.raw/` 并行目录中
-- **>= 100 MB 或媒体文件**（视频、音频、图像）：上传到云存储（Supabase Storage、S3 等），并在大脑仓库中留下 `.redirect.yaml` 指针。文件 >= 100 MB 使用 TUS 可恢复上传（6 MB 块，带重试）以确保可靠性。
+**Size routing (automatic via `gbrain files upload-raw`):**
+- **< 100 MB text/PDF**: stays in the brain repo (git-tracked) in a `.raw/`
+  sidecar directory alongside the brain page
+- **>= 100 MB OR media files** (video, audio, images): uploaded to cloud
+  storage (Supabase Storage, S3, etc.) with a `.redirect.yaml` pointer left
+  in the brain repo. Files >= 100 MB use TUS resumable upload (6 MB chunks
+  with retry) for reliability.
 
-**上传命令：**
+**Upload command:**
 ```bash
 gbrain files upload-raw <file> --page <page-slug> --type <type>
 ```
-返回 JSON：小文件为 `{storage: "git"}`，云为 `{storage: "supabase", storagePath, reference}`。
+Returns JSON: `{storage: "git"}` for small files, `{storage: "supabase", storagePath, reference}` for cloud.
 
-**`.redirect.yaml` 指针格式：**
+**The `.redirect.yaml` pointer format:**
 ```yaml
 target: supabase://brain-files/page-slug/filename.mp4
 bucket: brain-files
@@ -105,54 +122,97 @@ uploaded: 2026-04-11T...
 type: transcript
 ```
 
-**访问存储的文件：**
+**Accessing stored files:**
 ```bash
-gbrain files signed-url <storage-path>    # 生成 1 小时签名 URL
-gbrain files restore <dir>                # 下载回本地
+gbrain files signed-url <storage-path>    # Generate 1-hour signed URL
+gbrain files restore <dir>                # Download back to local
 ```
 
-这确保任何派生的大脑页面都可以追溯回其原始来源，并且大文件不会使 git 仓库膨胀。
+This ensures any derived brain page can be traced back to its original source,
+and large files don't bloat the git repo.
 
-## 梦境循环合成 / 模式目录 (v0.23)
+## Dream-cycle synthesize / patterns directories (v0.23)
 
-`gbrain dream` 的 `synthesize` 和 `patterns` 阶段写入从 `_brain-filing-rules.json` 的 `dream_synthesize_paths.globs` 数组获取的**固定允许列表**。编辑该 JSON 是合成子代理可以写入新目录的**唯一方法**：
+The `synthesize` and `patterns` phases of `gbrain dream` write to a
+**fixed allow-list** of paths sourced from `_brain-filing-rules.json`'s
+`dream_synthesize_paths.globs` array. Editing that JSON is the ONLY way
+to add a new directory the synthesis subagent may write to:
 
-| 输出类型 | Slug 模式 | 这里放什么 |
+| Output type | Slug pattern | What goes here |
 |-------------|--------------|----------------|
-| 反思 | `wiki/personal/reflections/YYYY-MM-DD-<topic>-<hash[:6]>` | 自我知识、情感处理、模式识别。来自用户的逐字引用，带有分析。 |
-| 会议纪要 | `wiki/meetings/YYYY-MM-DD-<meeting-topic>-<hash[:6]>` | 显式会议记录输入的逐场会议整理，包含目的、参会人、决策、行动项、开放问题和风险。 |
-| 会话整理 | `wiki/conversations/YYYY-MM-DD-<conversation-topic>-<hash[:6]>` | 显式 AI/Codex/ChatGPT/Claude 会话输入的逐场会话整理，保留上下文、意图、决策、输出、待办和可复用经验。 |
-| 原始想法 | `wiki/originals/ideas/YYYY-MM-DD-<idea>-<hash[:6]>` | 新框架、论文、心智模型、"概念主义 ideologist" 输出。捕获用户的确切措辞 — 这就是工件。 |
-| 人员丰富 | `wiki/people/<existing-slug>` | 从会话提及附加到现有人员页面时间线条目。新实质性人员的存根页面。 |
-| 模式 | `wiki/personal/patterns/<theme>` | 在 ≥3 个反思中检测到的跨会话主题。最高杠杆输出：如果反思引用 dated 内容，模式可以跨越 25 年。 |
-| 循环摘要 | `dream-cycle-summaries/YYYY-MM-DD` | 一个梦境循环产生的每个页面的索引。由编排器确定性地自动写入。 |
+| Reflection | `wiki/personal/reflections/YYYY-MM-DD-<topic>-<hash[:6]>` | Self-knowledge, emotional processing, pattern recognition. Verbatim quotes from the user, with analysis. |
+| Original idea | `wiki/originals/ideas/YYYY-MM-DD-<idea>-<hash[:6]>` | New frames, theses, mental models, "conceptive ideologist" outputs. Capture the user's exact phrasing — that's the artifact. |
+| People enrichment | `wiki/people/<existing-slug>` | Timeline entries appended to existing people pages from session mentions. Stub pages for new substantive people. |
+| Pattern | `wiki/personal/patterns/<theme>` | Cross-session theme detected across ≥3 reflections. Highest-leverage output: a pattern can span 25 years if reflections reference dated content. |
+| Cycle summary | `dream-cycle-summaries/YYYY-MM-DD` | Index of every page produced by one dream cycle. Auto-written deterministically by the orchestrator. |
 
-**合成输出的铁律：**
-1. 逐字引用用户。不要解释 memorable 的措辞。
-2. 强制交叉引用：每个新页面必须链接到现有大脑内容。
-3. Slug 纪律：仅小写字母数字和连字符，斜杠分隔。无下划线，无文件扩展名。
-4. 编辑的转录本产生新的 slug（内容哈希后缀更改）— 永远不会静默覆盖先前的反思。
+**Iron Law for synthesize output:**
+1. Quote the user verbatim. Quotation marks are ONLY for spans reproducible
+   EXACTLY from the source transcript — if you cannot reproduce a span
+   exactly, paraphrase it WITHOUT quotation marks. Do not paraphrase
+   memorable phrasings you can quote exactly. A mechanical, zero-LLM verify
+   pass re-checks every quote, speaker attribution and number after the write,
+   repairs what it can, and moves any sentence it cannot ground out of the
+   page into `unverified_claims` (`dream.synthesize.quote_verify`, default on).
+2. Cross-reference compulsively: every new page MUST link to existing brain content.
+3. Slug discipline: lowercase alphanumeric and hyphens only, slash-separated. NO underscores, NO file extensions.
+4. Edited transcripts produce NEW slugs (content-hash suffix changes) — never silently overwrite a prior reflection.
+5. Preserve concrete facts: carry the specific numbers, dates, dollar amounts,
+   names, and who-decided-what of the salient content you write about, exactly
+   as the source states them. Do not add routine logistics for their own sake.
+6. Ground every claim in the source. Attribute speculation as speculation
+   ("the user wondered whether…"), and never state a completion state or an
+   outcome the source does not show.
 
-## Takes 归属 (v0.32+)
+## Takes attribution (v0.32+)
 
-在写入 `<!--- gbrain:takes:begin -->` 围栏时，**holder** 列说明**谁相信**主张，而不是**关于谁**。超过 100K 生产 takes 的跨模态评估将归属评为 6.5/10 — holder/subject 混淆是 #1 错误。这六个规则是契约。带有工作示例的长格式位于 `docs/takes-vs-facts.md`。
+When writing a `<!--- gbrain:takes:begin -->` fence, the **holder** column says
+WHO BELIEVES the claim, not who it's ABOUT. Cross-modal eval over 100K
+production takes scored attribution at 6.5/10 — holder/subject confusion was
+the #1 error. These six rules are the contract. Long form with worked
+examples lives in `docs/takes-vs-facts.md`.
 
-1. **Holder ≠ subject。** 测试：这个人是否**说**或**清楚地暗示**这个？
-   - 是 → `holder = people/<slug>`
-   - 否，这是你对他们的分析 → `holder = brain`
-   - 示例："Garry 有英雄/救援者模式" → `holder=brain`（关于 Garry 的分析，不是 BY Garry 陈述）
-2. **原子主张。** 将复合行拆分为单独的行。每行一个主张。
-3. **放大 ≠ 认可。** 仅转推信号上限为 `weight 0.55`。用户共享了某些东西；他们不一定认可每个条款。
-4. **自我报告 ≠ 已验证。** "Saif 报告 7 位数" → `holder=people/saif`，`weight=0.75`，不是 `holder=world/1.0`。自我报告是一个强烈的个人信号，不是共识事实。
-5. **无虚假精度。** 仅使用 0.05 增量（`0.35`、`0.55`、`0.75`）。`0.74` 和 `0.82` 意味着不存在的校准精度。引擎层在插入时四舍五入 — 在你的围栏中匹配网格并避免警告。
-6. **"那又怎样"测试。** 跳过元数据风格的琐事（Twitter 句柄、关注者计数、明显的 bio 字段）。take 必须对某些未来查询具有承载性。
+1. **Holder ≠ subject.** The test: did this person SAY or CLEARLY IMPLY this?
+   - YES → `holder = people/<slug>`
+   - NO, it's your analysis OF them → `holder = brain`
+   - Example: "Garry has a hero/rescuer pattern" → `holder=brain` (analysis ABOUT Garry, not stated BY Garry)
+2. **Atomic claims.** Split compound rows into separate rows. One claim per row.
+3. **Amplification ≠ endorsement.** A retweet-only signal caps at `weight 0.55`.
+   The user shared something; they didn't necessarily endorse every clause.
+4. **Self-reported ≠ verified.** "Saif reports 7 figures" → `holder=people/saif`,
+   `weight=0.75`, NOT `holder=world/1.0`. Self-report is a strong individual
+   signal, not consensus fact.
+5. **No false precision.** Use 0.05 increments only (`0.35`, `0.55`, `0.75`).
+   `0.74` and `0.82` imply calibration accuracy that doesn't exist. The engine
+   layer rounds on insert — match the grid in your fence and avoid the warning.
+6. **"So what" test.** Skip metadata-style trivia (Twitter handles, follower
+   counts, obvious bio fields). A take has to be load-bearing for some future
+   query.
 
-**Holder 格式（在 v0.32 中作为解析器警告强制执行，v0.33+ 中作为错误）：**
-- `world`（共识事实，无个人索赔人）
-- `brain`（AI 推断，holder 真正模糊）
-- `people/<slug>`（个人陈述的信念）
-- `companies/<slug>`（机构事实，无个人索赔人）
+**Holder format (enforced as a parser warning in v0.32, error in v0.33+):**
+- `world` (consensus fact, no individual claimant)
+- `brain` (AI-inferred, holder genuinely ambiguous)
+- `people/<slug>` (individual's stated belief)
+- `companies/<slug>` (institutional fact, no individual claimant)
 
-Slug 使用标准语法（`[a-z0-9._-]+`）。`Garry`、`people/Garry-Tan` 和 `world/garry-tan` 都失败验证。
+Slugs use the standard grammar (`[a-z0-9._-]+`). `Garry`, `people/Garry-Tan`,
+and `world/garry-tan` all fail validation.
 
-**创始人描述自己公司的规则。** 当创始人描述他们自己的公司时，holder 是**创始人**，而不是公司。"我们可以达到 $10M ARR" 由 Bo Lu 说 → `holder=people/bo-lu`，不是 `holder=companies/clipboard-health`。公司不说话；他们的员工说话。
+**Write takes with `takes_add`, not by hand.** `takes_add` (and `takes_update`
+for an existing row) writes the row for you: it allocates the row number,
+accepts only the four kinds (`fact`, `take`, `bet`, `hunch`), and keeps the
+fence's markers and header canonical, so the page never needs fence repair.
+Give it a canonical holder: `world`, `brain`, `people/<slug>` or
+`companies/<slug>`, with a lowercase slug (`people/alice-example`,
+`companies/acme-example`). A display name (`Alice Example`), a bare first
+name or an assistant label is not a holder: gbrain rewrites assistant labels
+(`System`, `assistant`) to `brain`, resolves a name only when it matches
+exactly one `people/` or `companies/` page, and otherwise refuses the write
+or holds the file for a person to fix. Facts rows go through `remember` the same way. Write a fence
+table by hand only when the user asks for one, and then follow the exact
+format in `docs/guides/fence-format.md`.
+
+**Founder-describing-own-company rule.** When a founder describes their own
+company, the holder is the FOUNDER, not the company. "We can hit $10M ARR"
+said by Bo Lu → `holder=people/bo-lu`, NOT `holder=companies/clipboard-health`.
+Companies don't speak; their employees do.

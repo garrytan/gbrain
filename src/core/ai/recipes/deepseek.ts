@@ -56,7 +56,8 @@ export const deepseek: Recipe = {
   },
   touchpoints: {
     embedding: {
-      models: ['deepseek-embedding'],
+      models: [],
+      user_provided_models: true,
       default_dims: 1536,
       dims_options: [1536],
       cost_per_1m_tokens_usd: 0.001,
@@ -75,6 +76,7 @@ export const deepseek: Recipe = {
       supports_tools: true,
       supports_subagent_loop: true,
       supports_prompt_cache: false,
+      max_output_tokens: model=>['deepseek-flash','deepseek-v4-flash','deepseek-v4-pro'].includes(model)?393216:undefined,
       max_context_tokens: 128000,
       cost_per_1m_input_usd: 0.07,
       cost_per_1m_output_usd: 0.28,

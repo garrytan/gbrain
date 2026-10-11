@@ -48,7 +48,11 @@ describe('BRAIN_TOOL_ALLOWLIST', () => {
     // v0.29 added get_recent_salience + find_anomalies (read-only).
     // get_recent_transcripts is deliberately excluded — subagent calls always
     // have ctx.remote=true, and the v0.29 trust gate rejects remote callers.
-    expect(BRAIN_TOOL_ALLOWLIST.size).toBe(13);
+    expect(BRAIN_TOOL_ALLOWLIST.size).toBe(16);
+    expect(BRAIN_TOOL_ALLOWLIST.has('list_skills')).toBe(true);
+    expect(BRAIN_TOOL_ALLOWLIST.has('get_skill')).toBe(true);
+    expect(BRAIN_TOOL_ALLOWLIST.has('add_timeline_entry')).toBe(true);
+    expect(BRAIN_TOOL_ALLOWLIST.has('add_link')).toBe(false);
     expect(BRAIN_TOOL_ALLOWLIST.has('query')).toBe(true);
     expect(BRAIN_TOOL_ALLOWLIST.has('search')).toBe(true);
     expect(BRAIN_TOOL_ALLOWLIST.has('get_page')).toBe(true);

@@ -70,6 +70,8 @@ export async function importStructuredDocument(
   relativePath: string,
   opts: {
     noEmbed?: boolean;
+    checkOnly?: boolean;
+    forceRechunk?: boolean;
     sourceId?: string;
     activePack?: { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string> }> };
   } = {},
@@ -128,6 +130,8 @@ export async function importStructuredDocument(
   process.stderr.write(`[pmbrain document-import] ${JSON.stringify({ path: relativePath, ...summary })}\n`);
   const importOptions = {
     noEmbed: opts.noEmbed,
+    checkOnly: opts.checkOnly,
+    forceRechunk: opts.forceRechunk,
     sourceId: opts.sourceId,
     activePack: opts.activePack,
     filename: title,

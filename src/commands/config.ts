@@ -62,14 +62,16 @@ export async function switchEmbeddingModel(
   if (previousModel === nextModel) {
     await engine.unsetConfig('embedding_model');
     await engine.unsetConfig('embedding_dimensions');
+    const configuredDimensions = current.embedding_dimensions ?? 0;
+    if (configuredDimensions > 0) {
+      const { alignEmbeddingDimension } = await import('../core/embedding-dimension-alignment.ts');
+      await alignEmbeddingDimension(engine, configuredDimensions, { targetModel: nextModel });
+    }
     const stale = await engine.countStaleChunks();
     if (stale === 0) {
       console.log(`Embedding model is already ${nextModel}; no re-embedding needed.`);
       return;
     }
-    // A prior migration may have committed the new model/dimension and then
-    // stopped while re-embedding. Re-running the exact command must resume the
-    // stale rows instead of treating the matching config as completion.
     const { runEmbedCore } = await import('./embed.ts');
     const result = await runEmbedCore(engine, { stale: true, catchUp: true });
     console.log(

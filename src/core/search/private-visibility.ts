@@ -100,3 +100,7 @@ export async function resolveExcludePrivatePages(
   }
   return !expose;
 }
+
+export function privateLinkOriginFilterFragment(linkAlias: string): string {
+  return `(${linkAlias}.origin_page_id IS NULL OR EXISTS (SELECT 1 FROM pages origin_private WHERE origin_private.id=${linkAlias}.origin_page_id AND ${privatePagesFilterFragment('origin_private')}))`;
+}

@@ -11,6 +11,7 @@
  */
 
 import express from 'express';
+import { withDatabasePriority } from '../product/database/priority';
 import type { Request, Response, NextFunction } from 'express';
 import type { Server as HttpServer } from 'node:http';
 import cookieParser from 'cookie-parser';
@@ -119,6 +120,7 @@ import {
   writePrivateFile,
 } from '../core/chatgpt-tunnel.ts';
 import { registerPmbrainAdminRoutes } from './pmbrain-admin-routes.ts';
+import { ProductTaskRuntime } from '../product/tasks/runtime.ts';
 import { ADMIN_DREAM_SCHEDULE_CHECK_MS } from './pmbrain-admin-support.ts';
 import { bindResolveIpcForServe } from '../mcp/resolve-ipc-binding.ts';
 export {
@@ -395,15 +397,27 @@ export async function probeHealth(
   }
 }
 
-function waitForHttpServerClose(server: HttpServer, engine: BrainEngine): Promise<void> {
+export function waitForHttpServerClose(server: HttpServer, engine: BrainEngine, beforeDisconnect?: () => Promise<void>): Promise<void> {
   return new Promise((resolve, reject) => {
     let settled = false;
+    let stopping = false;
+    let desktopShutdown = false;
+    let beforeDisconnectPromise:Promise<void>|undefined;
+    const stopTasks=()=>beforeDisconnectPromise??=(beforeDisconnect?.()??Promise.resolve());
+    const activeResponses=new Set<import('node:http').ServerResponse>();
+    const onRequest=(_request:import('node:http').IncomingMessage,response:import('node:http').ServerResponse)=>{
+      if(response.writableEnded)return;
+      activeResponses.add(response);
+      response.once('close',()=>activeResponses.delete(response));
+    };
 
     const cleanup = () => {
       server.off('error', onError);
       server.off('close', onClose);
       process.off('SIGINT', onSigint);
       process.off('SIGTERM', onSigterm);
+      process.off('message', onMessage);
+      server.off('request',onRequest);
     };
 
     const finish = async (err?: Error) => {
@@ -411,9 +425,14 @@ function waitForHttpServerClose(server: HttpServer, engine: BrainEngine): Promis
       settled = true;
       cleanup();
       try {
+        await stopTasks();
+        if(stopping)console.error('PMBrain HTTP server: background tasks stopped');
         const { awaitPendingVolunteerEventWrites } = await import('../core/context/volunteer-events.ts');
         await awaitPendingVolunteerEventWrites();
+        if(stopping)console.error('PMBrain HTTP server: pending writes flushed');
         await engine.disconnect();
+        if(stopping)console.error('PMBrain HTTP server: database closed');
+        if(stopping&&process.connected)process.disconnect?.();
       } catch (disconnectErr) {
         if (!err) {
           reject(disconnectErr);
@@ -422,25 +441,41 @@ function waitForHttpServerClose(server: HttpServer, engine: BrainEngine): Promis
       }
       if (err) reject(err);
       else resolve();
+      if(desktopShutdown)setImmediate(()=>process.exit(err?1:0));
     };
 
     const shutdown = (signal: string) => {
+      if(stopping)return;
+      stopping=true;
+      desktopShutdown=signal==='desktop IPC';
       console.error(`PMBrain HTTP server: graceful shutdown (${signal})`);
       server.close((err) => {
         if (err) void finish(err);
         else void finish();
       });
+      server.closeIdleConnections();
+      void stopTasks().then(()=>{
+        console.error('PMBrain HTTP server: task drain complete; closing HTTP connections');
+        for(const response of activeResponses)response.destroy();
+        server.closeAllConnections();
+        void finish();
+      },error=>finish(error instanceof Error?error:new Error(String(error))));
     };
 
     const onError = (err: Error) => { void finish(err); };
     const onClose = () => { void finish(); };
     const onSigint = () => shutdown('SIGINT');
     const onSigterm = () => shutdown('SIGTERM');
+    const onMessage=(message:unknown)=>{
+      if(process.send&&message&&typeof message==='object'&&(message as {type?:unknown}).type==='pmbrain:shutdown')shutdown('desktop IPC');
+    };
 
     server.on('error', onError);
     server.on('close', onClose);
     process.once('SIGINT', onSigint);
     process.once('SIGTERM', onSigterm);
+    process.on('message',onMessage);
+    server.on('request',onRequest);
   });
 }
 
@@ -804,6 +839,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   let pgliteBusy = false;
   let pgliteConnected = true;
   let pgliteReconnectPromise: Promise<void> | null = null;
+  const productTasks = new ProductTaskRuntime(engine);
   const reconnectPglite = engine.kind === 'pglite' && config
     ? async () => {
         if (pgliteConnected) return;
@@ -840,6 +876,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     ? {
         acquireExclusive: () => pgliteRunCoordinator!.acquire(),
         beforeSpawn: async () => {
+          await productTasks.pauseAndDrain();
           pgliteBusy = true;
           pgliteConnected = false;
           try {
@@ -855,6 +892,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
           // no database and makes the next user action look corrupted.
           try {
             await reconnectPglite?.();
+            await productTasks.resume();
           } finally {
             // A failed reconnect remains safely unavailable through
             // !pgliteConnected, but must not masquerade as a running child.
@@ -958,6 +996,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
 
   // Express 5 app
   const app = express();
+  app.use((req, _res, next) => withDatabasePriority(req.path.startsWith('/mcp') ? 1 : 0, next));
   // v0.41.3 (T8): configurable trust-proxy via GBRAIN_HTTP_TRUST_PROXY env.
   // Default 'loopback' (trust Caddy/Tailscale on the same host) preserves
   // pre-v0.41.3 behavior. Operators behind Fly.io / Render / Vercel / nginx
@@ -1366,7 +1405,8 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       const canCancelRun = req.method === 'POST' && /^\/runs\/[^/]+\/cancel$/.test(req.path);
       const canReadTaskCenter = req.method === 'GET' && req.path === '/task-center';
       const canRecoverPgliteOwner = req.method === 'POST' && req.path === '/pglite-owner/terminate';
-      if (canReadRun || canCancelRun || canReadTaskCenter || canRecoverPgliteOwner) {
+      const canAdjustResources=req.method==='POST'&&req.path==='/console/resource-stop';
+      if (canReadRun || canCancelRun || canReadTaskCenter || canRecoverPgliteOwner || canAdjustResources) {
         next();
         return;
       }
@@ -1509,6 +1549,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     getPgliteConnected: () => pgliteConnected,
     reconnectPglite,
     ensureAdminWorkerStarted,
+    productTasks,
   });
 
 
@@ -2942,6 +2983,7 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
 
   let httpServer: HttpServer;
   try {
+    await productTasks.start();
     httpServer = await listenHttpServer(app, port, bind, () => {
     console.error(`
 ╔══════════════════════════════════════════════════════╗
@@ -2987,6 +3029,7 @@ ${renderAdminTokenFooter({ suppressBootstrapPrint, bootstrapFromEnv, bootstrapTo
     }
     });
   } catch (error) {
+    await productTasks.close();
     resolveIpcBinding.close();
     throw error;
   }
@@ -2998,16 +3041,16 @@ ${renderAdminTokenFooter({ suppressBootstrapPrint, bootstrapFromEnv, bootstrapTo
     console.error('[serve-http] diagnostic-mode active: Dream schedule timer not started; Supervisor auto-start disabled');
   } else {
     const {startWritebackHarvester}=await import('../core/facts/writeback-harvest.ts');
-    const stopWriteback=startWritebackHarvester(engine);
+    const stopWriteback=withDatabasePriority(3, () => startWritebackHarvester(engine));
     httpServer.once('close',stopWriteback);
     const dreamScheduleTimer = setInterval(
-      () => void checkScheduledDream(),
+      () => void withDatabasePriority(3, checkScheduledDream),
       ADMIN_DREAM_SCHEDULE_CHECK_MS,
     );
     dreamScheduleTimer.unref?.();
     httpServer.once('close', () => clearInterval(dreamScheduleTimer));
-    void checkScheduledDream();
+    void withDatabasePriority(3, checkScheduledDream);
   }
 
-  await waitForHttpServerClose(httpServer, engine);
+  await waitForHttpServerClose(httpServer, engine, () => productTasks.close());
 }

@@ -48,6 +48,11 @@ jobs:
       - name: Install Admin dependencies
         working-directory: admin
         run: bun install --frozen-lockfile
+      - name: Install Desktop type dependencies
+        working-directory: desktop
+        run: bun install --frozen-lockfile --ignore-scripts
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
       - run: bun run verify
 
   serial-tests:
@@ -67,6 +72,11 @@ jobs:
           path: ~/.bun/install/cache
           key: bun-cache-${{ runner.os }}-${{ hashFiles('bun.lock') }}
       - run: bun install --frozen-lockfile
+      - name: Install Desktop type dependencies
+        working-directory: desktop
+        run: bun install --frozen-lockfile --ignore-scripts
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
       - run: bun run test:serial
 
   slow-eval-longmemeval:
@@ -202,14 +212,6 @@ jobs:
       - name: Install Admin dependencies
         working-directory: admin
         run: bun install --frozen-lockfile
-      - run: bun run build:admin
-      - name: Verify generated Admin and release files are committed
-        shell: pwsh
-        run: |
-          git diff --exit-code -- admin/dist src/admin-embedded.ts release-manifest.json
-          if ($LASTEXITCODE -ne 0) {
-            throw "Generated files are stale. Run 'bun run build:admin' and commit admin/dist, src/admin-embedded.ts, and release-manifest.json."
-          }
       - name: Install Desktop dependencies
         working-directory: desktop
         run: bun install --trust

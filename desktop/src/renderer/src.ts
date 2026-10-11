@@ -37,6 +37,7 @@ declare global {
 const $ = <T extends HTMLElement>(selector: string) => document.querySelector<T>(selector)!;
 let state: DesktopSetupState | null = null;
 let latestSystemSettings: DesktopSystemSettingsState | null = null;
+let themeSource: DesktopTheme = 'system';
 let lastResult = '';
 let advancedModelsLoaded = false;
 let advancedOverrides: Partial<Record<AdvancedModelTier, string>> = {};
@@ -74,6 +75,7 @@ const advancedPhaseProviderModels: Record<AdvancedModelPhase, string[]> = {
   synthesize_concepts: [],
   consolidate: [],
   conversation_facts_backfill: [],
+  capture_entities: [],
   propose_takes: [],
   grade_takes: [],
   calibration_profile: [],
@@ -116,21 +118,23 @@ function clearNotices(): void {
   setNotice('success');
 }
 
-type Panel = 'basic' | 'models' | 'integrations' | 'system' | 'updates' | 'repair' | 'recovery';
+type Panel = 'basic' | 'models' | 'integrations' | 'system' | 'desktop-behavior' | 'updates' | 'repair' | 'recovery';
 
 const PANEL_COPY: Record<Panel, { eyebrow: string; title: string }> = {
   basic: { eyebrow: 'DESKTOP SETTINGS / 01', title: '配置数据库、原始资料与主源' },
   models: { eyebrow: 'DESKTOP SETTINGS / 02', title: '配置普通模型与向量模型' },
   integrations: { eyebrow: 'MCP / 03', title: '把 PMBrain 接入 AI 客户端' },
   system: { eyebrow: 'SYSTEM / 04', title: '管理桌面连接与系统行为' },
+  'desktop-behavior': { eyebrow: 'PREFERENCES', title: '启动' },
   updates: { eyebrow: 'UPDATES / 05', title: '保持桌面端安全更新' },
   repair: { eyebrow: 'REPAIR / 06', title: '软件修复' },
   recovery: { eyebrow: 'RECOVERY', title: '恢复 PMBrain 本地服务' },
 };
 
-function switchPanel(target: Panel): void {
+export function switchPanel(target: Panel, notify = true): void {
+  if (notify) window.dispatchEvent(new CustomEvent('pmbrain:settings-panel', { detail: target }));
   document.querySelectorAll('.rail-item').forEach((item) => item.classList.toggle('active', (item as HTMLElement).dataset.target === target));
-  document.querySelectorAll('.panel').forEach((panel) => panel.classList.toggle('active', panel.id === `panel-${target}`));
+  document.querySelectorAll('.desktop-settings .panel').forEach((panel) => panel.classList.toggle('active', panel.id === `panel-${target}`));
   const copy = PANEL_COPY[target];
   $('#page-eyebrow').textContent = state?.setup.needsSetup && target === 'basic' ? 'FIRST RUN / 01' : copy.eyebrow;
   $('#page-title').textContent = state?.setup.needsSetup && target === 'basic'
@@ -138,9 +142,16 @@ function switchPanel(target: Panel): void {
     : copy.title;
 }
 
+export function activateSettingsPanel(target: Panel, notify = false): void {
+  switchPanel(target, notify);
+  if (target === 'models' && ($<HTMLDetailsElement>('#advanced-model-settings')).open) void loadAdvancedModels(true);
+  if (target === 'integrations') refreshIntegrationPanel();
+  if (target === 'repair') void loadPgliteUpgradeBackups();
+}
+
 function renderTheme(theme: DesktopThemeState): void {
   document.documentElement.dataset.theme = theme.resolved;
-  ($<HTMLSelectElement>('#system-theme-select')).value = theme.source;
+  themeSource = theme.source;
 }
 
 function renderStartupProgress(progress: StartupProgress): void {
@@ -319,6 +330,7 @@ const ADVANCED_PHASES = [
   'synthesize_concepts',
   'consolidate',
   'conversation_facts_backfill',
+  'capture_entities',
   'propose_takes',
   'grade_takes',
   'calibration_profile',
@@ -331,6 +343,7 @@ const ADVANCED_PHASE_LABELS: Record<AdvancedModelPhase, string> = {
   synthesize_concepts: '概念合成',
   consolidate: '知识合并',
   conversation_facts_backfill: '对话事实回填',
+  capture_entities: '识别实体',
   propose_takes: '观点提炼',
   grade_takes: '观点评价',
   calibration_profile: '校准画像',
@@ -1358,7 +1371,8 @@ function renderSystemSettings(next: DesktopSystemSettingsState): void {
   const mode = next.preferences.networkMode;
   $<HTMLInputElement>(`#network-mode-${mode}`).checked = true;
   $<HTMLInputElement>('#launch-at-login').checked = next.launchAtLogin;
-  $<HTMLSelectElement>('#close-behavior').value = next.preferences.closeBehavior;
+  $<HTMLInputElement>('#start-minimized').checked = next.preferences.startMinimized;
+  $<HTMLInputElement>('#close-to-tray').checked = next.preferences.closeBehavior !== 'quit';
 
   const select = $<HTMLSelectElement>('#shared-address');
   const placeholder = document.createElement('option');
@@ -1418,15 +1432,29 @@ function renderSystemSettings(next: DesktopSystemSettingsState): void {
   updateSystemSettingsAvailability();
 }
 
+const DESKTOP_SETUP_NOTE = '请先在“基础配置”完成数据库与知识目录设置，再保存系统设置。';
+
 function updateSystemSettingsAvailability(): void {
-  const button = $<HTMLButtonElement>('#save-system-settings');
+  const buttons = ['#save-system-settings']
+    .map((selector) => document.querySelector<HTMLButtonElement>(selector))
+    .filter((button): button is HTMLButtonElement => button !== null);
+  const startupSwitches = ['#launch-at-login', '#start-minimized', '#close-to-tray']
+    .map((selector) => document.querySelector<HTMLInputElement>(selector))
+    .filter((input): input is HTMLInputElement => input !== null);
+  const desktopNote = $('#desktop-behavior-note');
   if (state?.setup.needsSetup !== false) {
-    button.disabled = true;
-    $('#system-save-note').textContent = '请先在“基础配置”完成数据库与知识目录设置，再保存系统设置。';
+    for (const button of buttons) button.disabled = true;
+    for (const input of startupSwitches) input.disabled = true;
+    $('#system-save-note').textContent = DESKTOP_SETUP_NOTE;
+    desktopNote.textContent = DESKTOP_SETUP_NOTE;
     return;
   }
-  if (!button.classList.contains('busy')) button.disabled = false;
+  for (const button of buttons) {
+    if (!button.classList.contains('busy')) button.disabled = false;
+  }
+  for (const input of startupSwitches) input.disabled = false;
   $('#system-save-note').textContent = latestSystemSettings?.warning || '';
+  if (desktopNote.textContent === DESKTOP_SETUP_NOTE) desktopNote.textContent = '';
 }
 
 function applySystemSettingsState(next: DesktopSystemSettingsState): void {
@@ -1538,12 +1566,12 @@ function currentSystemSettingsPayload(): DesktopSystemSettingsPayload {
   const mode = selectedNetworkMode();
   const address = selectedNetworkAddress();
   return {
-    theme: $<HTMLSelectElement>('#system-theme-select').value as DesktopTheme,
+    theme: themeSource,
     networkMode: mode,
     sharedAdapter: address.adapterName,
     sharedIp: address.address,
     launchAtLogin: $<HTMLInputElement>('#launch-at-login').checked,
-    closeBehavior: $<HTMLSelectElement>('#close-behavior').value as 'tray' | 'quit',
+    closeBehavior: $<HTMLInputElement>('#close-to-tray').checked ? 'tray' : 'quit',
   };
 }
 
@@ -1575,9 +1603,9 @@ async function restartSharedGateway(): Promise<void> {
   }
 }
 
-async function saveSystemSettings(): Promise<void> {
+async function saveSystemSettings(trigger?: HTMLButtonElement): Promise<void> {
   clearNotices();
-  const button = $<HTMLButtonElement>('#save-system-settings');
+  const button = trigger ?? $<HTMLButtonElement>('#save-system-settings');
   const payload = currentSystemSettingsPayload();
   const mode = payload.networkMode;
   const address = { adapterName: payload.sharedAdapter, address: payload.sharedIp };
@@ -1615,6 +1643,23 @@ async function saveSystemSettings(): Promise<void> {
   }
 }
 
+async function saveDesktopBehavior(): Promise<void> {
+  const note = $('#desktop-behavior-note');
+  if (note.textContent === DESKTOP_SETUP_NOTE) return;
+  const launchAtLogin = $<HTMLInputElement>('#launch-at-login').checked;
+  const startMinimized = $<HTMLInputElement>('#start-minimized').checked;
+  const closeBehavior = $<HTMLInputElement>('#close-to-tray').checked ? 'tray' : 'quit';
+  try {
+    const result = await window.pmbrainDesktop.saveDesktopBehavior({ launchAtLogin, startMinimized, closeBehavior });
+    applySystemSettingsState(result.state);
+    if (note.textContent !== DESKTOP_SETUP_NOTE) note.textContent = '';
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (latestSystemSettings) renderSystemSettings(latestSystemSettings);
+    note.textContent = message;
+  }
+}
+
 function populate(next: DesktopSetupState): void {
   const integrations = latestIntegrations.length > 0
     ? latestIntegrations
@@ -1632,9 +1677,9 @@ function populate(next: DesktopSetupState): void {
   renderProviderDropdown('embedding');
   syncAdvancedProviderOptions();
   const activePanel = (document.querySelector<HTMLElement>('.panel.active')?.id.replace('panel-', '') || 'basic') as Panel;
-  switchPanel(activePanel);
+  switchPanel(activePanel, false);
   $('#existing-config').hidden = setup.needsSetup;
-  ($<HTMLSelectElement>('#system-theme-select')).value = setup.current.theme;
+  themeSource = setup.current.theme;
   const radio = document.querySelector<HTMLInputElement>(`input[name="engine"][value="${setup.current.engine}"]`);
   if (radio) radio.checked = true;
   ($<HTMLInputElement>('#database-path')).value = setup.current.databasePath || setup.defaults.databasePath;
@@ -2170,6 +2215,7 @@ async function save(): Promise<void> {
   const knowledgeDirectory = ($<HTMLInputElement>('#knowledge-directory')).value;
   const knowledgeSourceId = ($<HTMLInputElement>('#knowledge-source-id')).value;
   const payload: SetupPayload = {
+    expectedModelRevision: state?.setup.modelRevision,
     engine: selectedEngine(),
     resetAdvancedModelRouting: false,
     confirmEmbeddingRebuild,
@@ -2950,6 +2996,9 @@ document.querySelectorAll<HTMLButtonElement>('.secret-toggle').forEach((button) 
 }));
 $('#save-setup').addEventListener('click', () => void save());
 $('#save-system-settings').addEventListener('click', () => void saveSystemSettings());
+for (const id of ['launch-at-login', 'start-minimized', 'close-to-tray']) {
+  $(`#${id}`).addEventListener('change', () => void saveDesktopBehavior());
+}
 $('#restart-shared-gateway').addEventListener('click', () => void restartSharedGateway());
 $('#memory-open-integrations').addEventListener('click', () => {
   switchPanel('integrations');
@@ -3245,3 +3294,19 @@ $('#daily-identity-merge').addEventListener('click', async () => {
   await refreshDailyPanel();
   if (result.entity_id) void renderDailyPersonCard(result.entity_id);
 });
+
+window.addEventListener('pmbrain:models-updated', () => { void window.pmbrainDesktop.getSetup().then(populate).catch(error => setNotice('error', String(error))); });
+
+export async function saveDatabaseSettings(): Promise<void> {
+  const knowledgeDirectory = ($<HTMLInputElement>('#knowledge-directory')).value;
+  const knowledgeSourceId = ($<HTMLInputElement>('#knowledge-source-id')).value;
+  const next = await window.pmbrainDesktop.saveSetup({
+    engine: selectedEngine(),
+    databasePath: ($<HTMLInputElement>('#database-path')).value,
+    databaseUrl: ($<HTMLInputElement>('#database-url')).value,
+    knowledgeDirectory,
+    knowledgeSourceId,
+    knowledgeSourceChanged: knowledgeDirectory.trim() !== loadedKnowledgeDirectory || knowledgeSourceId.trim() !== loadedKnowledgeSourceId,
+  });
+  populate(next);
+}

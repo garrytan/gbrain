@@ -12,7 +12,6 @@ const consoleSource = [
 ].map(path => readFileSync(path, 'utf8')).join('\n');
 const settingsSource = readFileSync(join(import.meta.dir, '..', 'admin', 'src', 'pages', 'Settings.tsx'), 'utf8');
 const naturalApiSource = readFileSync(join(import.meta.dir, '..', 'src', 'commands', 'natural-lang', 'api.ts'), 'utf8');
-const serveHttpSource = readFileSync(join(import.meta.dir, '..', 'src', 'commands', 'pmbrain-admin-routes.ts'), 'utf8');
 const importSource = readFileSync(join(import.meta.dir, '..', 'src', 'commands', 'import.ts'), 'utf8');
 
 describe('Admin folder import summary', () => {
@@ -162,9 +161,11 @@ describe('Admin import behavior contracts', () => {
   test('Admin re-walks files, reports each result and allows long folder imports', () => {
     expect(naturalApiSource).toContain('ADMIN_IMPORT_TIMEOUT_MS = 6 * 60 * 60 * 1000');
     expect(naturalApiSource).toContain("command.push('--fresh', '--report-files')");
-    expect(serveHttpSource).toContain('fresh: true');
-    expect(serveHttpSource).toContain('reportFiles: true');
-    expect(importSource).toContain("const reportFiles = args.includes('--report-files')");
+    const taskWorkerSource = readFileSync(join(import.meta.dir, '..', 'src/product/tasks/task-worker.ts'), 'utf8');
+    expect(taskWorkerSource).toContain('fresh: true');
+    expect(taskWorkerSource).toContain('reportFiles: true');
+    expect(taskWorkerSource).toContain('runStructuredImport(engine');
+    expect(importSource).toContain("reportFiles: args.includes('--report-files')");
     expect(importSource).toContain('[pmbrain import-file]');
   });
 });

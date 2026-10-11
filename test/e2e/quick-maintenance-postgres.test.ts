@@ -78,24 +78,24 @@ describeIfDB('Postgres Quick Maintenance — stale Source local_path', () => {
 });
 
 describeIfDB('Postgres Quick Maintenance - mention relation parity', () => {
-  test('recognizes concept aliases, preserves explicit links, and removes an inferred link after ambiguity appears', async () => {
+  test('recognizes company aliases, preserves explicit links, and removes an inferred link after ambiguity appears', async () => {
     await engine.executeRaw(
       `INSERT INTO sources (id, name, config, created_at)
        VALUES ('mention-source', 'mention-source', '{}'::jsonb, NOW())
        ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, config = EXCLUDED.config`,
     );
-    await engine.putPage('concepts/openai', {
-      type: 'note', title: '知识点-OpenAI', compiled_truth: 'OpenAI knowledge point.', timeline: '',
+    await engine.putPage('companies/openai', {
+      type: 'company', title: 'OpenAI', compiled_truth: 'OpenAI company.', timeline: '',
       frontmatter: { aliases: ['Open AI'] },
     }, { sourceId: 'mention-source' });
     await engine.putPage('notes/inferred', {
-      type: 'note', title: 'Inferred', compiled_truth: 'OpenAI released a model.', timeline: '', frontmatter: {},
+      type: 'note', title: 'Inferred', compiled_truth: 'Open AI released a model.', timeline: '', frontmatter: {},
     }, { sourceId: 'mention-source' });
     await engine.putPage('notes/explicit', {
       type: 'note', title: 'Explicit', compiled_truth: 'OpenAI released a model.', timeline: '', frontmatter: {},
     }, { sourceId: 'mention-source' });
     await engine.addLink(
-      'notes/explicit', 'concepts/openai', 'explicit Markdown relation', 'related_to', 'markdown',
+      'notes/explicit', 'companies/openai', 'explicit Markdown relation', 'related_to', 'markdown',
       undefined, undefined, { fromSourceId: 'mention-source', toSourceId: 'mention-source' },
     );
 
@@ -113,8 +113,8 @@ describeIfDB('Postgres Quick Maintenance - mention relation parity', () => {
       { slug: 'notes/inferred', link_source: 'mentions' },
     ]);
 
-    await engine.putPage('concepts/openai-duplicate', {
-      type: 'concept', title: 'OpenAI', compiled_truth: 'Duplicate name.', timeline: '', frontmatter: {},
+    await engine.putPage('companies/openai-duplicate', {
+      type: 'company', title: 'OpenAI', compiled_truth: 'Duplicate name.', timeline: '', frontmatter: { aliases: ['Open AI'] },
     }, { sourceId: 'mention-source' });
     const second = await runByMentionCore(engine, { sourceIdFilter: 'mention-source', quiet: true });
     expect(second.created).toBe(0);

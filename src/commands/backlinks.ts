@@ -12,6 +12,7 @@
 
 import { readFileSync, writeFileSync, readdirSync, statSync, lstatSync, existsSync } from 'fs';
 import { join, relative, basename } from 'path';
+import { readFile } from 'node:fs/promises';
 import { extractEntityRefs as canonicalExtractEntityRefs } from '../core/link-extraction.ts';
 import { createProgress, startHeartbeat } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
@@ -114,11 +115,8 @@ export function insertBacklinkEntry(content: string, bodyStart: number, entry: s
 export const insertTimelineEntry = insertBacklinkEntry;
 
 /** Scan a brain directory for back-link gaps */
-export function findBacklinkGaps(brainDir: string): BacklinkGap[] {
-  const gaps: BacklinkGap[] = [];
-
-  // Collect all markdown files
-  const allPages: { path: string; relPath: string; content: string }[] = [];
+function collectBacklinkPages(brainDir:string):{path:string;relPath:string}[]{
+  const allPages: { path: string; relPath: string }[] = [];
   function walk(dir: string) {
     for (const entry of readdirSync(dir)) {
       if (entry.startsWith('.')) continue;
@@ -127,54 +125,89 @@ export function findBacklinkGaps(brainDir: string): BacklinkGap[] {
         walk(full);
       } else if (entry.endsWith('.md') && !entry.startsWith('_')) {
         const relPath = relative(brainDir, full).replace(/\\/g, '/');
-        try {
-          allPages.push({ path: full, relPath, content: readFileSync(full, 'utf-8') });
-        } catch { /* skip unreadable */ }
+        allPages.push({ path: full, relPath });
       }
     }
   }
   walk(brainDir);
+  return allPages;
+}
 
-  // Build a lookup of existing pages by directory/slug
-  const pagesBySlug = new Map<string, { path: string; content: string }>();
-  for (const page of allPages) {
-    const slug = page.relPath.replace('.md', '');
-    pagesBySlug.set(slug, { path: page.path, content: page.content });
+class BacklinkBodyCache {
+  private entries=new Map<string,{text:string;bytes:number}>();
+  bytes=0;
+  constructor(private budget:number){}
+  get(path:string):string|undefined{
+    const entry=this.entries.get(path);
+    if(entry){this.entries.delete(path);this.entries.set(path,entry);}
+    return entry?.text;
   }
+  put(path:string,text:string):void{
+    const bytes=Buffer.byteLength(text)+text.length*2;
+    if(bytes>this.budget)return;
+    while(this.bytes+bytes>this.budget&&this.entries.size){
+      const key=this.entries.keys().next().value!;
+      this.bytes-=this.entries.get(key)!.bytes;this.entries.delete(key);
+    }
+    this.entries.set(path,{text,bytes});this.bytes+=bytes;
+  }
+}
 
-  // For each page, check entity references
-  for (const page of allPages) {
-    const refs = extractEntityRefs(page.content, page.relPath);
-    const sourceFilename = basename(page.relPath);
-    // LOCAL PATCH (paolo, 2026-05-12): dedupe (source, target) pairs within
-    // a single source page. extractEntityRefs returns one EntityRef per
-    // occurrence, so a source page that mentions the same target N times
-    // produced N identical gaps → N duplicate "Referenced in" lines on the
-    // target. The per-ref `hasBacklink(target.content, ...)` check reads a
-    // stale snapshot (target.content is frozen at this scope), so every
-    // iteration sees the same "no backlink yet" state and pushes another
-    // gap. Tracking seen target slugs per source caps gaps at one per pair.
-    const seen = new Set<string>();
+function* backlinkCandidates(content:string,relPath:string,paths:Map<string,string>){
+  const seen=new Set<string>();
+  for(const ref of extractEntityRefs(content,relPath)){
+    const slug=`${ref.dir}/${ref.slug}`;
+    if(seen.has(slug))continue;
+    seen.add(slug);
+    const path=paths.get(slug);
+    if(path)yield {path,gap:{sourcePage:relPath,targetPage:slug+'.md',entityName:ref.name,sourceTitle:extractPageTitle(content)}};
+  }
+}
 
-    for (const ref of refs) {
-      const targetSlug = `${ref.dir}/${ref.slug}`;
-      if (seen.has(targetSlug)) continue;
-      seen.add(targetSlug);
-      const target = pagesBySlug.get(targetSlug);
-      if (!target) continue; // target page doesn't exist
-
-      // Check if the target already has a back-link to this source page
-      if (!hasBacklink(target.content, sourceFilename)) {
-        gaps.push({
-          sourcePage: page.relPath,
-          targetPage: targetSlug + '.md',
-          entityName: ref.name,
-          sourceTitle: extractPageTitle(page.content),
-        });
-      }
+export function findBacklinkGaps(brainDir: string): BacklinkGap[] {
+  const pages=collectBacklinkPages(brainDir);
+  const paths=new Map(pages.map(page=>[page.relPath.replace('.md',''),page.path]));
+  const cache=new BacklinkBodyCache(8*1024**2);
+  const gaps:BacklinkGap[]=[];
+  for(const page of pages){
+    let content:string;
+    try{content=readFileSync(page.path,'utf8');}catch{continue;}
+    for(const {path,gap} of backlinkCandidates(content,page.relPath,paths)){
+      let target=cache.get(path);
+      if(target===undefined){try{target=readFileSync(path,'utf8');cache.put(path,target);}catch{continue;}}
+      if(!hasBacklink(target,basename(page.relPath)))gaps.push(gap);
     }
   }
+  return gaps;
+}
 
+export interface BacklinkScanOptions {
+  signal?:AbortSignal;
+  cacheBytes?:number;
+  onProgress?:(row:{processed:number;total:number;cachedBytes:number})=>void;
+}
+
+export async function findBacklinkGapsBounded(brainDir:string,options:BacklinkScanOptions={}):Promise<BacklinkGap[]>{
+  options.signal?.throwIfAborted();
+  const pages=collectBacklinkPages(brainDir);
+  const paths=new Map(pages.map(page=>[page.relPath.replace('.md',''),page.path]));
+  const cache=new BacklinkBodyCache(Math.max(0,options.cacheBytes??8*1024**2));
+  const gaps:BacklinkGap[]=[];
+  let processed=0;
+  for(const page of pages){
+    options.signal?.throwIfAborted();
+    let content:string;
+    try{content=await readFile(page.path,'utf8');}catch{processed++;continue;}
+    options.signal?.throwIfAborted();
+    for(const {path,gap} of backlinkCandidates(content,page.relPath,paths)){
+      options.signal?.throwIfAborted();
+      let target=cache.get(path);
+      if(target===undefined){try{target=await readFile(path,'utf8');cache.put(path,target);}catch{continue;}}
+      if(!hasBacklink(target,basename(page.relPath)))gaps.push(gap);
+    }
+    options.onProgress?.({processed:++processed,total:pages.length,cachedBytes:cache.bytes});
+  }
+  options.signal?.throwIfAborted();
   return gaps;
 }
 
@@ -218,6 +251,7 @@ export function fixBacklinkGaps(brainDir: string, gaps: BacklinkGap[], dryRun: b
 }
 
 export interface BacklinksOpts {
+  signal?:AbortSignal;
   action: 'check' | 'fix';
   dir: string;
   dryRun?: boolean;
@@ -251,7 +285,7 @@ export async function runBacklinksCore(opts: BacklinksOpts): Promise<BacklinksRe
   const stopHb = startHeartbeat(progress, 'walking pages for missing back-links…');
   let gaps: BacklinkGap[];
   try {
-    gaps = findBacklinkGaps(opts.dir);
+    gaps = await findBacklinkGapsBounded(opts.dir,{signal:opts.signal});
   } finally {
     stopHb();
     progress.finish();

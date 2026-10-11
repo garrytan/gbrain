@@ -5,6 +5,7 @@ import { tmpdir } from 'os';
 import type { BrainEngine } from '../core/engine.ts';
 import { DELETE_BATCH_SIZE } from '../core/engine-constants.ts';
 import { importFile, importImageFile, isImageFilePath } from '../core/import-file.ts';
+import type { SyncFileRuntime } from '../core/sync-file-runtime.ts';
 import { collectSyncableFiles } from './import.ts';
 import { createInterface } from 'readline';
 import {
@@ -182,6 +183,7 @@ async function promptYesNo(question: string): Promise<boolean> {
 }
 
 export interface SyncOpts {
+  fileRuntime?: SyncFileRuntime;
   repoPath?: string;
   dryRun?: boolean;
   full?: boolean;
@@ -1811,12 +1813,17 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
       // Reimport at new path (picks up content changes)
       const filePath = join(syncContentRoot, to);
       if (existsSync(filePath)) {
-        const result = opts.includeOffice && isOfficeFilePath(to)
+        const result = opts.fileRuntime
+          ? await opts.fileRuntime.importFile(filePath, to, { noEmbed, sourceId: opts.sourceId, includeOffice: opts.includeOffice, includeImages: opts.includeImages, documentOcr: opts.documentOcr, activePack: syncActivePack })
+          : opts.includeOffice && isOfficeFilePath(to)
           ? await importOfficeFile(engine, filePath, to, { noEmbed, sourceId: opts.sourceId, documentOcr: opts.documentOcr, activePack: syncActivePack })
           : opts.includeImages && isImageFilePath(to)
             ? await importImageFile(engine, filePath, to, { noEmbed, sourceId: opts.sourceId, forceOcr: opts.documentOcr })
           : await importFile(engine, filePath, to, { noEmbed, sourceId: opts.sourceId, activePack: syncActivePack });
         if (result.status === 'imported') chunksCreated += result.chunks;
+        else if (opts.fileRuntime && result.error && result.error !== 'unchanged') {
+          failedFiles.push({ path: to, error: result.error });
+        }
         else if (result.status === 'partial') {
           chunksCreated += result.chunks;
           failedFiles.push({
@@ -1940,7 +1947,9 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
         // / addLink) target (sourceId, slug). Pre-fix the schema DEFAULT
         // 'default' was applied even for non-default sources, fabricating
         // duplicate rows that crashed bare-slug subqueries with Postgres 21000.
-        const runImport = () => opts.includeOffice && isOfficeFilePath(path)
+        const runImport = () => opts.fileRuntime
+          ? opts.fileRuntime.importFile(filePath, path, { noEmbed, sourceId: opts.sourceId, includeOffice: opts.includeOffice, includeImages: opts.includeImages, documentOcr: opts.documentOcr, activePack: syncActivePack })
+          : opts.includeOffice && isOfficeFilePath(path)
           ? importOfficeFile(eng, filePath, path, { noEmbed, sourceId: opts.sourceId, documentOcr: opts.documentOcr, activePack: syncActivePack })
           : opts.includeImages && isImageFilePath(path)
             ? importImageFile(eng, filePath, path, { noEmbed, sourceId: opts.sourceId, forceOcr: opts.documentOcr })
@@ -1956,6 +1965,7 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
           }
         };
         const result = await importWithIndexRepair();
+        if ('deferred' in result && result.deferred) { progressAt.last = Date.now(); return; }
         if (result.status === 'imported') {
           chunksCreated += result.chunks;
           pagesAffected.push(result.slug);
@@ -2085,7 +2095,8 @@ async function performSyncInner(engine: BrainEngine, opts: SyncOpts): Promise<Sy
     }
   }
 
-  committedImportSnapshot?.cleanup();
+  try { await opts.fileRuntime?.finish(); }
+  finally { committedImportSnapshot?.cleanup(); }
 
   // CODEX-3 (v0.22.13): head-drift gate. If git HEAD moved during the import
   // window (someone ran `git checkout` or `git pull` in another terminal /
@@ -2415,6 +2426,8 @@ async function performFullSync(
       strategy: opts.strategy,
       sourceId: opts.sourceId,
       checkpointKey: fullCheckpointKey,
+      fileRuntime: opts.fileRuntime,
+      runtime: opts.fileRuntime ? { signal: opts.fileRuntime.signal, onFile: async () => {} } : undefined,
       managedBookmark: true,
       exclude: opts.exclude,
     });

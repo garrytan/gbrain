@@ -24,6 +24,7 @@ import {
   type SourceSetupPolicy,
 } from './source-setup-policy.js';
 import { requiresFirstActivationAlignment } from './embedding-activation-policy.js';
+import { canHotUpdateRunningModels } from '../models/model-runtime-refresh.js';
 
 const DESKTOP_MIGRATION_ARGS = ['apply-migrations', '--yes', '--non-interactive', '--no-autopilot-install'];
 
@@ -58,14 +59,36 @@ export interface SetupControllerDependencies {
   syncModelDefaults: (options?: { resetAdvanced?: boolean }) => Promise<void>;
   sendStartupProgress: (progress: StartupProgress) => void;
   hideStartupProgress: () => void;
+  log?: (message: string) => void;
   waitEmbeddingRebuildChoice: () => Promise<'wait' | 'defer'>;
   applyTheme: (theme: DesktopTheme) => unknown;
+  reloadLiveModels: () => Promise<void>;
 }
 
 export class SetupController {
   private applying = false;
 
   constructor(private readonly dependencies: SetupControllerDependencies) {}
+
+  private async runLogged<T>(stage: string, operation: () => Promise<T>): Promise<T> {
+    const startedAt = Date.now();
+    const log = (result: string) => {
+      try {
+        this.dependencies.log?.(`setup ${stage} ${result}`);
+      } catch {
+        return;
+      }
+    };
+    log('started');
+    try {
+      const result = await operation();
+      log(`completed in ${Date.now() - startedAt}ms`);
+      return result;
+    } catch (error) {
+      log(`failed in ${Date.now() - startedAt}ms (${error instanceof Error ? error.name : 'unknown error'})`);
+      throw error;
+    }
+  }
 
   get inProgress(): boolean {
     return this.applying;
@@ -168,9 +191,9 @@ export class SetupController {
     );
   }
 
-  async currentState() {
+  async currentState(configurationOnly = false) {
     const setup = getSetupInfo();
-    if (!setup.needsSetup) {
+    if (!configurationOnly && !setup.needsSetup) {
       await this.repairLegacyMainSourcePath();
       const canonical = await this.readCanonicalMainSource().catch(() => null);
       if (canonical) {
@@ -198,9 +221,11 @@ export class SetupController {
     this.applying = true;
     try {
       const sourcePolicy = this.sourceSetupPolicy(payload);
-      if (!sourcePolicy.explicitSourceChange) await this.repairLegacyMainSourcePath();
+      if (!sourcePolicy.explicitSourceChange) {
+        await this.runLogged('repair-main-source', () => this.repairLegacyMainSourcePath());
+      }
       const canonical = !sourcePolicy.explicitSourceChange
-        ? await this.readCanonicalMainSource().catch(() => null)
+        ? await this.runLogged('read-main-source', () => this.readCanonicalMainSource()).catch(() => null)
         : null;
       const effectivePayload = canonical
         ? {
@@ -209,14 +234,14 @@ export class SetupController {
             knowledgeDirectory: canonical.localPath ?? payload.knowledgeDirectory,
           }
         : payload;
-      return await this.applyOnce(effectivePayload, sourcePolicy);
+      return await this.runLogged('apply-once', () => this.applyOnce(effectivePayload, sourcePolicy));
     } finally {
       this.applying = false;
     }
   }
 
   private async applyOnce(payload: SetupPayload, sourcePolicy: SourceSetupPolicy) {
-    await this.dependencies.ensureRuntimeReady();
+    await this.runLogged('ensure-runtime-ready', () => this.dependencies.ensureRuntimeReady());
     const setupBeforeSave = getSetupInfo();
     const databaseExistedBeforeSave = setupBeforeSave.current.engine === 'pglite'
       && Boolean(setupBeforeSave.current.databasePath && existsSync(setupBeforeSave.current.databasePath));
@@ -238,12 +263,41 @@ export class SetupController {
         + '必须在桌面端明确确认重新向量化后才能继续。',
       );
     }
+    if (canHotUpdateRunningModels({
+      sidecarReady: Boolean(this.dependencies.sidecar.current && this.dependencies.sidecar.state?.phase === 'ready'),
+      needsSetup: setupBeforeSave.needsSetup,
+      migrationRequired: needsDesktopMigration(app.getVersion()),
+      applySourceConfiguration: sourcePolicy.applySourceConfiguration,
+      payload,
+      current: setupBeforeSave.current,
+    })) {
+      const saved = saveSetup(payload);
+      try {
+        await this.dependencies.syncModelDefaults({ resetAdvanced: false });
+        await this.dependencies.reloadLiveModels();
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        throw new Error(`模型配置已保存，但运行中的服务没有刷新。${detail}`);
+      }
+      this.dependencies.applyTheme(getSetupInfo().current.theme);
+      const integrations = await listIntegrationsWithConnectionState(
+        this.dependencies.sidecar.current?.port,
+        this.dependencies.sidecar.current ?? undefined,
+      );
+      return {
+        setup: getSetupInfo(),
+        integrations,
+        port: this.dependencies.sidecar.current?.port,
+        mcpUrl: this.dependencies.sidecar.current?.mcpUrl,
+        backup: saved.backup,
+        reembeddingWarning: null,
+      };
+    }
     const hadRunningSidecar = Boolean(this.dependencies.sidecar.current);
-    await this.dependencies.sidecar.stop();
+    await this.runLogged('stop-sidecar', () => this.dependencies.sidecar.stop());
     let saved: ReturnType<typeof saveSetup>;
     let embeddingSwitchCommitted = false;
-    let embeddingRebuildQueued = false;
-    let embeddingRebuildTotal = 0;
+    let embeddingVectorsCleared = false;
     let reembeddingWarning: string | null = null;
     let migrationRequired = false;
     try {
@@ -254,10 +308,11 @@ export class SetupController {
       throw error;
     }
     try {
-      await this.dependencies.prepareConfiguredDatabase();
+      await this.runLogged('prepare-database', () => this.dependencies.prepareConfiguredDatabase());
       migrationRequired = needsDesktopMigration(app.getVersion());
       if (migrationRequired && saved.config.engine === 'pglite') {
-        await this.dependencies.pgliteBackup.ensureUpgradeBackup(saved.config.database_path);
+        await this.runLogged('backup-before-migration', () =>
+          this.dependencies.pgliteBackup.ensureUpgradeBackup(saved.config.database_path));
       }
       if (saved.needsEmbeddingDimensionProbe || saved.embeddingModelChanged) {
         this.dependencies.sendStartupProgress({
@@ -268,12 +323,12 @@ export class SetupController {
         });
         let probe: Awaited<ReturnType<typeof runCliChecked>>;
         try {
-          probe = await runCliChecked(this.dependencies.runtime(), [
+          probe = await this.runLogged('detect-embedding-dimension', () => runCliChecked(this.dependencies.runtime(), [
             'models',
             'detect-embedding-dimension',
             '--json',
             `--requested-dimensions=${saved.config.embedding_dimensions}`,
-          ]);
+          ]));
         } catch (error) {
           if (saved.config.embedding_model?.startsWith('custom-openai:')) {
             const baseUrl = saved.config.provider_touchpoint_base_urls?.['custom-openai']?.embedding
@@ -306,7 +361,8 @@ export class SetupController {
           title: '正在升级数据库',
           message: '检测到桌面版本更新，正在执行兼容升级。知识库与原始资料不会被删除。',
         });
-        await runCliChecked(this.dependencies.runtime(), DESKTOP_MIGRATION_ARGS);
+        await this.runLogged('run-database-migration', () =>
+          runCliChecked(this.dependencies.runtime(), DESKTOP_MIGRATION_ARGS));
       }
       this.dependencies.sendStartupProgress({
         visible: true,
@@ -314,18 +370,20 @@ export class SetupController {
         title: '正在保存模型配置',
         message: '正在应用普通模型与向量模型设置。',
       });
-      await this.dependencies.syncModelDefaults({ resetAdvanced: payload.resetAdvancedModelRouting === true });
+      await this.runLogged('sync-model-defaults', () =>
+        this.dependencies.syncModelDefaults({ resetAdvanced: payload.resetAdvancedModelRouting === true }));
       const knowledgeDirectory = saved.config.desktop?.knowledge_directory?.trim();
       const sourceId = saved.config.desktop?.knowledge_source_id?.trim();
       if (sourcePolicy.applySourceConfiguration && sourceId) {
         if (sourcePolicy.bindPath && knowledgeDirectory) {
           await ensureKnowledgeDirectory(knowledgeDirectory);
-          await runCliChecked(this.dependencies.runtime(), [
+          await this.runLogged('add-main-source', () => runCliChecked(this.dependencies.runtime(), [
             'sources', 'add', sourceId, '--path', knowledgeDirectory,
             '--name', basename(knowledgeDirectory), '--federated',
-          ]);
+          ]));
         }
-        await runCliChecked(this.dependencies.runtime(), ['sources', 'default', sourceId]);
+        await this.runLogged('set-main-source', () =>
+          runCliChecked(this.dependencies.runtime(), ['sources', 'default', sourceId]));
       }
       if (migrationRequired && saved.config.engine !== 'pglite') markDesktopMigration(app.getVersion());
       if (saved.embeddingModelActivated && requiresFirstActivationAlignment({
@@ -338,9 +396,9 @@ export class SetupController {
           title: '正在准备搜索索引',
           message: '正在按首次配置的向量模型对齐空向量库；知识页面、文本分块和原始资料不会被修改。',
         });
-        await runCliChecked(this.dependencies.runtime(), [
+        await this.runLogged('align-first-embedding-dimension', () => runCliChecked(this.dependencies.runtime(), [
           'models', 'align-embedding-dimension', '--yes', '--json', '--empty-only',
-        ]);
+        ]));
         embeddingSwitchCommitted = true;
       } else if (saved.embeddingModelActivated) {
         embeddingSwitchCommitted = true;
@@ -351,31 +409,24 @@ export class SetupController {
           title: '正在安全恢复原向量配置',
           message: '正在核对数据库实际维度并校正历史误标；不会清空或重新生成已有向量。',
         });
-        await runCliChecked(this.dependencies.runtime(), [
+        await this.runLogged('restore-legacy-embedding-config', () => runCliChecked(this.dependencies.runtime(), [
           'models', 'restore-legacy-embedding-config', '--json',
-        ]);
+        ]));
         embeddingSwitchCommitted = true;
       } else if (saved.embeddingModelChanged && !legacyEmbeddingRecoveryConfirmed) {
-        embeddingSwitchCommitted = true;
-        embeddingRebuildQueued = true;
-        try {
-          const statusResult = await runCliChecked(this.dependencies.runtime(), [
-            'models', 'embedding-dimension-status', '--json',
-          ]);
-          const status = JSON.parse(statusResult.stdout.trim().split(/\r?\n/).at(-1) || '{}') as {
-            existing_embeddings?: number | string;
-          };
-          const parsed = Number(status.existing_embeddings ?? 0);
-          if (Number.isFinite(parsed) && parsed >= 0) embeddingRebuildTotal = parsed;
-        } catch {
-          embeddingRebuildTotal = 0;
-        }
-        const { pauseEmbeddingRebuild } = await import('../../../../src/core/embedding-rebuild-state.js');
-        pauseEmbeddingRebuild({
-          model: String(saved.config.embedding_model ?? ''),
-          dimensions: Number(saved.config.embedding_dimensions ?? 0) || 1,
-          total: embeddingRebuildTotal,
+        this.dependencies.sendStartupProgress({
+          visible: true,
+          stage: 'migration',
+          title: '正在准备搜索索引',
+          message: '正在按新向量模型清除旧向量并对齐维度。知识页面、文本分块和原始资料不会被修改。',
         });
+        await this.runLogged('align-changed-embedding-dimension', () => runCliChecked(this.dependencies.runtime(), [
+          'models', 'align-embedding-dimension', '--yes', '--json', '--force-reembed',
+        ]));
+        embeddingSwitchCommitted = true;
+        embeddingVectorsCleared = true;
+        const { clearEmbeddingRebuildState, readEmbeddingRebuildState } = await import('../../../../src/core/embedding-rebuild-state.js');
+        if (readEmbeddingRebuildState()) clearEmbeddingRebuildState();
       }
     } catch (error) {
       if (!embeddingSwitchCommitted) restoreConfig(saved.snapshot);
@@ -386,11 +437,12 @@ export class SetupController {
       }
       throw error;
     }
-    await this.dependencies.sidecar.start(false);
+    await this.runLogged('restart-sidecar', () => this.dependencies.sidecar.start(false));
     const savedKnowledgeDirectory = saved.config.desktop?.knowledge_directory;
     const savedSourceId = saved.config.desktop?.knowledge_source_id;
     if (sourcePolicy.bindPath && savedKnowledgeDirectory && savedSourceId) {
-      await this.verifyConfiguredMainSource(savedSourceId, savedKnowledgeDirectory);
+      await this.runLogged('verify-main-source', () =>
+        this.verifyConfiguredMainSource(savedSourceId, savedKnowledgeDirectory));
     }
     if (sourcePolicy.applySourceConfiguration) await this.markMainSourcePathRepairComplete();
     if (migrationRequired && saved.config.engine === 'pglite') {
@@ -403,39 +455,23 @@ export class SetupController {
     // Read all sidecar-backed setup state before submitting the background
     // task. The task coordinator will briefly disconnect PGLite before its
     // CLI child starts; no post-submit database request may race that handoff.
-    const integrations = await listIntegrationsWithConnectionState(
+    const integrations = await this.runLogged('read-integration-state', () => listIntegrationsWithConnectionState(
       this.dependencies.sidecar.current?.port,
       this.dependencies.sidecar.current ?? undefined,
-    );
-    if (embeddingRebuildQueued) {
-      const { markEmbeddingRebuildRunning } = await import('../../../../src/core/embedding-rebuild-state.js');
-      const rebuildChoice = this.dependencies.waitEmbeddingRebuildChoice();
-      this.dependencies.sendStartupProgress({
-        visible: true,
-        stage: 'migration',
-        title: '正在准备搜索索引',
-        message: embeddingRebuildTotal > 0
-          ? `新模型已生效。向量索引待重建 ${embeddingRebuildTotal} 条。可稍后处理并进入 PMBrain，未完成的条目暂时不能语义搜索。`
-          : '新模型已生效。可稍后在任务中心继续重建向量索引。',
-        canDeferEmbeddingRebuild: true,
-        embeddingRebuildTotal,
-      });
-      const choice = await rebuildChoice;
+    ));
+    if (embeddingVectorsCleared) {
       const activeSidecar = this.dependencies.sidecar.current;
-      if (choice === 'wait') {
-        if (!activeSidecar || this.dependencies.sidecar.state?.phase !== 'ready') {
-          reembeddingWarning = '新模型已生效，但本地服务尚未就绪。已在任务中心留下暂停的重建任务。';
-        } else {
-          try {
-            await activeSidecar.adminRequest('/admin/api/runs/action', {
-              method: 'POST',
-              body: JSON.stringify({ action: 'embed_stale', catchUp: true, forceReembed: true }),
-            });
-            markEmbeddingRebuildRunning();
-          } catch (error) {
-            reembeddingWarning = '新模型已生效，但未能立即开始重建。请到任务中心点击继续。'
-              + ` 原因：${error instanceof Error ? error.message : String(error)}`;
-          }
+      if (!activeSidecar || this.dependencies.sidecar.state?.phase !== 'ready') {
+        reembeddingWarning = '新模型已生效，旧向量已清除，但本地服务尚未就绪。稍后的向量化会补上新向量。';
+      } else {
+        try {
+          await this.runLogged('submit-embedding-rebuild', () => activeSidecar.adminRequest('/admin/api/runs/action', {
+            method: 'POST',
+            body: JSON.stringify({ action: 'embed_stale', catchUp: true }),
+          }));
+        } catch (error) {
+          reembeddingWarning = '新模型已生效，旧向量已清除，但未能立即开始重新向量化。可稍后继续。'
+            + ` 原因：${error instanceof Error ? error.message : String(error)}`;
         }
       }
     }

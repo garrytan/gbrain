@@ -254,6 +254,44 @@ describe('MinionQueue: Stall Detection', () => {
     expect(r3.dead[0].status).toBe('dead');
   });
 
+  test('本进程还在执行的任务，锁时间过了也不会被领走重跑', async () => {
+    const running = await queue.add('sync', {});
+    const other = await queue.add('sync', {});
+    await engine.executeRaw('UPDATE minion_jobs SET max_stalled = 2 WHERE id IN ($1, $2)', [running.id, other.id]);
+    await queue.claim('running-token', 30000, 'default', ['sync']);
+    await queue.claim('other-token', 30000, 'default', ['sync']);
+    await engine.executeRaw(
+      "UPDATE minion_jobs SET lock_until = now() - interval '1 second' WHERE id IN ($1, $2)",
+      [running.id, other.id],
+    );
+    const { requeued, dead } = await queue.handleStalled([running.id]);
+    expect(requeued.map(job => job.id)).toEqual([other.id]);
+    expect(dead).toHaveLength(0);
+    const kept = await engine.executeRaw<{ status: string }>(
+      'SELECT status FROM minion_jobs WHERE id = $1',
+      [running.id],
+    );
+    expect(kept[0]?.status).toBe('active');
+  });
+
+  test('没单独设置超时的任务大约 5 分钟会被判死，设成 6 小时的任务继续执行', async () => {
+    const unlimited = await queue.add('sync', {});
+    const bounded = await queue.add('sync', {}, { timeout_ms: 6 * 60 * 60 * 1000 });
+    await queue.claim('unlimited-token', 30_000, 'default', ['sync']);
+    await queue.claim('bounded-token', 30_000, 'default', ['sync']);
+    await engine.executeRaw(
+      "UPDATE minion_jobs SET started_at = now() - interval '6 minutes' WHERE id IN ($1, $2)",
+      [unlimited.id, bounded.id],
+    );
+    const dead = await queue.handleWallClockTimeouts(30_000);
+    expect(dead.map(job => job.id)).toEqual([unlimited.id]);
+    const kept = await engine.executeRaw<{ status: string }>(
+      'SELECT status FROM minion_jobs WHERE id = $1',
+      [bounded.id],
+    );
+    expect(kept[0]?.status).toBe('active');
+  });
+
   test('max_stalled → dead', async () => {
     // max_stalled=0 means first stall = dead immediately (0+1 >= 0 is always true)
     const job = await queue.add('sync', {});
@@ -2468,7 +2506,8 @@ function makeProbeEngine(overrides: ProbeOverrides) {
             .executeRaw(sql, params);
         };
       }
-      return Reflect.get(target, prop, receiver);
+      const value=Reflect.get(target, prop, target);
+      return typeof value==='function'?value.bind(target):value;
     },
   }) as unknown as PGLiteEngine;
 }

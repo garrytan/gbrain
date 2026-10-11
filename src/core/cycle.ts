@@ -48,6 +48,8 @@ import { join } from 'path';
 import { hostname } from 'os';
 import { gbrainPath } from './config.ts';
 import type { BrainEngine } from './engine.ts';
+import type { MinionHandler } from './minions/types.ts';
+import { SyncFilesDeferred, type SyncFileRuntime } from './sync-file-runtime.ts';
 import { createProgress, type ProgressReporter } from './progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from './cli-options.ts';
 import { deleteLockRow, inspectLock, tryAcquireDbLock, type DbLockHandle } from './db-lock.ts';
@@ -102,6 +104,7 @@ export type CyclePhase =
   // brain-wide BudgetTracker and passes it through opts.budgetTracker
   // so the core's auto-wrap doesn't REPLACE it.
   | 'conversation_facts_backfill'
+  | 'capture_entities'
   | 'drift' | 'enrich_thin';
 
 export const ALL_PHASES: CyclePhase[] = [
@@ -129,6 +132,7 @@ export const ALL_PHASES: CyclePhase[] = [
   // the graph. Quick-cycle compatible: each invocation walks at most
   // BATCH_SIZE*10 chunks where edges_backfilled_at IS NULL or stale.
   'resolve_symbol_edges',
+  'capture_entities',
   'patterns',
   // v0.41 T9 — concept synthesis (global, pack-gated). Runs AFTER patterns
   // so the cluster pass sees fresh cross-session themes. Same pack-gate
@@ -179,6 +183,10 @@ export const ALL_PHASES: CyclePhase[] = [
   'purge',
 ];
 
+export const DEFAULT_PHASES = ALL_PHASES.filter(phase =>
+  !(['propose_takes', 'grade_takes', 'calibration_profile'] as CyclePhase[]).includes(phase),
+);
+
 /** Ordered stage partitions used by Source freshness and global maintenance. */
 export const SOURCE_PHASES: CyclePhase[] = ALL_PHASES.filter(
   phase => PHASE_SCOPE[phase] === 'source',
@@ -206,7 +214,7 @@ export function resolveCyclePhases(
   requested: CyclePhase[] | undefined,
   sourceId: string | undefined,
 ): CyclePhase[] {
-  if (!sourceId || sourceId === 'default') return requested ?? ALL_PHASES;
+  if (!sourceId || sourceId === 'default') return requested ?? DEFAULT_PHASES;
   if (requested === undefined) return SOURCE_FRESHNESS_PHASES;
   return requested;
 }
@@ -263,6 +271,7 @@ const NEEDS_LOCK_PHASES: ReadonlySet<CyclePhase> = new Set([
   'synthesize_concepts',
   // v0.41.11.0 — inserts facts + writes terminal audit rows; needs lock.
   'conversation_facts_backfill',
+  'capture_entities',
   'enrich_thin',
   'embed',
   'purge',
@@ -373,9 +382,14 @@ export interface CycleReport {
 }
 
 export interface CycleOpts {
+  captureEntitySlugs?: string[];
+  captureEntityBudget?: import('./cycle/capture-entities.ts').CaptureEntitiesOpts['budget'];
+  syncFileRuntime?: SyncFileRuntime;
+  afterSync?: (sourceId: string, root: string, result: import('../commands/sync.ts').SyncResult) => Promise<unknown>;
+  completedPhases?: PhaseResult[];
+  phaseCheckpoint?: (phases: PhaseResult[]) => Promise<void>;
   /** If true, no writes to filesystem or DB. All phases honor this. */
   dryRun?: boolean;
-  /** Defaults to ALL_PHASES. Pass a subset for --phase lint etc. */
   phases?: CyclePhase[];
   /**
    * Trusted caller override for pack-gated phases selected by a workflow
@@ -394,6 +408,7 @@ export interface CycleOpts {
   pull?: boolean;
   /** Include committed Office/PDF files in the sync phase. Default false. */
   includeOffice?: boolean;
+  syncConcurrency?: number;
   /**
    * Called between phases AND before runCycle returns. Awaited even
    * after phase failure. Hook exceptions are logged, never fatal.
@@ -450,6 +465,8 @@ export interface CycleOpts {
    * until the worker wedges (the 98-waiting-0-active incident on 2026-04-24).
    */
   signal?: AbortSignal;
+  embedBatchSize?: number;
+  getEmbedBatchSize?: () => number;
   /** Absolute deadline inherited from the owning Minion job. */
   deadlineAtMs?: number | null;
   /** Owning Minion job id for phase-created dream-inline private queues. */
@@ -475,9 +492,10 @@ export interface CycleOpts {
   /**
    * PMBrain Quick Maintenance: after the extract phase, also run the existing
    * deterministic by-mention linker (entity gazetteer → mentions edges).
-   * Full Dream leaves this unset so upstream phase semantics stay intact.
    */
   includeByMention?: boolean;
+  includeNer?: boolean;
+  refreshRelationsAfterGeneration?: boolean;
   /**
    * Optional compatibility cap for historical (non-priority) pages. Quick
    * Maintenance no longer sets a default page cap; explicit callers may still
@@ -494,6 +512,8 @@ export interface CycleOpts {
   includeHistoricalMarkdownCatchUp?: boolean;
   /** Optional compatibility cap; Quick leaves this unset and drains all old pages. */
   markdownCatchUpMaxHistorical?: number;
+  /** Replaces the entity-capture child handler. Production leaves this unset. */
+  captureEntitiesHandler?: MinionHandler;
 }
 
 /** Union sync + synthesis writes without turning "no producer ran" into []. */
@@ -503,6 +523,14 @@ export function resolveIncrementalExtractSlugs(
 ): string[] | undefined {
   if (syncSlugs === undefined && synthesizedSlugs === undefined) return undefined;
   return [...new Set([...(syncSlugs ?? []), ...(synthesizedSlugs ?? [])])];
+}
+
+export function mergeCaptureSlugs(
+  synthesized: string[] | undefined,
+  captured: readonly string[],
+): string[] | undefined {
+  if (synthesized === undefined && captured.length === 0) return undefined;
+  return [...new Set([...(synthesized ?? []), ...captured])];
 }
 
 // ─── Lock primitives ───────────────────────────────────────────────
@@ -807,11 +835,13 @@ export async function runPhaseLint(
   brainDir: string,
   dryRun: boolean,
   engine?: BrainEngine,
+  signal?: AbortSignal,
 ): Promise<PhaseResult> {
   try {
     const { runLintCore, resolveLintContentSanity } = await import('../commands/lint.ts');
     const result = await runLintCore({
       target: brainDir,
+      signal,
       fix: true,
       dryRun,
       contentSanity: await resolveLintContentSanity(engine),
@@ -846,7 +876,7 @@ export async function runPhaseLint(
   }
 }
 
-export async function runPhaseBacklinks(brainDir: string, dryRun: boolean): Promise<PhaseResult> {
+export async function runPhaseBacklinks(brainDir: string, dryRun: boolean, signal?:AbortSignal): Promise<PhaseResult> {
   try {
     // Maintenance cycles must not rewrite tracked brain pages with generated
     // "Referenced in" timeline bullets. The graph extractor/auto-link path is
@@ -856,6 +886,7 @@ export async function runPhaseBacklinks(brainDir: string, dryRun: boolean): Prom
     const { runBacklinksCore } = await import('../commands/backlinks.ts');
     const result = await runBacklinksCore({
       action: 'check',
+      signal,
       dir: brainDir,
       dryRun,
     });
@@ -979,6 +1010,10 @@ async function runPhaseSync(
   pull: boolean,
   willRunExtractPhase: boolean,
   includeOffice: boolean,
+  concurrency?: number,
+  fileRuntime?: SyncFileRuntime,
+  signal?: AbortSignal,
+  afterSync?: CycleOpts['afterSync'],
 ): Promise<SyncPhaseResult> {
   try {
     const { performSync } = await import('../commands/sync.ts');
@@ -1000,7 +1035,12 @@ async function runPhaseSync(
       includeOffice,
       includeImages: documentOcr,
       documentOcr,
+      concurrency,
+      fileRuntime,
+      workingTree: fileRuntime ? true : undefined,
+      signal,
     });
+    const git = !dryRun && afterSync && sourceId ? await afterSync(sourceId, brainDir, result) : undefined;
     const syncedCount = result.added + result.modified;
     const uncommittedCount = result.uncommitted
       ? result.uncommitted.added + result.uncommitted.modified + result.uncommitted.deleted
@@ -1022,11 +1062,13 @@ async function runPhaseSync(
         failedFiles: result.failedFiles ?? 0,
         syncStatus: result.status,
         dryRun,
+        ...(git ? { git } : {}),
         ...(result.uncommitted ? { uncommitted: result.uncommitted } : {}),
       },
       pagesAffected: result.pagesAffected,
     };
   } catch (e) {
+    if (e instanceof SyncFilesDeferred) throw e;
     return {
       phase: 'sync',
       status: 'fail',
@@ -1062,6 +1104,7 @@ async function runPhaseExtract(
     }
     // Incremental path: if sync told us which slugs changed, only extract those.
     // On a 54K-page brain this turns a 10-minute full walk into a sub-second pass.
+    await (await import('./pmbrain-adapters/entity-ingest-workflow.ts')).pruneEntityIngestLinks(engine,sourceId);
     const result = await runExtractCore(engine, {
       mode: 'all',
       dir: brainDir,
@@ -1253,6 +1296,8 @@ async function runPhaseEmbed(
   pageLimit?: number,
   reporter?: ProgressReporter,
   signal?: AbortSignal,
+  batchSize?: number,
+  getBatchSize?: () => number,
 ): Promise<PhaseResult> {
   try {
     const { loadConfig } = await import('./config.ts');
@@ -1283,6 +1328,8 @@ async function runPhaseEmbed(
       sourceId,
       pageLimit,
       signal,
+      batchSize,
+      getBatchSize,
       quiet: true,
       onProgress: (done, total, embedded) => {
         const safeTotal = Math.max(1, total);
@@ -1398,7 +1445,7 @@ async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<Phas
       };
     }
     const { purgeExpiredSources } = await import('./destructive-guard.ts');
-    const purgedSources = await purgeExpiredSources(engine);
+    const purgedSources = await purgeExpiredSources(engine, { batchSize: 1 });
     const purgedPages = await engine.purgeDeletedPages(SOFT_DELETE_TTL_HOURS_FOR_PURGE);
     const purgedClones = await purgeOrphanClones(SOFT_DELETE_TTL_HOURS_FOR_PURGE);
     // v0.36+ folded scope item +C: GC stale op_checkpoints rows.
@@ -1407,14 +1454,14 @@ async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<Phas
     let purgedCheckpoints = 0;
     try {
       const { purgeStaleCheckpoints } = await import('./op-checkpoint.ts');
-      purgedCheckpoints = await purgeStaleCheckpoints(engine, 7);
+      purgedCheckpoints = await purgeStaleCheckpoints(engine, 7, 100);
     } catch {
       // Non-fatal: op_checkpoints table may not exist yet on pre-v67 brains.
     }
     let purgedVolunteerEvents = 0;
     try {
       const { purgeStaleVolunteerEvents } = await import('./context/volunteer-events.ts');
-      purgedVolunteerEvents = await purgeStaleVolunteerEvents(engine, 90);
+      purgedVolunteerEvents = await purgeStaleVolunteerEvents(engine, 90, 100);
     } catch {
       // Non-fatal: schema 118 may not have been applied yet.
     }
@@ -1542,9 +1589,11 @@ export async function runCycle(
   opts: CycleOpts,
 ): Promise<CycleReport> {
   const start = performance.now();
-  const requestedPhases = opts.phases ?? ALL_PHASES;
-  const phases = resolveCyclePhases(opts.phases, opts.sourceId);
-  const excludedPhases = requestedPhases.filter(phase => !phases.includes(phase));
+  const requestedPhases = opts.phases ?? DEFAULT_PHASES;
+  const resolvedPhases = resolveCyclePhases(opts.phases, opts.sourceId);
+  const restored = (opts.completedPhases ?? []).filter(item => resolvedPhases.includes(item.phase));
+  const phases = resolvedPhases.filter(phase => !restored.some(item => item.phase === phase));
+  const excludedPhases = requestedPhases.filter(phase => !resolvedPhases.includes(phase));
   const dryRun = !!opts.dryRun;
   const pull = !!opts.pull;
   const timestamp = new Date().toISOString();
@@ -1560,6 +1609,11 @@ export async function runCycle(
     },
   }));
   const brainDir = opts.brainDir;
+  phaseResults.push(...restored);
+  const checkpoint = async () => {
+    await opts.phaseCheckpoint?.(phaseResults);
+    await safeYield(opts.yieldBetweenPhases);
+  };
 
   const skipNoBrainDir = (phase: CyclePhase): PhaseResult => ({
     phase,
@@ -1720,12 +1774,12 @@ export async function runCycle(
         phaseResults.push(skipNoBrainDir('lint'));
       } else {
         progress.start('cycle.lint');
-        const { result, duration_ms } = await timePhase(() => runPhaseLint(brainDir, dryRun, engine ?? undefined));
+        const { result, duration_ms } = await timePhase(() => runPhaseLint(brainDir, dryRun, engine ?? undefined, opts.signal));
         result.duration_ms = duration_ms;
         phaseResults.push(result);
         progress.finish();
       }
-      await safeYield(opts.yieldBetweenPhases);
+      await checkpoint();
     }
 
     // ── Phase 2: backlinks ──────────────────────────────────────
@@ -1735,21 +1789,22 @@ export async function runCycle(
         phaseResults.push(skipNoBrainDir('backlinks'));
       } else {
         progress.start('cycle.backlinks');
-        const { result, duration_ms } = await timePhase(() => runPhaseBacklinks(brainDir, dryRun));
+        const { result, duration_ms } = await timePhase(() => runPhaseBacklinks(brainDir, dryRun, opts.signal));
         result.duration_ms = duration_ms;
         phaseResults.push(result);
         progress.finish();
       }
-      await safeYield(opts.yieldBetweenPhases);
+      await checkpoint();
     }
 
     // ── Phase 3: sync ───────────────────────────────────────────
     // Track which slugs sync touched so extract can run incrementally,
     // and which slugs synthesize wrote so recompute_emotional_weight can
     // pick up the union of (sync ∪ synthesize) for v0.29 incremental mode.
-    let syncPagesAffected: string[] | undefined;
-    let syncAttempted = false;
+    let syncPagesAffected: string[] | undefined = (restored.find(item => item.phase === 'sync') as SyncPhaseResult | undefined)?.pagesAffected;
+    let syncAttempted = restored.some(item => item.phase === 'sync');
     let synthesizeWrittenSlugs: string[] | undefined;
+    let entityCaptureSlugs: string[] = [];
     let stopDbWrites = false;
     const noteSearchIndexAbort = (result: PhaseResult) => {
       if (result.status !== 'fail' || stopDbWrites) return;
@@ -1790,6 +1845,10 @@ export async function runCycle(
           pull,
           phases.includes('extract'),
           opts.includeOffice === true,
+          opts.syncConcurrency,
+          opts.syncFileRuntime,
+          opts.signal,
+          opts.afterSync,
         ));
         result.duration_ms = duration_ms;
         // Capture changed slugs for incremental extract.
@@ -1798,7 +1857,7 @@ export async function runCycle(
         noteSearchIndexAbort(result);
         progress.finish();
       }
-      await safeYield(opts.yieldBetweenPhases);
+      await checkpoint();
     }
 
     // ── Phase 4: synthesize (v0.23) ─────────────────────────────
@@ -1840,8 +1899,169 @@ export async function runCycle(
         }
         progress.finish();
       }
-      await safeYield(opts.yieldBetweenPhases);
+      await checkpoint();
     }
+
+    const refreshRelations = async (
+      engine: BrainEngine,
+      result: PhaseResult,
+      prioritySlugs?: string[],
+      limits?: { maxHistoricalPages?: number; nerSlugs?: string[] },
+    ) => {
+      const relationNerSlugs=new Set([...(prioritySlugs ?? []),...(limits?.nerSlugs ?? [])]);
+      checkAborted(opts.signal);
+      if (opts.includeHistoricalMarkdownCatchUp && !dryRun) {
+        try {
+          const { extractStaleFromDB } = await import('../commands/extract-stale.ts');
+          const catchUpStart = performance.now();
+          const catchUp = await extractStaleFromDB(engine, {
+            dryRun: false,
+            jsonMode: false,
+            includeFrontmatter: true,
+            catalogAware: true,
+            sourceIdFilter: filesystemSourceId,
+            catchUp: opts.markdownCatchUpMaxHistorical == null,
+            quiet: !getCliOptions().progressJson,
+            signal: opts.signal,
+            yieldDuringPhase: buildYieldDuringPhase(lock, opts.yieldDuringPhase),
+            maxPages: opts.markdownCatchUpMaxHistorical,
+          });
+          for(const ref of catchUp.processedSlugs)relationNerSlugs.add(ref.slug);
+          result.details = {
+            ...result.details,
+            linksCreated: Number(result.details.linksCreated ?? 0) + catchUp.linksCreated,
+            timelineCreated: Number(result.details.timelineCreated ?? 0) + catchUp.timelineCreated,
+            relationLinksCreated: Number(result.details.relationLinksCreated ?? 0) + catchUp.linksCreated,
+            relationTimelineCreated: Number(result.details.relationTimelineCreated ?? 0) + catchUp.timelineCreated,
+            relationPagesProcessed: Number(result.details.relationPagesProcessed ?? 0) + catchUp.pagesProcessed,
+            relationHistoricalRemaining: catchUp.staleRemaining,
+            relationUnresolvedReferences: catchUp.unresolvedReferences,
+            relationSkippedMissingTarget: catchUp.skippedMissingTarget,
+            relationSkippedCrossSource: catchUp.skippedCrossSource,
+            historical_relation_backfill: true,
+            // Additive compatibility marker for existing Admin/report readers.
+            historical_markdown_catch_up: true,
+          };
+          result.summary =
+            `${result.summary}; historical relations +${catchUp.linksCreated} link(s) ` +
+            `from ${catchUp.pagesProcessed} page(s) (${catchUp.staleRemaining} stale remaining, ` +
+            `${catchUp.unresolvedReferences + catchUp.skippedMissingTarget + catchUp.skippedCrossSource} unresolved/skipped)`;
+          result.duration_ms += Math.round(performance.now() - catchUpStart);
+          if (result.status === 'skipped' && catchUp.pagesProcessed > 0) {
+            result.status = 'ok';
+          }
+        } catch (e) {
+          checkAborted(opts.signal);
+          const message = e instanceof Error ? e.message : String(e);
+          if (isGinRepairAbortText(e)) {
+            result.status = 'fail';
+            result.error = makeErrorFromException(e);
+            result.details = { ...result.details, relation_backfill_error: message };
+            result.summary = message;
+          } else {
+            result.status = result.status === 'fail' ? 'fail' : 'warn';
+            result.details = { ...result.details, relation_backfill_error: message };
+            result.summary = `${result.summary}; historical relation backfill failed`;
+          }
+        }
+      }
+
+      if (result.error && isGinRepairAbortText(result.error.message)) return;
+      if (opts.includeByMention && !dryRun) {
+        try {
+          const { runByMentionCore } = await import('../commands/extract.ts');
+          const mentionStart = performance.now();
+          const mention = await runByMentionCore(engine, {
+            prioritySlugs,
+            maxHistoricalPages: limits && Object.prototype.hasOwnProperty.call(limits, 'maxHistoricalPages')
+              ? limits.maxHistoricalPages
+              : opts.byMentionMaxHistorical,
+            historicalTimeBudgetMs: opts.byMentionTimeBudgetMs,
+            sourceIdFilter: filesystemSourceId,
+            quiet: !getCliOptions().progressJson,
+            signal: opts.signal,
+            yieldDuringPhase: buildYieldDuringPhase(lock, opts.yieldDuringPhase),
+          });
+          for(const ref of mention.processedSlugs)relationNerSlugs.add(ref.slug);
+          const mentionMs = Math.round(performance.now() - mentionStart);
+          const prevLinks = Number(result.details.linksCreated ?? 0);
+          result.details = {
+            ...result.details,
+            linksCreated: prevLinks + mention.created,
+            mentionLinksCreated: Number(result.details.mentionLinksCreated ?? 0) + mention.created,
+            mentionLinksRemoved: Number(result.details.mentionLinksRemoved ?? 0) + mention.removed,
+            mentionPagesProcessed: Number(result.details.mentionPagesProcessed ?? 0) + mention.pages,
+            mentionPriorityPagesProcessed: Number(result.details.mentionPriorityPagesProcessed ?? 0) + mention.priorityPages,
+            mentionHistoricalPagesProcessed: Number(result.details.mentionHistoricalPagesProcessed ?? 0) + mention.historicalPages,
+            mentionHistoricalRemaining: mention.historicalRemaining,
+            mentionTimeBudgetReached: mention.timeBudgetReached,
+            mentionTimeBudgetMs: opts.byMentionTimeBudgetMs ?? null,
+            mentionAmbiguousNames: mention.ambiguousNames,
+            by_mention: true,
+          };
+          result.summary =
+            `${result.summary}; by-mention +${mention.created}/-${mention.removed} link(s) ` +
+            `(${mention.pages} page(s), ${mention.historicalRemaining} historical remaining)`;
+          result.duration_ms += mentionMs;
+          if (result.status === 'skipped' && mention.pages > 0) {
+            result.status = 'ok';
+          }
+        } catch (e) {
+          checkAborted(opts.signal);
+          const message = e instanceof Error ? e.message : String(e);
+          if (isGinRepairAbortText(e)) {
+            result.status = 'fail';
+            result.error = makeErrorFromException(e);
+            result.details = { ...result.details, by_mention_error: message };
+            result.summary = message;
+          } else {
+            result.status = result.status === 'fail' ? 'fail' : 'warn';
+            result.details = {
+              ...result.details,
+              by_mention_error: message,
+            };
+            result.summary = `${result.summary}; by-mention failed`;
+          }
+        }
+      }
+
+
+      if (result.error && isGinRepairAbortText(result.error.message)) return;
+      if (opts.includeNer && !dryRun) {
+        const started = performance.now();
+        try {
+          const { extractNerLinks } = await import('./extract-ner.ts');
+          const ner = await extractNerLinks(engine, {
+            sourceIdFilter: filesystemSourceId, signal: opts.signal,
+            yieldDuringPhase: buildYieldDuringPhase(lock, opts.yieldDuringPhase),
+            slugs: [...relationNerSlugs],
+          });
+          const { runMentionPass }=await import('./mentions/pass.ts');
+          const settled=await runMentionPass(engine,{sourceId:filesystemSourceId,slugs:[...relationNerSlugs],signal:opts.signal});
+          if(settled.state==='failed')throw new Error(settled.error);
+          result.details = {
+            ...result.details,
+            linksCreated: Number(result.details.linksCreated ?? 0) + ner.created,
+            nerLinksCreated: Number(result.details.nerLinksCreated ?? 0) + ner.created,
+            nerPagesProcessed: Number(result.details.nerPagesProcessed ?? 0) + ner.pages,
+            nerPackUnavailable: ner.pack_unavailable,
+            typed_ner: true,
+          };
+          result.summary += `; NER +${ner.created} typed link(s) (${ner.pages} page(s)${ner.pack_unavailable ? ', no applicable pack rules' : ''})`;
+          if (result.status === 'skipped' && ner.pages > 0) result.status = 'ok';
+        } catch (error) {
+          checkAborted(opts.signal);
+          const message = error instanceof Error ? error.message : String(error);
+          result.status = isGinRepairAbortText(error) ? 'fail' : result.status === 'fail' ? 'fail' : 'warn';
+          result.error = makeErrorFromException(error);
+          for(const slug of relationNerSlugs)await engine.executeRaw('UPDATE page_mention_state SET mention_revision=NULL WHERE page_id IN (SELECT id FROM pages WHERE slug=$1 AND ($2::text IS NULL OR source_id=$2))',[slug,filesystemSourceId ?? null]);
+          result.details = { ...result.details, ner_error: message };
+          result.summary += `; NER relation extraction failed: ${message}`;
+        }
+        result.duration_ms += Math.round(performance.now() - started);
+      }
+    };
+
 
     // ── Phase 5: extract (now picks up synthesize output) ───────
     if (phases.includes('extract')) {
@@ -1875,117 +2095,13 @@ export async function runCycle(
           result.duration_ms = timed.duration_ms;
         }
 
-        if (opts.includeHistoricalMarkdownCatchUp && !dryRun) {
-          try {
-            const { extractStaleFromDB } = await import('../commands/extract-stale.ts');
-            const catchUpStart = performance.now();
-            const catchUp = await extractStaleFromDB(engine, {
-              dryRun: false,
-              jsonMode: false,
-              includeFrontmatter: true,
-              sourceIdFilter: filesystemSourceId,
-              catchUp: opts.markdownCatchUpMaxHistorical == null,
-              quiet: !getCliOptions().progressJson,
-              maxPages: opts.markdownCatchUpMaxHistorical,
-            });
-            result.details = {
-              ...result.details,
-              linksCreated: Number(result.details.linksCreated ?? 0) + catchUp.linksCreated,
-              timelineCreated: Number(result.details.timelineCreated ?? 0) + catchUp.timelineCreated,
-              relationLinksCreated: catchUp.linksCreated,
-              relationTimelineCreated: catchUp.timelineCreated,
-              relationPagesProcessed: catchUp.pagesProcessed,
-              relationHistoricalRemaining: catchUp.staleRemaining,
-              relationUnresolvedReferences: catchUp.unresolvedReferences,
-              relationSkippedMissingTarget: catchUp.skippedMissingTarget,
-              relationSkippedCrossSource: catchUp.skippedCrossSource,
-              historical_relation_backfill: true,
-              // Additive compatibility marker for existing Admin/report readers.
-              historical_markdown_catch_up: true,
-            };
-            result.summary =
-              `${result.summary}; historical relations +${catchUp.linksCreated} link(s) ` +
-              `from ${catchUp.pagesProcessed} page(s) (${catchUp.staleRemaining} stale remaining, ` +
-              `${catchUp.unresolvedReferences + catchUp.skippedMissingTarget + catchUp.skippedCrossSource} unresolved/skipped)`;
-            result.duration_ms += Math.round(performance.now() - catchUpStart);
-            if (result.status === 'skipped' && catchUp.pagesProcessed > 0) {
-              result.status = 'ok';
-            }
-          } catch (e) {
-            const message = e instanceof Error ? e.message : String(e);
-            if (isGinRepairAbortText(e)) {
-              result.status = 'fail';
-              result.error = makeErrorFromException(e);
-              result.details = { ...result.details, relation_backfill_error: message };
-              result.summary = message;
-            } else {
-              result.status = result.status === 'fail' ? 'fail' : 'warn';
-              result.details = { ...result.details, relation_backfill_error: message };
-              result.summary = `${result.summary}; historical relation backfill failed`;
-            }
-          }
-        }
-
-        // PMBrain Quick: deterministic by-mention after explicit link extract.
-        // Independent of empty syncPagesAffected so historical catch-up and
-        // failed-file isolation still build knowledge relations.
-        if (opts.includeByMention && !dryRun) {
-          try {
-            const { runByMentionCore } = await import('../commands/extract.ts');
-            const mentionStart = performance.now();
-            const mention = await runByMentionCore(engine, {
-              prioritySlugs: syncPagesAffected,
-              maxHistoricalPages: opts.byMentionMaxHistorical,
-              historicalTimeBudgetMs: opts.byMentionTimeBudgetMs,
-              sourceIdFilter: filesystemSourceId,
-              quiet: !getCliOptions().progressJson,
-            });
-            const mentionMs = Math.round(performance.now() - mentionStart);
-            const prevLinks = Number(result.details.linksCreated ?? 0);
-            result.details = {
-              ...result.details,
-              linksCreated: prevLinks + mention.created,
-              mentionLinksCreated: mention.created,
-              mentionLinksRemoved: mention.removed,
-              mentionPagesProcessed: mention.pages,
-              mentionPriorityPagesProcessed: mention.priorityPages,
-              mentionHistoricalPagesProcessed: mention.historicalPages,
-              mentionHistoricalRemaining: mention.historicalRemaining,
-              mentionTimeBudgetReached: mention.timeBudgetReached,
-              mentionTimeBudgetMs: opts.byMentionTimeBudgetMs ?? null,
-              mentionAmbiguousNames: mention.ambiguousNames,
-              by_mention: true,
-            };
-            result.summary =
-              `${result.summary}; by-mention +${mention.created}/-${mention.removed} link(s) ` +
-              `(${mention.pages} page(s), ${mention.historicalRemaining} historical remaining)`;
-            result.duration_ms += mentionMs;
-            if (result.status === 'skipped' && mention.pages > 0) {
-              result.status = 'ok';
-            }
-          } catch (e) {
-            const message = e instanceof Error ? e.message : String(e);
-            if (isGinRepairAbortText(e)) {
-              result.status = 'fail';
-              result.error = makeErrorFromException(e);
-              result.details = { ...result.details, by_mention_error: message };
-              result.summary = message;
-            } else {
-              result.status = result.status === 'fail' ? 'fail' : 'warn';
-              result.details = {
-                ...result.details,
-                by_mention_error: message,
-              };
-              result.summary = `${result.summary}; by-mention failed`;
-            }
-          }
-        }
+        await refreshRelations(engine, result, resolveIncrementalExtractSlugs(syncPagesAffected, synthesizeWrittenSlugs));
 
         phaseResults.push(result);
         noteSearchIndexAbort(result);
         if (progressStarted) progress.finish();
       }
-      await safeYield(opts.yieldBetweenPhases);
+      await checkpoint();
     }
 
     // ── Phase 5b: extract_facts (v0.32.2) ───────────────────────
@@ -2026,7 +2142,7 @@ export async function runCycle(
         noteSearchIndexAbort(result);
         progress.finish();
       }
-      await safeYield(opts.yieldBetweenPhases);
+      await checkpoint();
     }
 
     // ── v0.41 T9: extract_atoms (per-source, pack-gated) ──────────
@@ -2090,7 +2206,7 @@ export async function runCycle(
         phaseResults.push(result);
         progress.finish();
       }
-      await safeYield(opts.yieldBetweenPhases);
+      await checkpoint();
     }
 
     // ── v0.33.3 W0c: resolve_symbol_edges (between extract_facts + patterns) ──
@@ -2119,7 +2235,42 @@ export async function runCycle(
         noteSearchIndexAbort(result);
         progress.finish();
       }
-      await safeYield(opts.yieldBetweenPhases);
+      await checkpoint();
+    }
+
+    if (phases.includes('capture_entities')) {
+      checkAborted(opts.signal);
+      if (!engine) {
+        phaseResults.push({
+          phase: 'capture_entities',
+          status: 'skipped',
+          duration_ms: 0,
+          summary: 'no database connected',
+          details: { reason: 'no_database' },
+        });
+      } else {
+        progress.start('cycle.capture_entities');
+        const { runPhaseCaptureEntities } = await import('./cycle/capture-entities.ts');
+        const { result, duration_ms } = await timePhase(() => runPhaseCaptureEntities(engine, {
+          sourceId: cycleSourceId,
+          slugs:opts.captureEntitySlugs,
+          budget:opts.captureEntityBudget,
+          dryRun,
+          signal: opts.signal,
+          yieldDuringPhase: opts.yieldDuringPhase,
+          deadlineAtMs: opts.deadlineAtMs ?? null,
+          privateQueueOwnerJobId: opts.privateQueueOwnerJobId ?? null,
+          handler: opts.captureEntitiesHandler,
+        }));
+        result.duration_ms = duration_ms;
+        phaseResults.push(result);
+        const written = Array.isArray(result.details?.written_slugs) ? result.details.written_slugs as string[] : [];
+        const sources = Array.isArray(result.details?.source_slugs) ? result.details.source_slugs as string[] : [];
+        const relationSlugs = Array.isArray(result.details?.relation_slugs) ? result.details.relation_slugs as string[] : [];
+        entityCaptureSlugs = [...written, ...sources, ...relationSlugs];
+        progress.finish(result.summary);
+      }
+      await checkpoint();
     }
 
     // ── Phase 6: patterns (v0.23) ───────────────────────────────
@@ -2154,7 +2305,7 @@ export async function runCycle(
         phaseResults.push(result);
         progress.finish();
       }
-      await safeYield(opts.yieldBetweenPhases);
+      await checkpoint();
     }
 
     // ── v0.41 T9: synthesize_concepts (global, pack-gated) ───────
@@ -2197,7 +2348,7 @@ export async function runCycle(
         phaseResults.push(result);
         progress.finish();
       }
-      await safeYield(opts.yieldBetweenPhases);
+      await checkpoint();
     }
 
     // ── Phase 7: recompute_emotional_weight (v0.29) ─────────────
@@ -2239,7 +2390,7 @@ export async function runCycle(
         phaseResults.push(result);
         progress.finish();
       }
-      await safeYield(opts.yieldBetweenPhases);
+      await checkpoint();
     }
 
     // ── Phase 8 (v0.31): consolidate facts → takes ──────────────
@@ -2268,7 +2419,7 @@ export async function runCycle(
         phaseResults.push(result);
         progress.finish();
       }
-      await safeYield(opts.yieldBetweenPhases);
+      await checkpoint();
     }
 
     // ── v0.36.1.0 calibration phases (propose_takes → grade_takes →
@@ -2331,7 +2482,7 @@ export async function runCycle(
           };
           result.duration_ms = duration_ms;
           phaseResults.push(result);
-          await safeYield(opts.yieldBetweenPhases);
+          await checkpoint();
         }
 
         if (phases.includes('grade_takes')) {
@@ -2355,7 +2506,7 @@ export async function runCycle(
           result.duration_ms = duration_ms;
           phaseResults.push(result);
           progress.finish();
-          await safeYield(opts.yieldBetweenPhases);
+          await checkpoint();
         }
 
         if (phases.includes('calibration_profile')) {
@@ -2379,7 +2530,7 @@ export async function runCycle(
           result.duration_ms = duration_ms;
           phaseResults.push(result);
           progress.finish();
-          await safeYield(opts.yieldBetweenPhases);
+          await checkpoint();
         }
       } else {
         for (const p of (['propose_takes', 'grade_takes', 'calibration_profile'] as const)) {
@@ -2431,7 +2582,7 @@ export async function runCycle(
         phaseResults.push(result);
         progress.finish();
       }
-      await safeYield(opts.yieldBetweenPhases);
+      await checkpoint();
     }
 
     // ── v0.41.11.0: conversation_facts_backfill ─────────────────
@@ -2461,7 +2612,7 @@ export async function runCycle(
         phaseResults.push(result);
         progress.finish();
       }
-      await safeYield(opts.yieldBetweenPhases);
+      await checkpoint();
     }
 
     // Default OFF. Develops a bounded number of thin pages using only
@@ -2486,7 +2637,31 @@ export async function runCycle(
         phaseResults.push(result);
         progress.finish();
       }
-      await safeYield(opts.yieldBetweenPhases);
+      await checkpoint();
+    }
+
+    if (opts.refreshRelationsAfterGeneration && engine && !dryRun && resolvedPhases.includes('extract')) {
+      checkAborted(opts.signal);
+      const extract = phaseResults.find(result => result.phase === 'extract');
+      if (extract && !skipIfSearchIndexUnusable('extract')) {
+        progress.start('cycle.extract');
+        const capturePhase = phaseResults.find(item => item.phase === 'capture_entities');
+        const relationsRefreshed = capturePhase?.details?.relations_refreshed === true;
+        const postCaptureSlugs = resolveIncrementalExtractSlugs(
+          syncPagesAffected,
+          mergeCaptureSlugs(synthesizeWrittenSlugs, entityCaptureSlugs),
+        );
+        await refreshRelations(
+          engine,
+          extract,
+          postCaptureSlugs,
+          relationsRefreshed ? { maxHistoricalPages: 0, nerSlugs: postCaptureSlugs ?? [] } : undefined,
+        );
+        extract.details.postGenerationRelations = true;
+        noteSearchIndexAbort(extract);
+        progress.finish();
+        await checkpoint();
+      }
     }
 
     // ── Phase 8: embed ──────────────────────────────────────────
@@ -2512,13 +2687,15 @@ export async function runCycle(
           opts.embedPageLimit,
           progress,
           opts.signal,
+          opts.embedBatchSize,
+          opts.getEmbedBatchSize,
         ));
         result.duration_ms = duration_ms;
         phaseResults.push(result);
         noteSearchIndexAbort(result);
         progress.finish();
       }
-      await safeYield(opts.yieldBetweenPhases);
+      await checkpoint();
     }
 
     // ── Phase 9: orphans ────────────────────────────────────────
@@ -2539,7 +2716,7 @@ export async function runCycle(
         phaseResults.push(result);
         progress.finish();
       }
-      await safeYield(opts.yieldBetweenPhases);
+      await checkpoint();
     }
 
     // ── v0.39 T12: schema-suggest ───────────────────────────────
@@ -2585,7 +2762,7 @@ export async function runCycle(
         }
         progress.finish();
       }
-      await safeYield(opts.yieldBetweenPhases);
+      await checkpoint();
     }
 
     // ── Phase 9: purge (v0.26.5) ────────────────────────────────
@@ -2609,7 +2786,7 @@ export async function runCycle(
         phaseResults.push(result);
         progress.finish();
       }
-      await safeYield(opts.yieldBetweenPhases);
+      await checkpoint();
     }
 
     // Catch an abort that fired during the final selected phase. Without

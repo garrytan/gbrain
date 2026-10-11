@@ -165,18 +165,19 @@ describe('Admin local attachment staging safety contract', () => {
     expect(serveHttpSource).toContain("createWriteStream(filePath, { flags: 'wx', mode: 0o600 })");
   });
 
-  test('reuses startImportRun and removes the temporary directory after completion', () => {
+  test('submits a structured background task and delegates staged-file cleanup to its runtime', () => {
     const uploadRoute = sourceBetween(
       serveHttpSource,
       "'/admin/api/import-upload-runs'",
       "app.post('/admin/api/export-runs'",
     );
-    expect(uploadRoute).toContain('await startImportRun(engine, {');
+    expect(uploadRoute).toContain('await productTasks.submitImport({');
     expect(uploadRoute).toContain('includeOffice: true');
     expect(uploadRoute).toContain('includeImages: true');
-    expect(uploadRoute).toContain('acquireExclusive: runHooks?.acquireExclusive');
-    expect(uploadRoute).toContain('afterComplete: async () =>');
-    expect(uploadRoute).toContain('await cleanup()');
+    expect(uploadRoute).toContain('stagingDir: tempDir');
+    expect(uploadRoute).not.toContain('acquireExclusive');
+    expect(uploadRoute).toContain('if (tempDir) await removeAdminUploadTempDir(tempDir)');
+    expect(readFileSync('src/product/tasks/runtime.ts', 'utf8')).toContain('await removeAdminUploadTempDir(task.input.stagingDir)');
   });
 
   test('知识工作台不再展示写入与处理选项，默认写入主知识源并自动处理', () => {

@@ -1,6 +1,8 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, isPgliteBusyError } from '../api';
-import { RunOutput, formatDate, pageTypeLabel, pageTypeTitle, type ConsoleRun } from '../lib/shared';
+import { formatDate, pageTypeLabel, pageTypeTitle, type ConsoleRun } from '../lib/shared';
+import { TaskProgressCard, taskLink } from '../product/TaskProgress';
+import { useProductTasks } from '../product/TaskActivity';
 import { describeRunRecovery } from '../lib/run-recovery';
 import { TakeProposalsPage } from './TakeProposals';
 import { CalibrationPage } from './Calibration';
@@ -198,6 +200,7 @@ const PHASE_LABELS: Record<string, string> = {
   grade_takes: '观点评分：对候选观点进行质量评估',
   calibration_profile: '校准画像：生成用户认知校准分析',
   conversation_facts_backfill: '对话事实回填：将对话中确认的事实写回知识库',
+  capture_entities: '识别实体：按知识整理技能查找并创建或补充人物、公司、项目和概念',
   orphans: '孤儿页面检测：发现没有被任何页面引用的孤立页面',
   'schema-suggest': 'Schema 建议：推荐知识库结构优化方案',
   purge: '清理：删除软删除标记的页面和数据',
@@ -220,6 +223,7 @@ const PHASE_USER_ACTIONS: Record<string, string> = {
   grade_takes: '评估已有观点的可靠程度',
   calibration_profile: '更新 AI 对你的判断习惯的理解',
   conversation_facts_backfill: '把对话中确认的信息补回知识库',
+  capture_entities: '识别值得记录的人物、公司、项目和概念',
   embed: '更新 AI 搜索和理解能力',
   orphans: '发现缺少关联的孤立知识',
   'schema-suggest': '检查知识结构是否需要优化',
@@ -250,6 +254,7 @@ const PHASE_GROUP_BY_PHASE: Record<string, typeof PHASE_GROUPS[number]['key']> =
   synthesize: 'synthesis', patterns: 'synthesis', synthesize_concepts: 'synthesis',
   recompute_emotional_weight: 'synthesis', consolidate: 'synthesis',
   propose_takes: 'takes', grade_takes: 'takes', calibration_profile: 'takes', conversation_facts_backfill: 'takes',
+  capture_entities: 'synthesis',
   embed: 'lifecycle', orphans: 'lifecycle', 'schema-suggest': 'lifecycle', purge: 'lifecycle',
 };
 
@@ -259,7 +264,7 @@ function phasesForGroup(catalog: string[], groupKey: string): string[] {
 
 const DREAM_KNOWLEDGE_STEPS = [
   { key: 'read', title: '阅读新内容', description: '找到最近新增或变化的资料', phases: ['lint', 'backlinks', 'sync'] },
-  { key: 'understand', title: '理解与提炼', description: '提取事实、人物、概念和知识点', phases: ['synthesize', 'extract', 'extract_facts', 'extract_atoms'] },
+  { key: 'understand', title: '理解与提炼', description: '提取事实、人物、概念和知识点', phases: ['synthesize', 'extract', 'extract_facts', 'extract_atoms', 'capture_entities'] },
   { key: 'connect', title: '建立知识连接', description: '补全关系并发现反复出现的主题', phases: ['resolve_symbol_edges', 'patterns', 'synthesize_concepts'] },
   { key: 'remember', title: '形成长期记忆', description: '合并重复信息并沉淀重要判断', phases: ['recompute_emotional_weight', 'consolidate', 'propose_takes', 'grade_takes', 'calibration_profile', 'conversation_facts_backfill'] },
   { key: 'search', title: '更新搜索能力', description: '让最新知识可以被 AI 准确找到', phases: ['embed', 'orphans', 'schema-suggest', 'purge'] },
@@ -305,11 +310,11 @@ function useDreamData() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [busyRuns, setBusyRuns] = useState<ConsoleRun[]>([]);
+  const pending = useRef(false);
 
-  const load = async () => {
-    // Keep the current Dream page mounted during background refreshes. Replacing
-    // it with the initial loading screen resets the user's scroll anchor.
-    if (!data) setLoading(true);
+  const load = useCallback(async () => {
+    if (pending.current) return;
+    pending.current = true;
     try {
       setData(await api.dreamOverview());
       setError('');
@@ -329,9 +334,10 @@ function useDreamData() {
         setError(err instanceof Error ? err.message : String(err));
       }
     } finally {
+      pending.current = false;
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => { void load(); }, []);
   useEffect(() => {
@@ -491,7 +497,7 @@ function quickMaintenancePending(report: DreamCycleReport | null): {
     pendingEmbeddings: Number.isFinite(explicitPending)
       ? Math.max(0, explicitPending)
       : Math.max(0, totalChunks - completedChunks),
-    historicalLinks: phaseDetailNumber(report, 'extract', 'mentionHistoricalRemaining'),
+    historicalLinks: Math.max(phaseDetailNumber(report, 'extract', 'mentionHistoricalRemaining'), phaseDetailNumber(report, 'extract', 'relationHistoricalRemaining')),
     processingErrors: phases.reduce((sum, phase) => sum + Math.max(0, Number(phase.details?.errors_count ?? 0)), 0),
   };
 }
@@ -564,6 +570,17 @@ export function describeDreamRun(run: ConsoleRun): {
   slugs: string[];
 } {
   const report = parseDreamReport(run);
+  if (run.product) {
+    const view = run.product;
+    return {
+      headline: `${view.name} · ${view.stage}`,
+      diagnosis: view.errorReason ?? (run.status === 'running' || run.status === 'queued' ? '任务在后台继续，离开页面不影响执行。' : '查看任务了解步骤和处理结果。'),
+      actions: view.steps.filter(step => step.status === 'completed').map(step => step.label),
+      outputs: view.metrics.map(metric => `${metric.label} ${metric.value}`),
+      details: run.durationMs !== null ? [`耗时 ${Math.round(run.durationMs / 1000)} 秒`] : [],
+      slugs: asStringArray(report?.phases?.find(phase => phase.phase === 'synthesize')?.details?.written_slugs),
+    };
+  }
   const isQuick = isQuickMaintenanceRun(run);
   const text = `${run.stdout}\n${run.stderr}`;
   const synth = report?.phases?.find(phase => phase.phase === 'synthesize');
@@ -818,6 +835,16 @@ export function buildDreamOutcome(run: ConsoleRun): DreamOutcomeSummary {
       failureItems.push(`${currentLabel}：${additionalErrors} 项模型或数据处理未成功`);
     }
     const pending = Math.max(0, Number(currentDetails.pending ?? 0));
+    if(Array.isArray(currentDetails.unresolved_references)&&currentDetails.unresolved_references.length){
+      failureCount+=currentDetails.unresolved_references.length;
+      failureItems.push(`${currentLabel}：${currentDetails.unresolved_references.length} 条引用未关联成功，详见知识关系`);
+    }
+    for (const [key, label] of [['relation_backfill_error', '历史关系补扫'], ['by_mention_error', '正文实体关联'], ['ner_error', '关系类型判断']]) {
+      if (currentDetails[key]) {
+        failureCount += 1;
+        failureItems.push(`${label}：${String(currentDetails[key])}`);
+      }
+    }
     if (!isQuick && pending > 0) {
       failureCount += pending;
       failureItems.push(`${currentLabel}：${pending} 个内容块仍待处理`);
@@ -865,6 +892,8 @@ export function buildDreamOutcome(run: ConsoleRun): DreamOutcomeSummary {
   const proposalsInserted = Math.max(0, Number(proposals.proposals_inserted ?? 0));
   const proposalSamples = asArray(proposals.proposal_samples).map(recordOf);
   const extractionItems: string[] = [];
+  const takesWritten=Math.max(0,Number(totals.consolidate_takes_written??0));
+  if(takesWritten>0)extractionItems.push(`长期判断：形成 ${takesWritten} 条，合并 ${Number(totals.facts_consolidated??0)} 条事实。`);
   if (factsInserted > 0) {
     extractionItems.push(
       factSlugs.length > 0
@@ -916,6 +945,49 @@ export function buildDreamOutcome(run: ConsoleRun): DreamOutcomeSummary {
     extractionItems,
     failureItems: uniqueStrings(failureItems),
   };
+}
+
+export function DreamRunContent({run,expanded=false}:{run:ConsoleRun;expanded?:boolean}){
+  const outcome=buildDreamOutcome(run);
+  const summary=describeDreamRun(run);
+  const isQuick=isQuickMaintenanceRun(run);
+  const phases=parseDreamReport(run)?.phases??[];
+  const proposals=phases.find(phase=>phase.phase==='propose_takes')?.details??{};
+  const relations=phases.find(phase=>phase.phase==='extract')?.details??{};
+  const unresolved=phases.flatMap(phase=>Array.isArray(phase.details?.unresolved_references)?phase.details.unresolved_references.map(recordOf):[]);
+  const reasons:Record<string,string>={not_configured:'未配置该阶段需要的资料目录',not_in_active_pack:'当前知识类型未启用该阶段',insufficient_evidence:'资料数量不足，未满足执行条件'};
+  return <details className="dream-outcome-content" open={expanded}>
+    <summary>查看本次整理内容</summary>
+    {typeof proposals.model_id==='string'&&<p className="pm-hint">观点提炼模型：{proposals.model_id} · 成功处理 {Number(proposals.pages_processed??0)} 页 · 剩余 {Number(proposals.remaining??0)} 页</p>}
+    <div className="dream-outcome-content-grid">
+      <section><h3>新增与更新的知识</h3>{outcome.knowledgeItems.length>0
+        ?<ul>{outcome.knowledgeItems.map(item=><li key={item}><code>{item}</code></li>)}</ul>
+        :<p>本次没有记录到新增或更新的知识页面。</p>}</section>
+      {!isQuick&&<section><h3>事实、概念和观点</h3>
+        {Number(proposals.proposals_inserted)>0&&<p>本次生成 {Number(proposals.proposals_inserted)} 条候选观点，待确认。以下展示运行记录保留的内容。</p>}
+        {outcome.extractionItems.length>0?<ul>{outcome.extractionItems.map((item,index)=><li key={`${item}:${index}`}>{item}</li>)}</ul>
+          :<p>本次没有提取出新的事实、概念或观点。</p>}
+      </section>}
+      <section><h3>知识关系</h3>
+        <p>{phases.find(phase=>phase.phase==='extract') ? phaseSummaryZh(phases.find(phase=>phase.phase==='extract')!) : '本次运行没有关系处理记录。'}</p>
+        {relations.postGenerationRelations===true&&<p>实体和概念生成后，已再次补扫历史关系。</p>}
+        {relations.nerPackUnavailable===true&&<p>存在未提供关系规则的知识类型，已跳过对应的关系类型判断。</p>}
+        {phases.some(phase=>phase.phase==='orphans')&&<p>孤立页检查统计尚未被其他知识引用的页面；这些页面可能已有向外的链接。</p>}
+        {unresolved.length>0&&<details><summary>{unresolved.length} 条引用未关联成功</summary><ul>{unresolved.map((reference,index)=><li key={index}>
+          <p>Source：<code>{String(reference.sourceId??'未记录')}</code> · 来源：<code>{String(reference.sourcePage??'未记录')}</code></p>
+          <p>目标名称或路径：<code>{String(reference.target??'未记录')}</code> · 字段：{String(reference.field??'未记录')}</p>
+          <p>原因：{String(reference.reason??'未记录')}</p>
+        </li>)}</ul></details>}
+      </section>
+      <section className={outcome.failureItems.length>0?'has-warning':''}><h3>{isQuick?'需要检查的异常':'未处理成功的内容'}</h3>
+        {outcome.failureItems.length>0?<ul>{outcome.failureItems.map((item,index)=><li key={`${item}:${index}`}>{item}</li>)}</ul>
+          :<p>{isQuick?'本次没有记录到执行异常。':'没有未处理成功的内容。'}</p>}
+        {Array.isArray(proposals.warnings)&&proposals.warnings.length>0&&<ul>{proposals.warnings.map((item,index)=><li key={index}>{String(item)}</li>)}</ul>}
+      </section>
+      <section><h3>本次执行了什么</h3><ul>{summary.actions.slice(0,12).map((item,index)=><li key={index}>{item}</li>)}</ul></section>
+      {phases.some(phase=>phase.status==='skipped')&&<section><h3>未执行的步骤</h3><ul>{phases.filter(phase=>phase.status==='skipped').map(phase=><li key={phase.phase}>{PHASE_LABELS[phase.phase]??phase.phase}：{reasons[String(phase.details?.reason)]??phase.summary}</li>)}</ul></section>}
+    </div>
+  </details>;
 }
 
 function DreamRunResult({ run }: { run: ConsoleRun }) {
@@ -979,43 +1051,8 @@ function DreamRunResult({ run }: { run: ConsoleRun }) {
       <div className="dream-detail-chips">
         {summary.details.map((item, index) => <span key={index}>{item}</span>)}
       </div>
-      <details className="dream-outcome-content">
-        <summary>查看本次整理内容</summary>
-        <div className="dream-outcome-content-grid">
-          <section>
-            <h3>新增与更新的知识</h3>
-            {outcome.knowledgeItems.length > 0
-              ? <ul>{outcome.knowledgeItems.map(item => <li key={item}><code>{item}</code></li>)}</ul>
-              : <p>本次没有记录到新增或更新的知识页面。</p>}
-          </section>
-          {!isQuick && (
-            <section>
-              <h3>事实、概念和观点</h3>
-              {outcome.extractionItems.length > 0
-                ? <ul>{outcome.extractionItems.map((item, index) => <li key={`${item}:${index}`}>{item}</li>)}</ul>
-                : <p>本次没有提取出新的事实、概念或观点。</p>}
-            </section>
-          )}
-          <section className={outcome.failureItems.length > 0 ? 'has-warning' : ''}>
-            <h3>{isQuick ? '需要检查的异常' : '未处理成功的内容'}</h3>
-            {outcome.failureItems.length > 0
-              ? <ul>{outcome.failureItems.map((item, index) => <li key={`${item}:${index}`}>{item}</li>)}</ul>
-              : <p>{isQuick ? '本次没有记录到执行异常。' : '没有未处理成功的内容。'}</p>}
-          </section>
-          <section>
-            <h3>本次执行了什么</h3>
-            <ul>{summary.actions.slice(0, 12).map((item, index) => <li key={index}>{item}</li>)}</ul>
-          </section>
-        </div>
-      </details>
-      <details className="dream-execution-log">
-        <summary>执行日志</summary>
-        <DreamTechnicalDetails run={run} />
-        <details className="nl-details">
-          <summary>原始日志与命令</summary>
-          <RunOutput run={run} />
-        </details>
-      </details>
+      <DreamRunContent run={run} />
+      <button type="button" className="pm-ghost" onClick={() => taskLink(run)}>查看任务</button>
     </section>
   );
 }
@@ -1430,8 +1467,13 @@ export function phaseSummaryZh(phase: DreamPhaseReport): string {
         : '本次运行记录未提供实际写入明细';
       return `检测到 ${candidates} 个待同步文件，${result}${failed > 0 ? `，${failed} 个文件解析失败` : ''}。`;
     }
-    case 'extract':
-      return `已建立 ${number('linksCreated')} 条知识链接和 ${number('timelineCreated')} 条时间线记录。`;
+    case 'extract': {
+      const remaining = Math.max(number('relationHistoricalRemaining'), number('mentionHistoricalRemaining'));
+      const breakdown = details.by_mention || details.typed_ner || details.historical_relation_backfill
+        ? `其中历史显式关联 ${number('relationLinksCreated')} 条、正文实体关联 ${number('mentionLinksCreated')} 条、关系类型关联 ${number('nerLinksCreated')} 条。`
+        : '';
+      return `已建立 ${number('linksCreated')} 条知识链接和 ${number('timelineCreated')} 条时间线记录。${breakdown}${remaining > 0 ? `历史仍有 ${remaining} 页待补扫。` : ''}`;
+    }
     case 'extract_facts':
       return `已检查 ${number('pagesScanned')} 个页面，核对并写入 ${number('factsInserted')} 条事实。`;
     case 'propose_takes':
@@ -1443,7 +1485,7 @@ export function phaseSummaryZh(phase: DreamPhaseReport): string {
     case 'embed':
       return `已为 ${number('embedded')} 个内容块更新搜索索引，${number('skipped')} 个内容块已有有效索引。`;
     case 'orphans':
-      return `发现 ${number('total_orphans')} 个暂时缺少关联的页面，共检查 ${number('total_pages')} 个页面。`;
+      return `发现 ${number('total_orphans')} 个尚未被其他知识引用的页面，共检查 ${number('total_pages')} 个页面。`;
   }
 
   if (phase.status === 'warn') return `已完成但有待处理项：${baseAction}`;
@@ -2127,8 +2169,8 @@ function DreamRunPanel({
       <div className="pm-hint dream-run-persist-note">
         手动整理默认不设外层时限，会在后台继续运行；离开页面不会中断，也可随时中止。
       </div>
-      <KnowledgeJourney run={selectedRun} mode={runMode} />
-      {selectedRun && (
+      {selectedRun?.product ? <TaskProgressCard run={selectedRun} /> : <KnowledgeJourney run={selectedRun} mode={runMode} />}
+      {selectedRun && !selectedRun.product && (
         <DreamRunResult run={selectedRun} />
       )}
       <details className="dream-diagnostics-details">
@@ -2177,13 +2219,32 @@ function RecentRuns({ runs }: { runs: ConsoleRun[] }) {
   );
 }
 
-export function DreamOverviewPage() {
+export function DreamOverviewPage({ product = false }: { product?: boolean } = {}) {
   const { data, error, loading, busy, busyRuns, reload } = useDreamData();
-  if (busy) return <DreamShell title="AI 知识整理"><DreamBusyRecovery runs={busyRuns} onRefresh={() => void reload()} /></DreamShell>;
-  if (error) return <DreamShell title="AI 知识整理"><ErrorBlock message={error} /></DreamShell>;
-  if (loading || !data) return <DreamShell title="AI 知识整理"><Loading text="正在了解你的知识库…" /></DreamShell>;
+  const tasks = useProductTasks();
+  const currentTask = tasks.rows.find(run => run.kind.startsWith('dream_') && ['running', 'queued'].includes(run.status));
+  const displayedTask = currentTask ?? tasks.rows.find(run => run.kind.startsWith('dream_') && run.product);
+  const currentProgress = displayedTask ? <TaskProgressCard run={displayedTask} /> : null;
+  const previousTasks = useRef(new Map<string, string>());
+  useEffect(() => {
+    const rows = tasks.rows.filter(run => run.kind.startsWith('dream_'));
+    const finished = rows.some(run => ['running', 'queued'].includes(previousTasks.current.get(run.id) ?? '') && !['running', 'queued'].includes(run.status));
+    previousTasks.current = new Map(rows.map(run => [run.id, run.status]));
+    if (finished) void reload();
+  }, [tasks.rows, reload]);
+  const [schedule, setSchedule] = useState<{ enabled: boolean; time: string; timeZone: string } | null>(null);
+  const [scheduleError, setScheduleError] = useState('');
+  useEffect(() => {
+    if (!product) return;
+    let active = true;
+    void api.dreamSchedule().then(value => { if (active) setSchedule(value); }).catch(reason => { if (active) setScheduleError(reason instanceof Error ? reason.message : String(reason)); });
+    return () => { active = false; };
+  }, [product]);
+  if (busy) return <DreamShell title="知识整理">{currentProgress}<DreamBusyRecovery runs={busyRuns} onRefresh={() => void reload()} /></DreamShell>;
+  if (error) return <DreamShell title="知识整理">{currentProgress}<ErrorBlock message={error} /></DreamShell>;
+  if (loading || !data) return <DreamShell title="知识整理">{currentProgress}<Loading text="正在读取整理状态…" /></DreamShell>;
 
-  const activeLock = data.locks.find(lock => lock.active);
+  const activeLock = currentTask ?? data.locks.find(lock => lock.active);
   const pending = data.embeddings.pending ?? 0;
   const orphanPages = data.health?.orphan_pages ?? 0;
   const deadLinks = data.health?.dead_links ?? 0;
@@ -2206,29 +2267,33 @@ export function DreamOverviewPage() {
   const statusText = activeLock
     ? '整理会在后台继续，完成后这里会显示结果。'
     : pending > 0
-      ? `有 ${pending} 段内容等待更新搜索索引，建议运行一次整理。`
+      ? product ? `有 ${pending} 段内容等待更新搜索索引。` : `有 ${pending} 段内容等待更新搜索索引，建议运行一次整理。`
       : orphanPages > 0
         ? `发现 ${orphanPages} 个暂时缺少关联的页面，整理后可能建立新的知识连接。`
         : deadLinks > 0
-          ? `发现 ${deadLinks} 条需要检查的知识引用，建议运行一次整理。`
-          : '暂时没有发现需要立即处理的问题。导入新资料或积累一段时间后再运行即可。';
+          ? product ? `发现 ${deadLinks} 条需要检查的知识引用。` : `发现 ${deadLinks} 条需要检查的知识引用，建议运行一次整理。`
+          : product ? '暂时没有需要处理的问题。' : '暂时没有发现需要立即处理的问题。导入新资料或积累一段时间后再运行即可。';
 
   return (
     <div className="pm-page dream-page dream-home">
       <section className="dream-hero">
         <div className="dream-hero-copy">
-          <span className="dream-eyebrow">PMBrain Dream</span>
-          <h1>让知识自己长起来</h1>
-          <p>AI 会阅读最近新增的资料，理解内容、建立联系、形成长期记忆，并更新搜索能力。</p>
+          {!product && <span className="dream-eyebrow">PMBrain Dream</span>}
+          <h1>{product ? '知识整理' : '让知识自己长起来'}</h1>
+          <p>{product ? '查看后台维护状态和最近的整理结果。' : 'AI 会阅读最近新增的资料，理解内容、建立联系、形成长期记忆，并更新搜索能力。'}</p>
           <div className="dream-hero-actions">
             <button className="pm-ghost" onClick={() => void reload()}>刷新状态</button>
           </div>
         </div>
-        <div className={`dream-status-orbit ${activeLock ? 'running' : needsAttention ? 'attention' : 'healthy'}`}>
-          <div className="dream-orbit-core"><span>{activeLock ? '整理中' : needsAttention ? '待整理' : '清晰'}</span></div>
-          <i className="orbit-one" /><i className="orbit-two" />
-        </div>
+        {!product && <div className={`dream-status-orbit ${activeLock ? 'running' : needsAttention ? 'attention' : 'healthy'}`}><div className="dream-orbit-core"><span>{activeLock ? '整理中' : needsAttention ? '待整理' : '清晰'}</span></div><i className="orbit-one" /><i className="orbit-two" /></div>}
       </section>
+
+      {currentProgress}
+      {product && <section className="maintenance-schedule">
+        <span className={`maintenance-dot ${schedule?.enabled ? 'enabled' : ''}`} aria-hidden="true" />
+        <div><b>{schedule ? schedule.enabled ? '自动整理已开启' : '自动整理未开启' : scheduleError ? '无法读取自动整理状态' : '正在读取自动整理设置…'}</b><small>{schedule?.enabled ? `每天 ${schedule.time} · ${schedule.timeZone}` : '在设置中配置自动整理时间。'}{scheduleError && ` ${scheduleError}`}</small></div>
+        <button type="button" className="pm-ghost" onClick={() => { window.location.hash = 'settings-dream'; }}>整理设置</button>
+      </section>}
 
       <section className="dream-recommendation">
         <div className="dream-recommendation-icon">{activeLock ? '↻' : needsAttention ? '↗' : '✓'}</div>
@@ -2239,7 +2304,10 @@ export function DreamOverviewPage() {
         <SearchIndexRepairCard forceShow />
       )}
 
-      <DreamRunPanel engine={data.overview?.engine} defaultSourceId={data.overview?.main_source_id} phaseCatalog={data.phase_catalog} phaseCapabilities={data.phase_capabilities} generativeEnabled={data.generative_enabled === true} sources={data.overview?.sources} locks={data.locks} jobs={data.jobs} supervisor={data.supervisor} onDone={() => void reload()} />
+      {product ? <details className="maintenance-manual" open={Boolean(activeLock)}>
+        <summary>{activeLock ? '查看当前任务' : '手动维护与高级操作'}</summary>
+        <DreamRunPanel engine={data.overview?.engine} defaultSourceId={data.overview?.main_source_id} phaseCatalog={data.phase_catalog} phaseCapabilities={data.phase_capabilities} generativeEnabled={data.generative_enabled === true} sources={data.overview?.sources} locks={data.locks} jobs={data.jobs} supervisor={data.supervisor} onDone={() => void reload()} />
+      </details> : <DreamRunPanel engine={data.overview?.engine} defaultSourceId={data.overview?.main_source_id} phaseCatalog={data.phase_catalog} phaseCapabilities={data.phase_capabilities} generativeEnabled={data.generative_enabled === true} sources={data.overview?.sources} locks={data.locks} jobs={data.jobs} supervisor={data.supervisor} onDone={() => void reload()} />}
 
       <div className="dream-home-grid">
         <section className="dream-summary-card">
@@ -2292,7 +2360,7 @@ export function DreamOverviewPage() {
       <section className="dream-history-card">
         <div className="dream-section-title">
           <div><span className="dream-eyebrow">整理记录</span><h2>最近发生了什么</h2></div>
-          <button className="pm-ghost" onClick={() => { window.location.hash = 'dream-execute'; }}>打开高级执行页</button>
+          {!product && <button className="pm-ghost" onClick={() => { window.location.hash = 'dream-execute'; }}>打开高级执行页</button>}
         </div>
         <RecentRuns runs={data.runs} />
       </section>

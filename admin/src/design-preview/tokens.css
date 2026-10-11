@@ -1,0 +1,15 @@
+:root {
+  color-scheme: dark;
+  --canvas: #13171c;
+  --panel: #1a222d;
+  --text: #f4f6fa;
+  --muted: #a9b3c4;
+  --border: #293340;
+  --border-soft: #202833;
+  --accent: #0064ff;
+  --accent-light: #329dff;
+  --green: #00e77d;
+  --font: 'Segoe UI', 'Microsoft YaHei UI', 'Microsoft YaHei', sans-serif;
+  --nav-width: 250px;
+  --history-width: 296px;
+}

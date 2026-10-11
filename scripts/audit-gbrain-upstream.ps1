@@ -38,6 +38,7 @@ if (-not (Test-Path -LiteralPath $baselinePath -PathType Leaf)) {
 }
 
 $baseline = Get-Content -LiteralPath $baselinePath -Raw -Encoding UTF8 | ConvertFrom-Json
+if($baseline.status -eq 'deprecated-historical-snapshot'){ Write-Warning '此文件只保存历史审计。当前对齐范围和基线请查看 .upstream/gbrain-subsystems.json。' }
 $reviewedHead = [string]$baseline.reviewed_head
 $upstreamHead = (@(Invoke-GitReadOnly -Repository $upstreamRoot -Arguments @('rev-parse', 'HEAD')))[0].Trim()
 $upstreamBranch = (@(Invoke-GitReadOnly -Repository $upstreamRoot -Arguments @('branch', '--show-current')))[0].Trim()

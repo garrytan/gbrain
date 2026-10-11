@@ -1,0 +1,208 @@
+# MIT License
+#
+# Copyright (c) 2026 Matt Zimak
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+api_version: gbrain-schema-pack-v1
+name: company-brain
+version: 0.2.0
+description: Preserve existing company knowledge, ownership, and decision history without retyping pages
+author: Matt Zimak and GBrain contributors
+license: MIT
+homepage: https://github.com/mattzimak/gbrain-company-brain
+gbrain_min_version: 0.51.8.0
+extends: gbrain-base-v2
+borrow_from: []
+mapping_rules: []
+phases: []
+
+page_types:
+  - name: company
+    primitive: entity
+    path_prefixes: [companies/, company/, orgs/]
+    subtypes:
+      - name: company
+        when:
+          path_pattern: '^companies/'
+      - name: org
+        when:
+          path_pattern: '^orgs/'
+    aliases: [yc-company, org, people-org, organization, startup, business]
+    extractable: false
+    expert_routing: true
+  - name: customer
+    primitive: entity
+    path_prefixes: [customers/]
+    aliases: []
+    extractable: true
+    expert_routing: false
+  - name: competitor
+    primitive: entity
+    path_prefixes: [competitors/]
+    aliases: []
+    extractable: true
+    expert_routing: false
+  - name: supplier
+    primitive: entity
+    path_prefixes: [suppliers/]
+    aliases: []
+    extractable: true
+    expert_routing: false
+  - name: distributor
+    primitive: entity
+    path_prefixes: [distributors/]
+    aliases: []
+    extractable: true
+    expert_routing: false
+  - name: decision
+    primitive: temporal
+    path_prefixes: [decisions/]
+    aliases: []
+    extractable: true
+    expert_routing: false
+  - name: weekly
+    primitive: temporal
+    path_prefixes: [weekly/]
+    aliases: []
+    extractable: true
+    expert_routing: false
+  - name: extracted-facts
+    primitive: annotation
+    path_prefixes: [inbox/extracted/]
+    aliases: []
+    extractable: false
+    expert_routing: false
+  - name: sales
+    primitive: concept
+    path_prefixes: [sales/]
+    aliases: []
+    extractable: true
+    expert_routing: false
+  - name: strategy
+    primitive: concept
+    aliases: []
+    extractable: true
+    expert_routing: false
+  - name: product
+    primitive: concept
+    path_prefixes: [products/]
+    aliases: []
+    extractable: true
+    expert_routing: false
+  - name: brand
+    primitive: concept
+    aliases: []
+    extractable: false
+    expert_routing: false
+  - name: ops
+    primitive: concept
+    aliases: []
+    extractable: true
+    expert_routing: false
+  - name: finance
+    primitive: concept
+    aliases: []
+    extractable: true
+    expert_routing: false
+  - name: runbook
+    primitive: concept
+    aliases: []
+    extractable: false
+    expert_routing: false
+
+link_types:
+  - name: owned_by
+    inverse: owns
+  - name: competes_with
+    inverse: competes_with
+    inference:
+      page_type: competitor
+      target_type: company
+      regex: '\b([Cc]ompetes? with|[Cc]ompetitor (of|to)|[Rr]ivals?)\b'
+  - name: decided_in
+    inverse: decision_made
+    inference:
+      page_type: decision
+      target_type: meeting
+      regex: '\b([Aa]greed|[Dd]ecided|[Aa]pproved)\s+(in|at|during)\b'
+  - name: champion
+    inverse: champion_of
+    inference:
+      page_type: customer
+      target_type: person
+      regex: '\b([Cc]hampion|[Ss]ponsor|[Mm]ain contact|[Pp]oint of contact)\b'
+  - name: attended
+    inverse: attended_by
+    inference:
+      page_type: meeting
+      target_type: person
+
+frontmatter_links:
+  - page_type: customer
+    fields: [owner]
+    link_type: owned_by
+  - page_type: competitor
+    fields: [owner]
+    link_type: owned_by
+  - page_type: supplier
+    fields: [owner]
+    link_type: owned_by
+  - page_type: distributor
+    fields: [owner]
+    link_type: owned_by
+  - page_type: decision
+    fields: [owner]
+    link_type: owned_by
+  - page_type: decision
+    fields: [supersedes]
+    link_type: supersedes
+  - page_type: meeting
+    fields: [attendees]
+    link_type: attended
+
+enrichable_types:
+  - type: customer
+  - type: competitor
+
+filing_rules:
+  - kind: customer
+    directory: customers/
+    description: One file per customer or active prospect
+  - kind: competitor
+    directory: competitors/
+    description: One file per competitor
+  - kind: supplier
+    directory: suppliers/
+    description: One file per supplier
+  - kind: distributor
+    directory: distributors/
+    description: One file per distributor or reseller
+  - kind: person
+    directory: people/
+    description: One file per person
+  - kind: decision
+    directory: decisions/
+    description: Dated decisions with explicit supersession
+  - kind: meeting
+    directory: meetings/
+    description: Dated meeting notes
+  - kind: weekly
+    directory: weekly/
+    description: Weekly company brief

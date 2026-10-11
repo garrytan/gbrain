@@ -43,6 +43,7 @@ describe('hasPendingMigrations', () => {
       await engine.initSchema();
       // Simulate an older brain by rewinding the version row.
       await engine.setConfig('version', '1');
+      await engine.setConfig('pmbrain.schema.version', '1');
       expect(await hasPendingMigrations(engine)).toBe(true);
     } finally {
       await engine.disconnect();
@@ -925,6 +926,7 @@ describe('migrate: v8 (links_dedup) regression — must be fast on 1K duplicate 
 
     // Reset version to 7 so v8 + v9 + v10 + v11 re-run
     await engine.setConfig('version', '7');
+    await engine.setConfig('pmbrain.schema.version', '7');
 
     // Run migrations and assert wall-clock + correctness.
     //
@@ -994,6 +996,7 @@ describe('migrate: v9 (timeline_dedup_index) regression — must be fast on 1K d
     expect(beforeCount).toBe(1000);
 
     await engine.setConfig('version', '7');
+    await engine.setConfig('pmbrain.schema.version', '7');
 
     // Same 90s budget as the v8 link-dedup test for the same reason — see
     // its "Budget note" comment. The 5s budget was for v9 in isolation;

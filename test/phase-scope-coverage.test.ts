@@ -44,9 +44,9 @@ describe('PHASE_SCOPE coverage', () => {
   test('all supported upstream phases covered (regression on accidental omission)', () => {
     // Pin the count so a future PR that adds a phase to ALL_PHASES
     // without updating PHASE_SCOPE notices here too. Current PMBrain
-    // Dream subset is 22 phases (see ALL_PHASES in src/core/cycle.ts).
-    expect(ALL_PHASES.length).toBe(22);
-    expect(Object.keys(PHASE_SCOPE).length).toBe(22);
+    // Dream subset is 23 phases (see ALL_PHASES in src/core/cycle.ts).
+    expect(ALL_PHASES.length).toBe(23);
+    expect(Object.keys(PHASE_SCOPE).length).toBe(23);
   });
 
   test('embed remains global (the headline brain-wide phase)', () => {

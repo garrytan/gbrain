@@ -1,11 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { basename, extname } from 'node:path';
-import { PDFParse } from 'pdf-parse';
 import { normalizeDocumentText } from '../normalize.ts';
 import type { DocumentParseOptions, DocumentSection, StructuredDocument } from '../types.ts';
 import { markdownToSections } from './markdown-sections.ts';
 
 async function parseWithPdfParse(buffer: Buffer, title: string, fallback?: string): Promise<StructuredDocument> {
+  const { PDFParse } = await import('pdf-parse');
   const parser = new PDFParse({ data: buffer });
   try {
     const result = await parser.getText({ pageJoiner: '\n<!-- PMBRAIN_PAGE page_number -->\n' });
@@ -46,6 +46,7 @@ async function addOcrPages(
   ocrPage: NonNullable<DocumentParseOptions['ocrPage']>,
 ): Promise<void> {
   if (pagesNeedingOcr.length === 0) return;
+  const { PDFParse } = await import('pdf-parse');
   const parser = new PDFParse({ data: buffer });
   try {
     const screenshots = await parser.getScreenshot({

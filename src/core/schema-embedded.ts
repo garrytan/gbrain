@@ -1,7 +1,8 @@
 // AUTO-GENERATED — do not edit. Run: bun run build:schema
 // Source: src/schema.sql
 
-export const SCHEMA_SQL = `-- GBrain Postgres + pgvector schema
+export const SCHEMA_SQL = `
+-- GBrain Postgres + pgvector schema
 
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
@@ -178,7 +179,7 @@ END;
 
 DROP TRIGGER IF EXISTS bump_page_generation_trg ON pages;
 CREATE TRIGGER bump_page_generation_trg
-  BEFORE INSERT OR UPDATE ON pages
+  BEFORE INSERT OR UPDATE OF title,type,page_kind,compiled_truth,timeline,frontmatter,deleted_at,contextual_retrieval_mode,corpus_generation,content_hash ON pages
   FOR EACH ROW
   EXECUTE FUNCTION bump_page_generation_fn();
 
@@ -446,7 +447,7 @@ CREATE TABLE IF NOT EXISTS links (
   -- v0.41.18.0: 'mentions' added for auto-linked body-text mentions
   -- (gbrain extract links --by-mention). Filtered OUT of backlink-count
   -- for search ranking; only counts toward orphan-ratio + graph traversal.
-  link_source    TEXT    CHECK (link_source IS NULL OR link_source IN ('markdown', 'frontmatter', 'manual', 'mentions', 'concept-provenance')),
+  link_source    TEXT    CHECK (link_source IS NULL OR link_source IN ('markdown', 'wikilink-resolved', 'frontmatter', 'manual', 'mentions', 'concept-provenance')),
   -- v0.41.18.0: nullable link_kind distinguishes "plain body mention" from
   -- "verb-pattern-derived typed link" within link_source='mentions'.
   -- Codex finding #12 design: keep link_source stable; add link_kind
@@ -759,6 +760,9 @@ CREATE OR REPLACE FUNCTION update_page_search_vector() RETURNS trigger AS \$\$
 DECLARE
   timeline_text TEXT;
 BEGIN
+  IF TG_OP = 'UPDATE' AND NEW.title IS NOT DISTINCT FROM OLD.title
+    AND NEW.compiled_truth IS NOT DISTINCT FROM OLD.compiled_truth
+    AND NEW.timeline IS NOT DISTINCT FROM OLD.timeline THEN RETURN NEW; END IF;
   -- Gather timeline_entries text for this page
   SELECT coalesce(string_agg(summary || ' ' || detail, ' '), '')
   INTO timeline_text
@@ -778,7 +782,7 @@ END;
 
 DROP TRIGGER IF EXISTS trg_pages_search_vector ON pages;
 CREATE TRIGGER trg_pages_search_vector
-  BEFORE INSERT OR UPDATE ON pages
+  BEFORE INSERT OR UPDATE OF title,compiled_truth,timeline ON pages
   FOR EACH ROW
   EXECUTE FUNCTION update_page_search_vector();
 
@@ -1510,4 +1514,167 @@ BEGIN
     RAISE WARNING 'Skipping RLS: role % does not have BYPASSRLS privilege. Run as postgres role to enable.', current_user;
   END IF;
 END \$\$;
+
+DO \$do\$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'sources'::regclass AND attname = 'incarnation' AND NOT attisdropped) THEN
+      ALTER TABLE sources ADD COLUMN IF NOT EXISTS incarnation UUID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'sources'::regclass AND attname = 'incarnation' AND atthasdef) THEN
+      ALTER TABLE sources ALTER COLUMN incarnation SET DEFAULT gen_random_uuid();
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'sources'::regclass AND attname = 'incarnation' AND NOT attnotnull) THEN
+      UPDATE sources SET incarnation = gen_random_uuid() WHERE incarnation IS NULL;
+      ALTER TABLE sources ALTER COLUMN incarnation SET NOT NULL;
+    END IF;
+  END \$do\$;
+CREATE UNIQUE INDEX IF NOT EXISTS sources_incarnation_key ON sources(incarnation);
+DO \$do\$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'pages'::regclass AND attname = 'knowledge_revision' AND NOT attisdropped) THEN
+      ALTER TABLE pages ADD COLUMN IF NOT EXISTS knowledge_revision UUID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'pages'::regclass AND attname = 'knowledge_revision' AND atthasdef) THEN
+      ALTER TABLE pages ALTER COLUMN knowledge_revision SET DEFAULT gen_random_uuid();
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'pages'::regclass AND attname = 'knowledge_revision' AND NOT attnotnull)
+       AND NOT EXISTS (SELECT 1 FROM pages) THEN
+      ALTER TABLE pages ALTER COLUMN knowledge_revision SET NOT NULL;
+    END IF;
+  END \$do\$;
+ALTER TABLE pages ADD COLUMN IF NOT EXISTS text_projection_revision UUID;
+ALTER TABLE page_versions ADD COLUMN IF NOT EXISTS knowledge_revision UUID;
+ALTER TABLE page_versions ADD COLUMN IF NOT EXISTS timeline TEXT;
+ALTER TABLE page_versions ADD COLUMN IF NOT EXISTS title TEXT;
+ALTER TABLE page_versions ADD COLUMN IF NOT EXISTS type TEXT;
+ALTER TABLE page_versions ADD COLUMN IF NOT EXISTS tags JSONB;
+ALTER TABLE page_versions ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN;;
+CREATE TABLE IF NOT EXISTS page_write_guards (
+    source_incarnation UUID NOT NULL REFERENCES sources(incarnation) ON DELETE CASCADE,
+    slug TEXT NOT NULL,
+    PRIMARY KEY (source_incarnation, slug)
+  );
+CREATE OR REPLACE FUNCTION gbrain_advance_page_revision() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS \$fn\$
+    BEGIN
+      IF OLD.knowledge_revision IS NULL THEN
+        NEW.knowledge_revision := COALESCE(NEW.knowledge_revision, gen_random_uuid());
+        NEW.text_projection_revision := NULL;
+        RETURN NEW;
+      END IF;
+      IF (NEW.source_id, NEW.slug, NEW.type, NEW.page_kind, NEW.title, NEW.compiled_truth,
+          NEW.timeline, NEW.frontmatter, NEW.deleted_at)
+         IS DISTINCT FROM
+         (OLD.source_id, OLD.slug, OLD.type, OLD.page_kind, OLD.title, OLD.compiled_truth,
+          OLD.timeline, OLD.frontmatter, OLD.deleted_at) THEN
+        IF NEW.knowledge_revision = OLD.knowledge_revision AND NOT (
+          COALESCE(current_setting('gbrain.materializing_revision', true), '') = OLD.knowledge_revision::text
+          AND (NEW.source_id, NEW.slug, NEW.type, NEW.page_kind, NEW.title, NEW.frontmatter, NEW.deleted_at)
+            IS NOT DISTINCT FROM
+            (OLD.source_id, OLD.slug, OLD.type, OLD.page_kind, OLD.title, OLD.frontmatter, OLD.deleted_at)
+        ) THEN
+          NEW.knowledge_revision := gen_random_uuid();
+        END IF;
+      END IF;
+      IF NEW.knowledge_revision IS DISTINCT FROM OLD.knowledge_revision THEN
+        NEW.text_projection_revision := NULL;
+      END IF;
+      RETURN NEW;
+    END \$fn\$;
+DROP TRIGGER IF EXISTS pages_knowledge_revision ON pages;
+CREATE TRIGGER pages_knowledge_revision BEFORE UPDATE ON pages
+    FOR EACH ROW EXECUTE FUNCTION gbrain_advance_page_revision();
+CREATE OR REPLACE FUNCTION gbrain_advance_tag_revision() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS \$fn\$
+    BEGIN
+      IF TG_OP = 'UPDATE' AND (NEW.page_id, NEW.tag) IS NOT DISTINCT FROM (OLD.page_id, OLD.tag) THEN
+        RETURN NULL;
+      END IF;
+      IF TG_OP <> 'INSERT' THEN
+        UPDATE pages SET knowledge_revision = gen_random_uuid() WHERE id = OLD.page_id;
+      END IF;
+      IF TG_OP <> 'DELETE' AND (TG_OP = 'INSERT' OR (NEW.page_id, NEW.tag) IS DISTINCT FROM (OLD.page_id, OLD.tag)) THEN
+        UPDATE pages SET knowledge_revision = gen_random_uuid() WHERE id = NEW.page_id;
+      END IF;
+      RETURN NULL;
+    END \$fn\$;
+DROP TRIGGER IF EXISTS tags_knowledge_revision ON tags;
+CREATE TRIGGER tags_knowledge_revision AFTER INSERT OR DELETE OR UPDATE ON tags
+    FOR EACH ROW EXECUTE FUNCTION gbrain_advance_tag_revision();
+
+CREATE TABLE IF NOT EXISTS page_aliases (
+      id BIGSERIAL PRIMARY KEY, source_id TEXT NOT NULL, alias_norm TEXT NOT NULL, slug TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      CONSTRAINT page_aliases_uniq UNIQUE (source_id, alias_norm, slug)
+    );
+    CREATE INDEX IF NOT EXISTS page_aliases_lookup_idx ON page_aliases (source_id, alias_norm);
+    CREATE INDEX IF NOT EXISTS page_aliases_slug_idx ON page_aliases (source_id, slug);
+    ALTER TABLE page_aliases ADD COLUMN IF NOT EXISTS origin TEXT NOT NULL DEFAULT 'frontmatter'
+      CHECK (origin IN ('frontmatter','declared','subject'));
+    ALTER TABLE page_aliases ADD COLUMN IF NOT EXISTS case_sensitive BOOLEAN NOT NULL DEFAULT false;
+    ALTER TABLE page_aliases ADD COLUMN IF NOT EXISTS alias_text TEXT;
+    DO \$alias_origin\$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'page_aliases_origin_uniq' AND conrelid = 'page_aliases'::regclass) THEN
+        ALTER TABLE page_aliases ADD CONSTRAINT page_aliases_origin_uniq UNIQUE (source_id, alias_norm, slug, origin);
+      END IF;
+      ALTER TABLE page_aliases DROP CONSTRAINT IF EXISTS page_aliases_uniq;
+    END \$alias_origin\$;
+    CREATE TABLE IF NOT EXISTS page_mention_state (
+      page_id INTEGER PRIMARY KEY REFERENCES pages(id) ON DELETE CASCADE,
+      source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+      mention_revision UUID,
+      mention_version INTEGER,
+      mention_generation BIGINT,
+      mentions_scanned_at TIMESTAMPTZ,
+      alias_revision UUID,
+      alias_version INTEGER,
+      aliases_refreshed_at TIMESTAMPTZ
+    );
+    CREATE INDEX IF NOT EXISTS page_mention_state_source_idx ON page_mention_state (source_id, mention_version);
+    CREATE TABLE IF NOT EXISTS mention_gazetteer_entries (
+      source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+      name_norm TEXT NOT NULL,
+      target_slug TEXT NOT NULL,
+      case_sensitive BOOLEAN NOT NULL DEFAULT false,
+      PRIMARY KEY (source_id, name_norm, target_slug, case_sensitive)
+    );
+    CREATE TABLE IF NOT EXISTS mention_index_status (
+      source_id TEXT PRIMARY KEY REFERENCES sources(id) ON DELETE CASCADE,
+      generation BIGINT NOT NULL DEFAULT 0,
+      state TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('complete','pending','disabled','failed')),
+      pending INTEGER NOT NULL DEFAULT 0,
+      counted_at TIMESTAMPTZ,
+      last_pass_at TIMESTAMPTZ,
+      policy_fingerprint TEXT,
+      error TEXT,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    DO \$rls\$ BEGIN
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname=current_user AND rolbypassrls) THEN
+        ALTER TABLE page_mention_state ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE mention_gazetteer_entries ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE mention_index_status ENABLE ROW LEVEL SECURITY;
+      END IF;
+    END \$rls\$;
+CREATE TABLE IF NOT EXISTS wanted_links (
+        id               BIGSERIAL PRIMARY KEY,
+        origin_page_id   INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+        source_id        TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+        producer         TEXT NOT NULL CHECK (producer IN ('body','frontmatter')),
+        ref_kind         TEXT NOT NULL CHECK (ref_kind IN ('slug','name')),
+        target_source_id TEXT NOT NULL,
+        target_ref       TEXT NOT NULL,
+        link_type        TEXT NOT NULL DEFAULT '',
+        context          TEXT NOT NULL DEFAULT '',
+        checked_at       TIMESTAMPTZ NOT NULL,
+        first_seen_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+        CONSTRAINT wanted_links_reference_unique
+          UNIQUE (origin_page_id, producer, ref_kind, target_source_id, target_ref)
+      );
+      CREATE INDEX IF NOT EXISTS wanted_links_target_idx ON wanted_links (target_source_id, target_ref);
+      CREATE INDEX IF NOT EXISTS wanted_links_source_idx ON wanted_links (source_id);
+      CREATE INDEX IF NOT EXISTS idx_pages_slug_basename
+        ON pages (source_id, (regexp_replace(slug, '^.*/', '')));
+      DO \$rls\$ BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles pr WHERE pg_has_role(current_user, pr.oid, 'USAGE') AND (pr.rolbypassrls OR pr.rolsuper)) THEN
+          ALTER TABLE wanted_links ENABLE ROW LEVEL SECURITY;
+        END IF;
+      END \$rls\$;
 `;

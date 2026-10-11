@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-const html = readFileSync(resolve('src/renderer/index.html'), 'utf8');
+const html = readFileSync(resolve('src/renderer/settings-content.html'), 'utf8');
 const renderer = readFileSync(resolve('src/renderer/src.ts'), 'utf8');
 const preload = readFileSync(resolve('src/preload/index.ts'), 'utf8');
 const ipc = readFileSync(resolve('src/main/ipc-handlers.ts'), 'utf8');

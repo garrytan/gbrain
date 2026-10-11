@@ -42,6 +42,7 @@ const MODEL_DOCTOR_CHAT_TIMEOUT_MS = 15_000;
 
 const PER_TASK_KEYS: Array<{ key: string; tier: ModelTier; description: string }> = [
   { key: 'models.dream.synthesize',         tier: 'subagent',  description: 'Dream synthesis (conversation → brain pages)' },
+  { key: 'models.dream.capture_entities',   tier: 'subagent',  description: 'Dream entity capture (signal-detector pages)' },
   { key: 'models.dream.synthesize_verdict', tier: 'utility',   description: 'Dream synthesis verdict (Haiku judge)' },
   { key: 'models.dream.patterns',           tier: 'subagent',  description: 'Pattern discovery (cross-take themes)' },
   { key: 'models.dream.extract_atoms',      tier: 'reasoning', description: 'Dream atom extraction' },

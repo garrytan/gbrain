@@ -16,7 +16,7 @@ import type {
   MinionJob, MinionJobContext, MinionHandler, MinionWorkerOpts,
   MinionQueueOpts, TokenUpdate,
 } from './types.ts';
-import { UnrecoverableError } from './types.ts';
+import { UnrecoverableError, MINION_DEFERRED } from './types.ts';
 import { MinionQueue } from './queue.ts';
 import { calculateBackoff } from './backoff.ts';
 import { RateLeaseUnavailableError } from './handlers/subagent.ts';
@@ -146,6 +146,8 @@ interface InFlightJob {
 export interface MinionWorker {
   on(event: 'unhealthy', listener: (info: UnhealthyReason) => void): this;
   emit(event: 'unhealthy', info: UnhealthyReason): boolean;
+  on(event: 'job-finished', listener: (job: MinionJob) => void): this;
+  emit(event: 'job-finished', job: MinionJob): boolean;
 }
 
 export class MinionWorker extends EventEmitter {
@@ -179,6 +181,7 @@ export class MinionWorker extends EventEmitter {
       maxAttachmentBytes: opts?.maxAttachmentBytes,
     });
     this.opts = {
+      ownsLockedTransaction: opts?.ownsLockedTransaction ?? (() => false),
       queue: opts?.queue ?? 'default',
       concurrency: opts?.concurrency ?? 1,
       lockDuration: opts?.lockDuration ?? 30000,
@@ -247,8 +250,11 @@ export class MinionWorker extends EventEmitter {
       throw new Error('No handlers registered. Call worker.register(name, handler) before start().');
     }
 
-    await this.queue.ensureSchema();
     this.running = true;
+    try { await this.queue.ensureSchema(); }
+    catch (error) { this.running = false; throw error; }
+    if (!this.running) return;
+    await this.queue.handleStalled([],this.opts.queue);
 
     // Graceful shutdown. Fires shutdownAbort so handlers subscribed to
     // `ctx.shutdownSignal` (currently: shell handler) can run their own cleanup
@@ -273,7 +279,8 @@ export class MinionWorker extends EventEmitter {
       stalledSweepInFlight = true;
       void (async () => {
         try {
-          const { requeued, dead } = await this.queue.handleStalled();
+          const runningHere = [...this.inFlight.keys()].filter(id=>this.opts.ownsLockedTransaction(id));
+          const { requeued, dead } = await this.queue.handleStalled(runningHere,this.opts.queue);
           if (requeued.length > 0) console.log(`Stall detector: requeued ${requeued.length} jobs`);
           if (dead.length > 0) console.log(`Stall detector: dead-lettered ${dead.length} jobs`);
         } catch (e) {
@@ -481,6 +488,11 @@ export class MinionWorker extends EventEmitter {
             this.registeredNames,
           );
 
+          if(job && !this.running){
+            await this.engine.executeRaw(`UPDATE minion_jobs SET status='waiting',lock_token=NULL,lock_until=NULL,timeout_at=NULL,
+              attempts_started=GREATEST(attempts_started-1,0),updated_at=now() WHERE id=$1 AND status='active' AND lock_token=$2`,[job.id,lockToken]);
+            break;
+          }
           if (job) {
             // Quiet-hours gate: evaluated at claim time, not dispatch.
             // Config lives on the job record (jsonb column added in
@@ -596,6 +608,11 @@ export class MinionWorker extends EventEmitter {
     this.running = false;
   }
 
+  setConcurrency(concurrency:number):void{
+    if(!Number.isSafeInteger(concurrency)||concurrency<1)throw new Error('Worker concurrency must be a positive integer');
+    this.opts.concurrency=concurrency;
+  }
+
   /** RSS watchdog. Called from the per-job finally and the periodic timer.
    *  Idempotent: returns early if already not running or already shut down.
    *  When threshold is exceeded, hands off to gracefulShutdown(). */
@@ -698,6 +715,7 @@ export class MinionWorker extends EventEmitter {
       lastSuccessfulRenewalAt: Date.now(),
       consecutiveFailures: 0,
       cancelled: () => cancelled,
+      ownsExecution: () => (this.engine.kind === 'pglite' && this.inFlight.has(job.id)) || this.opts.ownsLockedTransaction(job.id),
     };
     const renewalDeps: LockRenewalDeps = {
       renewLock: (id, tok, dur) => this.queue.renewLock(id, tok, dur),
@@ -807,6 +825,7 @@ export class MinionWorker extends EventEmitter {
         if (timeoutTimer) clearTimeout(timeoutTimer);
         if (graceTimer) clearTimeout(graceTimer);
         this.inFlight.delete(job.id);
+        this.emit('job-finished',job);
         this.jobsCompleted += 1;
         this.checkMemoryLimit('post-job');
       })
@@ -882,6 +901,8 @@ export class MinionWorker extends EventEmitter {
       const result = await withChatPhase(`job:${job.name}`, () => handler(context));
 
       clearInterval(lockTimer);
+
+      if (result === MINION_DEFERRED) return;
 
       // Complete the job (token-fenced)
       const completed = await this.queue.completeJob(

@@ -125,3 +125,14 @@ export function sanitizeStartupFailureMessage(message: string): string {
 export function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
+
+export function readMigrationProgress(stderr:string):{visible:true;stage:'migration'|'health';title:string;message:string}|null{
+  const started=Math.max(stderr.lastIndexOf('Schema version '),stderr.lastIndexOf('[serve] opening database'));
+  const ready=stderr.lastIndexOf('[migrate] schema ready');
+  if(ready>started)return {visible:true,stage:'health',title:'数据库升级完成，正在检查本地服务',message:'正在等待本地服务健康检查。'};
+  const matches=[...stderr.matchAll(/page revision backfill: (\d+)\/(\d+) row\(s\) done/g)];
+  const latest=matches.at(-1);
+  if(latest)return {visible:true,stage:'migration',title:'正在升级知识库',message:`页面版本号已完成 ${latest[1]} / ${latest[2]} 页。关闭应用后，下次启动会从已完成的批次继续。`};
+  if(stderr.includes('Schema version '))return {visible:true,stage:'migration',title:'正在升级知识库',message:'升级正在本地执行，完成后会继续启动服务。'};
+  return null;
+}

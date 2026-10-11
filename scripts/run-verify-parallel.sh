@@ -42,6 +42,7 @@ CHECKS=(
   "check:admin-build"
   "check:repository-hygiene"
   "check:version-sync"
+  "check:gbrain-subsystems"
   "check:privacy"
   "check:proposal-pii"
   "check:test-names"

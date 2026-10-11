@@ -1,3 +1,4 @@
+import { setTestSchemaVersion } from './helpers/schema-version.ts';
 /**
  * dream_verdicts TTL (#4069 reimplemented): every cached triage verdict gets
  * a 30-day expiry — reads treat expired rows as misses, re-judging refreshes
@@ -169,7 +170,7 @@ describe('dream_verdicts TTL', () => {
       INSERT INTO dream_verdicts (file_path, content_hash, worth_processing, reasons, judged_at)
       VALUES ('/tmp/legacy.md', 'legacy-hash', false, '[]'::jsonb, now() - interval '45 days')
     `);
-    await engine.setConfig('version', '119');
+    await setTestSchemaVersion(engine, '119');
 
     const first = await runMigrations(engine);
     expect(first.applied).toBeGreaterThanOrEqual(1);

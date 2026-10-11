@@ -139,6 +139,12 @@ export interface OperationContext {
    */
   allowedSlugPrefixes?: string[];
   /**
+   * Skills directory for a protected subagent job. Dream entity capture sets
+   * this so list_skills and get_skill read the packaged skill files without
+   * changing the caller's mcp.skills_dir or the remote publication gate.
+   */
+  skillsDir?: string;
+  /**
    * Resolved global CLI options (--quiet / --progress-json / --progress-interval).
    * CLI callers populate this from `getCliOptions()`. MCP / library callers
    * may leave it undefined — consumers default to quiet/no-progress for

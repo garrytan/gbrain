@@ -233,20 +233,30 @@ export function _peekPendingVolunteerEventWritesForTests(): number {
 export async function purgeStaleVolunteerEvents(
   engine: BrainEngine,
   ttlDays = VOLUNTEER_EVENTS_TTL_DAYS,
+  batchSize?: number,
 ): Promise<number> {
   try {
-    const rows = await engine.executeRaw<{ count: string | number }>(
-      `WITH deleted AS (
-         DELETE FROM context_volunteer_events
-         WHERE volunteered_at < now() - ($1 || ' days')::interval
-         RETURNING 1
-       )
-       SELECT count(*)::text AS count FROM deleted`,
-      [String(ttlDays)],
-    );
-    return Number(rows[0]?.count ?? 0);
+    let total = 0;
+    const limit = batchSize === undefined ? null : Math.max(1, Math.floor(batchSize));
+    while (true) {
+      const rows = await engine.executeRaw<{ count: string | number }>(
+        `WITH deleted AS (
+           DELETE FROM context_volunteer_events
+           WHERE id IN (
+             SELECT id FROM context_volunteer_events
+             WHERE volunteered_at < now() - ($1 || ' days')::interval
+             ORDER BY volunteered_at LIMIT $2
+           )
+           RETURNING 1
+         )
+         SELECT count(*)::text AS count FROM deleted`,
+        [String(ttlDays), limit],
+      );
+      const count = Number(rows[0]?.count ?? 0);
+      total += count;
+      if (limit === null || count < limit) return total;
+    }
   } catch {
     return 0;
   }
 }
-

@@ -11,7 +11,12 @@ function mockEngine(overrides: Partial<Record<string, any>> = {}): BrainEngine {
   const calls: { method: string; args: any[] }[] = [];
   const track = (method: string) => (...args: any[]) => {
     calls.push({ method, args });
-    if (overrides[method]) return overrides[method](...args);
+    if (overrides[method]) {
+      const result = overrides[method](...args);
+      return method === 'putPage' ? Promise.resolve(result).then(value => value ?? { slug: args[0], ...args[1] }) : result;
+    }
+    if (method === 'putPage') return { slug: args[0], ...args[1] };
+    if (method === 'executeRaw') return [];
     return Promise.resolve(null);
   };
 

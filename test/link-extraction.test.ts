@@ -57,13 +57,13 @@ describe('extractEntityRefs', () => {
   test('extracts filesystem-relative refs ([Name](../people/slug.md))', () => {
     const refs = extractEntityRefs('Met with [Alice Chen](../people/alice-chen.md) at the office.');
     expect(refs.length).toBe(1);
-    expect(refs[0]).toEqual({ name: 'Alice Chen', slug: 'people/alice-chen', dir: 'people' });
+    expect(refs[0]).toEqual({ name: 'Alice Chen', slug: 'people/alice-chen', dir: 'people', index: 9 });
   });
 
   test('extracts engine-style slug refs ([Name](people/slug))', () => {
     const refs = extractEntityRefs('See [Alice Chen](people/alice-chen) for context.');
     expect(refs.length).toBe(1);
-    expect(refs[0]).toEqual({ name: 'Alice Chen', slug: 'people/alice-chen', dir: 'people' });
+    expect(refs[0]).toEqual({ name: 'Alice Chen', slug: 'people/alice-chen', dir: 'people', index: 4 });
   });
 
   test('extracts company refs', () => {
@@ -103,7 +103,7 @@ describe('extractEntityRefs', () => {
     // GBrain-compatible extraction no longer hardcodes a directory allowlist;
     // persist callers still require the target page to exist.
     const refs = extractEntityRefs('See [random](notes/random).');
-    expect(refs).toEqual([{ name: 'random', slug: 'notes/random', dir: 'notes' }]);
+    expect(refs).toEqual([{ name: 'random', slug: 'notes/random', dir: 'notes', index: 4 }]);
   });
 
   test('extracts meeting refs', () => {
@@ -122,12 +122,14 @@ describe('extractEntityRefs', () => {
         slug: 'wiki/重庆保供项目/项目-重庆保供项目',
         dir: 'wiki',
         exactPath: true,
+        index: 3,
       },
       {
         name: '更新记录',
         slug: 'youdao/随写漫谈/项目/pmbrain拉取gbrain更新',
         dir: 'youdao',
         exactPath: true,
+        index: 31,
       },
     ]);
   });
@@ -233,6 +235,67 @@ describe('extractPageLinks', () => {
     const aliceLink = candidates.find(c => c.targetSlug === 'people/alice');
     expect(aliceLink!.linkType).toBe('attended');
   });
+
+  test('中文任职写成人物到公司的 works_at', async () => {
+    const { candidates } = await extractPageLinks(
+      'people/zhang',
+      '张三在[星河科技](companies/xinghe)任职。',
+      {},
+      'person',
+      nullResolver,
+    );
+    expect(candidates.find(candidate => candidate.targetSlug === 'companies/xinghe')?.linkType).toBe('works_at');
+  });
+
+  test('会议页指向公司时记为提及，指向人物时仍是参加', async () => {
+    const { candidates } = await extractPageLinks(
+      'meetings/standup',
+      '讨论了[星河科技](companies/xinghe)，[张三](people/zhang)到场。',
+      {},
+      'meeting' as never,
+      nullResolver,
+    );
+    expect(candidates.find(candidate => candidate.targetSlug === 'companies/xinghe')?.linkType).toBe('mentions');
+    expect(candidates.find(candidate => candidate.targetSlug === 'people/zhang')?.linkType).toBe('attended');
+  });
+
+  test('给出目标类型后，会议只把人物标成参加', async () => {
+    const { candidates } = await extractPageLinks(
+      'meetings/standup',
+      '[Alice](people/alice) discussed [Acme](companies/acme).',
+      {},
+      'meeting' as never,
+      nullResolver,
+      { targetType: slug => slug.startsWith('people/') ? 'person' : 'company' },
+    );
+    expect(candidates.find(candidate => candidate.targetSlug === 'people/alice')?.linkType).toBe('attended');
+    expect(candidates.find(candidate => candidate.targetSlug === 'companies/acme')?.linkType).toBe('mentions');
+  });
+
+  test('显式关系行标出 works_at，关闭行语法后回到普通提及', async () => {
+    const content = '- works_at [Acme](companies/acme)\n';
+    const enabled = await extractPageLinks('people/ann', content, {}, 'person', nullResolver);
+    expect(enabled.candidates.find(candidate => candidate.targetSlug === 'companies/acme')?.linkType).toBe('works_at');
+    const disabled = await extractPageLinks(
+      'people/ann', content, {}, 'person', nullResolver, { lineGrammar: { enabled: false } },
+    );
+    expect(disabled.candidates.find(candidate => candidate.targetSlug === 'companies/acme')?.linkType).toBe('mentions');
+  });
+
+  test('时间线里的公司链接不继承正文开头的任职判断', async () => {
+    const content = [
+      'Alice is an engineer at [Acme](companies/acme).',
+      '',
+      '后来的记录'.repeat(40),
+      '',
+      '## Timeline',
+      '',
+      'Met [Beta](companies/beta) at a conference.',
+    ].join('\n');
+    const { candidates } = await extractPageLinks('people/alice', content, {}, 'person', nullResolver);
+    expect(candidates.find(candidate => candidate.targetSlug === 'companies/acme')?.linkType).toBe('works_at');
+    expect(candidates.find(candidate => candidate.targetSlug === 'companies/beta')?.linkType).toBe('mentions');
+  });
 });
 
 // ─── inferLinkType ─────────────────────────────────────────────
@@ -315,6 +378,24 @@ describe('inferLinkType', () => {
     expect(inferLinkType('person', '王五担任顾问。')).toBe('advises');
     expect(inferLinkType('person', '赵六任职于星河科技。')).toBe('works_at');
     expect(inferLinkType('concept', '本文引用了纳瓦尔的观点。')).toBe('cited');
+  });
+
+  test('joined as a role is works_at', () => {
+    expect(inferLinkType('person', 'She joined [Acme](companies/acme) as a senior engineer.')).toBe('works_at');
+  });
+
+  test('相邻两个链接各自保留自己的动词', () => {
+    const text = 'She works at [Acme](companies/acme) and also advises [Beta](companies/beta).';
+    expect(inferLinkType('person', text, undefined, 'companies/acme', 'company', text.indexOf('companies/acme'))).toBe('works_at');
+    expect(inferLinkType('person', text, undefined, 'companies/beta', 'company', text.indexOf('companies/beta'))).toBe('advises');
+  });
+
+  test('会议链接按目标类型区分参加和提及', () => {
+    expect(inferLinkType('meeting', 'Attendees: Alice')).toBe('attended');
+    expect(inferLinkType('meeting', 'Attendees: Alice', undefined, 'people/alice')).toBe('attended');
+    expect(inferLinkType('meeting', 'Discussed Acme', undefined, 'companies/acme')).toBe('mentions');
+    expect(inferLinkType('meeting', 'Discussed Acme', undefined, 'companies/acme', 'company')).toBe('mentions');
+    expect(inferLinkType('meeting', 'Attendees: Alice', undefined, 'people/alice', 'person')).toBe('attended');
   });
 
   test('precedence: founded beats works_at', () => {
@@ -994,7 +1075,7 @@ describe("extractEntityRefs — v0.18.0 qualified wikilinks", () => {
   test("[[gstack:projects/foo|Display Name]] preserves display + sourceId", () => {
     const refs = extractEntityRefs("See [[gstack:projects/foo|The Foo Project]] for details.");
     expect(refs.length).toBe(1);
-    expect(refs[0]).toEqual({ name: "The Foo Project", slug: "projects/foo", dir: "projects", sourceId: "gstack" });
+    expect(refs[0]).toEqual({ name: "The Foo Project", slug: "projects/foo", dir: "projects", sourceId: "gstack", index: 4 });
   });
 
   test("qualified source-id format is validated (must match [a-z0-9-]+ kebab rules)", () => {

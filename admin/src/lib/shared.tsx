@@ -19,6 +19,8 @@ const PAGE_TYPE_LABELS: Record<string, { label: string; description: string }> =
   fact: { label: '事实', description: '可追溯、可验证的结构化事实。' },
   person: { label: '人物', description: '人物、角色或联系人页面。' },
   company: { label: '公司', description: '公司、组织或机构页面。' },
+  organization: { label: '组织机构', description: '组织、机构或部门的知识页。' },
+  entity: { label: '实体', description: '从资料中识别并归集的知识对象。' },
   event: { label: '事件', description: '有日期的独立事件页。' },
   'calendar-event': { label: '日历事件', description: '日历或日程中的事件。' },
   pattern: { label: '模式', description: '跨会话或跨项目重复出现的模式。' },
@@ -97,8 +99,7 @@ export function RunOutput({ run }: { run: ConsoleRun }) {
       <button className="run-output-copy" type="button" onClick={() => void copyOutput()} disabled={!copyText}>
         {copied ? '已复制' : '复制'}
       </button>
-      <div className="pm-kv"><span>状态</span><b className={`run-${run.status}`}>{run.status}</b></div>
-      <div className="pm-kv"><span>命令</span><b>{run.command.join(' ')}</b></div>
+      {run.command.length > 0 && <div className="pm-kv"><span>执行参数</span><b>{run.command.join(' ')}</b></div>}
       {run.error && <div className="pm-error-text">{run.error}</div>}
       {run.stdout && <pre>{run.stdout}</pre>}
       {run.stderr && <pre className="stderr">{run.stderr}</pre>}

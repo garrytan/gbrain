@@ -1,0 +1,112 @@
+.product-app {
+  --ui-radius: 12px;
+  --ui-control: 36px;
+  --ui-accent-soft: color-mix(in srgb, var(--accent) 12%, var(--product-panel));
+  --ui-raised: color-mix(in srgb, var(--product-text) 3%, var(--product-panel));
+}
+.product-app :is(input[type="checkbox"], input[type="radio"]):not(.settings-switch) {
+  width: 16px; min-width: 16px; max-width: 16px; height: 16px; min-height: 16px; max-height: 16px;
+  margin: 0; padding: 0; flex: 0 0 16px; align-self: center; accent-color: var(--accent); box-shadow: none;
+}
+.product-app .checkbox-label { display: inline-flex; align-items: center; gap: 8px; }
+.product-app .product-existing .main { padding: 28px 36px 40px; background: var(--product-bg); }
+.product-app .product-existing .pm-page { max-width: 1200px; margin: 0 auto; padding: 0; }
+.product-app .product-existing :is(.pm-section-head, .dream-hero-copy) h1 { font-size: 26px; font-weight: 650; line-height: 1.3; letter-spacing: -.02em; margin: 0 0 6px; }
+.product-app .product-existing :is(.pm-page-intro, .dream-hero-copy > p) { font-size: 13px; line-height: 1.65; color: var(--product-muted); margin: 0; max-width: 720px; }
+.product-app .product-existing :is(.pm-card, .dream-summary-card, .dream-library-card, .dream-history-card, .dream-recommendation) { border: 1px solid var(--product-line); border-radius: var(--ui-radius); background: var(--product-panel); box-shadow: none; }
+.product-app .product-existing :is(.pm-eyebrow, .dream-eyebrow) { display: none; }
+.product-app .product-existing :is(.pm-primary, .pm-ghost) { min-height: var(--ui-control); border-radius: 8px; padding: 7px 12px; font-size: 13px; }
+.product-app .product-existing .pm-primary { background: var(--accent); box-shadow: none; }
+.product-app .product-existing :is(input:not([type="checkbox"]):not([type="radio"]), select) { min-height: var(--ui-control); border-radius: 8px; }
+.product-app .brain-data-page > .pm-section-head { align-items: center; margin-bottom: 22px; }
+.product-app .brain-data-page .knowledge-view-tabs { gap: 4px; border-bottom: 1px solid var(--product-line); padding-bottom: 12px; }
+.product-app .brain-data-page .knowledge-view-tabs button { border-radius: 7px; font-size: 13px; padding: 8px 12px; }
+.product-app .brain-data-page .knowledge-view-tabs button.active { background: var(--ui-accent-soft); color: var(--accent); border-color: transparent; }
+.product-app .dream-home { display: flex; flex-direction: column; gap: 16px; }
+.product-app .dream-home > * { margin: 0; }
+.product-app .dream-home .dream-hero { padding: 0 0 6px; background: transparent; border: 0; min-height: 0; border-radius: 0; }
+.product-app .dream-hero-copy { width: 100%; display: grid; grid-template-columns: 1fr auto; }
+.product-app .dream-hero-copy > p { grid-column: 1; }
+.product-app .dream-hero-actions { grid-column: 2; grid-row: 1 / 3; align-self: center; margin: 0; }
+.product-app .dream-recommendation { padding: 16px 18px; gap: 12px; }
+.product-app .dream-recommendation-icon { width: 32px; height: 32px; border-radius: 9px; background: var(--ui-accent-soft); color: var(--accent); font-size: 18px; flex: none; }
+.product-app .dream-recommendation b { font-size: 14px; }
+.product-app .dream-recommendation :is(span, small) { font-size: 12px; color: var(--product-muted); }
+.product-app .maintenance-schedule { display: flex; gap: 12px; align-items: center; padding: 16px 18px; background: var(--product-panel); border: 1px solid var(--product-line); border-radius: var(--ui-radius); }
+.product-app .maintenance-schedule div { flex: 1; }
+.product-app .maintenance-schedule b { display: block; font-size: 14px; font-weight: 600; }
+.product-app .maintenance-schedule small { display: block; font-size: 12px; color: var(--product-muted); margin-top: 5px; }
+.product-app .maintenance-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--product-muted); }
+.product-app .maintenance-dot.enabled { background: #34c759; }
+.product-app .maintenance-manual { order: 5; border-top: 1px solid var(--product-line); }
+.product-app .maintenance-manual > summary { cursor: pointer; padding: 16px 0; font-size: 13px; color: var(--product-muted); }
+.product-app .maintenance-manual[open] > summary { color: var(--product-text); }
+.product-app .dream-home-grid { gap: 16px; }
+.product-app :is(.dream-summary-card, .dream-library-card, .dream-history-card) { padding: 20px; }
+.product-app :is(.dream-summary-card, .dream-history-card) h2 { font-size: 17px; margin: 0 0 10px; }
+.product-app .dream-summary-card > p { font-size: 13px; color: var(--product-muted); }
+.product-app .dream-library-metrics b { font-size: 28px; font-weight: 600; }
+.product-app .dream-launcher { padding: 20px; background: var(--product-panel); border: 1px solid var(--product-line); border-radius: var(--ui-radius); }
+.product-app .dream-launcher h2 { font-size: 18px; }
+.product-app .dream-run-mode { background: var(--ui-raised); border-color: var(--product-line); border-radius: 10px; }
+.product-app .dream-run-mode button.active { background: var(--ui-accent-soft); }
+.product-app .dream-launcher :is(label, p) { font-size: 13px; }
+.product-app .desktop-settings .credential-switch { display: flex; flex-wrap: wrap; align-items: center; gap: 18px; }
+.product-app .desktop-settings .credential-switch label { display: inline-flex; align-items: center; gap: 8px; margin: 0; font-size: 13px; }
+.product-app .desktop-settings :is(.form-row, .field):has(input[type="radio"]) label { align-items: center; }
+.product-app .wb-toolbar { min-height: 64px; padding: 12px 24px; gap: 12px; }
+.product-app .wb-toolbar select { max-width: 320px; min-height: 34px; font-size: 12px; background: var(--ui-raised); }
+.product-app .wb-knowledge { gap: 8px; padding: 6px 9px; border: 1px solid var(--product-line); border-radius: 8px; }
+.product-app .wb-history { background: var(--product-bg); gap: 10px; padding: 16px 12px; }
+.product-app .wb-history-list button { padding: 12px; border-radius: 9px; margin-bottom: 3px; }
+.product-app .wb-history-list button.selected { background: var(--ui-raised); }
+.product-app .wb-history-list small { font-size: 11px; }
+.product-app .wb-message-column { max-width: 880px; padding: 28px 32px; }
+.product-app .wb-message { gap: 12px; margin-bottom: 28px; }
+.product-app .wb-avatar { width: 28px; height: 28px; border: 0; background: var(--ui-accent-soft); color: var(--accent); border-radius: 8px; }
+.product-app .wb-message-body .markdown-article { font-size: 14px; line-height: 1.85; }
+.product-app .wb-message-body > header { margin-top: 2px; }
+.product-app .wb-compose-area { padding: 12px 28px 16px; }
+.product-app .wb-composer { max-width: 880px; margin-inline: auto; border-radius: 16px; background: var(--product-panel); padding: 14px 16px 10px; }
+.product-app .wb-composer textarea { font-size: 14px; min-height: 64px; }
+.product-app .wb-compose-note { margin-top: 8px; font-size: 11px; }
+.product-app .materials-drawer { position: fixed; inset: 0 0 0 auto; margin: 0; width: min(540px, calc(100vw - 48px)); max-width: none; height: 100dvh; max-height: none; border: 0; border-left: 1px solid var(--product-line); padding: 0; color: var(--product-text); background: var(--product-bg); box-shadow: -16px 0 60px #0002; }
+.product-app .materials-drawer[open] { display: flex; flex-direction: column; }
+.product-app .materials-drawer::backdrop { background: #0006; }
+.product-app .materials-drawer > header { display: flex; align-items: flex-start; justify-content: space-between; padding: 28px; border-bottom: 1px solid var(--product-line); }
+.product-app .materials-drawer h2 { margin: 0; font-size: 22px; font-weight: 600; }
+.product-app .materials-drawer p { font-size: 13px; color: var(--product-muted); line-height: 1.6; }
+.product-app .materials-drawer header p { margin: 8px 0 0; }
+.product-app .materials-drawer button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 34px; padding: 8px 12px; border: 1px solid var(--product-line); border-radius: 8px; color: inherit; background: var(--product-panel); font: inherit; font-size: 13px; cursor: pointer; }
+.product-app .materials-drawer button:disabled { opacity: .45; cursor: default; }
+.product-app .materials-drawer header button { padding: 6px; border: 0; background: transparent; }
+.product-app .materials-body { flex: 1; min-height: 0; overflow: auto; padding: 24px 28px; }
+.product-app .materials-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+.product-app .materials-actions button { flex-direction: column; align-items: flex-start; padding: 18px; border-radius: 12px; }
+.product-app .materials-actions svg { color: var(--accent); margin-bottom: 8px; }
+.product-app .materials-actions b { font-weight: 600; }
+.product-app .materials-actions small { color: var(--product-muted); font-size: 11px; }
+.product-app .materials-source { display: grid; gap: 8px; margin-top: 24px; font-size: 12px; color: var(--product-muted); }
+.product-app .materials-source select { width: 100%; min-width: 0; border-radius: 8px; font-size: 13px; }
+.product-app .materials-list { padding: 0; list-style: none; margin: 20px 0; }
+.product-app .materials-list li { display: flex; align-items: center; gap: 12px; padding: 14px 0; border-bottom: 1px solid var(--product-line); }
+.product-app .materials-list > li > svg { flex: none; color: var(--accent); }
+.product-app .materials-list span { flex: 1; min-width: 0; }
+.product-app .materials-list :is(b, small) { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.product-app .materials-list b { font-size: 13px; font-weight: 500; }
+.product-app .materials-list small { margin-top: 4px; font-size: 11px; color: var(--product-muted); }
+.product-app .materials-list button { border: 0; padding: 5px; background: transparent; }
+.product-app .materials-empty { text-align: center; padding: 40px 16px; }
+.product-app .materials-result { border: 1px solid var(--product-line); border-radius: 10px; padding: 16px; background: var(--product-panel); font-size: 13px; }
+.product-app .materials-result pre { white-space: pre-wrap; font: inherit; color: var(--product-muted); line-height: 1.7; }
+.product-app .materials-log { margin-top: 16px; font-size: 12px; }
+.product-app .materials-log summary { cursor: pointer; color: var(--product-muted); }
+.product-app .materials-drawer > footer { display: flex; align-items: center; gap: 16px; border-top: 1px solid var(--product-line); padding: 20px 28px; }
+.product-app .materials-drawer footer small { flex: 1; color: var(--product-muted); font-size: 11px; line-height: 1.6; }
+.product-app .materials-drawer .materials-primary { background: var(--accent); color: white; border-color: var(--accent); }
+@media (min-width: 768px) and (max-width: 1100px) {
+  .product-app .product-existing .main { padding: 24px; }
+  .product-app .wb-toolbar { gap: 8px; padding: 12px; }
+  .product-app .wb-assistant-chip { display: none; }
+  .product-app .wb-message-column { padding: 22px; }
+}

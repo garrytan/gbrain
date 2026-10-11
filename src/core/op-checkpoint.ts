@@ -342,18 +342,29 @@ export function mentionsFingerprint(p: {
 export async function purgeStaleCheckpoints(
   engine: BrainEngine,
   ttlDays = 7,
+  batchSize?: number,
 ): Promise<number> {
   try {
-    const rows = await engine.executeRaw<{ count: string | number }>(
-      `WITH deleted AS (
-         DELETE FROM op_checkpoints
-         WHERE updated_at < now() - ($1 || ' days')::interval
-         RETURNING 1
-       )
-       SELECT count(*)::text AS count FROM deleted`,
-      [String(ttlDays)],
-    );
-    return Number(rows[0]?.count ?? 0);
+    let total = 0;
+    const limit = batchSize === undefined ? null : Math.max(1, Math.floor(batchSize));
+    while (true) {
+      const rows = await engine.executeRaw<{ count: string | number }>(
+        `WITH deleted AS (
+           DELETE FROM op_checkpoints
+           WHERE (op, fingerprint) IN (
+             SELECT op, fingerprint FROM op_checkpoints
+             WHERE updated_at < now() - ($1 || ' days')::interval
+             ORDER BY updated_at LIMIT $2
+           )
+           RETURNING 1
+         )
+         SELECT count(*)::text AS count FROM deleted`,
+        [String(ttlDays), limit],
+      );
+      const count = Number(rows[0]?.count ?? 0);
+      total += count;
+      if (limit === null || count < limit) return total;
+    }
   } catch (e) {
     console.error('[op-checkpoint] purge failed:', (e as Error).message);
     return 0;

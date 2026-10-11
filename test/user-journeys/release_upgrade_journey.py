@@ -136,8 +136,15 @@ def run(args: argparse.Namespace) -> None:
         )
         page = old_session.start()
         try:
-            origin, _desktop_url = journeys.first_launch_journey(page, artifacts, provider)
-            journeys.import_search_journey(page, origin, markdown, pdf, artifacts)
+            journeys.first_launch_journey(page, artifacts, provider)
+            admin_browser, admin, origin = journeys.open_admin_browser(
+                playwright,
+                journeys.mint_admin_login_link(page, home),
+            )
+            try:
+                journeys.import_search_journey(admin, origin, markdown, pdf, artifacts)
+            finally:
+                admin_browser.close()
         finally:
             old_session.stop()
 
@@ -160,12 +167,18 @@ def run(args: argparse.Namespace) -> None:
 
         browser, restarted_page = wait_for_restarted_page(playwright, cdp_port)
         try:
-            origin = journeys.open_admin_from_desktop(restarted_page)
-            restarted_page.goto(origin + "/admin/#data")
-            restarted_page.get_by_role("heading", name="知识数据").wait_for()
-            restarted_page.get_by_placeholder("搜索 slug 或标题").fill("Real User Journey Orchid")
-            restarted_page.get_by_role("row", name=re.compile("Real User Journey Orchid")).wait_for(timeout=120_000)
-            verify_version_history(home, args.expected_version)
+            admin_browser, admin, origin = journeys.open_admin_browser(
+                playwright,
+                journeys.mint_admin_login_link(restarted_page, home),
+            )
+            try:
+                admin.goto(origin + "/admin/#data")
+                admin.get_by_role("heading", name="知识数据").wait_for()
+                admin.get_by_placeholder("搜索 slug 或标题").fill("Real User Journey Orchid")
+                admin.get_by_role("row", name=re.compile("Real User Journey Orchid")).wait_for(timeout=120_000)
+                verify_version_history(home, args.expected_version)
+            finally:
+                admin_browser.close()
         except Exception:
             restarted_page.screenshot(path=str(artifacts / "upgrade-failure.png"), full_page=True)
             raise

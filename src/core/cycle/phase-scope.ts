@@ -25,6 +25,7 @@ export const PHASE_SCOPE: Record<CyclePhase, PhaseScope> = {
   extract_atoms: 'source',
   synthesize_concepts: 'global',
   conversation_facts_backfill: 'source',
+  capture_entities: 'source',
   enrich_thin: 'source',
 };
 

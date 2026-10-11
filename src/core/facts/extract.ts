@@ -28,6 +28,7 @@ import { resolveModel } from '../model-config.ts';
 import type { BrainEngine, NewFact, FactKind } from '../engine.ts';
 import { normalizeMetricLabel } from './extract-from-fence.ts';
 import { stripReasoningBlocks } from '../llm-json.ts';
+import {defaultMaxOutputTokens,isThinkingModel} from '../ai/model-compatibility.ts';
 
 /**
  * v0.31 (D15): kill-switch for fact extraction.
@@ -180,10 +181,11 @@ export async function extractFactsFromTurn(input: ExtractInput): Promise<Extract
   const cap = Math.max(1, Math.min(input.maxFactsPerTurn ?? 10, 25));
   const defaultModel = await getFactsExtractionModel(input.engine);
   const promptAppendix = await getFactsExtractionPromptAppendix(input.engine);
+  const model=input.model??defaultModel;
   let result: ChatResult;
   try {
     result = await chat({
-      model: input.model ?? defaultModel,
+      model,
       system: promptAppendix ? `${EXTRACTOR_SYSTEM}\n\n${promptAppendix}` : EXTRACTOR_SYSTEM,
       messages: [
         {
@@ -195,7 +197,10 @@ export async function extractFactsFromTurn(input: ExtractInput): Promise<Extract
           }`,
         },
       ],
-      maxTokens: 1500,
+      maxTokens:isThinkingModel(model)?defaultMaxOutputTokens(model):1500,
+      retryLength:true,
+      disableReasoning:true,
+      responseSchema:{name:'facts',schema:{type:'object',properties:{facts:{type:'array',items:{type:'object'}}},required:['facts']}},
       abortSignal: input.abortSignal,
     });
   } catch (err) {
@@ -207,10 +212,17 @@ export async function extractFactsFromTurn(input: ExtractInput): Promise<Extract
   }
 
   if (result.stopReason === 'refusal' || result.stopReason === 'content_filter') return [];
+  if(result.stopReason==='length'){
+    const error=new Error('facts_output_truncated: output truncated after bounded retry');
+    if(input.throwOnError)throw error;
+    console.error(error.message);
+    return [];
+  }
 
   const parsedRaw = parseExtractorJson(result.text);
   if (!parsedRaw) {
     if(input.throwOnError)throw new Error('Facts extraction returned invalid JSON');
+    console.error('facts_parse_failed: Facts extraction returned invalid JSON');
     return [];
   }
 
@@ -294,11 +306,7 @@ interface RawExtracted {
  * the model included it. Production callers should use extractFactsFromTurn.
  */
 export function parseExtractorJson(raw: string): RawExtracted[] | null {
-  const direct = parseExtractorJsonInner(raw);
-  if (direct) return direct;
-  const stripped = stripReasoningBlocks(raw);
-  if (stripped && stripped !== raw.trim()) return parseExtractorJsonInner(stripped);
-  return null;
+  return parseExtractorJsonInner(stripReasoningBlocks(raw));
 }
 
 function parseExtractorJsonInner(raw: string): RawExtracted[] | null {

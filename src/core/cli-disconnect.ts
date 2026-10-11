@@ -11,6 +11,7 @@ export const PGLITE_SKIP_CLOSE_COMMANDS: ReadonlySet<string> = new Set([
   'extract',
   'models',
   'think',
+  'sources',
 ]);
 
 export interface CliDisconnectOptions {

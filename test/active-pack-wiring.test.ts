@@ -63,7 +63,7 @@ describe('v0.39 T1.5 — parseMarkdown activePack threading', () => {
     expect(parseMarkdown('x', 'Projects/p1.md', { activePack: pack }).type).toBe('project');
     expect(parseMarkdown('x', 'Reading/a1.md', { activePack: pack }).type).toBe('reading-note');
     expect(parseMarkdown('x', 'Daily Notes/today.md', { activePack: pack }).type).toBe('daily-note');
-    // Unmapped path falls back to `concept`.
-    expect(parseMarkdown('x', 'Other/foo.md', { activePack: pack }).type).toBe('concept');
+    // Unmapped path stays note. It does not become a concept entity.
+    expect(parseMarkdown('x', 'Other/foo.md', { activePack: pack }).type).toBe('note');
   });
 });

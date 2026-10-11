@@ -63,6 +63,7 @@ describe('普通模型默认可用', () => {
     expect(phaseRequiresGenerativeModel('grade_takes')).toBe(true);
     expect(phaseRequiresGenerativeModel('extract_atoms')).toBe(true);
     expect(phaseRequiresGenerativeModel('drift')).toBe(true);
+    expect(phaseRequiresGenerativeModel('capture_entities')).toBe(true);
     expect(phaseRequiresGenerativeModel('enrich_thin')).toBe(true);
     expect(phaseRequiresGenerativeModel('schema-suggest')).toBe(false);
     expect(phaseRequiresGenerativeModel('consolidate')).toBe(false);

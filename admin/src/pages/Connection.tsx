@@ -1,18 +1,35 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { AgentsPage } from './Agents';
 import { ChatGptTunnelPanel } from './ChatGptTunnel';
 import { CopyButton } from '../lib/clipboard';
 import { InfoIcon } from '../lib/shared';
 import { useOverview } from './console-shared';
+import { desktopApi } from '../lib/product-fetch';
+import { mcpServiceOrigin } from '../lib/mcp-service-origin';
 export function ConnectionCenterPage() {
   const { overview } = useOverview();
-  const origin = window.location.origin;
+  const [origin, setOrigin] = useState(() => mcpServiceOrigin(window.location.origin));
+  const [serviceError, setServiceError] = useState('');
+  useEffect(() => {
+    const desktop = desktopApi();
+    if (!desktop) return;
+    let live = true;
+    const update = (state: { port?: number; phase?: string; message?: string } | null) => {
+      if (!live) return;
+      setOrigin(mcpServiceOrigin(window.location.origin, state));
+      setServiceError(state?.phase === 'failed' ? state.message || '本地服务读取失败' : '');
+    };
+    const unsubscribe = desktop.onState(update);
+    void desktop.getState().then(update).catch((error: unknown) => { if (live) setServiceError(String(error)); });
+    return () => { live = false; unsubscribe(); };
+  }, []);
+  const endpoint = (path: string) => origin ? `${origin}${path}` : '';
   const [showCodeBuddyGuide, setShowCodeBuddyGuide] = useState(false);
   const codeBuddyConfig = useMemo(() => JSON.stringify({
     mcpServers: {
       pmbrain: {
         type: 'http',
-        url: `${origin}/mcp`,
+        url: origin ? `${origin}/mcp` : '',
         headers: {
           Authorization: 'Bearer PASTE_PMBRAIN_API_KEY_HERE',
         },
@@ -41,16 +58,17 @@ export function ConnectionCenterPage() {
           <span>MCP 请求未指定 source 时，会读取主知识库源。需要修改时请到“设置”页调整主知识库源。</span>
         </div>
       )}
+      {serviceError && <p className="pm-error" role="alert">{serviceError}</p>}
       <div className="mcp-endpoint-grid">
         {[
-          ['MCP Server', `${origin}/mcp`],
-          ['OAuth Discovery', `${origin}/.well-known/oauth-authorization-server`],
-          ['Token URL', `${origin}/token`],
+          ['MCP Server', endpoint('/mcp')],
+          ['OAuth Discovery', endpoint('/.well-known/oauth-authorization-server')],
+          ['Token URL', endpoint('/token')],
         ].map(([label, value]) => (
           <article className="mcp-endpoint-card" key={label}>
             <span>{label}</span>
-            <code>{value}</code>
-            <CopyButton className="pm-ghost" value={value} />
+            <code>{value || '正在读取本地服务地址…'}</code>
+            {value && <CopyButton className="pm-ghost" value={value} />}
           </article>
         ))}
       </div>
@@ -81,7 +99,7 @@ export function ConnectionCenterPage() {
               <section>
                 <h3>准备工作</h3>
                 <ol>
-                  <li>保持 PMBrain HTTP 服务运行，当前 MCP 地址是 <code>{origin}/mcp</code>。</li>
+                  <li>保持 PMBrain HTTP 服务运行，当前 MCP 地址是 <code>{endpoint('/mcp') || '正在读取本地服务地址…'}</code>。</li>
                   <li>在本页下方点击 <b>+ API Key</b>，创建一个给 CodeBuddy 使用的 Agent。</li>
                   <li>复制创建时显示的 API Key。离开弹窗后不会再次显示完整密钥。</li>
                 </ol>

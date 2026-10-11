@@ -48,6 +48,10 @@ describe('complete engine transfer', () => {
     await source.addTag('transfer-original', '保留标签');
     await source.executeRaw("INSERT INTO tags (page_id, tag) SELECT p.id, 'batch-' || n::text FROM pages p CROSS JOIN generate_series(1, 205) AS n WHERE p.slug = 'transfer-original'");
     await source.setConfig('transfer.preference', '保留设置');
+    const targetSchema = await target.getConfig('pmbrain.schema.version');
+    const targetLedger = await target.executeRaw('SELECT * FROM pmbrain_schema_migrations ORDER BY namespace, version');
+    await source.unsetConfig('pmbrain.schema.version');
+    await source.setConfig('version', '130');
     await source.executeRaw("INSERT INTO facts (source_id, fact, kind, visibility, source) VALUES ('default', '迁移事实', 'fact', 'private', 'transfer-test')");
     await source.putPage('transfer-related', {
       type: 'person', title: '关联对象', compiled_truth: '关联内容',
@@ -70,6 +74,11 @@ describe('complete engine transfer', () => {
     await source.executeRaw('DROP TABLE legacy_unknown');
 
     expect(receipt.status).toBe('verified');
+    expect(receipt.excludedOperationalTables).toContain('pmbrain_schema_migrations');
+    expect(await target.getConfig('pmbrain.schema.version')).toBe(targetSchema);
+    expect(await target.getConfig('version')).toBe(targetSchema);
+    expect(await target.executeRaw('SELECT * FROM pmbrain_schema_migrations ORDER BY namespace, version')).toEqual(targetLedger);
+    expect(await source.getConfig('pmbrain.schema.version')).toBeNull();
     expect(progress).toContainEqual({ name: 'content_chunks', copied: 1, total: 1 });
     expect((await target.getPage('transfer-original'))?.compiled_truth).toBe('保留正文');
     expect((await target.getChunksWithEmbeddings('transfer-original')).map(chunk => chunk.chunk_text)).toContain('更新后的分块');
@@ -129,6 +138,8 @@ describe('complete engine transfer', () => {
     let fresh: PGLiteEngine;
 
     beforeAll(async () => {
+      await source.disconnect();
+      await target.disconnect();
       legacy = new PGLiteEngine();
       fresh = new PGLiteEngine();
       await legacy.connect({ engine: 'pglite', database_path: join(directory, 'legacy.pglite') });
@@ -141,6 +152,8 @@ describe('complete engine transfer', () => {
       await fresh?.disconnect();
       await legacy?.disconnect();
       rmSync(directory, { recursive: true, force: true });
+      await source.connect({ engine: 'pglite', database_path: join(root, 'source.pglite') });
+      await target.connect({ engine: 'pglite', database_path: join(root, 'target.pglite') });
     }, 120000);
 
     test('preserves both Facts in the new database without changing the old database', async () => {

@@ -58,6 +58,7 @@ echo "[pg_upgrade_matrix] log=$LOG_FILE"
 echo ""
 
 fails=0
+LATEST=$(bun -e 'import { LATEST_VERSION } from "./src/core/migrate.ts"; process.stdout.write(String(LATEST_VERSION));')
 for SHAPE in "${SHAPES[@]}"; do
   echo "[pg_upgrade_matrix] --- shape=$SHAPE ---" | tee -a "$LOG_FILE"
 
@@ -72,10 +73,16 @@ for SHAPE in "${SHAPES[@]}"; do
     continue
   fi
 
-  # Step 2: walk forward. `gbrain doctor` triggers engine.connect() which
-  # runs applyForwardReferenceBootstrap → SCHEMA_SQL → runMigrations.
-  # Wedges manifest as either a timeout, a non-zero exit, or status != 'ok'
-  # in the JSON output.
+  set +e
+  timeout 120s bun run src/cli.ts init --migrate-only --json >> "$LOG_FILE" 2>&1
+  MIGRATE_RC=$?
+  set -e
+  VERSION=$(psql "$DATABASE_URL" -t -A -c "SELECT value FROM config WHERE key = 'pmbrain.schema.version';")
+  if [ "$MIGRATE_RC" -ne 0 ] || [ "$VERSION" != "$LATEST" ]; then
+    echo "[pg_upgrade_matrix] FAIL: shape=$SHAPE migration exit=$MIGRATE_RC version=$VERSION expected=$LATEST" >&2
+    fails=$((fails + 1))
+    continue
+  fi
   DOCTOR_OUT="$LOG_DIR/heavy-pg_upgrade_doctor-${TS}-${SHAPE}.json"
   set +e
   timeout 120s bun run src/cli.ts doctor --json > "$DOCTOR_OUT" 2>>"$LOG_FILE"
@@ -112,6 +119,7 @@ done
 if [ "$fails" -gt 0 ]; then
   echo "[pg_upgrade_matrix] FAILED: $fails/${#SHAPES[@]} shape(s) wedged on walk-forward." >&2
   echo "[pg_upgrade_matrix] Full log: $LOG_FILE" >&2
+  tail -n 100 "$LOG_FILE" >&2
   exit 1
 fi
 

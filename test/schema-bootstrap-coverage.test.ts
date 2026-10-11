@@ -181,7 +181,7 @@ test('applyForwardReferenceBootstrap covers every forward reference declared in 
       ALTER TABLE pages DROP CONSTRAINT IF EXISTS pages_source_slug_key;
       ALTER TABLE pages ADD CONSTRAINT pages_slug_key UNIQUE (slug);
       DROP INDEX IF EXISTS idx_pages_source_id;
-      ALTER TABLE pages DROP COLUMN IF EXISTS source_id;
+      ALTER TABLE pages DROP COLUMN IF EXISTS source_id CASCADE;
       DROP TABLE IF EXISTS sources CASCADE;
 
       DROP INDEX IF EXISTS idx_links_source;
@@ -204,7 +204,7 @@ test('applyForwardReferenceBootstrap covers every forward reference declared in 
       ALTER TABLE content_chunks DROP COLUMN IF EXISTS search_vector;
 
       DROP INDEX IF EXISTS pages_deleted_at_purge_idx;
-      ALTER TABLE pages DROP COLUMN IF EXISTS deleted_at;
+      ALTER TABLE pages DROP COLUMN IF EXISTS deleted_at CASCADE;
       DROP INDEX IF EXISTS pages_last_retrieved_at_idx;
       ALTER TABLE pages DROP COLUMN IF EXISTS last_retrieved_at;
       DROP INDEX IF EXISTS pages_links_extracted_at_idx;
@@ -231,15 +231,15 @@ test('applyForwardReferenceBootstrap covers every forward reference declared in 
       ALTER TABLE pages DROP COLUMN IF EXISTS emotional_weight;
 
       DROP INDEX IF EXISTS idx_ingest_log_source_type_created;
-      ALTER TABLE ingest_log DROP COLUMN IF EXISTS source_id;
+      ALTER TABLE ingest_log DROP COLUMN IF EXISTS source_id CASCADE;
 
       DROP INDEX IF EXISTS idx_files_source_id;
       DROP INDEX IF EXISTS idx_files_page_id;
-      ALTER TABLE files DROP COLUMN IF EXISTS source_id;
+      ALTER TABLE files DROP COLUMN IF EXISTS source_id CASCADE;
       ALTER TABLE files DROP COLUMN IF EXISTS page_id;
 
       DROP INDEX IF EXISTS idx_oauth_clients_federated_read;
-      ALTER TABLE oauth_clients DROP COLUMN IF EXISTS source_id;
+      ALTER TABLE oauth_clients DROP COLUMN IF EXISTS source_id CASCADE;
       ALTER TABLE oauth_clients DROP COLUMN IF EXISTS federated_read;
 
       -- v0.40.3.0 v90 + v91 column strips so applyForwardReferenceBootstrap
@@ -251,7 +251,7 @@ test('applyForwardReferenceBootstrap covers every forward reference declared in 
       DROP TRIGGER IF EXISTS bump_page_generation_trg ON pages;
       DROP FUNCTION IF EXISTS bump_page_generation_fn;
       DROP INDEX IF EXISTS pages_generation_idx;
-      ALTER TABLE pages DROP COLUMN IF EXISTS generation;
+      ALTER TABLE pages DROP COLUMN IF EXISTS generation CASCADE;
       ALTER TABLE pages DROP COLUMN IF EXISTS contextual_retrieval_mode;
       ALTER TABLE pages DROP COLUMN IF EXISTS corpus_generation;
 
@@ -311,7 +311,7 @@ test('after bootstrap, PGLITE_SCHEMA_SQL replays without crashing on missing for
       ALTER TABLE pages DROP CONSTRAINT IF EXISTS pages_source_slug_key;
       ALTER TABLE pages ADD CONSTRAINT pages_slug_key UNIQUE (slug);
       DROP INDEX IF EXISTS idx_pages_source_id;
-      ALTER TABLE pages DROP COLUMN IF EXISTS source_id;
+      ALTER TABLE pages DROP COLUMN IF EXISTS source_id CASCADE;
       DROP TABLE IF EXISTS sources CASCADE;
       DROP INDEX IF EXISTS idx_links_source;
       DROP INDEX IF EXISTS idx_links_origin;
@@ -319,7 +319,7 @@ test('after bootstrap, PGLITE_SCHEMA_SQL replays without crashing on missing for
       ALTER TABLE links DROP COLUMN IF EXISTS link_source;
       ALTER TABLE links DROP COLUMN IF EXISTS origin_page_id;
       DROP INDEX IF EXISTS pages_deleted_at_purge_idx;
-      ALTER TABLE pages DROP COLUMN IF EXISTS deleted_at;
+      ALTER TABLE pages DROP COLUMN IF EXISTS deleted_at CASCADE;
       DROP INDEX IF EXISTS pages_last_retrieved_at_idx;
       ALTER TABLE pages DROP COLUMN IF EXISTS last_retrieved_at;
       DROP INDEX IF EXISTS pages_links_extracted_at_idx;

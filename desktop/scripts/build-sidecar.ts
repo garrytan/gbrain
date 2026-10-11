@@ -159,11 +159,14 @@ const build = Bun.spawn([
   runtimeExecutablePath,
   'build',
   join(projectRoot, 'src', 'cli.ts'),
+  join(projectRoot, 'src', 'product', 'tasks', 'task-worker.ts'),
+  join(projectRoot, 'src', 'product', 'database', 'database-worker.ts'),
   '--target=bun',
   '--outdir', outputDirectory,
-  '--entry-naming', 'pmbrain-sidecar.js',
+  '--entry-naming', '[name].js',
   '--external', '@electric-sql/pglite',
   '--external', '@electric-sql/pglite/*',
+  '--external', '*/pglite-embedded-assets.ts',
   '--external', '@dqbd/tiktoken',
   '--external', '@dqbd/tiktoken/*',
   '--external', '@aws-sdk/util-user-agent-node',
@@ -183,6 +186,7 @@ const build = Bun.spawn([
 if (await build.exited !== 0) {
   throw new Error('PMBrain sidecar bundle failed.');
 }
+await rename(join(outputDirectory, 'cli.js'), join(outputDirectory, 'pmbrain-sidecar.js'));
 
 await Bun.write(
   join(outputDirectory, 'runtime-manifest.json'),

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { api } from '../api';
+import { productFetch } from '../lib/product-fetch';
 import { ALLOWED_SCOPES_LIST, type Scope } from '../lib/scope-constants';
 import { CopyButton } from '../lib/clipboard';
 import {
@@ -321,6 +322,8 @@ export function AgentsPage({
   titleHelp?: React.ReactNode;
 }) {
   const [agents, setAgents] = useState<Agent[]>([]);
+  const [agentsLoading, setAgentsLoading] = useState(true);
+  const [agentsError, setAgentsError] = useState('');
   const [hideRevoked, setHideRevoked] = useState(true);
   const [showRegister, setShowRegister] = useState(false);
   const [showCredentials, setShowCredentials] = useState<RegisteredCredentials | null>(null);
@@ -332,7 +335,12 @@ export function AgentsPage({
 
   useEffect(() => { loadAgents(); loadOverview(); }, []);
 
-  const loadAgents = () => { api.agents().then(setAgents).catch(() => {}); };
+  const loadAgents = () => {
+    setAgentsLoading(true);
+    api.agents().then(value => { setAgents(value); setAgentsError(''); })
+      .catch(error => setAgentsError(error instanceof Error ? error.message : String(error)))
+      .finally(() => setAgentsLoading(false));
+  };
   const openRegister = () => {
     setSelectedAgent(null);
     setShowApiKeyCreate(false);
@@ -373,6 +381,8 @@ export function AgentsPage({
         </div>
       </div>
       {(() => {
+        if (agentsLoading) return <div className="pm-empty" role="status">正在读取 Agent 凭证…</div>;
+        if (agentsError) return <p className="pm-error" role="alert">{agentsError}</p>;
         // Filter once and reuse, so the empty-state guard sees the same
         // rows the table renders. Pre-fix: agents.length === 0 used the
         // unfiltered array, so an all-revoked dataset with hideRevoked=on
@@ -666,7 +676,7 @@ function RegisterModal({ onClose, onRegistered, sources, mainSourceId }: {
     setError('');
     try {
       // Use the CLI registration endpoint (POST to admin API)
-      const res = await fetch('/admin/api/register-client', {
+      const res = await productFetch('/admin/api/register-client', {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },

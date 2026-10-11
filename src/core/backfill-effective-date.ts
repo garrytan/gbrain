@@ -77,7 +77,7 @@ interface PageRow {
   updated_at: string;
 }
 
-function parseFrontmatter(raw: unknown): Record<string, unknown> {
+export function parseFrontmatter(raw: unknown): Record<string, unknown> {
   if (raw == null) return {};
   if (typeof raw === 'string') {
     try { return JSON.parse(raw) as Record<string, unknown>; }

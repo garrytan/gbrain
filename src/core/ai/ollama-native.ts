@@ -1,6 +1,13 @@
+import {randomUUID} from 'node:crypto';
+import {modelAnswerText} from './tool-text';
+import {chatRequestFetch,IncompleteChatStream} from './chat-request-runtime';
+
+export interface OllamaNativeToolCall { function: { name: string; arguments: Record<string, unknown> } }
 export interface OllamaNativeMessage {
-  role: 'system' | 'user' | 'assistant';
+  role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
+  tool_calls?: OllamaNativeToolCall[];
+  tool_name?: string;
 }
 
 export interface OllamaNativeChatInput {
@@ -9,17 +16,20 @@ export interface OllamaNativeChatInput {
   messages: OllamaNativeMessage[];
   maxTokens: number;
   contextWindow?: number;
+  tools?: Array<{ type: 'function'; function: { name: string; description: string; parameters: Record<string, unknown> } }>;
   apiKey?: string;
   headers?: Record<string, string>;
   format?: unknown;
   temperature?: number;
   abortSignal?: AbortSignal;
+  onText?: (delta: string) => void;
+  allowReasoningFallback?: boolean;
 }
 
 export interface OllamaNativeChatResult {
-  content: Array<{ type: 'text'; text: string }>;
+  content: Array<{ type: 'text'; text: string } | { type: 'tool-call'; toolCallId: string; toolName: string; input: Record<string, unknown> }>;
   text: string;
-  toolCalls: never[];
+  toolCalls: Array<{ toolCallId: string; toolName: string; input: Record<string, unknown> }>;
   finishReason: string;
   usage: { inputTokens: number; outputTokens: number };
   providerMetadata: Record<string, unknown>;
@@ -92,7 +102,7 @@ function messagesWithThinkingDisabled(
   messages: OllamaNativeMessage[],
 ): OllamaNativeMessage[] {
   const copy = messages.map(message => ({ ...message }));
-  if (!/^qwen3(?:[.:-]|$)/i.test(model)) return copy;
+  if (!/^qwen3(?:[-:]|$|\.[0-4](?:[-:]|$))/i.test(model)) return copy;
   for (let index = copy.length - 1; index >= 0; index--) {
     const message = copy[index]!;
     if (message.role !== 'user') continue;
@@ -112,7 +122,7 @@ export async function streamOllamaNativeChat(
   if (input.apiKey && !headers.has('Authorization')) {
     headers.set('Authorization', `Bearer ${input.apiKey}`);
   }
-  const response = await fetch(ollamaNativeChatUrl(input.baseURL), {
+  const response = await chatRequestFetch()(ollamaNativeChatUrl(input.baseURL), {
     method: 'POST',
     headers,
     body: JSON.stringify({
@@ -120,6 +130,7 @@ export async function streamOllamaNativeChat(
       messages: messagesWithThinkingDisabled(input.model, input.messages),
       stream: true,
       think: false,
+      ...(input.tools?.length ? {tools: input.tools} : {}),
       ...(input.format === undefined ? {} : { format: input.format }),
       options: {
         num_predict: input.maxTokens,
@@ -131,7 +142,7 @@ export async function streamOllamaNativeChat(
   });
   if (!response.ok) {
     const body = await response.text().catch(() => '');
-    throw new Error(`Ollama chat failed: HTTP ${response.status} ${body.slice(0, 180)}`);
+    throw Object.assign(new Error(`Ollama chat failed: HTTP ${response.status} ${body.slice(0, 180)}`),{statusCode:response.status});
   }
   if (!response.body) throw new Error('Ollama chat returned an empty response');
 
@@ -140,6 +151,8 @@ export async function streamOllamaNativeChat(
   let pending = '';
   let text = '';
   let thinking = '';
+  let finished=false;
+  const toolCalls: OllamaNativeChatResult['toolCalls'] = [];
   let finishReason = 'stop';
   let inputTokens = 0;
   let outputTokens = 0;
@@ -148,7 +161,8 @@ export async function streamOllamaNativeChat(
     if (!line.trim()) return;
     const chunk = JSON.parse(line) as {
       error?: string;
-      message?: { content?: string; thinking?: string };
+      done?: boolean;
+      message?: { content?: string; thinking?: string; tool_calls?: OllamaNativeToolCall[] };
       done_reason?: string;
       prompt_eval_count?: number;
       eval_count?: number;
@@ -158,8 +172,16 @@ export async function streamOllamaNativeChat(
       eval_duration?: number;
     };
     if (chunk.error) throw new Error(`Ollama chat failed: ${chunk.error}`);
-    if (typeof chunk.message?.content === 'string') text += chunk.message.content;
+    if(chunk.done===true)finished=true;
+    if (typeof chunk.message?.content === 'string' && chunk.message.content) {
+      text += chunk.message.content;
+      if(!input.tools?.length&&input.allowReasoningFallback!==false)input.onText?.(chunk.message.content);
+    }
     if (typeof chunk.message?.thinking === 'string') thinking += chunk.message.thinking;
+    for (const call of chunk.message?.tool_calls ?? []) {
+      if (!call.function || typeof call.function.name !== 'string' || !call.function.arguments || typeof call.function.arguments !== 'object' || Array.isArray(call.function.arguments)) throw new Error('Ollama 返回了无效的工具参数');
+      toolCalls.push({toolCallId:randomUUID(),toolName:call.function.name,input:call.function.arguments});
+    }
     if (typeof chunk.done_reason === 'string' && chunk.done_reason) finishReason = chunk.done_reason;
     if (typeof chunk.prompt_eval_count === 'number') inputTokens = chunk.prompt_eval_count;
     if (typeof chunk.eval_count === 'number') outputTokens = chunk.eval_count;
@@ -175,7 +197,7 @@ export async function streamOllamaNativeChat(
     }
   };
 
-  while (true) {
+  try { while (true) {
     const { done, value } = await reader.read();
     pending += decoder.decode(value, { stream: !done });
     const lines = pending.split(/\r?\n/);
@@ -184,13 +206,16 @@ export async function streamOllamaNativeChat(
     if (done) break;
   }
   consumeLine(pending);
+  } finally { await reader.cancel().catch(() => undefined); reader.releaseLock(); }
+  if(input.contextWindow!==undefined&&!finished)throw new IncompleteChatStream();
 
-  const finalText = text.trim() ? text : thinking;
+  const finalText = input.tools?.length||input.allowReasoningFallback===false ? modelAnswerText(text) : text.trim() ? text : toolCalls.length ? '' : thinking;
+  if((input.tools?.length||input.allowReasoningFallback===false)&&finalText&&!(input.allowReasoningFallback===false&&toolCalls.length))input.onText?.(finalText);
   return {
-    content: finalText ? [{ type: 'text', text: finalText }] : [],
+    content: [...(finalText ? [{ type: 'text' as const, text: finalText }] : []),...toolCalls.map(call=>({type:'tool-call' as const,...call}))],
     text: finalText,
-    toolCalls: [],
-    finishReason,
+    toolCalls,
+    finishReason: toolCalls.length && finishReason !== 'length' ? 'tool-calls' : finishReason,
     usage: { inputTokens, outputTokens },
     providerMetadata,
   };

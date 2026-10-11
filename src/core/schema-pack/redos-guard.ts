@@ -125,6 +125,15 @@ export function runRegexBounded(
 ): RegExpMatchArray | null {
   // Create a fresh context so the pack's regex can't leak state across
   // runs. Pass pattern + text as primitives only.
+  // Bun's vm timeout interrupt can land in a later PGLite WASM call and wedge it.
+  // Mention context is a short window; a direct exec cannot outlive this call.
+  if (text.length <= 512) {
+    try {
+      return new RegExp(pattern).exec(text);
+    } catch {
+      throw new RegexTimeoutError('<unknown-verb>', pattern);
+    }
+  }
   const ctx = createContext({ pattern, text });
   try {
     const code = `(new RegExp(pattern)).exec(text)`;

@@ -36,9 +36,10 @@ import type { PageType } from '../core/types.ts';
 import { parseMarkdown } from '../core/markdown.ts';
 import {
   extractPageLinks, parseTimelineEntries, deriveTimelineAnchor, inferLinkType, makeResolver,
-  extractFrontmatterLinks,
+  extractFrontmatterLinks, loadExtractionPack, loadPageTypeMap, pageTypeAt,
   type UnresolvedFrontmatterRef,
 } from '../core/link-extraction.ts';
+import { lineGrammarOptions } from '../core/line-grammar.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import { pathToSlug, pruneDir, isSyncable } from '../core/sync.ts';
@@ -1229,6 +1230,7 @@ export async function extractLinksFromDB(
 ): Promise<{ created: number; pages: number; unresolved: UnresolvedFrontmatterRef[] }> {
   const includeFrontmatter = opts?.includeFrontmatter ?? false;
   const sourceIdFilter = opts?.sourceIdFilter;
+  const lineGrammar = await lineGrammarOptions(engine);
   // Batch resolver: pg_trgm + exact only, NO search fallback. Dodges the
   // N-thousand API call trap on 46K-page brains. Resolver has a per-run
   // cache so duplicate names (same person appearing on many pages) resolve
@@ -1301,6 +1303,8 @@ export async function extractLinksFromDB(
     }
   }
 
+  const pageTypes = await loadPageTypeMap(engine);
+  const linkPacks = new Map<string, Awaited<ReturnType<typeof loadExtractionPack>>>();
   for (const { slug, source_id } of allRefs) {
     const page = await engine.getPage(slug, { sourceId: source_id });
     if (!page) continue;
@@ -1316,13 +1320,19 @@ export async function extractLinksFromDB(
     // Migration orchestrator explicitly enables it for the one-time backfill;
     // user-invoked `gbrain extract links` stays outgoing-only.
     const sourceResolver = resolverForSource(source_id);
+    if (!linkPacks.has(source_id)) linkPacks.set(source_id, await loadExtractionPack(engine, source_id));
     const extracted = await extractPageLinks(
       slug,
       fullContent,
       page.frontmatter,
       page.type,
       sourceResolver,
-      { skipFrontmatter: !includeFrontmatter },
+      {
+        skipFrontmatter: !includeFrontmatter,
+        pack: linkPacks.get(source_id) ?? null,
+        lineGrammar,
+        targetType: (targetSlug, targetSourceId) => pageTypeAt(pageTypes, targetSlug, targetSourceId, source_id),
+      },
     );
     unresolved.push(...extracted.unresolved);
 
@@ -1531,6 +1541,8 @@ export async function extractTimelineFromDB(
 }
 
 export interface RunByMentionOpts {
+  signal?: AbortSignal;
+  yieldDuringPhase?: () => Promise<void>;
   dryRun?: boolean;
   jsonMode?: boolean;
   typeFilter?: PageType;
@@ -1559,6 +1571,7 @@ export interface RunByMentionOpts {
 }
 
 export interface RunByMentionResult {
+  processedSlugs: Array<{slug:string;sourceId:string}>;
   created: number;
   removed: number;
   pages: number;
@@ -1581,376 +1594,49 @@ export async function runByMentionCore(
   engine: BrainEngine,
   opts: RunByMentionOpts = {},
 ): Promise<RunByMentionResult> {
-  const dryRun = !!opts.dryRun;
-  const jsonMode = !!opts.jsonMode;
-  const typeFilter = opts.typeFilter;
-  const since = opts.since;
-  const sourceIdFilter = opts.sourceIdFilter;
-  const quiet = !!opts.quiet;
-  const prioritySlugSet = new Set(
-    (opts.prioritySlugs ?? []).map(s => s.trim()).filter(Boolean),
-  );
-  const maxHistorical = opts.maxHistoricalPages;
-  const historicalTimeBudgetMs =
-    typeof opts.historicalTimeBudgetMs === 'number'
-      && Number.isFinite(opts.historicalTimeBudgetMs)
-      && opts.historicalTimeBudgetMs >= 0
-      ? Math.floor(opts.historicalTimeBudgetMs)
-      : null;
-
-  // Build gazetteer once per run. Skip everything if there are no
-  // linkable entities — vacuous truth, no mentions to find.
-  const gazetteer = await buildGazetteer(engine);
-  const ambiguousNames = countAmbiguousGazetteerEntries(gazetteer);
-
-  // v0.41.19.0 (T5): gazetteer hash is part of the checkpoint
-  // fingerprint so adding new entity pages mid-pause invalidates the
-  // checkpoint cleanly. Without it, resumed pages would skip new
-  // entities silently (codex flag).
-  const gazetteerHash = createHash('sha256')
-    .update(
-      [...gazetteer.values()]
-        .flat()
-        .map(entry => [
-          entry.source_id,
-          entry.slug,
-          entry.tokens.join('\u0000'),
-          entry.ambiguous ? 'ambiguous' : 'resolved',
-        ].join('\u0001'))
-        .sort()
-        .join('\n'),
-    )
-    .digest('hex')
-    .slice(0, 8);
-
-  const allRefs = sourceIdFilter
-    ? (await engine.listAllPageRefs()).filter(r => r.source_id === sourceIdFilter)
-    : await engine.listAllPageRefs();
-
-  type ExistingRelationRow = {
-    from_source_id: string;
-    from_slug: string;
-    to_source_id: string;
-    to_slug: string;
-    link_type: string;
-    link_source: string | null;
-    link_kind: string | null;
-  };
-  const relationSql = `
-    SELECT f.source_id AS from_source_id, f.slug AS from_slug,
-           t.source_id AS to_source_id, t.slug AS to_slug,
-           l.link_type, l.link_source, l.link_kind
-      FROM links l
-      JOIN pages f ON f.id = l.from_page_id
-      JOIN pages t ON t.id = l.to_page_id
-     ${sourceIdFilter ? 'WHERE f.source_id = $1' : ''}`;
-  const existingRelations = await engine.executeRaw<ExistingRelationRow>(
-    relationSql,
-    sourceIdFilter ? [sourceIdFilter] : [],
-  );
-  const explicitTargetsByPage = new Map<string, Set<string>>();
-  const mentionTargetsByPage = new Map<string, Map<string, ExistingRelationRow>>();
-  for (const relation of existingRelations) {
-    const pageKey = `${relation.from_source_id}::${relation.from_slug}`;
-    const targetKey = `${relation.to_source_id}\u0000${relation.to_slug}`;
-    if (relation.link_source !== 'mentions') {
-      const targets = explicitTargetsByPage.get(pageKey) ?? new Set<string>();
-      targets.add(targetKey);
-      explicitTargetsByPage.set(pageKey, targets);
-    } else if (relation.link_type === 'mentions' && relation.link_kind !== 'typed_ner') {
-      const targets = mentionTargetsByPage.get(pageKey) ?? new Map<string, ExistingRelationRow>();
-      targets.set(targetKey, relation);
-      mentionTargetsByPage.set(pageKey, targets);
-    }
-  }
-  if (gazetteer.size === 0 && mentionTargetsByPage.size === 0) {
-    if (jsonMode) {
-      process.stdout.write(JSON.stringify({ event: 'no_gazetteer', message: 'no linkable entity or concept pages found; nothing to scan' }) + '\n');
-    } else if (!quiet) {
-      console.log('No linkable entity or concept pages found in this brain; nothing to scan.');
-    }
-    return {
-      created: 0,
-      removed: 0,
-      pages: 0,
-      priorityPages: 0,
-      historicalPages: 0,
-      historicalRemaining: 0,
-      timeBudgetReached: false,
-      ambiguousNames: 0,
-    };
-  }
-
-  // v0.41.19.0 (T5): load checkpoint and skip already-completed
-  // (source_id, slug) pairs. Dry-run does NOT load OR persist the
-  // checkpoint — dry-run is an inspection mode and shouldn't pollute
-  // resume state for the next non-dry-run.
-  const ckptKey = {
-    op: 'extract-by-mention',
-    fingerprint: mentionsFingerprint({
-      source: sourceIdFilter,
-      type: typeFilter,
-      since,
-      gazetteerHash,
-      rulesVersion: opts.rulesVersion ?? 2,
-    }),
-  };
-  const completed = dryRun
-    ? new Set<string>()
-    : new Set(await loadOpCheckpoint(engine, ckptKey));
-
-  // Priority slugs always re-scan (drop from completed for this run's walk).
-  // Historical remaining excludes completed unless priority forced re-entry.
-  const priorityRefs = allRefs.filter(r => prioritySlugSet.has(r.slug));
-  for (const r of priorityRefs) completed.delete(`${r.source_id}::${r.slug}`);
-
-  const historicalRemainingRefs = allRefs.filter(r =>
-    !prioritySlugSet.has(r.slug) && !completed.has(`${r.source_id}::${r.slug}`),
-  );
-  const historicalBudget =
-    typeof maxHistorical === 'number' && Number.isFinite(maxHistorical) && maxHistorical >= 0
-      ? Math.floor(maxHistorical)
-      : historicalRemainingRefs.length;
-  const historicalCandidates = historicalRemainingRefs.slice(0, historicalBudget);
-  const remaining = [...priorityRefs, ...historicalCandidates];
-  // Dedupe by source::slug while preserving order (priority first).
-  const seenKeys = new Set<string>();
-  const walkList = remaining.filter(r => {
-    const key = `${r.source_id}::${r.slug}`;
-    if (seenKeys.has(key)) return false;
-    seenKeys.add(key);
-    return true;
-  });
-  if (completed.size > 0 && !jsonMode && !quiet) {
-    console.log(
-      `[by-mention] resuming: ${completed.size} pages already scanned, ` +
-      `walking up to ${walkList.length} (priority ${priorityRefs.length}, ` +
-      `historical ${historicalCandidates.length})`,
-    );
-  }
-
-  let processed = 0;
-  let created = 0;
-  let removed = 0;
-  let priorityPages = 0;
-  let historicalPages = 0;
-  let historicalStartedAt: number | null = null;
-  let timeBudgetReached = false;
-  const batch: LinkBatchInput[] = [];
-
-  const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
-  progress.start('extract.by_mention.scan', walkList.length);
-
-  async function flushBatch() {
-    if (batch.length === 0) return;
-    try {
-      created += await engine.addLinksBatch(batch, { auditSite: 'extract.by_mention' }); // gbrain-allow-direct-insert: gbrain extract --by-mention — canonical auto-link write from body-text mention scan
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      if (jsonMode) {
-        process.stderr.write(JSON.stringify({ event: 'batch_error', size: batch.length, error: msg }) + '\n');
-      } else {
-        console.error(`  batch error (${batch.length} link rows lost): ${msg}`);
-      }
-    } finally {
-      batch.length = 0;
-    }
-  }
-
-  // v0.41.19.0 (T5 — codex fix #1): flush links FIRST, commit pending
-  // page keys to checkpoint SECOND, persist THIRD. A crash between
-  // batch.push() and flushBatch() leaves pendingForFlush uncommitted —
-  // resume re-scans those pages instead of silently losing their links.
-  //
-  // Persist cadence: every 1000 items OR every 30s, whichever first
-  // (~322 persists on a 322K-page brain, ~24s total overhead). Crash
-  // window is at most 1000 pages (<0.3% loss on the driver brain).
-  const PERSIST_EVERY_N = 1000;
-  const PERSIST_EVERY_MS = 30_000;
-  const pendingForFlush: string[] = [];
-  let sinceLastPersistMs = Date.now();
-  let unpersistedCount = 0;
-
-  async function flushAndCheckpoint(force = false): Promise<void> {
-    await flushBatch();
-    for (const key of pendingForFlush) completed.add(key);
-    pendingForFlush.length = 0;
-    if (dryRun) return;
-    const now = Date.now();
-    if (force || unpersistedCount >= PERSIST_EVERY_N || (now - sinceLastPersistMs) >= PERSIST_EVERY_MS) {
-      await recordCompleted(engine, ckptKey, [...completed]);
-      unpersistedCount = 0;
-      sinceLastPersistMs = now;
-    }
-  }
-
-  const sinceMs = since ? new Date(since).getTime() : null;
-
-  for (const { slug, source_id } of walkList) {
-    const isPriority = prioritySlugSet.has(slug);
-    if (!isPriority) {
-      if (historicalStartedAt === null) historicalStartedAt = Date.now();
-      if (
-        historicalTimeBudgetMs !== null
-        && (Date.now() - historicalStartedAt) >= historicalTimeBudgetMs
-      ) {
-        timeBudgetReached = true;
-        break;
-      }
-      historicalPages++;
-    } else {
-      priorityPages++;
-    }
-    const page = await engine.getPage(slug, { sourceId: source_id });
-    // v0.41.19.0 (T5 — codex fix #4): even when we skip a page (filter
-    // miss, missing row, empty body, no mentions), MARK IT COMPLETED so
-    // resume doesn't re-fetch it. The decision NOT to create links is
-    // itself a completed decision.
-    const key = `${source_id}::${slug}`;
-    if (!page || (typeFilter && page.type !== typeFilter)) {
-      pendingForFlush.push(key);
-      unpersistedCount++;
-      continue;
-    }
-    if (sinceMs !== null) {
-      const updatedMs = new Date(page.updated_at).getTime();
-      if (Number.isFinite(updatedMs) && updatedMs <= sinceMs) {
-        pendingForFlush.push(key);
-        unpersistedCount++;
-        continue;
-      }
-    }
-    processed++;
-    progress.tick();
-
-    // D3: scan both columns joined with a paragraph separator so an
-    // end-of-compiled token doesn't accidentally merge with a
-    // start-of-timeline token into a false phrase match.
-    const body = page.compiled_truth + '\n\n' + (page.timeline ?? '');
-    if (!body.trim()) {
-      pendingForFlush.push(key);
-      unpersistedCount++;
-      continue;
-    }
-
-    const mentions = findMentionedEntities(body, gazetteer, {
-      fromSlug: slug,
-      fromSourceId: source_id,
-    });
-
-    // Explicit Markdown/frontmatter/manual edges are stronger evidence than a
-    // plain body mention. Avoid storing a second provenance row for the same
-    // endpoint pair when a deterministic explicit relation already exists.
-    const explicitTargets = explicitTargetsByPage.get(key) ?? new Set<string>();
-    const filteredMentions = mentions.filter(
-      mention => !explicitTargets.has(`${mention.source_id}\u0000${mention.slug}`),
-    );
-
-    // Reconcile only the deterministic plain-mention rows owned by this
-    // operation. Typed NER and every explicit/manual provenance are untouched.
-    const desiredTargets = new Set(
-      filteredMentions.map(mention => `${mention.source_id}\u0000${mention.slug}`),
-    );
-    const existingMentionTargets = mentionTargetsByPage.get(key) ?? new Map<string, ExistingRelationRow>();
-    for (const [targetKey, relation] of existingMentionTargets) {
-      if (desiredTargets.has(targetKey)) continue;
-      if (dryRun) {
-        if (jsonMode) {
-          process.stdout.write(JSON.stringify({
-            action: 'remove_link', from: slug, from_source_id: source_id,
-            to: relation.to_slug, to_source_id: relation.to_source_id,
-            type: 'mentions', link_source: 'mentions',
-          }) + '\n');
-        } else if (!quiet) {
-          console.log(`  ${slug} -> ${relation.to_slug} (remove stale mention)`);
+  opts.signal?.throwIfAborted();
+  const { runMentionPass, countMentionDuePages } = await import('../core/mentions/pass.ts');
+  const { previewMentionPass } = await import('../core/mentions/stale.ts');
+  const priority = [...new Set(opts.prioritySlugs ?? [])];
+  const common = { sourceId:opts.sourceIdFilter,signal:opts.signal,typeFilter:opts.typeFilter,since:opts.since,yieldDuringPhase:opts.yieldDuringPhase };
+  if (opts.dryRun) {
+    const preview=await previewMentionPass(engine,opts.sourceIdFilter);
+    const gazetteer=await buildGazetteer(engine,{strict:true});
+    let after=0,created=0,pages=0;
+    if(preview.enabled)for(;;){
+      opts.signal?.throwIfAborted();
+      const batch=await engine.executeRaw<{id:number;slug:string;source_id:string;title:string;compiled_truth:string;timeline:string}>(
+        `SELECT id,slug,source_id,title,compiled_truth,timeline FROM pages WHERE deleted_at IS NULL AND id>$1
+          AND ($2::text IS NULL OR source_id=$2) AND ($3::text IS NULL OR type=$3)
+          AND ($4::timestamptz IS NULL OR updated_at>=$4) ORDER BY id LIMIT 500`,
+        [after,opts.sourceIdFilter ?? null,opts.typeFilter ?? null,opts.since ?? null]);
+      if(!batch.length)break;
+      after=Number(batch[batch.length-1]!.id);
+      for(const page of batch){
+        const hits=findMentionedEntities(`${page.title ?? ''}\n${page.compiled_truth ?? ''}\n${page.timeline ?? ''}`,gazetteer,{fromSlug:page.slug,fromSourceId:page.source_id,allowCrossSource:false});
+        const existing=await engine.executeRaw<{slug:string;source_id:string}>('SELECT t.slug,t.source_id FROM links l JOIN pages t ON t.id=l.to_page_id WHERE l.from_page_id=$1',[page.id]);
+        for(const hit of hits){
+          if(existing.some(row=>row.slug===hit.slug&&row.source_id===hit.source_id))continue;
+          created++;
+          if(opts.jsonMode)console.log(JSON.stringify({action:'add_link',from:page.slug,to:hit.slug,type:'mentions',link_source:'mentions',from_source_id:page.source_id,to_source_id:hit.source_id}));
         }
-      } else {
-        await engine.removeLink(slug, relation.to_slug, 'mentions', 'mentions', {
-          fromSourceId: source_id,
-          toSourceId: relation.to_source_id,
-        });
-      }
-      removed++;
-    }
-
-    if (filteredMentions.length === 0) {
-      pendingForFlush.push(key);
-      unpersistedCount++;
-      continue;
-    }
-
-    for (const m of filteredMentions) {
-      if (dryRun) {
-        if (jsonMode) {
-          process.stdout.write(JSON.stringify({
-            action: 'add_link', from: slug, from_source_id: source_id,
-            to: m.slug, to_source_id: m.source_id,
-            type: 'mentions', context: m.name, link_source: 'mentions',
-          }) + '\n');
-        } else if (!quiet) {
-          console.log(`  ${slug} → ${m.slug} (mentions: "${m.name}")`);
-        }
-        created++;
-      } else {
-        batch.push({
-          from_slug: slug,
-          to_slug: m.slug,
-          link_type: 'mentions',
-          link_source: 'mentions',
-          context: m.name,
-          from_source_id: source_id,
-          to_source_id: m.source_id,
-        });
-        if (batch.length >= BATCH_SIZE) {
-          // The page that produced these batch entries stays UN-committed
-          // until flushBatch succeeds. The push below happens AFTER the
-          // flushAndCheckpoint call so a crash inside flushBatch leaves
-          // the page un-checkpointed and resume re-scans it.
-          await flushAndCheckpoint();
-        }
+        pages++;
       }
     }
-    // Page completed (whether dry-run or non-dry-run). Stage for the
-    // next flushAndCheckpoint().
-    pendingForFlush.push(key);
-    unpersistedCount++;
-    // Time-based cadence floor.
-    if (!dryRun && (Date.now() - sinceLastPersistMs) >= PERSIST_EVERY_MS) {
-      await flushAndCheckpoint();
-    }
+    return {created,removed:0,pages,priorityPages:0,historicalPages:pages,historicalRemaining:preview.due,timeBudgetReached:false,ambiguousNames:countAmbiguousGazetteerEntries(gazetteer),processedSlugs:[]};
   }
-
-  if (!dryRun) {
-    await flushAndCheckpoint(true); // final flush + force-persist
-  }
-  progress.finish();
-
-  const historicalRemainingAfter =
-    Math.max(0, historicalRemainingRefs.length - historicalPages);
-
-  // Clean exit only when historical backlog is empty (and no dry-run).
-  // Partial Quick budgets leave the checkpoint so the next run resumes.
-  if (!dryRun && historicalRemainingAfter === 0) {
-    await clearOpCheckpoint(engine, ckptKey);
-  }
-
-  if (!jsonMode && !quiet) {
-    const label = dryRun ? '(dry run) would create' : 'created';
-    console.log(
-      `Mentions: ${label} ${created} links, removed ${removed} stale links from ${processed} pages ` +
-      `against gazetteer of ${gazetteer.size} first-token buckets (${ambiguousNames} ambiguous names skipped)`,
-    );
-  }
-  return {
-    created,
-    removed,
-    pages: processed,
-    priorityPages,
-    historicalPages,
-    historicalRemaining: historicalRemainingAfter,
-    timeBudgetReached,
-    ambiguousNames,
-  };
+  if(priority.length)await engine.executeRaw('UPDATE page_mention_state SET mention_revision=NULL WHERE page_id IN (SELECT id FROM pages WHERE slug=ANY($1::text[]) AND ($2::text IS NULL OR source_id=$2))',[priority,opts.sourceIdFilter ?? null]);
+  const first=priority.length ? await runMentionPass(engine,{...common,slugs:priority}) : null;
+  if(first?.state==='failed')throw new Error(first.error);
+  const deadline=opts.historicalTimeBudgetMs===undefined ? undefined : Date.now()+Math.max(0,opts.historicalTimeBudgetMs);
+  const history=await runMentionPass(engine,{...common,excludeSlugs:priority,maxPages:opts.maxHistoricalPages,deadline});
+  if(history.state==='failed')throw new Error(history.error);
+  const processedSlugs=[...(first?.processedSlugs ?? []),...history.processedSlugs];
+  const result={created:(first?.created ?? 0)+history.created,removed:(first?.removed ?? 0)+history.removed,pages:processedSlugs.length,
+    priorityPages:first?.pages ?? 0,historicalPages:history.pages,historicalRemaining:await countMentionDuePages(engine,opts.sourceIdFilter),
+    timeBudgetReached:history.remaining>0 && deadline!==undefined && Date.now()>=deadline,ambiguousNames:countAmbiguousGazetteerEntries(await buildGazetteer(engine)),processedSlugs};
+  if(!opts.jsonMode && !opts.quiet)console.log((await buildGazetteer(engine)).size ? `Mentions: +${result.created}/-${result.removed} links from ${result.pages} due pages (${result.historicalRemaining} remaining)` : 'No linkable entity pages; nothing to scan.');
+  return result;
 }
 
 /** CLI adapter — unlimited historical walk (legacy behavior). */

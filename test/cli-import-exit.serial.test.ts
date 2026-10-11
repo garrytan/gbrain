@@ -313,7 +313,8 @@ describe('CLI import child process lifecycle', () => {
           await Bun.sleep(100);
         }
         expect(run?.status, `${fileName}\nstdout:\n${run?.stdout ?? ''}\n\nstderr:\n${run?.stderr ?? ''}\n\nerror:\n${run?.error ?? ''}`).toBe('completed');
-        expect(run?.stdout).toContain('1 pages imported');
+        const receipt = (run?.stdout ?? '').split('\n').filter(line => line.startsWith('{')).map(line => JSON.parse(line)).find(item => item.status === 'success');
+        expect(receipt).toMatchObject({ imported: 1, errors: 0, total_files: 1 });
         return run;
       };
 

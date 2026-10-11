@@ -1434,6 +1434,7 @@ async function handleCliOnly(command: string, args: string[]) {
   }
   const engine = await connectEngine({
     strictMigrations: command === 'serve',
+    pgliteWorker: command === 'serve' && args.includes('--http'),
     probeOnly: command === 'migrate' && args.includes('--full-copy') && args.includes('--no-switch'),
   });
   let commandFailed = false;
@@ -1944,7 +1945,7 @@ async function dispatchReadOnlyCommand(engine: BrainEngine, command: string, arg
 export { buildGatewayConfig } from './core/ai/gateway-config.ts';
 import { buildGatewayConfig } from './core/ai/gateway-config.ts';
 
-async function connectEngine(opts?: { probeOnly?: boolean; strictMigrations?: boolean }): Promise<BrainEngine> {
+async function connectEngine(opts?: { probeOnly?: boolean; strictMigrations?: boolean; pgliteWorker?: boolean }): Promise<BrainEngine> {
   const config = loadConfig();
   if (!config) {
     console.error('No brain configured. Run: pmbrain init');
@@ -1963,7 +1964,7 @@ async function connectEngine(opts?: { probeOnly?: boolean; strictMigrations?: bo
   const connectionConfig = sourceBackupPath && config.engine === 'pglite'
     ? { ...toEngineConfig(config), database_path: sourceBackupPath }
     : toEngineConfig(config);
-  const engine = await createEngine(connectionConfig);
+  const engine = await createEngine(connectionConfig, { pgliteWorker: opts?.pgliteWorker });
   const noRetry = process.argv.includes('--no-retry-connect') ||
                   process.env.GBRAIN_NO_RETRY_CONNECT === '1';
   const { connectWithRetry } = await import('./core/db.ts');

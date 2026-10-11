@@ -21,8 +21,8 @@ describe('schema 129-130 chronicle timeline repair', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  test('LATEST_VERSION is 130', () => {
-    expect(LATEST_VERSION).toBe(130);
+  test('最新版保留 129-130 的时间线迁移', () => {
+    expect(LATEST_VERSION).toBe(MIGRATIONS.at(-1)!.version);
     expect(MIGRATIONS.find(m => m.version === 129)?.name).toBe('timeline_dedup_md5_summary');
     expect(MIGRATIONS.find(m => m.version === 130)?.name).toBe('timeline_legacy_source_split_repair');
   });

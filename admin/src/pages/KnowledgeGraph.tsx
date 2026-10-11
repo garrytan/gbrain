@@ -32,6 +32,11 @@ function requestedViewMode(): GraphViewMode {
   return requested === 'global' || requested === 'isolated' || requested === 'missing' ? requested : 'local';
 }
 
+function requestedEdgeId(): number | null {
+  const id = Number(new URLSearchParams(window.location.hash.split('?')[1] ?? '').get('edge'));
+  return Number.isSafeInteger(id) && id > 0 ? id : null;
+}
+
 function escapeHtml(value: string): string {
   return value.replace(/[&<>'"]/g, character => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;',
@@ -79,6 +84,11 @@ export function KnowledgeGraphPage() {
   const [relationFilter, setRelationFilter] = useState('all');
   const [relationTypes, setRelationTypes] = useState<string[]>([]);
   const [viewMode, setViewMode] = useState<GraphViewMode>(requestedViewMode);
+  const [requestedEdge, setRequestedEdge] = useState<number | null>(requestedEdgeId);
+  const changeView = (view: GraphViewMode) => {
+    setRequestedEdge(null); setViewMode(view);
+    if (requestedEdge) window.history.replaceState(null, '', `#graph?view=${view}`);
+  };
   const [globalTotals, setGlobalTotals] = useState<{ nodes: number; edges: number } | null>(null);
   const [missingLinks, setMissingLinks] = useState<KnowledgeGraphMissingLink[]>([]);
   const [missingTotal, setMissingTotal] = useState(0);
@@ -94,7 +104,7 @@ export function KnowledgeGraphPage() {
   );
 
   useEffect(() => {
-    const syncRequestedView = () => setViewMode(requestedViewMode());
+    const syncRequestedView = () => { setViewMode(requestedViewMode()); setRequestedEdge(requestedEdgeId()); };
     window.addEventListener('hashchange', syncRequestedView);
     return () => window.removeEventListener('hashchange', syncRequestedView);
   }, []);
@@ -246,6 +256,16 @@ export function KnowledgeGraphPage() {
     setMissingTotal(0);
     setRelationFilter('all');
     const metaRequest = api.knowledgeGraphMeta(sourceFilter);
+    if (requestedEdge) {
+      void Promise.all([metaRequest, api.knowledgeGraphEdge(requestedEdge)]).then(([meta, focused]) => {
+        if (!active) return;
+        setRelationTypes(meta.relation_types);
+        setGraph(focused); setSelectedEdge(focused.edges[0] ?? null); setGlobalTotals(null);
+        if (!focused.edges.length) setNotice('这条关联已清理或对应知识已移出知识库。');
+        globalFitPending.current = true; reheat();
+      }).catch(caught => active && setError(caught instanceof Error ? caught.message : String(caught)));
+      return () => { active = false; };
+    }
     if (viewMode === 'missing') {
       void Promise.all([metaRequest, api.knowledgeGraphMissing(sourceFilter)])
         .then(([meta, missing]) => {
@@ -288,7 +308,7 @@ export function KnowledgeGraphPage() {
       .catch(caught => active && setError(caught instanceof Error ? caught.message : String(caught)));
     }
     return () => { active = false; };
-  }, [sourceFilter, viewMode]); // Source or view-mode changes restart with all relation types.
+  }, [sourceFilter, viewMode, requestedEdge]);
 
   useEffect(() => {
     const query = searchText.trim();
@@ -508,14 +528,14 @@ export function KnowledgeGraphPage() {
           )}
         </form>
         <div className="graph-view-switch" role="group" aria-label="图谱范围">
-          <button type="button" className={viewMode === 'local' ? 'active' : ''} onClick={() => setViewMode('local')}>局部图谱</button>
-          <button type="button" className={viewMode === 'global' ? 'active' : ''} onClick={() => setViewMode('global')}>全局图谱</button>
-          <button type="button" className={viewMode === 'isolated' ? 'active' : ''} onClick={() => setViewMode('isolated')}>孤立页</button>
-          <button type="button" className={viewMode === 'missing' ? 'active' : ''} onClick={() => setViewMode('missing')}>缺失链接</button>
+          <button type="button" className={viewMode === 'local' ? 'active' : ''} onClick={() => changeView('local')}>局部图谱</button>
+          <button type="button" className={viewMode === 'global' ? 'active' : ''} onClick={() => changeView('global')}>全局图谱</button>
+          <button type="button" className={viewMode === 'isolated' ? 'active' : ''} onClick={() => changeView('isolated')}>孤立页</button>
+          <button type="button" className={viewMode === 'missing' ? 'active' : ''} onClick={() => changeView('missing')}>缺失链接</button>
         </div>
         <label>
           <span>Source</span>
-          <select value={sourceFilter} onChange={event => setSourceFilter(event.target.value)}>
+          <select value={sourceFilter} onChange={event => { changeView(viewMode); setSourceFilter(event.target.value); }}>
             <option value="all">全部 Source</option>
             {overview?.sources.filter(source => !source.archived).map(source => (
               <option key={source.id} value={source.id}>{source.name || source.id}</option>

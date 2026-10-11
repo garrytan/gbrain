@@ -4,6 +4,7 @@ import { basename, isAbsolute, join, resolve } from 'node:path';
 import { isIP } from 'node:net';
 import { createHash, randomBytes } from 'node:crypto';
 import { getRecipe } from '../../../src/core/ai/recipes/index.js';
+import { assertModelRevision, modelConfigRevision } from './models/model-config-revision.js';
 
 const DESKTOP_RECOMMENDED_EMBEDDING_DIMENSIONS: Readonly<Record<string, number>> = {
   'zhipu:embedding-3': 1024,
@@ -31,6 +32,7 @@ export type DesktopCloseBehavior = 'tray' | 'quit';
 export interface DesktopPreferences {
   networkMode: DesktopNetworkMode;
   closeBehavior: DesktopCloseBehavior;
+  startMinimized: boolean;
   sharedAdapter?: string;
   sharedIp?: string;
   sharedResumeRequired: boolean;
@@ -107,6 +109,7 @@ function hasKnownDesktopEmbeddingDimension(model: string): boolean {
 
 export interface SetupPayload {
   engine: 'pglite' | 'postgres';
+  expectedModelRevision?: string;
   theme?: DesktopTheme;
   resetAdvancedModelRouting?: boolean;
   confirmEmbeddingRebuild?: boolean;
@@ -136,6 +139,7 @@ export interface SetupPayload {
 
 export interface SetupInfo {
   needsSetup: boolean;
+  modelRevision?: string;
   configPath: string;
   defaults: { databasePath: string; knowledgeDirectory: string };
   current: {
@@ -196,6 +200,7 @@ type RawConfig = Record<string, unknown> & {
     theme?: DesktopTheme;
     network_mode?: DesktopNetworkMode;
     close_behavior?: DesktopCloseBehavior;
+    start_minimized?: boolean;
     shared_adapter?: string;
     shared_ip?: string;
     shared_resume_required?: boolean;
@@ -477,6 +482,7 @@ function preferencesFromConfig(config: RawConfig | null): DesktopPreferences {
   return {
     networkMode: normalizeDesktopNetworkMode(desktop?.network_mode),
     closeBehavior: normalizeDesktopCloseBehavior(desktop?.close_behavior),
+    startMinimized: desktop?.start_minimized === true,
     sharedAdapter,
     sharedIp,
     sharedResumeRequired: desktop?.shared_resume_required === true,
@@ -603,6 +609,7 @@ export function getSetupInfo(): SetupInfo {
   );
   return {
     needsSetup: !config || desktop?.setup_completed === false,
+    modelRevision: modelConfigRevision(config ?? {}),
     configPath: path,
     defaults: {
       databasePath: join(pgliteDefaultDir, 'brain.pglite'),
@@ -828,6 +835,7 @@ export function saveSetup(payload: SetupPayload): {
     content: existsSync(path) ? readFileSync(path, 'utf8') : undefined,
   };
   const existing = readConfig(readPath) ?? {};
+  if (payload.expectedModelRevision !== undefined) assertModelRevision(existing, payload.expectedModelRevision);
   const config: RawConfig = { ...existing, engine: payload.engine };
 
   if (payload.engine === 'pglite') {
@@ -1036,6 +1044,7 @@ export function saveDesktopPreferences(patch: Partial<DesktopPreferences>): {
     closeBehavior: patch.closeBehavior === undefined
       ? current.closeBehavior
       : normalizeDesktopCloseBehavior(patch.closeBehavior),
+    startMinimized: patch.startMinimized === undefined ? current.startMinimized : patch.startMinimized === true,
     sharedAdapter: patch.sharedAdapter === undefined ? current.sharedAdapter : patch.sharedAdapter.trim() || undefined,
     sharedIp: patch.sharedIp === undefined ? current.sharedIp : patch.sharedIp.trim() || undefined,
     sharedResumeRequired: patch.sharedResumeRequired === undefined
@@ -1058,6 +1067,8 @@ export function saveDesktopPreferences(patch: Partial<DesktopPreferences>): {
   const desktop = { ...config.desktop };
   desktop.network_mode = preferences.networkMode;
   desktop.close_behavior = preferences.closeBehavior;
+  if (preferences.startMinimized) desktop.start_minimized = true;
+  else delete desktop.start_minimized;
   if (preferences.sharedAdapter) desktop.shared_adapter = preferences.sharedAdapter;
   else delete desktop.shared_adapter;
   if (preferences.sharedIp) desktop.shared_ip = preferences.sharedIp;
@@ -1072,6 +1083,16 @@ export function saveDesktopPreferences(patch: Partial<DesktopPreferences>): {
   config.desktop = desktop;
   writeJsonConfig(path, config);
   return { preferences, backup };
+}
+
+export function saveDesktopCloseBehavior(closeBehavior: DesktopCloseBehavior, filePath = desktopConfigPath(), backupRoot = activeConfigDirectory()): void {
+  const config = readConfig(filePath);
+  if (!config) throw new Error('请先完成基础配置，再保存系统设置。');
+  const normalized = normalizeDesktopCloseBehavior(closeBehavior);
+  if (normalizeDesktopCloseBehavior(config.desktop?.close_behavior) === normalized) return;
+  backupFile(filePath, 'config', backupRoot);
+  config.desktop = { ...(config.desktop ?? {}), close_behavior: normalized };
+  writeJsonConfig(filePath, config);
 }
 
 export function saveDetectedDockerContainerName(containerName: string): string | null {

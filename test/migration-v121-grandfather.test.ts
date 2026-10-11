@@ -1,3 +1,4 @@
+import { setTestSchemaVersion } from './helpers/schema-version.ts';
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -27,7 +28,7 @@ describe('migration 121 legacy embedding compatibility', () => {
     expect(migration?.sql).toContain('ADD COLUMN IF NOT EXISTS embedding_signature TEXT');
     expect(migration?.sql).toContain('ADD COLUMN IF NOT EXISTS embedded_text_hash TEXT');
     expect(migration?.sql).not.toMatch(/UPDATE\s+(content_chunks|pages)\b/i);
-    expect(LATEST_VERSION).toBe(130);
+    expect(LATEST_VERSION).toBe(134);
   });
 
   test('PGLite keeps legacy vectors and NULL receipts untouched when upgrading from schema 120', async () => {
@@ -47,7 +48,7 @@ describe('migration 121 legacy embedding compatibility', () => {
     }]);
     await engine.executeRaw(`UPDATE content_chunks SET embedded_text_hash = NULL`);
     await engine.executeRaw(`UPDATE pages SET embedding_signature = NULL WHERE slug = 'legacy-vector'`);
-    await engine.setConfig('version', '120');
+    await setTestSchemaVersion(engine, '120');
 
     await runMigrations(engine);
 

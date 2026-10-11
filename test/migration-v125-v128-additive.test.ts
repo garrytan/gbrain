@@ -1,3 +1,4 @@
+import { setTestSchemaVersion } from './helpers/schema-version.ts';
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -23,8 +24,8 @@ describe('schema 125-128 additive foundation', () => {
     rmSync(root, { recursive: true, force: true });
   }, 30_000);
 
-  test('LATEST_VERSION is 130', () => {
-    expect(LATEST_VERSION).toBe(130);
+  test('LATEST_VERSION includes the current compatibility migrations', () => {
+    expect(LATEST_VERSION).toBe(134);
   });
 
   test('migrations 125-128 are SQL-only and do not rewrite pages/facts/timeline content', () => {
@@ -139,9 +140,9 @@ describe('schema 125-128 additive foundation', () => {
       date: '2026-01-01',
       summary: 'legacy row',
     });
-    await engine.setConfig('version', '124');
+    await setTestSchemaVersion(engine, '124');
     await runMigrations(engine);
-    expect(await engine.getConfig('version')).toBe('130');
+    expect(await engine.getConfig('version')).toBe('134');
     const rows = await engine.executeRaw<{ event_page_id: number | null; summary: string }>(`
       SELECT te.event_page_id, te.summary
         FROM timeline_entries te

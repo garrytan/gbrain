@@ -1,3 +1,4 @@
+import {readMigrationProgress} from '../startup/post-upgrade-startup.js';
 import { app, type BrowserWindow } from 'electron';
 import { ensureBootstrapToken, getDatabaseRuntimeConfig, getSetupInfo, markDesktopMigration, needsDesktopMigration } from '../config-manager.js';
 import type { CliRuntime } from '../cli-runner.js';
@@ -114,6 +115,8 @@ export class SidecarController {
         logger,
         onStderr: (_chunk, recent) => {
           if (this.manager !== manager) return;
+          const migrationProgress=readMigrationProgress(recent);
+          if(migrationProgress)this.dependencies.sendStartupProgress(migrationProgress);
           if (recent.includes(GIN_REPAIR_DB_UNUSABLE_MESSAGE)) {
             this.dependencies.sendStartupProgress({
               visible: true,
@@ -152,8 +155,8 @@ export class SidecarController {
                 : 'sidecar 已启动，PMBrain 正在检查数据库与 HTTP 服务。';
             this.dependencies.sendStartupProgress({
               visible: true,
-              stage: 'health',
-              title: '正在等待本地服务健康检查',
+              stage: upgradePending&&getDatabaseRuntimeConfig().engine==='pglite'?'migration':'health',
+              title: upgradePending&&getDatabaseRuntimeConfig().engine==='pglite'?'正在打开并升级知识库':'正在等待本地服务健康检查',
               message: waitHint,
             });
           } else if (state.phase === 'ready' || state.phase === 'failed') {
@@ -162,7 +165,7 @@ export class SidecarController {
           if (state.phase === 'failed' || state.phase === 'stopped') {
             void this.dependencies.stopLan().then(this.dependencies.sendSystemSettingsState);
           }
-          if (openAdmin && state.phase === 'ready') void this.dependencies.getMainWindow()?.loadURL(state.adminUrl);
+          if (openAdmin && state.phase === 'ready') this.dependencies.getMainWindow()?.webContents.send('desktop:navigate', 'import');
         },
       });
       this.manager = manager;
@@ -203,7 +206,7 @@ export class SidecarController {
     if (this.startupPromise) {
       await this.startupPromise;
       if (openAdmin && this.manager && this.stateValue?.phase === 'ready') {
-        await this.dependencies.getMainWindow()?.loadURL(await this.manager.createAdminLink());
+        this.dependencies.getMainWindow()?.webContents.send('desktop:navigate', 'import');
       }
       return;
     }
@@ -341,14 +344,18 @@ export class SidecarController {
       } = await import('../startup/post-upgrade-startup.js');
 
       await this.dependencies.ensureRuntimeReady();
+      this.dependencies.getLogger()?.write('desktop', 'startup prepare-database started');
       await this.dependencies.prepareConfiguredDatabase();
       const setup = getSetupInfo();
+      this.dependencies.getLogger()?.write('desktop', 'startup migration-check started');
       const migrationRequired = await this.dependencies.migrateConfiguredInstallation();
       // PGLite migrations are intentionally performed by the sidecar's sole
       // database owner. Inspect only after that migration has completed on a
       // later startup; never let the preflight CLI open a pending upgrade DB.
       if (!(migrationRequired && setup.current.engine === 'pglite')) {
+        this.dependencies.getLogger()?.write('desktop', 'startup embedding-preflight started');
         await this.dependencies.reconcileConfiguredEmbeddingIndex();
+        this.dependencies.getLogger()?.write('desktop', 'startup embedding-preflight completed');
       }
       if (migrationRequired && setup.current.engine !== 'pglite') markDesktopMigration(app.getVersion());
 
@@ -357,8 +364,8 @@ export class SidecarController {
       if (migrationRequired) {
         this.dependencies.sendStartupProgress({
           visible: true,
-          stage: 'sidecar',
-          title: '升级完成，正在启动本地服务',
+          stage: setup.current.engine==='pglite'?'migration':'sidecar',
+          title: setup.current.engine==='pglite'?'冷备完成，正在打开并升级知识库':'升级完成，正在启动本地服务',
           message: '升级前冷备已完成。PMBrain 正在启动本地服务并自动重试，请稍候，无需手动点击重启。',
         });
         await sleep(POST_UPGRADE_SETTLE_MS);

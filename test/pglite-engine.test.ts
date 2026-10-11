@@ -338,12 +338,10 @@ describe('PGLiteEngine: CJK keyword fallback (v0.32.7)', () => {
       ORDER BY indexname
     `, [[
       'idx_chunks_text_trgm',
-      'idx_pages_compiled_truth_trgm',
       'idx_pages_slug_trgm',
     ]]);
     expect(rows.map((row: { indexname: string }) => row.indexname)).toEqual([
       'idx_chunks_text_trgm',
-      'idx_pages_compiled_truth_trgm',
       'idx_pages_slug_trgm',
     ]);
   });

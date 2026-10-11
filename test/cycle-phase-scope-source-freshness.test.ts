@@ -6,7 +6,7 @@
 
 import { describe, expect, test } from 'bun:test';
 import {
-  ALL_PHASES,
+  ALL_PHASES, DEFAULT_PHASES,
   MAINTENANCE_PHASES,
   normalizeQueuedSourcePhases,
   SOURCE_BACKGROUND_PHASES,
@@ -31,8 +31,8 @@ describe('two-stage Dream organization', () => {
   });
 
   test('default Source keeps the full maintenance-capable cycle', () => {
-    expect(resolveCyclePhases(undefined, undefined)).toEqual(ALL_PHASES);
-    expect(resolveCyclePhases(undefined, 'default')).toEqual(ALL_PHASES);
+    expect(resolveCyclePhases(undefined, undefined)).toEqual(DEFAULT_PHASES);
+    expect(resolveCyclePhases(undefined, 'default')).toEqual(DEFAULT_PHASES);
     expect(MAINTENANCE_PHASES).toContain('synthesize');
     expect(MAINTENANCE_PHASES).toContain('patterns');
     expect(MAINTENANCE_PHASES).toContain('synthesize_concepts');

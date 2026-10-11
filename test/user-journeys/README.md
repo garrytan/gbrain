@@ -19,6 +19,13 @@ GitHub CI 执行 `python test/user-journeys/core_journeys.py --packaged`，打�
 
 所有数据库、配置、测试文档、日志和失败截图都写入 Git 已忽略的 `备份/核心用户路径测试/runs/`。测试只设置独立 `PMBRAIN_HOME`，不得读取或修改真实用户数据库。
 
+## 后台任务定向路径
+
+`python test/user-journeys/background_tasks.py --runtime source --artifacts-dir 备份/task-acceptance/source-run`
+启动真实 HTTP 服务及独立 PGLite，使用本地合成模型服务测试后台导入、Markdown/PDF/DOCX、快速维护、深度整理预览、取消、显式重试及重启持久化。慢向量请求期间同时验证知识读取、MCP 搜索和助手对话；浏览器打开最新任务中心并保存截图。
+
+将 `source` 改为 `bundled` 可验证当前 `desktop/build/extraResources/pmbrain-runtime`；先运行 Admin 构建与 `desktop` 的 `build:sidecar`。需要 Python 的 Playwright、reportlab 及本机 Edge；`--no-browser` 仅跳过浏览器部分，不代表 UI 已验收。每次使用新的产物目录，不连接真实用户库或外部收费模型。
+
 ## 发布升级路径
 
 `release_upgrade_journey.py` 只在发布后的 Windows runner 执行。它安装上一版真实 NSIS，使用旧版软件创建 PGLite 数据，再点击软件更新，让 `electron-updater` 从 GitHub Releases 下载新安装包、停止 sidecar、安装并重启，最后确认新版本管理台仍能看到旧数据。

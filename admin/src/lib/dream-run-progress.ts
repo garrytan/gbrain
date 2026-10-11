@@ -17,6 +17,7 @@ const PHASE_LABELS: Record<string, string> = {
   grade_takes: '观点评分',
   calibration_profile: '校准画像',
   conversation_facts_backfill: '事实回填',
+  capture_entities: '识别实体',
   embed: '向量化',
   orphans: '孤立页检查',
   'schema-suggest': '结构建议',

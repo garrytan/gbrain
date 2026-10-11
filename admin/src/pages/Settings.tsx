@@ -9,6 +9,7 @@ import { LoadingBlock, useOverview } from './console-shared';
 import type {
   DreamScheduleResponse,
   DreamSettingsResponse,
+  EntityCaptureBudgetResponse,
 } from '../../../shared/contracts/index.ts';
 export function ModelConfigPage() {
   const { overview, reload } = useOverview();
@@ -105,6 +106,7 @@ function DreamSettings() {
     outputDir: 'output',
     dualWrite: true,
     includeUncommitted: false,
+    autoGitCommit: true,
     defaultBrainDir: null,
     resolvedOutputDir: null,
     directoryExists: false,
@@ -159,7 +161,7 @@ function DreamSettings() {
     setMessage('');
     setError('');
     try {
-      const saved = await api.saveDreamSettings({ outputDir, dualWrite, includeUncommitted: settings.includeUncommitted });
+      const saved = await api.saveDreamSettings({ outputDir, dualWrite, includeUncommitted: settings.includeUncommitted, autoGitCommit:settings.autoGitCommit });
       setSettings(current => ({ ...current, ...saved }));
       setSavedOutputDir(saved.outputDir);
       setMessage(dualWrite ? '已开启本地 Markdown 写入' : '已关闭本地 Markdown 写入');
@@ -171,9 +173,9 @@ function DreamSettings() {
     }
   };
 
-  const saveIncludeUncommitted = async (includeUncommitted: boolean) => {
-    const previousValue = settings.includeUncommitted;
-    setSettings(current => ({ ...current, includeUncommitted }));
+  const saveAutoGitCommit = async (autoGitCommit: boolean) => {
+    const previousValue = settings.autoGitCommit;
+    setSettings(current => ({ ...current, autoGitCommit }));
     setSaving(true);
     setMessage('');
     setError('');
@@ -181,12 +183,13 @@ function DreamSettings() {
       const saved = await api.saveDreamSettings({
         outputDir: settings.outputDir.trim() || 'output',
         dualWrite: settings.dualWrite,
-        includeUncommitted,
+        autoGitCommit,
+        includeUncommitted:settings.includeUncommitted,
       });
       setSettings(current => ({ ...current, ...saved }));
-      setMessage(includeUncommitted ? '快速维护将包含未提交内容' : '快速维护只同步 Git 已提交内容');
+      setMessage(autoGitCommit ? '同步成功后自动提交' : '已关闭自动 Git 提交');
     } catch (nextError) {
-      setSettings(current => ({ ...current, includeUncommitted: previousValue }));
+      setSettings(current => ({ ...current, autoGitCommit: previousValue }));
       setError(nextError instanceof Error ? nextError.message : String(nextError));
     } finally {
       setSaving(false);
@@ -254,19 +257,20 @@ function DreamSettings() {
             disabled={loading || saving}
           />
         </label>
-        <label className="dream-dual-write-setting" htmlFor="sync-include-uncommitted">
+        <label className="dream-dual-write-setting" htmlFor="sync-auto-git-commit">
           <span>
-            <b>包含未提交内容</b>
-            <small>默认关闭。关闭时快速维护只同步 Git 已提交版本，并提示尚未提交的变化；开启后才同步工作区修改和新文件。</small>
+            <b>快速维护时自动 Git 提交</b>
+            <small>将成功同步的文件变更保存为本地版本记录。默认开启，只在本地提交；普通文件夹无需 Git。</small>
           </span>
           <input
-            id="sync-include-uncommitted"
+            id="sync-auto-git-commit"
             type="checkbox"
-            checked={settings.includeUncommitted}
-            onChange={event => void saveIncludeUncommitted(event.target.checked)}
+            checked={settings.autoGitCommit !== false}
+            onChange={event => void saveAutoGitCommit(event.target.checked)}
             disabled={loading || saving}
           />
         </label>
+        <p className="pm-hint">快速维护包含本地新增、修改和删除的文件。{settings.autoGitCommit!==false?'同步成功后自动提交。':'自动提交已关闭。'}</p>
       </div>
       {(message || error) && <div className="settings-feedback" aria-live="polite">
         {message && <span className="pm-ok">{message}</span>}
@@ -375,6 +379,99 @@ function DreamScheduleSettings() {
     </section>
   );
 }
+function EntityCaptureBudgetSettings() {
+  const [loaded, setLoaded] = useState<EntityCaptureBudgetResponse | null>(null);
+  const [choice, setChoice] = useState('5');
+  const [custom, setCustom] = useState('8');
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    void api.entityCaptureBudget()
+      .then(next => {
+        setLoaded(next);
+        if (next.costCapCny == null) setChoice('unlimited');
+        else if (next.costCapCny === 1 || next.costCapCny === 5 || next.costCapCny === 20) setChoice(String(next.costCapCny));
+        else {
+          setChoice('custom');
+          setCustom(String(next.costCapCny));
+        }
+      })
+      .catch(nextError => setError(nextError instanceof Error ? nextError.message : String(nextError)));
+  }, []);
+
+  const selected = choice === 'unlimited'
+    ? null
+    : choice === 'custom'
+      ? Number(custom)
+      : Number(choice);
+  const valid = choice === 'unlimited' || (typeof selected === 'number' && Number.isFinite(selected) && selected > 0);
+  const dirty = loaded != null && selected !== loaded.costCapCny;
+
+  const save = async () => {
+    if (!valid || selected === undefined) {
+      setError('请填写大于 0 的金额');
+      return;
+    }
+    setSaving(true);
+    setMessage('');
+    setError('');
+    try {
+      const next = await api.saveEntityCaptureBudget(selected == null ? 'unlimited' : selected);
+      setLoaded(next);
+      setMessage(next.costCapCny == null ? '已取消单次费用上限' : `单次费用上限已设为 ${next.costCapCny} 元`);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : String(nextError));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <section className="pm-card dream-schedule-settings settings-panel">
+      <div className="settings-panel-title">
+        <span className="settings-panel-icon"><Sparkles /></span>
+        <div>
+          <h2>AI 实体回填</h2>
+          <p>只限制深度整理里的实体识别。达到费用上限后保留已完成结果，剩余资料下次继续，本地 Ollama 不计入金额。</p>
+        </div>
+      </div>
+      <div className="dream-schedule-row">
+        <label htmlFor="entity-capture-cost-cap">单次费用上限</label>
+        <select id="entity-capture-cost-cap" value={choice} onChange={event => setChoice(event.target.value)} disabled={saving || !loaded}>
+          <option value="1">1 元</option>
+          <option value="5">5 元</option>
+          <option value="20">20 元</option>
+          <option value="unlimited">不限制</option>
+          <option value="custom">自定义</option>
+        </select>
+        {choice === 'custom' && (
+          <input
+            aria-label="自定义费用上限"
+            type="number"
+            min="0.01"
+            step="0.01"
+            value={custom}
+            onChange={event => setCustom(event.target.value)}
+            disabled={saving}
+          />
+        )}
+        <button className="pm-primary" onClick={() => void save()} disabled={!loaded || saving || !dirty || !valid}>
+          {saving ? '正在保存…' : '保存'}
+        </button>
+      </div>
+      <p className="pm-hint dream-schedule-note">
+        默认 5 元。未返回用量或模型未填写人民币价格时，只按每轮 100 篇和 Token 上限停止，不估算金额。
+      </p>
+      {(message || error) && <div className="settings-feedback" aria-live="polite">
+        {message && <span className="pm-ok">{message}</span>}
+        {error && <span className="pm-error-text">{error}</span>}
+      </div>}
+    </section>
+  );
+}
+
 export type SettingsSection = 'general' | 'knowledge' | 'dream';
 
 const SETTINGS_SECTIONS: Array<{
@@ -387,7 +484,7 @@ const SETTINGS_SECTIONS: Array<{
   { key: 'dream', label: '自动化', description: '管理稳定的知识整理和定时任务' },
 ];
 
-function AppearanceSettings({
+export function AppearanceSettings({
   themeMode,
   onThemeModeChange,
 }: {
@@ -398,7 +495,7 @@ function AppearanceSettings({
     <section className="pm-card appearance-settings settings-panel">
       <div className="settings-panel-title">
         <span className="settings-panel-icon"><MonitorCog /></span>
-        <div><h2>界面外观</h2><p>仅调整当前管理页面，不会覆盖 PMBrain 桌面端的主题选择。</p></div>
+        <div><h2>界面外观</h2><p>调整 PMBrain 工作台与设置的统一外观。</p></div>
       </div>
       <div className="theme-choice" role="radiogroup" aria-label="界面主题">
         {([['system', '跟随系统'], ['light', '浅色'], ['dark', '深色']] as const).map(([value, label]) => (
@@ -461,6 +558,7 @@ export function SettingsPage({
           <div className="settings-section-stack">
             <DreamSettings />
             <DreamScheduleSettings />
+            <EntityCaptureBudgetSettings />
           </div>
         )}
       </div>

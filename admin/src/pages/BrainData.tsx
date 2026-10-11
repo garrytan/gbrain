@@ -35,6 +35,10 @@ import type {
   BrainPageRow,
 } from '../../../shared/contracts/brain.ts';
 import { FACT_KINDS, knowledgePageViewAllowsType } from '../../../shared/knowledge-views.ts';
+import { useProductTasks } from '../product/TaskActivity';
+import { pendingMaterialRows } from '../product/material-list-progress';
+import { taskLink } from '../product/TaskProgress';
+import { LoaderCircle } from 'lucide-react';
 
 function factTtlHint(validUntil: string | null | undefined): string | null {
   if (!validUntil) return null;
@@ -45,8 +49,14 @@ function factTtlHint(validUntil: string | null | undefined): string | null {
   return `临时记忆 · 还有 ${days} 天过期`;
 }
 
-export function BrainDataPage() {
-  const { overview } = useOverview();
+export function BrainDataPage({ product = false }: { product?: boolean } = {}) {
+  const { overview, reload: reloadOverview } = useOverview();
+  const tasks = useProductTasks();
+  const previousImports = useRef(new Map<string, string>());
+  const refreshingImports = useRef(false);
+  const reconciledImports = useRef(new Set<string>());
+  const [finishingImports, setFinishingImports] = useState<ConsoleRun[]>([]);
+  const activeImports = tasks.rows.filter(run => run.kind === 'import_path' && ['running', 'queued'].includes(run.status));
   const initialGraphTarget = useRef((() => {
     const [, query = ''] = window.location.hash.replace(/^#/, '').split('?');
     const params = new URLSearchParams(query);
@@ -105,6 +115,32 @@ export function BrainDataPage() {
     setFactRows([]);
     setMeta({ total: data.total, page: data.page, pages: data.pages, limit: data.limit ?? filters.pageSize });
   }, [filters]);
+
+  useEffect(() => {
+    const imports = tasks.rows.filter(run => run.kind === 'import_path');
+    const finished = imports.filter(run => ['running', 'queued'].includes(previousImports.current.get(run.id) ?? '') && !['running', 'queued'].includes(run.status));
+    previousImports.current = new Map(imports.map(run => [run.id, run.status]));
+    if (finished.length) setFinishingImports(current => [...current.filter(run => !finished.some(next => next.id === run.id)), ...finished]);
+  }, [tasks.rows]);
+  useEffect(() => {
+    const terminal = finishingImports.filter(run => !reconciledImports.current.has(run.id));
+    if ((!activeImports.length && !terminal.length) || refreshingImports.current) return;
+    refreshingImports.current = true;
+    void loadRows().then(() => {
+      terminal.forEach(run => reconciledImports.current.add(run.id));
+      if (terminal.some(run => run.status === 'completed')) setFinishingImports(current => current.filter(run => run.status !== 'completed' || !terminal.some(finished => finished.id === run.id)));
+      if (terminal.length) void reloadOverview();
+    }).catch(error => setPageError(String(error))).finally(() => { refreshingImports.current = false; });
+  }, [tasks.rows, finishingImports, loadRows, reloadOverview]);
+
+  const importingRows = pendingMaterialRows([...activeImports, ...finishingImports], tasks.imports, rows, filters);
+  const visibleRows = rows.filter(row => !importingRows.some(pending => pending.existing === row));
+
+  useEffect(() => {
+    const refresh = () => { void Promise.all([loadRows(), reloadOverview()]).catch(error => setPageError(error instanceof Error ? error.message : String(error))); };
+    window.addEventListener('pmbrain:materials-imported', refresh);
+    return () => window.removeEventListener('pmbrain:materials-imported', refresh);
+  }, [loadRows, reloadOverview]);
 
   useEffect(() => {
     void loadRows().catch(error => {
@@ -201,7 +237,7 @@ export function BrainDataPage() {
   };
   const renderPagination = () => (
     <div className="pagination">
-      <span className="pagination-total">共 {meta.total} 条</span>
+      <span className="pagination-total">共 {meta.total} 条{importingRows.length > 0 && ` · ${importingRows.length} 项导入处理中或待处理`}</span>
       <select value={filters.pageSize} onChange={e => setFilters(f => ({ ...f, pageSize: Number(e.target.value), page: 1 }))}>
         <option value={10}>10条/页</option>
         <option value={20}>20条/页</option>
@@ -272,12 +308,13 @@ export function BrainDataPage() {
       <div className="pm-section-head">
         <div>
           <div className="pm-eyebrow">DATABASE · MARKDOWN · KNOWLEDGE</div>
-          <h1>知识数据</h1>
+          <h1>{product ? '知识库' : '知识数据'}</h1>
           <p className="pm-page-intro">
-            这里展示数据库里的知识页、热记忆事实和观点记录。知识页是 Markdown；事实是 Agent 记住的独立陈述，不是页面。
+            {product ? '查看和管理你的资料、知识与事实。' : '这里展示数据库里的知识页、热记忆事实和观点记录。知识页是 Markdown；事实是 Agent 记住的独立陈述，不是页面。'}
             {overview && ` 当前 ${overview.stats.page_count} 个知识页 · ${overview.stats.active_fact_count ?? 0} 条有效事实 · ${overview.stats.link_count} 条关系。`}
           </p>
         </div>
+        {product && <button type="button" className="pm-primary" onClick={() => window.dispatchEvent(new Event('pmbrain:open-import'))}><Plus size={16} /> 添加资料</button>}
       </div>
       {pageError && <div className="pm-error-text">{pageError}</div>}
       <div className="pm-card">
@@ -306,14 +343,14 @@ export function BrainDataPage() {
           ))}
         </div>
         {filters.view === 'trash' && <p className="trash-retention-note">移出的内容保留 3 天，之后自动清空。打开详情可以撤销删除。</p>}
-        {filters.view === 'materials' && <p className="trash-retention-note">导入、同步和直接记录的内容。尚无法确认加工来源的旧内容也保留在这里。</p>}
-        {filters.view === 'structured' && <p className="trash-retention-note">经过二次加工生成的人物、项目、概念和整理笔记等知识。</p>}
+        {filters.view === 'materials' && <p className="trash-retention-note">导入、同步和直接记录的资料。实体识别、快速维护或深度整理生成的知识归入「结构化知识」；无法确认加工来源的旧内容暂留在这里。</p>}
+        {filters.view === 'structured' && <p className="trash-retention-note">实体识别、快速维护或深度整理生成的人物、组织机构、项目、概念和整理笔记，按已保存的加工来源分类。</p>}
         {filters.view === 'facts' && <p className="trash-retention-note">事实来自 facts 热记忆表，不是 Markdown 页面。由 remember / extract_facts / Dream 写入，可被 recall 读回。</p>}
         <div className="filter-bar">
           <input value={filters.q} onChange={e => setFilters(f => ({ ...f, q: e.target.value, page: 1 }))} placeholder={isFactsView ? '搜索事实、实体或来源' : '搜索 slug 或标题'} />
           <select value={filters.source} onChange={e => setFilters(f => ({ ...f, source: e.target.value, page: 1 }))}>
-            <option value="all">全部 source</option>
-            {overview?.sources.map(s => <option key={s.id} value={s.id}>{s.id}</option>)}
+            <option value="all">{product ? '全部数据源' : '全部 source'}</option>
+            {overview?.sources.map(s => <option key={s.id} value={s.id}>{product ? sourceLabel(s) : s.id}</option>)}
           </select>
           <select value={filters.type} onChange={e => setFilters(f => ({ ...f, type: e.target.value, page: 1 }))}>
             <option value="all">{isFactsView ? '全部事实类型' : '全部类型'}</option>
@@ -333,14 +370,26 @@ export function BrainDataPage() {
           <thead>
             <tr>
               <th>{isFactsView ? '事实' : '标题'}</th>
-              <th>Source</th>
+              <th>{product ? '数据源' : 'Source'}</th>
               <th>类型</th>
-              <th>{isFactsView ? '实体' : 'Chunks'}</th>
-              <th>Embedding</th>
+              <th>{isFactsView ? '实体' : product ? '知识分块' : 'Chunks'}</th>
+              <th>{product ? '向量化' : 'Embedding'}</th>
               <th>{filters.view === 'trash' ? '移除时间' : '更新'}</th>
             </tr>
           </thead>
           <tbody>
+            {importingRows.map(row => {
+              const waiting = !row.error && (!row.run || ['running', 'queued', 'completed'].includes(row.run.status));
+              const stage = row.error || (row.run?.status === 'cancelled' ? '导入已停止' : row.run?.status === 'completed' ? '正在读取结果' : row.run?.product?.stage ?? '等待导入');
+              return <tr key={`import:${row.id}`} className="material-import-row" aria-label={`导入 ${row.name}`}>
+                <td><b>{row.name}</b><div className={row.error ? 'pm-error-text' : 'pm-muted'}>{stage}{row.run?.id.startsWith('task-') && <button type="button" className="material-task-link" onClick={() => taskLink(row.run!)}>查看任务</button>}</div></td>
+                <td>{overview?.sources.some(source => source.id === row.sourceId) ? sourceLabel(overview.sources.find(source => source.id === row.sourceId)) : row.sourceId}</td>
+                <td>{row.type ? <span className="pm-pill">{row.type === 'directory' ? '目录' : pageTypeLabel(row.type)}</span> : '—'}</td>
+                <td>{waiting ? <span className="material-cell-progress" role="status" aria-label="知识分块处理中"><LoaderCircle size={16} /></span> : row.existing?.chunk_count ?? '—'}</td>
+                <td>{waiting ? <span className="material-cell-progress" role="status" aria-label="向量化处理中"><LoaderCircle size={16} /></span> : row.existing ? `${row.existing.embedded_chunks}/${row.existing.chunk_count}` : '—'}</td>
+                <td>—</td>
+              </tr>;
+            })}
             {isFactsView
               ? (factRows.length === 0
                 ? (
@@ -380,7 +429,7 @@ export function BrainDataPage() {
                   <td>{formatDate(row.created_at)}</td>
                 </tr>
               )))
-              : rows.map(row => (
+              : visibleRows.map(row => (
               <tr
                 key={`${row.source_id}:${row.slug}`}
                 tabIndex={0}
@@ -395,7 +444,7 @@ export function BrainDataPage() {
                 }}
               >
                 <td><b>{row.title || row.slug}</b><div className="pm-muted mono">{row.slug}</div></td>
-                <td>{row.source_id}</td>
+                <td>{overview?.sources.some(source => source.id === row.source_id) ? sourceLabel(overview.sources.find(source => source.id === row.source_id)) : row.source_id}</td>
                 <td><span className="pm-pill" title={pageTypeTitle(row.type)}>{pageTypeLabel(row.type)}</span></td>
                 <td>{row.chunk_count}</td>
                 <td>{row.embedded_chunks}/{row.chunk_count}</td>

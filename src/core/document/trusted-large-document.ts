@@ -11,13 +11,14 @@ export const LARGE_DOCUMENT_COMMIT_WINDOW = 100;
 export type LargeDocumentPhase =
   | 'parsed'
   | 'chunked'
+  | 'writing'
   | 'embedding'
   | 'partial'
   | 'completed'
   | 'failed';
 
 export interface LargeDocumentProgress {
-  mode: 'trusted_structured';
+  mode: 'trusted_structured' | 'batched';
   phase: LargeDocumentPhase;
   documentHash: string;
   bytes: number;
@@ -28,6 +29,11 @@ export interface LargeDocumentProgress {
   pending: number;
   failed: number;
   batchesCompleted: number;
+  bodyWritten?: number;
+  bodyCommitted?: boolean;
+  bodyBatchesCompleted?: number;
+  bodyBatchesTotal?: number;
+  generated?: number;
   error?: string;
 }
 

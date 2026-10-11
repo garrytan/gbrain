@@ -27,6 +27,7 @@ export type MinionJobStatus =
   | 'paused';
 
 export type BackoffType = 'fixed' | 'exponential';
+export const MINION_DEFERRED = Symbol('minion-deferred');
 
 export type ChildFailPolicy = 'fail_parent' | 'remove_dep' | 'ignore' | 'continue';
 
@@ -142,6 +143,7 @@ export interface MinionJobInput {
    * still live. Expired active locks do not suppress a fresh submission.
    */
   maxPending?: number;
+  maxQueueSize?: number;
 
   // v12: scheduler polish
   /**
@@ -166,6 +168,7 @@ export interface MinionQueueOpts {
 }
 
 export interface MinionWorkerOpts {
+  ownsLockedTransaction?: (jobId: number) => boolean;
   queue?: string;
   concurrency?: number; // default 1
   lockDuration?: number; // ms, default 30000
@@ -430,6 +433,18 @@ export interface SubagentHandlerData {
   model?: string;
   /** Max assistant turns before the loop fails with stop_reason='max_turns'. */
   max_turns?: number;
+  discovery_profile?: 'entity_capture';
+  ingest_context?: import('../pmbrain-adapters/entity-ingest-workflow.ts').EntityIngestContext;
+  ingest_json_tools?: boolean;
+  turn_timeout_ms?: number;
+  model_output_limit?: number;
+  usage_limits?: {
+    input: number;
+    output: number;
+    cost_cny?: number | null;
+    input_price?: number | null;
+    output_price?: number | null;
+  };
   /**
    * Whitelist of tool names the agent may call. MUST be a subset of the
    * derived registry names — invalid entries are rejected at tool-dispatch
@@ -470,6 +485,8 @@ export interface SubagentHandlerData {
   allowed_slug_prefixes?: string[];
   /** Source scope inherited by every brain tool call in this protected job. */
   source_id?: string;
+  /** Skills directory inherited by list_skills and get_skill in this protected job. */
+  skills_dir?: string;
   /**
    * v0.41 Approach C: opt out of the auto-generated tool-usage preamble
    * that `buildSystemPrompt()` splices into `system`. Default behavior
@@ -585,6 +602,8 @@ export type ContentBlock =
 
 /** Stop reason reported to the caller when the subagent loop terminates. */
 export type SubagentStopReason =
+  | 'user_stop' | 'service_shutdown' | 'timeout' | 'aborted'
+  | 'length'
   | 'end_turn'    // Anthropic says end_turn and last message has no tool_use
   | 'max_turns'   // hit max_turns budget before end_turn
   | 'refusal'     // detected via stop_reason + content shape
@@ -592,6 +611,11 @@ export type SubagentStopReason =
 
 /** Terminal result payload emitted by the subagent handler. */
 export interface SubagentResult {
+  ingest_verified?: boolean;
+  graph_reconciled?: boolean;
+  ingest_links_created?: number;
+  ingest_entities?: Array<{ slug: string; sourceId: string; title: string; evidence: string }>;
+  ingest_unresolved?: Array<{ sourcePage: string; sourceId: string; target: string; field?: string; reason: string }>;
   /** Concatenated text from the final assistant message. */
   result: string;
   /** Number of assistant turns consumed. */

@@ -37,10 +37,9 @@ describe('PMBrain product-layer structure', () => {
     const consolePage = read('admin/src/pages/Console.tsx');
     const settings = read('admin/src/pages/Settings.tsx');
 
-    expect(app).toContain("from './pages/Settings'");
-    expect(app).toContain("from './pages/BrainData'");
-    expect(app).toContain("from './pages/Import'");
-    expect(app).toContain("from './pages/Knowledge'");
+    for (const page of ['Settings', 'BrainData', 'Import', 'Knowledge']) {
+      expect(app).toContain(`React.lazy(() => import('./pages/${page}')`);
+    }
     expect(settings).toContain('export function SettingsPage');
     expect(settings).toContain('export function ModelConfigPage');
     expect(consolePage.split(/\r?\n/).filter(Boolean)).toHaveLength(4);

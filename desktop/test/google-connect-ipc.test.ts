@@ -13,7 +13,7 @@ const main = readdirSync(resolve('src/main'), { recursive: true })
   .join('\n');
 const renderer = read('src/renderer/src.ts');
 const preload = read('src/preload/index.ts');
-const html = read('src/renderer/index.html');
+const html = read('src/renderer/settings-content.html');
 const ipc = read('src/main/ipc-handlers.ts');
 const product = read('src/main/product-surfaces.ts');
 

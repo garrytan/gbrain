@@ -119,6 +119,7 @@ describe('desktop config manager', () => {
     expect(getDesktopPreferences()).toEqual({
       networkMode: 'local',
       closeBehavior: 'tray',
+      startMinimized: false,
       sharedAdapter: undefined,
       sharedIp: undefined,
       sharedResumeRequired: false,
@@ -177,6 +178,14 @@ describe('desktop config manager', () => {
     expect(config.desktop.theme).toBe('dark');
     expect(config.zhipu_api_key).toBe('keep-me');
     expect(getDesktopPreferences().sharedResumeRequired).toBe(true);
+    expect(getDesktopPreferences().startMinimized).toBe(false);
+    expect(config.desktop.start_minimized).toBeUndefined();
+    saveDesktopPreferences({ startMinimized: true });
+    expect(getDesktopPreferences().startMinimized).toBe(true);
+    expect(JSON.parse(readFileSync(desktopConfigPath(), 'utf8')).desktop.start_minimized).toBe(true);
+    expect(getDesktopPreferences().closeBehavior).toBe('quit');
+    saveDesktopPreferences({ startMinimized: false });
+    expect(JSON.parse(readFileSync(desktopConfigPath(), 'utf8')).desktop.start_minimized).toBeUndefined();
     saveDesktopPreferences({ sharedResumeRequired: false });
     expect(getDesktopPreferences().sharedResumeRequired).toBe(false);
     expect(JSON.parse(readFileSync(desktopConfigPath(), 'utf8')).desktop.shared_resume_required).toBeUndefined();

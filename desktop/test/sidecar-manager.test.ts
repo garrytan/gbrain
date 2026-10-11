@@ -6,6 +6,30 @@ import { SidecarManager, classifySidecarStartupError } from '../src/main/sidecar
 const logger = { write() {}, close() {}, directory: '', filePath: '' } as any;
 
 describe('desktop sidecar manager', () => {
+  test('独立内存保护只结束自己持有的进程树，报告原因且不自动重启',async()=>{
+    const states:any[]=[];
+    const manager=new SidecarManager({packaged:false,appPath:'',resourcesPath:'',port:3131,bootstrapToken:'isolated-token',clientVersion:'1.4.31',logger,onState:state=>states.push(state)});
+    const child=new EventEmitter() as any;child.pid=12345;child.exitCode=null;
+    (manager as any).child=child;let stops=0;let requests=0;
+    (manager as any).adminRequest=async()=>{requests++;};
+    (manager as any).requestProcessTreeStop=(target:any,force:boolean)=>{expect(target).toBe(child);expect(force).toBe(false);stops++;target.exitCode=0;target.emit('exit',0,null);};
+    await (manager as any).stopForResourcePressure({pid:999,exitCode:null},'不应执行',{bytes:3*1024**3,availableBytes:10*1024**3});
+    expect(stops).toBe(0);
+    await (manager as any).stopForResourcePressure(child,'资源保护：内存不足',{bytes:3*1024**3,availableBytes:200*1024**2},'emergency');
+    expect(stops).toBe(1);expect(requests).toBe(1);expect((manager as any).stopping).toBe(true);
+    expect(states.at(-1)).toMatchObject({phase:'failed',message:'资源保护：内存不足',details:{retryable:false}});
+  });
+  test('达到后台预算只请求降并发，服务和数据库进程保持运行',async()=>{
+    const manager=new SidecarManager({packaged:false,appPath:'',resourcesPath:'',port:3131,bootstrapToken:'isolated-token',clientVersion:'1.4.31',logger});
+    const child=new EventEmitter() as any;child.pid=12345;child.exitCode=null;
+    (manager as any).child=child;const requests:any[]=[];
+    (manager as any).adminRequest=async(_path:string,init:RequestInit)=>{requests.push(JSON.parse(String(init.body)));};
+    (manager as any).terminateChild=()=>{throw new Error('正常资源压力不能停服务');};
+    await (manager as any).stopForResourcePressure(child,'降低并发',{bytes:9*1024**3,totalBytes:32*1024**3,availableBytes:10*1024**3},'adjust');
+    await (manager as any).stopForResourcePressure(child,'恢复',{bytes:3*1024**3,totalBytes:32*1024**3,availableBytes:10*1024**3},'adjust');
+    expect(requests).toEqual([{action:'adjust',constrained:true},{action:'adjust',constrained:false}]);
+    expect((manager as any).child).toBe(child);expect((manager as any).stopping).toBe(false);
+  });
   test('PGLite 数据库打开失败时立即停止，不连续重启多个 sidecar', async () => {
     const states: any[] = [];
     const manager = new SidecarManager({
@@ -60,6 +84,18 @@ describe('desktop sidecar manager', () => {
 
     expect(requested).toEqual([false]);
     expect(child.exitCode).toBe(0);
+  });
+
+  test('受控 Sidecar 先走 IPC 正常关闭，等待退出后再继续',async()=>{
+    const manager=new SidecarManager({packaged:false,appPath:'',resourcesPath:'',port:3131,bootstrapToken:'test-bootstrap-token',clientVersion:'1.4.51',logger});
+    const child=new EventEmitter() as any;
+    child.pid=123;child.exitCode=null;child.connected=true;
+    const requests:unknown[]=[];
+    child.send=(message:unknown)=>{requests.push(message);setTimeout(()=>{child.exitCode=0;child.emit('exit',0,null);},20);};
+    child.kill=()=>{throw new Error('正常关闭不应杀进程');};
+    (manager as any).child=child;
+    await manager.stop();
+    expect(requests).toEqual([{type:'pmbrain:shutdown'}]);expect(child.exitCode).toBe(0);
   });
 
   test('health timeout writes pid, exit code and complete stderr into desktop logs', async () => {
@@ -409,4 +445,76 @@ describe('desktop sidecar manager', () => {
       await new Promise<void>(resolve => server.close(() => resolve()));
     }
   });
+  test('preserves upload bytes, text responses and HTTP failures', async () => {
+    const bytes: number[] = [];
+    const server = createServer((req, res) => {
+      if (req.url === '/admin/api/issue-magic-link') {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ url: `http://127.0.0.1:${(server.address() as any).port}/admin/auth/test` }));
+      } else if (req.url === '/admin/auth/test') {
+        res.writeHead(302, { 'set-cookie': 'pmbrain_admin=test; HttpOnly', location: '/admin/' }).end();
+      } else {
+        req.on('data', chunk => bytes.push(...chunk));
+        req.on('end', () => {
+          res.writeHead(422, { 'content-type': 'text/plain; charset=utf-8' });
+          res.end('原始错误');
+        });
+      }
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const manager = new SidecarManager({ packaged: false, appPath: '', resourcesPath: '', port: (server.address() as any).port, bootstrapToken: 'test-only', clientVersion: 'test', logger });
+    try {
+      const response = await manager.adminResponse('/admin/api/upload', { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: new Uint8Array([0, 128, 255]) });
+      expect(response.status).toBe(422);
+      expect(response.headers.get('content-type')).toContain('text/plain');
+      expect(await response.text()).toBe('原始错误');
+      expect(bytes).toEqual([0, 128, 255]);
+    } finally {
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  });
+
+  test('渲染进程用小写 content-type 发送时，正文仍然完整到达', async () => {
+    let contentType: string | string[] | undefined;
+    const chunks: Buffer[] = [];
+    const server = createServer((req, res) => {
+      if (req.url === '/admin/api/issue-magic-link') {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ url: `http://127.0.0.1:${(server.address() as any).port}/admin/auth/test` }));
+      } else if (req.url === '/admin/auth/test') {
+        res.writeHead(302, { 'set-cookie': 'pmbrain_admin=test; HttpOnly', location: '/admin/' }).end();
+      } else {
+        contentType = req.headers['content-type'];
+        req.on('data', chunk => chunks.push(chunk));
+        req.on('end', () => {
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end('{"ok":true}');
+        });
+      }
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const manager = new SidecarManager({ packaged: false, appPath: '', resourcesPath: '', port: (server.address() as any).port, bootstrapToken: 'test-only', clientVersion: 'test', logger });
+    try {
+      const response = await manager.adminResponse('/admin/api/workbench/conversations/x/messages', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text: '你好' }),
+      });
+      expect(response.status).toBe(200);
+      expect(contentType).toBe('application/json');
+      expect(JSON.parse(Buffer.concat(chunks).toString('utf8')).text).toBe('你好');
+      chunks.length = 0;
+      const upload = await manager.adminResponse('/admin/api/upload', {
+        method: 'POST',
+        headers: { 'content-type': 'application/octet-stream' },
+        body: new Uint8Array([9]),
+      });
+      expect(upload.status).toBe(200);
+      expect(contentType).toBe('application/octet-stream');
+      expect(Buffer.concat(chunks)).toEqual(Buffer.from([9]));
+    } finally {
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  });
+
 });

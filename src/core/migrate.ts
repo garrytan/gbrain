@@ -1,3 +1,9 @@
+import { WANTED_LINKS_SCHEMA_SQL } from './pmbrain-adapters/wanted-links-schema.ts';
+import {SEARCH_WRITE_SCHEMA_SQL,repairSearchWriteAmplification} from './pmbrain-adapters/search-write-schema.ts';
+import {readPmbrainSchemaVersion,preparePmbrainMigrationLedger,recordPmbrainMigration,PMBRAIN_SCHEMA_VERSION_KEY} from './pmbrain-adapters/migration-ledger.ts';
+import { PAGE_STATE_SCHEMA_SQL } from './page-state/schema.ts';
+import { resumePageRevisionBackfill } from './page-state/revision-backfill-schema.ts';
+import { MENTION_INDEX_SCHEMA_SQL } from './mentions/schema.ts';
 import type { BrainEngine } from './engine.ts';
 import { slugifyPath } from './sync.ts';
 import { repairTimelineDedupIndex, repairLegacyTimelineSourceRows } from './timeline-dedup-repair.ts';
@@ -32,7 +38,7 @@ interface Migration {
    * Defaults to true.
    */
   transaction?: boolean;
-  handler?: (engine: BrainEngine) => Promise<void>;
+  handler?: (engine: BrainEngine,opts?:MigrationRunOptions) => Promise<void>;
   /**
    * v0.30.1 (D6): when undefined, treated as `true` for all existing
    * migrations (every migration in the registry uses CREATE ... IF NOT
@@ -4228,7 +4234,7 @@ export const MIGRATIONS: Migration[] = [
 
         DROP TRIGGER IF EXISTS bump_page_generation_trg ON pages;
         CREATE TRIGGER bump_page_generation_trg
-          BEFORE INSERT OR UPDATE ON pages
+          BEFORE INSERT OR UPDATE OF title,type,page_kind,compiled_truth,timeline,frontmatter,deleted_at,contextual_retrieval_mode,corpus_generation,content_hash ON pages
           FOR EACH ROW
           EXECUTE FUNCTION bump_page_generation_fn();
       `;
@@ -5222,8 +5228,6 @@ export const MIGRATIONS: Migration[] = [
       pglite: `
         CREATE INDEX IF NOT EXISTS idx_chunks_text_trgm
           ON content_chunks USING GIN(chunk_text gin_trgm_ops);
-        CREATE INDEX IF NOT EXISTS idx_pages_compiled_truth_trgm
-          ON pages USING GIN(compiled_truth gin_trgm_ops);
         CREATE INDEX IF NOT EXISTS idx_pages_slug_trgm
           ON pages USING GIN(slug gin_trgm_ops);
       `,
@@ -5521,6 +5525,10 @@ export const MIGRATIONS: Migration[] = [
       }
     },
   },
+  { version: 131, name: 'page_revision_identity', idempotent: true, sql: PAGE_STATE_SCHEMA_SQL, handler: async (engine,opts) => { const r=await resumePageRevisionBackfill(engine,opts);if(r.status==='pending')throw new Error('Page revision backfill remains pending; schema upgrade is incomplete'); } },
+  { version: 132, name: 'persistent_mention_index', idempotent: true, sql: MENTION_INDEX_SCHEMA_SQL },
+  {version:133,name:'wanted_links',idempotent:true,sql:WANTED_LINKS_SCHEMA_SQL},
+  {version:134,name:'search_write_amplification',idempotent:true,sql:SEARCH_WRITE_SCHEMA_SQL},
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0
@@ -5715,9 +5723,8 @@ async function runMigrationSQL(
  */
 export async function hasPendingMigrations(engine: BrainEngine): Promise<boolean> {
   try {
-    const currentStr = await engine.getConfig('version');
-    const current = parseInt(currentStr || '1', 10);
-    return current < LATEST_VERSION;
+    const current=await readPmbrainSchemaVersion(engine);
+    return current<LATEST_VERSION || !(await engine.getConfig(PMBRAIN_SCHEMA_VERSION_KEY));
   } catch {
     return true;
   }
@@ -5848,9 +5855,19 @@ export function isDeadlockError(err: unknown): boolean {
   return /40P01|deadlock detected/i.test(msg);
 }
 
-export async function runMigrations(engine: BrainEngine): Promise<{ applied: number; current: number }> {
-  const currentStr = await engine.getConfig('version');
-  const current = parseInt(currentStr || '1', 10);
+export interface MigrationRunOptions{signal?:AbortSignal;batchSize?:number;log?:(line:string)=>void;onProgress?:(progress:{completed:number;total:number;cursor:number})=>void|Promise<void>}
+export async function runMigrations(engine:BrainEngine,opts:MigrationRunOptions={}):Promise<{applied:number;current:number}>{
+  const controller=new AbortController();
+  const abort=()=>controller.abort(new DOMException('Migration cancelled','AbortError'));
+  process.once('SIGINT',abort);process.once('SIGTERM',abort);
+  const signal=opts.signal?AbortSignal.any([opts.signal,controller.signal]):controller.signal;
+  try{return await runPmbrainMigrations(engine,{...opts,signal});}
+  finally{process.removeListener('SIGINT',abort);process.removeListener('SIGTERM',abort);}
+}
+async function runPmbrainMigrations(engine:BrainEngine,opts:MigrationRunOptions):Promise<{applied:number;current:number}>{
+  const current=await readPmbrainSchemaVersion(engine);
+  if(current>=119)await repairSearchWriteAmplification(engine);
+  await preparePmbrainMigrationLedger(engine,MIGRATIONS,current);
 
   // Sort by version ascending so array insertion order doesn't affect
   // correctness. Migrations MUST run in version order; if v16 accidentally
@@ -5873,6 +5890,9 @@ export async function runMigrations(engine: BrainEngine): Promise<{ applied: num
   } catch { /* best-effort; doctor reports the drift if this couldn't run */ }
 
   if (pending.length === 0) {
+    const backfill=await resumePageRevisionBackfill(engine,opts);
+    if(backfill.status==='pending')throw new Error('Page revision backfill remains pending; schema upgrade is incomplete');
+    process.stderr.write(`[migrate] schema ready version=${current}\n`);
     return { applied: 0, current };
   }
 
@@ -5885,6 +5905,8 @@ export async function runMigrations(engine: BrainEngine): Promise<{ applied: num
 
   let applied = 0;
   for (const m of pending) {
+    if(opts.signal?.aborted)throw opts.signal.reason;
+    if(m.version===131)await repairSearchWriteAmplification(engine);
     process.stderr.write(`  [${m.version}] ${m.name}...\n`);
 
     // Pick SQL: engine-specific `sqlFor` wins over engine-agnostic `sql`.
@@ -5930,7 +5952,7 @@ export async function runMigrations(engine: BrainEngine): Promise<{ applied: num
 
     // Application-level handler (runs outside transaction for flexibility)
     if (m.handler) {
-      await m.handler(engine);
+      await m.handler(engine,opts);
     }
 
     // v0.30.1 (D6): post-condition probe. If a verify hook is declared, run
@@ -5944,7 +5966,7 @@ export async function runMigrations(engine: BrainEngine): Promise<{ applied: num
         if (idempotent) {
           console.warn(`  [${m.version}] ⚠️  verify failed; re-running idempotent migration once`);
           if (sql) await runMigrationSQLWithRetry(engine, m, sql);
-          if (m.handler) await m.handler(engine);
+          if (m.handler) await m.handler(engine,opts);
           // Best-effort: don't double-throw if second run still fails verify.
           // Operator's next run of doctor will re-detect drift.
         } else {
@@ -5958,10 +5980,17 @@ export async function runMigrations(engine: BrainEngine): Promise<{ applied: num
     }
 
     // Update version after both SQL and handler succeed
-    await engine.setConfig('version', String(m.version));
+    await engine.transaction(async tx=>{
+      await recordPmbrainMigration(tx,m);
+      await tx.setConfig(PMBRAIN_SCHEMA_VERSION_KEY,String(m.version));
+      await tx.setConfig('version',String(m.version));
+    });
     process.stderr.write(`  [${m.version}] ✓ ${m.name}\n`);
     applied++;
   }
 
+  const backfill=await resumePageRevisionBackfill(engine,opts);
+  if(backfill.status==='pending')throw new Error('Page revision backfill remains pending; schema upgrade is incomplete');
+  process.stderr.write(`[migrate] schema ready version=${LATEST_VERSION}\n`);
   return { applied, current: LATEST_VERSION };
 }

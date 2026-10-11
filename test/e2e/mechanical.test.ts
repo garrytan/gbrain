@@ -1116,10 +1116,12 @@ describeE2E('E2E: RLS Verification', () => {
   test('v24 self-heals when budget_ledger + budget_reservations are missing', async () => {
     const conn = getConn();
     let priorVersion: string | null = null;
+    let priorPmbrainVersion: string | null = null;
     try {
       // Capture current version so we can restore after the test.
       const verRows = await conn.unsafe(`SELECT value FROM config WHERE key = 'version'`);
       priorVersion = (verRows[0] as any)?.value ?? null;
+      priorPmbrainVersion = (await conn.unsafe(`SELECT value FROM config WHERE key = 'pmbrain.schema.version'`))[0]?.value ?? null;
 
       // Simulate an operator who dropped the budget_* tables for any reason
       // (cleanup, migration from an older gbrain, etc).
@@ -1129,7 +1131,7 @@ describeE2E('E2E: RLS Verification', () => {
       // Roll the version back to 23 so v24 re-runs on the next initSchema.
       // UPSERT so this works whether the key exists or not.
       await conn.unsafe(`
-        INSERT INTO config (key, value) VALUES ('version', '23')
+        INSERT INTO config (key, value) VALUES ('version', '23'), ('pmbrain.schema.version', '23')
         ON CONFLICT (key) DO UPDATE SET value = '23'
       `);
 
@@ -1137,14 +1139,14 @@ describeE2E('E2E: RLS Verification', () => {
       // apply v24 cleanly and advance version to 24. Without the guard,
       // this would error out with 42P01 and leave version at 23.
       const result = Bun.spawnSync({
-        cmd: ['bun', 'run', 'src/cli.ts', 'init', '--non-interactive', '--url', process.env.DATABASE_URL!],
+        cmd: ['bun', 'run', 'src/cli.ts', 'init', '--migrate-only', '--json'],
         cwd: cliCwd, env: cliEnv(), timeout: 30_000,
       });
       const stdout = new TextDecoder().decode(result.stdout);
       const stderr = new TextDecoder().decode(result.stderr);
 
       // Must succeed — no 42P01, no transaction rollback.
-      expect(result.exitCode).toBe(0);
+      expect({ exitCode: result.exitCode, stderr, stdout }).toMatchObject({ exitCode: 0 });
       expect(stderr + stdout).not.toMatch(/42P01|does not exist.*budget/i);
 
       // Version must have advanced PAST 24. Since v0.18.1, v25-v29 (v0.19.0
@@ -1207,6 +1209,7 @@ describeE2E('E2E: RLS Verification', () => {
           [priorVersion],
         );
       }
+      if (priorPmbrainVersion !== null) await conn.unsafe(`UPDATE config SET value = $1 WHERE key = 'pmbrain.schema.version'`, [priorPmbrainVersion]);
     }
   }, 60_000);
 });

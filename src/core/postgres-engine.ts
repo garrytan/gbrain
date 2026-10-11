@@ -1,3 +1,8 @@
+import { lockRelationPages } from './pmbrain-adapters/relation-writer.ts';
+import { recordCreatedTaskLinks, type LinkAudit } from './pmbrain-adapters/task-relations.ts';
+import { readMentionPolicy } from './mentions/policy.ts';
+import { writePageAliases } from './mentions/pass.ts';
+import { composablePostgresTransaction } from './page-state/transactions.ts';
 import { readRelationalFanout, readTakes } from './search/read-enrichment.ts';
 import postgres from 'postgres';
 import type {
@@ -913,8 +918,10 @@ export class PostgresEngine implements BrainEngine {
     return conn.begin(async (tx) => {
       // Create a scoped engine with tx as its connection, no shared state mutation
       const txEngine = Object.create(this) as PostgresEngine;
-      Object.defineProperty(txEngine, 'sql', { get: () => tx });
-      Object.defineProperty(txEngine, '_sql', { value: tx as unknown as ReturnType<typeof postgres>, writable: false });
+      Object.defineProperty(txEngine,'_relationTransaction',{value:true});
+      const scoped = composablePostgresTransaction(tx);
+      Object.defineProperty(txEngine, 'sql', { get: () => scoped });
+      Object.defineProperty(txEngine, '_sql', { value: scoped, writable: false });
       return fn(txEngine);
     }) as Promise<T>;
   }
@@ -997,11 +1004,13 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async putPage(slug: string, page: PageInput, opts?: { sourceId?: string }): Promise<Page> {
+    if (!(this as unknown as {_relationTransaction?:boolean})._relationTransaction) return this.transaction(tx=>tx.putPage(slug,page,opts));
     slug = validateSlug(slug);
     const sql = this.sql;
     const hash = page.content_hash || contentHash(page);
     const frontmatter = page.frontmatter || {};
     const sourceId = opts?.sourceId ?? 'default';
+    await lockRelationPages(this,[{slug,sourceId}]);
 
     // v0.18.0 Step 5+: source_id is now in the INSERT column list so multi-
     // source callers actually land on the (source_id, slug) row they intend.
@@ -1055,7 +1064,9 @@ export class PostgresEngine implements BrainEngine {
         deleted_at            = NULL
       RETURNING id, source_id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, effective_date, effective_date_source, import_filename, source_kind, source_uri, ingested_via, ingested_at
     `;
-    return rowToPage(rows[0]);
+    const saved = rowToPage(rows[0]);
+    await writePageAliases(this,slug,sourceId,{title:saved.title,type:saved.type,compiled_truth:saved.compiled_truth,timeline:saved.timeline,frontmatter:saved.frontmatter},undefined,await readMentionPolicy(this));
+    return saved;
   }
 
   async deletePage(slug: string, opts?: { sourceId?: string }): Promise<void> {
@@ -1152,15 +1163,17 @@ export class PostgresEngine implements BrainEngine {
     return rows.length > 0;
   }
 
-  async purgeDeletedPages(olderThanHours: number): Promise<{ slugs: string[]; count: number }> {
+  async purgeDeletedPages(olderThanHours: number, options?: { limit?: number }): Promise<{ slugs: string[]; count: number }> {
     const sql = this.sql;
     // Clamp to non-negative integer; runaway purge protection. The DELETE
     // cascades through content_chunks, page_links, chunk_relations via FKs.
     const hours = Math.max(0, Math.floor(olderThanHours));
     const rows = await sql`
       DELETE FROM pages
-      WHERE deleted_at IS NOT NULL
-        AND deleted_at < now() - (${hours} || ' hours')::interval
+      WHERE id IN (SELECT id FROM pages
+        WHERE deleted_at IS NOT NULL
+          AND deleted_at < now() - (${hours} || ' hours')::interval
+        ORDER BY id LIMIT ${options?.limit === undefined ? null : Math.max(1, Math.floor(options.limit))})
       RETURNING slug
     `;
     const slugs = rows.map((r) => r.slug as string);
@@ -1239,6 +1252,14 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async listPages(filters?: PageFilters): Promise<Page[]> {
+    return (await this.readPageRows(filters)).map(rowToPage);
+  }
+
+  async listPageIds(filters?: PageFilters): Promise<number[]> {
+    return (await this.readPageRows(filters, true)).map(row => Number(row.id));
+  }
+
+  private async readPageRows(filters?: PageFilters, idsOnly = false): Promise<Record<string, unknown>[]> {
     const sql = this.sql;
     const limit = filters?.limit || 100;
     const offset = filters?.offset || 0;
@@ -1274,6 +1295,8 @@ export class PostgresEngine implements BrainEngine {
     const privateCondition = filters?.excludePrivate === true
       ? sql.unsafe(`AND ${privatePagesFilterFragment('p')}`)
       : sql``;
+    const idCondition = filters?.pageIds ? sql`AND p.id = ANY(${filters.pageIds}::int[])` : sql``;
+    const projection = sql.unsafe(idsOnly ? 'p.id' : 'p.*');
 
     // v0.29: ORDER BY threading via PAGE_SORT_SQL whitelist (no SQL injection).
     // postgres.js sql.unsafe lets us splice the literal fragment safely.
@@ -1281,13 +1304,13 @@ export class PostgresEngine implements BrainEngine {
     const orderBy = sql.unsafe(PAGE_SORT_SQL[sortKey]);
 
     const rows = await sql`
-      SELECT p.* FROM pages p
+      SELECT ${projection} FROM pages p
       ${tagJoin}
-      WHERE 1=1 ${typeCondition} ${tagCondition} ${updatedCondition} ${slugCondition} ${sourceCondition} ${deletedCondition} ${privateCondition}
+      WHERE 1=1 ${typeCondition} ${tagCondition} ${updatedCondition} ${slugCondition} ${sourceCondition} ${deletedCondition} ${privateCondition} ${idCondition}
       ORDER BY ${orderBy} LIMIT ${limit} OFFSET ${offset}
     `;
 
-    return rows.map(rowToPage);
+    return [...rows] as Record<string, unknown>[];
   }
 
   async getAllSlugs(opts?: { sourceId?: string }): Promise<Set<string>> {
@@ -2429,10 +2452,10 @@ export class PostgresEngine implements BrainEngine {
       UPDATE content_chunks
          SET embedded_text_hash = CASE WHEN embedding IS NULL THEN NULL ELSE md5(chunk_text) END
        WHERE page_id = ${pageId} AND chunk_index = ANY(${newIndices})
+         AND embedded_text_hash IS DISTINCT FROM CASE WHEN embedding IS NULL THEN NULL ELSE md5(chunk_text) END
     `;
     await sql`
-      UPDATE pages
-         SET embedding_signature = (
+      WITH signature AS (
            SELECT CASE
              WHEN COUNT(*) > 0
               AND COUNT(*) FILTER (WHERE embedding IS NULL) = 0
@@ -2440,11 +2463,15 @@ export class PostgresEngine implements BrainEngine {
               AND COUNT(DISTINCT vector_dims(embedding)) = 1
              THEN MIN(model) || ':' || MIN(vector_dims(embedding))::text
              ELSE NULL
-           END
+           END AS value
            FROM content_chunks
            WHERE page_id = ${pageId}
          )
-       WHERE id = ${pageId}
+      UPDATE pages
+         SET embedding_signature = signature.value
+        FROM signature
+       WHERE pages.id = ${pageId}
+         AND pages.embedding_signature IS DISTINCT FROM signature.value
     `;
   }
 
@@ -2636,6 +2663,9 @@ export class PostgresEngine implements BrainEngine {
     } else {
       conds.push('(links_extracted_at IS NULL OR updated_at > links_extracted_at)');
     }
+    const freshness=conds.pop()!;
+    conds.push(`(${freshness} OR id IN (SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON (t.source_id=w.target_source_id OR (t.source_id='default' AND w.target_source_id=w.source_id))
+  AND t.deleted_at IS NULL AND (t.slug=w.target_ref OR (w.ref_kind='name' AND (regexp_replace(t.slug,'^.*/','')=w.target_ref OR lower(t.title)=w.target_ref OR EXISTS(SELECT 1 FROM page_aliases a WHERE a.slug=t.slug AND a.source_id=t.source_id AND a.alias_norm=w.target_ref)))) WHERE t.updated_at>w.checked_at))`);
     if (opts?.sourceId) {
       params.push(opts.sourceId);
       conds.push(`source_id = $${params.length}`);
@@ -2722,6 +2752,7 @@ export class PostgresEngine implements BrainEngine {
       toSourceId?: string;
       originSourceId?: string;
       resolutionType?: 'qualified' | 'unqualified';
+      linkAudit?: LinkAudit;
     },
   ): Promise<void> {
     const sql = this.sql;
@@ -2747,7 +2778,7 @@ export class PostgresEngine implements BrainEngine {
     // containing either slug, so a multi-source brain silently created edges
     // pointing at the wrong pages.
     const src = linkSource ?? 'markdown';
-    await sql`
+    const inserted = await sql`
       INSERT INTO links (from_page_id, to_page_id, link_type, context, link_source, origin_page_id, origin_field, resolution_type)
       SELECT f.id, t.id, v.link_type, v.context, v.link_source, o.id, v.origin_field, v.resolution_type
       FROM (VALUES (${from}, ${to}, ${linkType || ''}, ${context || ''}, ${src}, ${originSlug ?? null}, ${originField ?? null}, ${fromSrc}, ${toSrc}, ${originSrc}, ${opts?.resolutionType ?? null}))
@@ -2759,15 +2790,17 @@ export class PostgresEngine implements BrainEngine {
         context = EXCLUDED.context,
         origin_field = EXCLUDED.origin_field,
         resolution_type = EXCLUDED.resolution_type
+      RETURNING id, (xmax = 0) AS created
     `;
+    await recordCreatedTaskLinks(this, opts?.linkAudit, inserted.filter(row => row.created).map(row => Number(row.id)));
   }
 
   async addLinksBatch(links: LinkBatchInput[], opts?: BatchOpts): Promise<number> {
     if (links.length === 0) return 0;
-    return this.batchRetry(opts?.auditSite ?? 'addLinksBatch', opts?.signal, () => this._addLinksBatchOnce(links), links.length);
+    return this.batchRetry(opts?.auditSite ?? 'addLinksBatch', opts?.signal, () => this._addLinksBatchOnce(links, opts), links.length);
   }
 
-  private async _addLinksBatchOnce(links: LinkBatchInput[]): Promise<number> {
+  private async _addLinksBatchOnce(links: LinkBatchInput[], opts?: BatchOpts): Promise<number> {
     const sql = this.sql;
     // unnest() pattern: 7 array-typed bound parameters regardless of batch size.
     // Avoids the 65535-parameter cap and the postgres-js sql(rows, ...) helper's
@@ -2803,8 +2836,9 @@ export class PostgresEngine implements BrainEngine {
       JOIN pages t ON t.slug = v.to_slug AND t.source_id = v.to_source_id
       LEFT JOIN pages o ON o.slug = v.origin_slug AND o.source_id = v.origin_source_id
       ON CONFLICT (from_page_id, to_page_id, link_type, link_source, origin_page_id) DO NOTHING
-      RETURNING 1
+      RETURNING id
     `;
+    await recordCreatedTaskLinks(this, opts?.linkAudit, result.map(row => Number(row.id)));
     return result.length;
   }
 
@@ -5089,8 +5123,8 @@ export class PostgresEngine implements BrainEngine {
     const sql = this.sql;
     const sourceId = opts?.sourceId ?? 'default';
     const rows = await sql`
-      INSERT INTO page_versions (page_id, compiled_truth, frontmatter)
-      SELECT id, compiled_truth, frontmatter
+      INSERT INTO page_versions (page_id, compiled_truth, frontmatter, knowledge_revision, timeline, title, type, tags, is_deleted)
+      SELECT id, compiled_truth, frontmatter, knowledge_revision, timeline, title, type, (SELECT COALESCE(jsonb_agg(tag),'[]'::jsonb) FROM tags WHERE page_id=pages.id), deleted_at IS NOT NULL
       FROM pages WHERE slug = ${slug} AND source_id = ${sourceId}
       RETURNING *
     `;
@@ -5391,12 +5425,12 @@ export class PostgresEngine implements BrainEngine {
     const sql = this.sql;
     const uniq = Array.from(new Set(aliasNorms.filter(a => a.length > 0)));
     await sql.begin(async tx => {
-      await tx`DELETE FROM page_aliases WHERE source_id = ${sourceId} AND slug = ${slug}`;
+      await tx`DELETE FROM page_aliases WHERE source_id = ${sourceId} AND slug = ${slug} AND origin = 'frontmatter'`;
       if (uniq.length === 0) return;
       await tx`
         INSERT INTO page_aliases (source_id, alias_norm, slug)
         SELECT ${sourceId}, a, ${slug} FROM unnest(${uniq}::text[]) AS a
-        ON CONFLICT (source_id, alias_norm, slug) DO NOTHING`;
+        ON CONFLICT (source_id, alias_norm, slug, origin) DO NOTHING`;
     });
   }
 

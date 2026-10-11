@@ -118,7 +118,7 @@ mock.module('../../src/commands/orphans.ts', () => ({
 }));
 
 // Import after mocks.
-const { runCycle, ALL_PHASES, resolveIncrementalExtractSlugs } = await import('../../src/core/cycle.ts');
+const { runCycle, ALL_PHASES, DEFAULT_PHASES, resolveIncrementalExtractSlugs } = await import('../../src/core/cycle.ts');
 const { PGLiteEngine } = await import('../../src/core/pglite-engine.ts');
 
 // Shared PGLite engine per describe block. Each block does its own
@@ -217,7 +217,7 @@ describe('runCycle — phase selection', () => {
 
   test('default: all 6 phases run in order', async () => {
     const report = await runCycle(sharedEngine,{ brainDir: '/tmp/brain' });
-    expect(report.phases.map(p => p.phase)).toEqual(ALL_PHASES);
+    expect(report.phases.map(p => p.phase)).toEqual(DEFAULT_PHASES);
   });
 
   test('--phase lint only runs lint', async () => {
@@ -419,9 +419,9 @@ describe('runCycle — yieldBetweenPhases hook', () => {
     // v0.36.1.0: 16 phases (added `propose_takes`, `grade_takes`, `calibration_profile` between consolidate and embed).
     // v0.39.0.0: 17 phases (added `schema-suggest` between orphans and purge — T12 schema cathedral).
     // v0.41.2.0: 19 phases (added `extract_atoms` after extract_facts + `synthesize_concepts` after patterns).
-    // PMBrain aligns to its supported upstream Dream subset (22 phases):
-    // drift + enrich_thin are included, SkillOpt remains deferred.
-    expect(hookCalls).toBe(22);
+    // PMBrain aligns to its supported upstream Dream subset (23 phases):
+    // drift + enrich_thin are included, and capture_entities reads the skill.
+    expect(hookCalls).toBe(DEFAULT_PHASES.length);
   });
 
   test('hook exceptions do not abort the cycle', async () => {
@@ -434,8 +434,8 @@ describe('runCycle — yieldBetweenPhases hook', () => {
     // v0.33.3: 13 phases (v0.32.2's 12 + resolve_symbol_edges).
     // v0.36.1.0: 16 phases (Hindsight calibration wave adds propose_takes, grade_takes, calibration_profile).
     // v0.39.0.0: 17 phases (T12 schema-suggest phase between orphans and purge).
-    // PMBrain aligns to its supported upstream Dream subset (22 phases).
-    expect(report.phases.length).toBe(22);
+    // PMBrain aligns to its supported upstream Dream subset (23 phases).
+    expect(report.phases.length).toBe(DEFAULT_PHASES.length);
   });
 });
 

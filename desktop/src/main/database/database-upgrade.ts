@@ -102,7 +102,7 @@ export class DatabaseUpgradeController {
 
     const statusResult = await runCliChecked(this.dependencies.runtime(), [
       'models', 'embedding-dimension-status', '--json',
-    ]);
+    ], {}, chunk => this.dependencies.getLogger()?.write('embedding-preflight:stderr', chunk));
     const status = parseLastJson<EmbeddingDimensionStatusCliResult>(
       statusResult.stdout,
       '向量维度状态检查返回格式无效，已停止自动修复。',

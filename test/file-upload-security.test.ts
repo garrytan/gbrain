@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync, symlinkSync, mkdirSync, realpathSync } from 'fs';
-import { join } from 'path';
+import { join, parse } from 'path';
 import { tmpdir } from 'os';
 import {
   validateUploadPath,
@@ -49,6 +49,12 @@ describe('validateUploadPath', () => {
       expect((e as OperationError).code).toBe('invalid_params');
       expect((e as Error).message).toMatch(/within the working directory/i);
     }
+  });
+
+  it.skipIf(process.platform !== 'win32' || parse(process.cwd()).root.toLowerCase() === parse(tmpdir()).root.toLowerCase())('rejects a file on a different Windows drive', () => {
+    const p = join(outside, 'cross-drive.txt');
+    writeFileSync(p, 'secret');
+    expect(() => validateUploadPath(p, process.cwd())).toThrow(/within the working directory/i);
   });
 
   it('rejects ../ traversal above the root', () => {

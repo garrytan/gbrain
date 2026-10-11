@@ -9,6 +9,8 @@ import {
   type CliRuntime,
 } from './cli-runner.js';
 import { getDesktopRuntimeContract } from './runtime-contract.js';
+import { SidecarResourceMonitor, type ResourceSample, type ResourceAction } from './sidecar/resource-monitor.js';
+import { memoryPressure } from '../../../shared/memory-budget.js';
 import {
   classifySidecarStartupError,
   SidecarExitedBeforeHealthyError,
@@ -100,6 +102,7 @@ export class SidecarManager {
   private lastExitSignal: string | null = null;
   private lastSidecarPid: number | null = null;
   private lastFailureDetails: SidecarFailureDetails | null = null;
+  private resourceMonitor:SidecarResourceMonitor|null=null;
 
   constructor(options: SidecarManagerOptions) {
     this.options = options;
@@ -200,14 +203,19 @@ export class SidecarManager {
   }
 
   async adminRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
-    const request = async (cookie: string) => fetch(`http://127.0.0.1:${this.port}${path}`, {
-      ...init,
-      headers: {
-        'Content-Type': 'application/json',
-        Cookie: cookie,
-        ...(init.headers ?? {}),
-      },
-    });
+    const response = await this.adminResponse(path, init);
+    const body = await response.json().catch(() => ({})) as T & { error?: string; message?: string };
+    if (!response.ok) throw new Error(body.message || body.error || `Admin API 返回 HTTP ${response.status}`);
+    return body;
+  }
+
+  async adminResponse(path: string, init: RequestInit = {}): Promise<Response> {
+    const request = async (cookie: string) => {
+      const headers = new Headers(init.headers);
+      if (!headers.has('content-type')) headers.set('content-type', 'application/json');
+      headers.set('cookie', cookie);
+      return fetch(`http://127.0.0.1:${this.port}${path}`, { ...init, headers });
+    };
 
     let cookie = await this.getAdminCookie();
     let response = await request(cookie);
@@ -217,9 +225,7 @@ export class SidecarManager {
       cookie = await this.getAdminCookie();
       response = await request(cookie);
     }
-    const body = await response.json().catch(() => ({})) as T & { error?: string; message?: string };
-    if (!response.ok) throw new Error(body.message || body.error || `Admin API 返回 HTTP ${response.status}`);
-    return body;
+    return response;
   }
 
   private async getAdminCookie(): Promise<string> {
@@ -281,13 +287,19 @@ export class SidecarManager {
   }
 
   private async terminateChild(): Promise<void> {
+    this.resourceMonitor?.stop();this.resourceMonitor=null;
     const child = this.child;
     this.child = null;
     if (!child || child.exitCode !== null) return;
 
+    const stoppingAt=Date.now();
     this.requestProcessTreeStop(child, false);
-    if (await this.waitForChildExit(child, STOP_TIMEOUT_MS)) return;
+    if (await this.waitForChildExit(child, STOP_TIMEOUT_MS)) {
+      this.options.logger.write('desktop',`Sidecar stopped normally in ${Date.now()-stoppingAt}ms`);
+      return;
+    }
 
+    this.options.logger.write('desktop','Sidecar graceful shutdown timed out; terminating process tree');
     this.requestProcessTreeStop(child, true);
     if (!await this.waitForChildExit(child, FORCE_STOP_TIMEOUT_MS)) {
       throw new Error(`PMBrain sidecar process tree (PID ${child.pid ?? 'unknown'}) did not stop.`);
@@ -295,6 +307,12 @@ export class SidecarManager {
   }
 
   private requestProcessTreeStop(child: ChildProcess, force: boolean): void {
+    if(!force&&child.connected){
+      try{
+        child.send({type:'pmbrain:shutdown'},error=>{if(error)this.options.logger.write('desktop',`Sidecar shutdown IPC failed: ${error.message}`);});
+        return;
+      }catch(error){this.options.logger.write('desktop',`Sidecar shutdown IPC failed: ${error instanceof Error?error.message:String(error)}`);}
+    }
     if (process.platform === 'win32' && child.pid) {
       const args = ['/PID', String(child.pid), '/T'];
       if (force) args.push('/F');
@@ -355,9 +373,16 @@ export class SidecarManager {
         PMBRAIN_PGLITE_LOCK_FAIL_FAST: '1',
       },
       windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
     });
     this.child = child;
+    if(child.pid){
+      this.resourceMonitor?.stop();
+      this.resourceMonitor=new SidecarResourceMonitor(child.pid,(message,sample,action)=>this.stopForResourcePressure(child,message,sample,action),{
+        onError:error=>this.options.logger.write('desktop',`Resource monitor: ${error instanceof Error?error.message:String(error)}`),
+      });
+      this.resourceMonitor.start();
+    }
     this.lastSidecarPid = child.pid ?? null;
     this.options.logger.write(
       'desktop',
@@ -375,6 +400,7 @@ export class SidecarManager {
       this.handleCrash(this.lastExitMessage);
     });
     child.once('exit', (code, signal) => {
+      if(this.child===child){this.resourceMonitor?.stop();this.resourceMonitor=null;}
       const stderr = this.recentStderr.trim();
       this.lastExitCode = code;
       this.lastExitSignal = signal;
@@ -382,6 +408,34 @@ export class SidecarManager {
       if (this.child === child) this.child = null;
       if (!this.stopping) this.handleCrash(this.lastExitMessage);
     });
+  }
+
+  private async stopForResourcePressure(child:ChildProcess,message:string,sample:ResourceSample|null,action:ResourceAction='adjust'):Promise<void>{
+    if(this.child!==child||child.exitCode!==null||this.stopping)return;
+    if(!sample)return;
+    if(action==='adjust'){
+      const constrained=memoryPressure(sample).level!=='normal';
+      await this.adminRequest('/admin/api/console/resource-stop',{method:'POST',body:JSON.stringify({action:'adjust',constrained}),signal:AbortSignal.timeout(5000)});
+      this.options.logger.write('desktop',constrained?`资源调节：${message}`:'资源调节：恢复正常后台并发');
+      return;
+    }
+    if(action==='drain'){
+      const reason=`资源保护：${message}，已停止后台任务，普通服务继续运行。`;
+      await this.adminRequest('/admin/api/console/resource-stop',{method:'POST',body:JSON.stringify({message:reason}),signal:AbortSignal.timeout(5000)});
+      this.options.logger.write('desktop',reason);return;
+    }
+    this.stopping=true;
+    this.options.logger.write('desktop',`${message} pid=${child.pid} committed=${sample?.bytes??'unavailable'} available=${sample?.availableBytes??'unavailable'} commitHeadroom=${sample?.commitHeadroomBytes??'unavailable'}`);
+    await Promise.race([
+      this.adminRequest('/admin/api/console/resource-stop',{method:'POST',body:JSON.stringify({message}),signal:AbortSignal.timeout(1000)}).catch(error=>this.options.logger.write('desktop',`Resource drain request: ${error instanceof Error?error.message:String(error)}`)),
+      new Promise(resolve=>setTimeout(resolve,1200)),
+    ]);
+    if(this.child&&this.child!==child)return;
+    try{await this.terminateChild();}
+    finally{
+      this.lastFailureDetails={sidecarPid:child.pid,retryable:false,lastHealthError:message};
+      this.options.onState?.({phase:'failed',port:this.port,message,details:this.lastFailureDetails});
+    }
   }
 
   private handleCrash(message: string): void {

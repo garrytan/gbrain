@@ -41,11 +41,13 @@ describe('desktop advanced model config', () => {
       'synthesize_concepts',
       'consolidate',
       'conversation_facts_backfill',
+      'capture_entities',
       'propose_takes',
       'grade_takes',
       'calibration_profile',
     ]);
     expect(ADVANCED_PHASE_CONFIG_KEYS.synthesize).toBe('models.dream.synthesize');
+    expect(ADVANCED_PHASE_CONFIG_KEYS.capture_entities).toBe('models.dream.capture_entities');
     expect(ADVANCED_PHASE_CONFIG_KEYS.extract_atoms).toBe('models.dream.extract_atoms');
     expect(ADVANCED_PHASE_CONFIG_KEYS.synthesize_concepts).toBe('models.dream.synthesize_concepts');
     expect(ADVANCED_PHASE_CONFIG_KEYS.consolidate).toBe('models.dream.consolidate');

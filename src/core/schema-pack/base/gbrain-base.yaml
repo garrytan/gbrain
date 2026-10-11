@@ -100,6 +100,8 @@ page_types:
     path_prefixes:
       - wiki/concepts/
       - wiki/concept/
+      - concepts/
+      - concept/
     aliases: []
     # v0.41.11+ — concepts ARE knowledge: their bodies define the
     # concept, so the facts extractor should mine them like writing/

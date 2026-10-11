@@ -62,6 +62,7 @@ export interface EmbedOpts {
    * keep memory bounded.
    */
   batchSize?: number;
+  getBatchSize?: () => number;
   /**
    * v0.41.18.0 (A13): when 'recent', walks the stale-chunk pool in
    * page.updated_at DESC order (recent-modified pages first) instead
@@ -328,6 +329,7 @@ export async function runEmbedCore(engine: BrainEngine, opts: EmbedOpts): Promis
     let drainError: unknown;
     const drain = embedAll(engine, !!opts.stale, !!opts.dryRun, result, opts.onProgress, opts.sourceId, {
       batchSize: opts.batchSize,
+      getBatchSize: opts.getBatchSize,
       priority: opts.priority,
       catchUp: opts.catchUp,
       pageLimit: opts.pageLimit,
@@ -592,6 +594,7 @@ async function embedAll(
   sourceId?: string,
   staleOpts?: {
     batchSize?: number;
+    getBatchSize?: () => number;
     priority?: 'recent';
     catchUp?: boolean;
     pageLimit?: number;
@@ -769,6 +772,7 @@ async function embedAllStale(
   onProgress: ((done: number, total: number, embedded: number) => void) | undefined,
   staleOpts: {
     batchSize?: number;
+    getBatchSize?: () => number;
     priority?: 'recent';
     catchUp?: boolean;
     pageLimit?: number;
@@ -808,7 +812,7 @@ async function embedAllStale(
   // we page through 2000 rows at a time via keyset pagination on
   // (page_id, chunk_index). Each query finishes in <1s.
   // v0.41.18.0 (A13): --batch-size N CLI flag overrides hardcoded 2000 default.
-  const PAGE_SIZE = staleOpts?.batchSize ?? 2000;
+  const defaultPageSize = staleOpts?.batchSize ?? 2000;
   // D3 + D3a + D8: wall-clock budget. 30 min default; env override.
   // v0.41.18.0 (A13): --catch-up removes the wall-clock cap entirely so the
   // handler runs until countStaleChunks() returns 0. Do not emulate infinity
@@ -859,6 +863,7 @@ async function embedAllStale(
         break;
       }
 
+      const PAGE_SIZE = Math.max(1, Math.min(10_000, Math.floor(staleOpts?.getBatchSize?.() ?? defaultPageSize)));
       const batch = await engine.listStaleChunks({
         batchSize: PAGE_SIZE,
         afterPageId,

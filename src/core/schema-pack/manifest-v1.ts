@@ -34,6 +34,7 @@ const LinkInferenceSchema = z.object({
   regex: z.string().optional(),
   page_type: z.string().optional(),
   target_type: z.string().optional(),
+  ner_only: z.boolean().optional(),
 }).strict();
 
 const LinkTypeSchema = z.object({

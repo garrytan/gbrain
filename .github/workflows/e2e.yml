@@ -79,7 +79,7 @@ jobs:
           key: bun-cache-${{ runner.os }}-${{ hashFiles('bun.lock') }}
       - run: bun install --frozen-lockfile
       - name: Run Tier 1 E2E files sequentially
-        run: bash scripts/run-e2e.sh test/e2e/mechanical.test.ts test/e2e/mcp.test.ts test/e2e/advisor-mcp-postgres.test.ts test/e2e/quick-maintenance-postgres.test.ts test/e2e/read-enrichment-alignment.test.ts test/e2e/cycle-consolidate-postgres.test.ts test/e2e/session-import-postgres.test.ts test/e2e/facts-idea-postgres.test.ts test/e2e/writeback-ttl-postgres.test.ts test/e2e/writeback-transports.test.ts
+        run: bash scripts/run-e2e.sh test/e2e/mechanical.test.ts test/e2e/mcp.test.ts test/e2e/advisor-mcp-postgres.test.ts test/e2e/quick-maintenance-postgres.test.ts test/e2e/read-enrichment-alignment.test.ts test/e2e/cycle-consolidate-postgres.test.ts test/e2e/session-import-postgres.test.ts test/e2e/facts-idea-postgres.test.ts test/e2e/writeback-ttl-postgres.test.ts test/e2e/writeback-transports.test.ts test/e2e/model-compatibility-ingest.test.ts test/e2e/model-compatibility-capture.test.ts test/e2e/model-compatibility-extraction.test.ts
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gbrain_test
 

@@ -7,6 +7,12 @@ import type {
 import type { LanMcpGatewayStatus } from './lan-mcp-gateway.js';
 import type { NetworkCandidate } from './network-manager.js';
 
+export interface DesktopBehaviorInput {
+  launchAtLogin: boolean;
+  startMinimized: boolean;
+  closeBehavior: DesktopCloseBehavior;
+}
+
 export interface DesktopSystemSettingsPayload {
   theme: DesktopTheme;
   networkMode: DesktopNetworkMode;

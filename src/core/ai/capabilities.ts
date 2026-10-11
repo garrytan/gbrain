@@ -23,6 +23,7 @@
 
 import { resolveRecipe } from './model-resolver.ts';
 import { AIConfigError } from './errors.ts';
+import {isThinkingModel} from './model-compatibility.ts';
 
 export interface ProviderCapabilities {
   /** Provider returns native function/tool calling. Required for the subagent loop. */
@@ -95,10 +96,7 @@ export function getProviderCapabilities(modelString: string): ProviderCapabiliti
     // Subsequent waves can split this into its own recipe field if a provider
     // ever supports tools without parallel dispatch.
     supportsParallelTools: chat.supports_tools === true,
-    // Not exposed by ChatTouchpoint today — defaults to false. Recipes can add
-    // a `supports_thinking` field later without breaking this helper (it'll
-    // just keep returning false until a recipe sets it).
-    supportsThinking: false,
+    supportsThinking: isThinkingModel(modelString),
     maxContext: chat.max_context_tokens ?? 128_000,
   };
 

@@ -13,6 +13,7 @@ import { listNetworkCandidates } from '../network-manager.js';
 import type { LanController } from '../network/lan-controller.js';
 import type { SidecarController } from '../sidecar/sidecar-controller.js';
 import type {
+  DesktopBehaviorInput,
   DesktopSystemSettingsPayload,
   DesktopSystemSettingsSaveResult,
   DesktopSystemSettingsState,
@@ -194,6 +195,16 @@ export class SystemSettingsController {
       state: this.currentState(),
       backup: saved.backup ?? themeBackup,
     };
+  }
+
+
+  async saveDesktopBehavior(input: DesktopBehaviorInput): Promise<DesktopSystemSettingsSaveResult> {
+    saveDesktopPreferences({
+      closeBehavior: input.closeBehavior,
+      startMinimized: input.startMinimized === true,
+    });
+    this.setLaunchAtLogin(input.launchAtLogin === true);
+    return { canceled: false, state: this.sendState() };
   }
 
   private loginItemSettingsOptions() {

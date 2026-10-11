@@ -94,6 +94,15 @@ describe('inferLinkTypeFromPack (T7b)', () => {
     ]);
     expect(inferLinkTypeFromPack(pack, 'concept', 'text')).toBeNull();
   });
+
+  test('自定义关系只在声明的目标类型上成立', () => {
+    const pack = minimalPack([
+      { name: 'responsible_for', inference: { target_type: 'company', regex: '任职' } },
+    ]);
+    expect(inferLinkTypeFromPack(pack, 'person', '张三在星河科技任职', undefined, 'company')).toBe('responsible_for');
+    expect(inferLinkTypeFromPack(pack, 'person', '张三在星河科技任职', undefined, 'project')).toBeNull();
+    expect(inferLinkTypeFromPack(pack, 'person', '张三在星河科技任职')).toBeNull();
+  });
 });
 
 describe('frontmatterLinkTypeFromPack (T7b)', () => {

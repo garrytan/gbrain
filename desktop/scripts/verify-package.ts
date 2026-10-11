@@ -82,6 +82,8 @@ const requiredFiles = [
   ...shape.artifacts.map(name => join(distRoot, name)),
   bunPath,
   sidecarPath,
+  join(shape.runtimeRoot, 'task-worker.js'),
+  join(shape.runtimeRoot, 'database-worker.js'),
   runtimeManifestPath,
   join(shape.runtimeRoot, 'pdf.worker.mjs'),
   join(shape.runtimeRoot, 'package.json'),

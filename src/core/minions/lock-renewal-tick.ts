@@ -190,6 +190,12 @@ export interface LockRenewalState {
    * cancellation event AND the post-await branch decisions.
    */
   cancelled: () => boolean;
+  /**
+   * True while this process is still inside the job and the database
+   * cannot take a second statement. A timed-out renewal then means the
+   * owner is busy, not that the owner died. Connection errors still abort.
+   */
+  ownsExecution?: () => boolean;
 }
 
 export type TickResult =
@@ -221,6 +227,8 @@ export async function runLockRenewalTick(
     ]);
   } catch (err) {
     if (state.cancelled()) return { kind: 'cancelled' };
+    const timedOut = err instanceof Error && err.message.includes('timed out');
+    if (timedOut && state.ownsExecution?.()) return { kind: 'ok' };
     state.consecutiveFailures += 1;
     // Defense-in-depth (codex C4): audit must never escape this catch.
     try {

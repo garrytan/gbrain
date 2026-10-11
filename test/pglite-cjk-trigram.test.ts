@@ -18,7 +18,6 @@ const pgliteEngine = readFileSync(join(root, 'src/core/pglite-engine.ts'), 'utf8
 
 const expectedIndexes = [
   'idx_chunks_text_trgm',
-  'idx_pages_compiled_truth_trgm',
   'idx_pages_slug_trgm',
 ] as const;
 

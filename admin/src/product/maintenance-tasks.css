@@ -1,0 +1,81 @@
+.maintenance-tasks-page { color: var(--product-text); }
+.maintenance-page-head { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 24px; }
+.maintenance-page-head h1 { font-size: 26px; font-weight: 650; letter-spacing: -.02em; margin: 0 0 6px; }
+.maintenance-page-head p { margin: 0; color: var(--product-muted); font-size: 13px; }
+.maintenance-tasks-page button, .maintenance-task-dialog button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 36px; border: 1px solid var(--product-line); border-radius: 8px; background: var(--product-panel); color: inherit; padding: 7px 12px; font: inherit; font-size: 13px; cursor: pointer; }
+.maintenance-tasks-page button:disabled, .maintenance-task-dialog button:disabled { opacity: .5; cursor: default; }
+.maintenance-tasks-page .maintenance-primary, .maintenance-task-dialog .maintenance-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.maintenance-launch-actions { display: flex; gap: 10px; flex-shrink: 0; }
+.maintenance-launch-actions button:disabled svg, .maintenance-submitting svg, .maintenance-state-running svg { animation: task-spin 1.6s linear infinite; }
+.maintenance-launch-actions button:disabled svg:not(.lucide-loader-circle) { animation: none; }
+.maintenance-automation { display: flex; align-items: center; gap: 9px; margin-bottom: 18px; font-size: 12px; color: var(--product-muted); }
+.maintenance-automation .maintenance-dot { flex: none; width: 7px; height: 7px; background: var(--product-muted); border-radius: 50%; }
+.maintenance-automation .maintenance-dot.enabled { background: #34c759; }
+.maintenance-automation button { min-height: 24px; padding: 0; border: 0; background: transparent; font-size: 12px; color: var(--accent); margin-left: auto; }
+.maintenance-run-list { border: 1px solid var(--product-line); border-radius: 12px; background: var(--product-panel); overflow: hidden; }
+.maintenance-list-toolbar { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--product-line); font-size: 12px; color: var(--product-muted); }
+.maintenance-list-toolbar select { width: 120px; font-size: 12px; }
+.maintenance-run-list table { width: 100%; border-collapse: collapse; text-align: left; table-layout: fixed; }
+.maintenance-run-list th { color: var(--product-muted); font-size: 12px; font-weight: 500; }
+.maintenance-run-list th:first-child { width: 46%; }
+.maintenance-run-list th:nth-child(2) { width: 28%; }
+.maintenance-run-list th:nth-child(3) { width: 21%; }
+.maintenance-run-list th:last-child { width: 5%; }
+.maintenance-run-list :is(th, td) { padding: 16px 20px; border-bottom: 1px solid var(--product-line); }
+.maintenance-run-list td { font-size: 13px; overflow-wrap: anywhere; }
+.maintenance-run-list tr:last-child td { border-bottom: 0; }
+.maintenance-run-row { cursor: pointer; transition: background .15s; }
+.maintenance-run-row:hover, .maintenance-run-row:focus-visible { background: color-mix(in srgb, var(--accent) 7%, var(--product-panel)); }
+.maintenance-run-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.maintenance-run-name { display: flex; align-items: center; gap: 14px; }
+.maintenance-run-icon { width: 38px; height: 42px; display: grid; place-items: center; flex: none; border-radius: 9px; border: 1px solid var(--product-line); color: var(--product-muted); }
+.maintenance-run-name b, .maintenance-run-title { font-size: 14px; font-weight: 600; }
+.maintenance-run-name small, .maintenance-run-stage { display: block; margin-top: 5px; font-size: 12px; line-height: 1.55; color: var(--product-muted); }
+.maintenance-run-state, .maintenance-submitting [role="status"] { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; }
+.maintenance-run-state small { font-size: 12px; font-variant-numeric: tabular-nums; }
+.maintenance-state-running, .maintenance-state-queued, .maintenance-submitting [role="status"] { color: var(--accent); }
+.maintenance-state-completed { color: #34a864; }
+.maintenance-state-failed { color: var(--danger, #db6666); }
+.maintenance-state-partial { color: #c79a42; }
+.maintenance-state-cancelled { color: var(--product-muted); }
+.maintenance-run-row td:last-child { padding-left: 0; padding-right: 12px; }
+.maintenance-run-row td:last-child button { min-height: 28px; padding: 5px; border: 0; background: transparent; color: var(--product-muted); }
+.maintenance-run-row time { color: var(--product-muted); font-size: 12px; }
+.maintenance-list-empty { display: grid; place-items: center; gap: 12px; min-height: 220px; padding: 30px; color: var(--product-muted); font-size: 12px; }
+.maintenance-list-empty b { color: var(--product-text); font-size: 14px; font-weight: 500; }
+.maintenance-retention { margin-top: 14px; color: var(--product-muted); font-size: 12px; }
+.maintenance-visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.maintenance-task-dialog { position: fixed; inset: 0 0 0 auto; margin: 0; width: min(540px, calc(100vw - 48px)); max-width: none; height: 100dvh; max-height: none; border: 0; border-left: 1px solid var(--product-line); border-radius: 0; padding: 0; background: var(--product-bg); color: var(--product-text); box-shadow: -16px 0 60px #0002; }
+.maintenance-task-dialog[open] { display: flex; flex-direction: column; }
+.maintenance-task-dialog::backdrop { background: #0006; }
+.maintenance-task-dialog > header { display: flex; align-items: start; justify-content: space-between; gap: 16px; padding: 28px; border-bottom: 1px solid var(--product-line); }
+.maintenance-task-dialog h2 { margin: 0 0 8px; font-size: 22px; font-weight: 600; }
+.maintenance-task-dialog header p { margin: 0; color: var(--product-muted); font-size: 13px; }
+.maintenance-task-dialog header button { background: transparent; border: 0; padding: 4px; min-height: 26px; }
+.maintenance-detail-body { overflow: auto; flex: 1; min-height: 0; padding: 24px 28px; }
+.maintenance-detail-meta { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--product-muted); margin-bottom: 22px; }
+.maintenance-task-dialog .product-task-progress { padding: 0; border: 0; border-radius: 0; background: transparent; }
+.maintenance-task-dialog .product-task-progress header { margin-bottom: 20px; }
+.maintenance-task-dialog .product-task-progress header > div { display: none; }
+.maintenance-task-dialog .product-task-state { padding: 6px 10px; border-radius: 7px; background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.maintenance-task-dialog .product-task-state.state-completed { background: color-mix(in srgb, var(--success, #34a864) 12%, transparent); }
+.maintenance-task-dialog .product-task-current { font-size: 14px; }
+.maintenance-task-dialog .product-task-bar { height: 5px; }
+.maintenance-task-dialog .product-task-metrics { gap: 22px; }
+.maintenance-task-dialog > footer { display: flex; gap: 10px; justify-content: flex-end; padding: 20px 28px; border-top: 1px solid var(--product-line); }
+.maintenance-muted { color: var(--product-muted); font-size: 13px; line-height: 1.65; }
+.product-task-timeline .product-task-steps { gap: 0; margin: 24px 0; }
+.product-task-timeline .product-task-steps li { position: relative; display: grid; grid-template-columns: 26px 1fr auto; gap: 12px; align-items: start; padding-bottom: 26px; }
+.product-task-timeline .product-task-steps li:not(:last-child)::before { content: ''; position: absolute; left: 12px; top: 29px; bottom: 3px; width: 1px; background: var(--product-line); }
+.product-task-timeline .product-task-steps li:last-child { padding-bottom: 0; }
+.product-task-timeline .product-task-steps svg { width: 26px; height: 26px; padding: 4px; border: 1px solid var(--product-line); border-radius: 50%; }
+.product-task-timeline .product-task-steps .step-completed svg { background: #34a864; border-color: #34a864; color: #fff; }
+.product-task-timeline .product-task-steps .step-running svg { background: color-mix(in srgb, var(--accent) 12%, transparent); border-color: var(--accent); }
+.product-task-timeline:not(.task-is-active) .product-task-steps .step-running svg { color: var(--product-muted); background: transparent; border-color: var(--product-line); }
+.product-task-timeline .product-task-steps li > span { padding-top: 3px; font-size: 14px; font-weight: 500; }
+.product-task-timeline .product-task-steps small { padding-top: 5px; margin: 0; }
+.product-task-timeline .task-step-description { display: block; padding-top: 6px; color: var(--product-muted); font-size: 12px; font-weight: 400; line-height: 1.6; }
+.product-task-timeline .task-step-progress { display: flex; align-items: center; gap: 10px; margin-top: 12px; font-size: 12px; font-variant-numeric: tabular-nums; }
+.product-task-timeline .task-step-progress .product-task-bar { flex: 1; }
+@media (max-width: 1100px) { .maintenance-run-list th:first-child { width: 40%; } .maintenance-run-list th:nth-child(2) { width: 30%; } .maintenance-run-list th:nth-child(3) { width: 25%; } .maintenance-run-list :is(th, td) { padding-inline: 16px; } .maintenance-run-name { gap: 10px; } }
+@media (prefers-reduced-motion: reduce) { .maintenance-launch-actions svg, .maintenance-submitting svg, .maintenance-state-running svg { animation: none !important; } .maintenance-run-row { transition: none; } }

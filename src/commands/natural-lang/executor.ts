@@ -336,7 +336,7 @@ export function parseCapturedDreamResult(text: string): unknown {
 
 export function resolveRunTimeoutMs(timeoutMs: number | null | undefined, kind?: string): number | null {
   if (timeoutMs === undefined && (kind === 'embed_stale' || kind === 'sync_source' || kind === 'sync_all')) return null;
-  return timeoutMs === null ? null : timeoutMs ?? 10 * 60 * 1000;
+  return timeoutMs === null ? null : timeoutMs ?? 6 * 60 * 60 * 1000;
 }
 
 export async function startRun(kind: string, command: string[], cwd: string, hooks?: RunHooks, timeoutMs?: number | null): Promise<ConsoleRun> {

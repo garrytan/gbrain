@@ -284,7 +284,22 @@ export async function listArchivedSources(
  */
 export async function purgeExpiredSources(
   engine: BrainEngine,
+  options?: { batchSize?: number },
 ): Promise<string[]> {
+  if (options?.batchSize) {
+    const ids: string[] = [];
+    while (true) {
+      const rows = await engine.executeRaw<{ id: string }>(
+        `DELETE FROM sources WHERE id IN (
+           SELECT id FROM sources WHERE archived = true
+             AND archive_expires_at IS NOT NULL AND archive_expires_at <= now()
+           ORDER BY id LIMIT $1)
+         RETURNING id`, [Math.max(1, Math.floor(options.batchSize))],
+      );
+      ids.push(...rows.map(row => row.id));
+      if (rows.length < options.batchSize) return ids;
+    }
+  }
   const rows = await engine.executeRaw<{ id: string }>(
     `DELETE FROM sources
      WHERE archived = true

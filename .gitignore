@@ -34,6 +34,7 @@ eval/data/amara-life-v1/_cache/
 test/.cache/
 
 .claude/
+.cursor/
 export/
 
 # Conductor workspace-local agent artifacts: plans, todos, run-unit-parallel

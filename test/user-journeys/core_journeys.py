@@ -278,28 +278,88 @@ def select_custom_model(page: Page, kind: str, base_url: str, model: str) -> Non
     page.locator("#custom-provider-dialog").wait_for(state="hidden")
 
 
-def open_admin_from_desktop(page: Page) -> str:
-    if "/admin/" in page.url:
-        origin = page.url.split("/admin", 1)[0]
-        page.goto(origin + "/admin/#")
-    else:
-        page.wait_for_function("() => !document.querySelector('#open-admin')?.disabled", timeout=120_000)
+def show_desktop_settings_panel(page: Page, name: str) -> None:
+    page.evaluate(
+        """(name) => {
+          const root = document.querySelector('.desktop-settings');
+          if (!root || root.hidden) throw new Error('desktop settings are not visible');
+          root.querySelectorAll('.panel').forEach((panel) => {
+            panel.classList.toggle('active', panel.id === `panel-${name}`);
+          });
+        }""",
+        name,
+    )
+    page.locator(f"#panel-{name}").wait_for(state="visible")
+
+
+def mint_admin_login_link(page: Page, home: Path) -> str:
+    state = page.evaluate(
+        """async () => {
+          const deadline = Date.now() + 120000;
+          while (Date.now() < deadline) {
+            const state = await window.pmbrainDesktop?.getState?.();
+            if (state && state.phase === 'ready' && Number(state.port) > 0) return state;
+            await new Promise(resolve => setTimeout(resolve, 100));
+          }
+          throw new Error('Desktop sidecar did not become ready before the existing startup deadline');
+        }"""
+    )
+    port = int(state["port"])
+    config = json.loads((home / ".pmbrain" / "config.json").read_text(encoding="utf-8-sig"))
+    token = config.get("admin_bootstrap_token")
+    if not isinstance(token, str) or len(token) < 32:
+        raise AssertionError("Desktop did not create an admin bootstrap token")
+    request = Request(
+        f"http://127.0.0.1:{port}/admin/api/issue-magic-link",
+        data=b"{}",
+        method="POST",
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+    )
+    with urlopen(request, timeout=20) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    link = str(payload.get("url", "")).replace("http://localhost:", "http://127.0.0.1:")
+    if "/admin/auth/" not in link:
+        raise AssertionError(f"Desktop did not mint an admin login link: {payload}")
+    return link
+
+
+def open_admin_browser(playwright: Playwright, link: str) -> tuple[object, Page, str]:
+    last_error: Exception | None = None
+    browser = None
+    for channel in ("msedge", "chrome"):
         try:
-            page.locator("#open-admin").click(timeout=20_000)
-        except PlaywrightTimeoutError:
-            if "/admin/" not in page.url:
-                raise
-    page.wait_for_load_state("domcontentloaded")
-    page.get_by_role("heading", name="总体概览").wait_for(timeout=90_000)
-    return page.url.split("/admin", 1)[0]
+            browser = playwright.chromium.launch(channel=channel, headless=True)
+            break
+        except Exception as error:
+            last_error = error
+    if browser is None:
+        raise RuntimeError(f"Could not launch the system browser for Admin: {last_error}")
+    admin = browser.new_context(viewport={"width": 1440, "height": 900}).new_page()
+    admin.set_default_timeout(45_000)
+    try:
+        admin.goto(link, wait_until="domcontentloaded")
+        if not admin.url.startswith("http") or "/admin/" not in admin.url:
+            raise AssertionError(f"Admin login did not open the console: {admin.url}")
+        origin = admin.url.split("/admin", 1)[0]
+        admin.goto(origin + "/admin/#dashboard", wait_until="domcontentloaded")
+        admin.get_by_role("heading", name="总体概览").wait_for(timeout=90_000)
+    except Exception:
+        browser.close()
+        raise
+    return browser, admin, origin
 
 
-def first_launch_journey(page: Page, artifacts: Path, provider: LocalOpenAIServer) -> tuple[str, str]:
+def first_launch_journey(page: Page, artifacts: Path, provider: LocalOpenAIServer) -> str:
     print("[journey 1/6] fresh Desktop launch -> PGLite -> models -> Admin homepage", flush=True)
     database_path = artifacts / "user-home" / "database" / "brain.pglite"
     knowledge_dir = artifacts / "knowledge-source"
     knowledge_dir.mkdir(parents=True, exist_ok=True)
-    page.locator("#panel-basic").wait_for(state="visible")
+    bring = page.get_by_role("button", name="导入或迁移")
+    panel = page.locator("#panel-basic")
+    bring.or_(panel).first.wait_for(state="visible", timeout=45_000)
+    if bring.is_visible():
+        bring.click()
+    panel.wait_for(state="visible")
     config_path = artifacts / "user-home" / ".pmbrain" / "config.json"
     if not config_path.exists():
         raise AssertionError("Desktop did not create its isolated PMBrain configuration")
@@ -313,8 +373,7 @@ def first_launch_journey(page: Page, artifacts: Path, provider: LocalOpenAIServe
     )
     page.locator("#database-path").fill(str(database_path))
     page.locator("#knowledge-directory").fill(str(knowledge_dir))
-    page.locator("#next-models").click()
-    page.locator("#panel-models").wait_for(state="visible")
+    show_desktop_settings_panel(page, "models")
     select_custom_model(page, "chat", provider.base_url, "e2e-chat")
     select_custom_model(page, "embedding", provider.base_url, "e2e-embedding-8")
     page.locator("#save-setup").click()
@@ -345,60 +404,59 @@ def first_launch_journey(page: Page, artifacts: Path, provider: LocalOpenAIServe
     success = page.locator("#global-success").inner_text()
     if "配置完成" not in success:
         raise AssertionError(f"First-run setup did not complete: {success}")
-    desktop_url = page.url
-    return open_admin_from_desktop(page), desktop_url
+    return page.url
 
 
 def import_search_journey(page: Page, origin: str, markdown: Path, pdf: Path, artifacts: Path) -> None:
-    print("[journey 2/6] import Markdown/PDF -> visible knowledge -> keyword search", flush=True)
-    response = page.goto(origin + "/admin/#import")
+    print("[journey 2/6] import Markdown/PDF -> visible knowledge -> source text", flush=True)
+    response = page.goto(origin + "/admin/#knowledge-import")
     print(f"[admin] import url={page.url} status={response.status if response else 'n/a'} title={page.title()}", flush=True)
-    page.get_by_role("heading", name="知识工作台").wait_for()
-    page.get_by_label("选择本地文件").set_input_files([str(markdown), str(pdf)])
-    page.get_by_role("button", name="导入", exact=True).click()
+    page.get_by_role("heading", name="添加资料").wait_for()
+    page.wait_for_function("() => document.querySelector('.materials-source select')?.value && !document.querySelector('.materials-source select')?.disabled")
+    page.locator(".materials-drawer input[type=file]").set_input_files([str(markdown), str(pdf)])
+    page.get_by_role("button", name="导入 2 项", exact=True).click()
     try:
         page.wait_for_function(
             """() => {
-              const progress = document.querySelector('.assistant-attachment-help')?.textContent || '';
-              if (progress.startsWith('正在导入')) return false;
-              const pills = Array.from(document.querySelectorAll('.nl-result .run-pill'));
-              const last = pills.at(-1);
-              if (!last) return false;
-              return ['已完成', '失败', '部分完成'].includes((last.textContent || '').trim());
-            }""",
-            timeout=240_000,
+              if (document.querySelector('.materials-progress')) return false;
+              const cards = [...document.querySelectorAll('.materials-drawer .product-task-progress')];
+              return cards.length === 2 && cards.every(card => !card.classList.contains('task-is-active'));
+            }""", timeout=240_000,
         )
     except PlaywrightTimeoutError:
-        details = page.locator(".nl-details")
-        if details.count():
-            details.evaluate("element => { element.open = true; }")
-        diagnostic = page.locator(".nl-result").inner_text() if page.locator(".nl-result").count() else page.locator("body").inner_text()
         (artifacts / "import-run-timeout.txt").write_text(
-            f"url={page.url}\nprogress={page.locator('.assistant-attachment-help').inner_text() if page.locator('.assistant-attachment-help').count() else 'n/a'}\n\n{diagnostic}\n",
-            encoding="utf-8",
+            f"url={page.url}\n\n{page.locator('.materials-drawer').inner_text()}", encoding="utf-8",
         )
         raise
-    textarea = page.locator(".assistant-composer textarea")
-    textarea.fill(UNIQUE_MARKER)
-    if page.locator(".pm-error-text").count() and page.locator(".pm-error-text").first.is_visible():
-        raise AssertionError(f"Import UI reported an error: {page.locator('.pm-error-text').first.inner_text()}")
-    run_pill = page.locator(".nl-result .run-pill").last
-    if not run_pill.count() or run_pill.inner_text().strip() != "已完成":
-        details = page.locator(".nl-result").inner_text()
-        raise AssertionError(f"Markdown/PDF import was not fully successful: {details}")
-    page.locator(".search-action-main").click()
-    result = page.locator(".knowledge-search-result")
-    result.wait_for(state="visible", timeout=90_000)
-    hits = result.locator(".knowledge-search-hits")
-    hits.wait_for(state="visible", timeout=90_000)
-    if UNIQUE_MARKER not in hits.inner_text():
-        raise AssertionError("Imported Markdown was not returned by the visible keyword search")
+    outcomes = page.locator(".materials-drawer .product-task-progress").evaluate_all(
+        """cards => cards.map(card => ({
+          status: card.querySelector('.product-task-state')?.textContent,
+          metrics: Object.fromEntries([...card.querySelectorAll('.product-task-metrics > div')]
+            .map(metric => [metric.querySelector('dt')?.textContent, metric.querySelector('dd')?.textContent])),
+          error: card.querySelector('.product-task-error')?.textContent,
+        }))"""
+    )
+    if len(outcomes) != 2 or any(
+        outcome.get("status") != "已完成" or outcome.get("error")
+        or outcome.get("metrics", {}).get("失败文件") != "0"
+        or outcome.get("metrics", {}).get("新增资料") != "1"
+        for outcome in outcomes
+    ):
+        raise AssertionError(f"Markdown/PDF import was not fully successful: {outcomes}")
+    page.get_by_role("button", name="关闭添加资料").click()
+    page.goto(origin + "/admin/#data")
+    page.get_by_placeholder("搜索 slug 或标题").fill("Real User Journey Orchid")
+    row = page.get_by_role("row", name=re.compile("Real User Journey Orchid"))
+    row.wait_for(timeout=90_000)
+    row.click()
+    page.get_by_text(UNIQUE_MARKER, exact=False).first.wait_for(timeout=90_000)
+    page.locator(".knowledge-drawer .drawer-close").click()
 
 
 def delete_restore_journey(page: Page, origin: str) -> None:
     print("[journey 3/6] delete -> recycle bin -> restore", flush=True)
     page.goto(origin + "/admin/#data")
-    page.get_by_role("heading", name="知识数据").wait_for()
+    page.get_by_role("heading", name="知识库", exact=True).wait_for()
     search = page.get_by_placeholder("搜索 slug 或标题")
     search.fill("Real User Journey Orchid")
     row = page.get_by_role("row", name=re.compile("Real User Journey Orchid"))
@@ -422,12 +480,17 @@ def embedding_switch_journey(
     page: Page,
     artifacts: Path,
     provider: LocalOpenAIServer,
+    playwright: Playwright,
     desktop_url: str | None = None,
 ) -> None:
     print("[journey 4/6] change embedding model -> dimension migration -> re-embed", flush=True)
-    page.goto(desktop_url or DESKTOP_RENDERER.as_uri())
-    page.locator("#panel-basic").wait_for(state="visible")
-    page.locator('.rail-item[data-target="models"]').click()
+    target = desktop_url or DESKTOP_RENDERER.as_uri()
+    if page.url != target:
+        page.goto(target, wait_until="domcontentloaded")
+    if not page.locator("#panel-models").is_visible():
+        page.evaluate("() => { window.location.hash = 'settings-basic'; }")
+        page.locator(".desktop-settings").wait_for(state="visible")
+        show_desktop_settings_panel(page, "models")
     page.wait_for_function(
         "() => Array.from(document.querySelector('#embedding-provider')?.options ?? []).some(option => option.textContent === 'PMBrain E2E Local Provider')"
     )
@@ -438,8 +501,6 @@ def embedding_switch_journey(
     page.locator("#embedding-model-name").fill("e2e-embedding-12")
     page.once("dialog", lambda dialog: dialog.accept())
     page.locator("#save-setup").click()
-    page.locator("#setup-wait-actions").wait_for(state="visible", timeout=180_000)
-    page.locator("#setup-wait-continue").click()
     page.locator("#setup-wait").wait_for(state="hidden", timeout=180_000)
     page.locator("#global-success").wait_for(state="visible", timeout=180_000)
     config_path = artifacts / "user-home" / ".pmbrain" / "config.json"
@@ -450,99 +511,104 @@ def embedding_switch_journey(
         raise AssertionError(f"Expected a 12-dimensional embedding column, got {config.get('embedding_dimensions')}")
     if page.locator("#global-error").is_visible():
         raise AssertionError(page.locator("#global-error").inner_text())
-    origin = open_admin_from_desktop(page)
-    page.goto(origin + "/admin/#tasks")
-    page.get_by_role("heading", name="任务中心").wait_for(timeout=90_000)
-    poll_deadline = time.monotonic() + 180
-    rebuild_id = None
-    last_runs_response: object = None
-    while time.monotonic() < poll_deadline:
-        try:
-            last_runs_response = page.evaluate(
-                """async () => {
-                  const controller = new AbortController();
-                  const timeout = setTimeout(() => controller.abort(), 5000);
-                  try {
-                    const response = await fetch('/admin/api/runs', {
-                      credentials: 'same-origin',
-                      signal: controller.signal,
-                    });
-                    let body = null;
-                    try { body = await response.json(); } catch (_) {}
-                    return { ok: response.ok, status: response.status, body };
-                  } catch (error) {
-                    return { ok: false, status: 0, error: String(error) };
-                  } finally {
-                    clearTimeout(timeout);
-                  }
-                }"""
+    admin_browser, admin, origin = open_admin_browser(
+        playwright,
+        mint_admin_login_link(page, artifacts / "user-home"),
+    )
+    try:
+        admin.goto(origin + "/admin/#tasks")
+        admin.get_by_role("heading", name="任务中心").wait_for(timeout=90_000)
+        poll_deadline = time.monotonic() + 180
+        rebuild_id = None
+        last_runs_response: object = None
+        while time.monotonic() < poll_deadline:
+            try:
+                last_runs_response = admin.evaluate(
+                    """async () => {
+                      const controller = new AbortController();
+                      const timeout = setTimeout(() => controller.abort(), 5000);
+                      try {
+                        const response = await fetch('/admin/api/runs', {
+                          credentials: 'same-origin',
+                          signal: controller.signal,
+                        });
+                        let body = null;
+                        try { body = await response.json(); } catch (_) {}
+                        return { ok: response.ok, status: response.status, body };
+                      } catch (error) {
+                        return { ok: false, status: 0, error: String(error) };
+                      } finally {
+                        clearTimeout(timeout);
+                      }
+                    }"""
+                )
+                rows = (last_runs_response or {}).get("body", {}).get("rows", [])
+                current = [
+                    run for run in rows
+                    if run.get("kind") == "embed_stale"
+                    and isinstance(run.get("id"), str)
+                    and run['id'].startswith('task-')
+                ]
+                current.sort(key=lambda run: str(run.get("startedAt", "")), reverse=True)
+                if current:
+                    rebuild_id = current[0]["id"]
+                    break
+            except Exception as exc:
+                last_runs_response = {"error": repr(exc)}
+            admin.wait_for_timeout(1000)
+        if not isinstance(rebuild_id, str) or not rebuild_id:
+            raise AssertionError(
+                f"Background embedding rebuild was not submitted: {rebuild_id}; "
+                f"last runs response={last_runs_response}"
             )
-            rows = (last_runs_response or {}).get("body", {}).get("rows", [])
-            current = [
-                run for run in rows
-                if run.get("kind") == "embed_stale"
-                and "--catch-up" in (run.get("command") or [])
-                and isinstance(run.get("id"), str)
-            ]
-            current.sort(key=lambda run: str(run.get("startedAt", "")), reverse=True)
-            if current:
-                rebuild_id = current[0]["id"]
-                break
-        except Exception as exc:
-            last_runs_response = {"error": repr(exc)}
-        page.wait_for_timeout(1000)
-    if not isinstance(rebuild_id, str) or not rebuild_id:
-        raise AssertionError(
-            f"Background embedding rebuild was not submitted: {rebuild_id}; "
-            f"last runs response={last_runs_response}"
-        )
-    poll_deadline = time.monotonic() + 180
-    rebuild: object = None
-    last_rebuild_response: object = None
-    while time.monotonic() < poll_deadline:
-        try:
-            last_rebuild_response = page.evaluate(
-                """async (runId) => {
-                  const controller = new AbortController();
-                  const timeout = setTimeout(() => controller.abort(), 5000);
-                  try {
-                    const response = await fetch(`/admin/api/runs/${encodeURIComponent(runId)}`, {
-                      credentials: 'same-origin',
-                      signal: controller.signal,
-                    });
-                    let body = null;
-                    try { body = await response.json(); } catch (_) {}
-                    return { ok: response.ok, status: response.status, body };
-                  } catch (error) {
-                    return { ok: false, status: 0, error: String(error) };
-                  } finally {
-                    clearTimeout(timeout);
-                  }
-                }""",
-                rebuild_id,
+        poll_deadline = time.monotonic() + 180
+        rebuild: object = None
+        last_rebuild_response: object = None
+        while time.monotonic() < poll_deadline:
+            try:
+                last_rebuild_response = admin.evaluate(
+                    """async (runId) => {
+                      const controller = new AbortController();
+                      const timeout = setTimeout(() => controller.abort(), 5000);
+                      try {
+                        const response = await fetch(`/admin/api/runs/${encodeURIComponent(runId)}`, {
+                          credentials: 'same-origin',
+                          signal: controller.signal,
+                        });
+                        let body = null;
+                        try { body = await response.json(); } catch (_) {}
+                        return { ok: response.ok, status: response.status, body };
+                      } catch (error) {
+                        return { ok: false, status: 0, error: String(error) };
+                      } finally {
+                        clearTimeout(timeout);
+                      }
+                    }""",
+                    rebuild_id,
+                )
+                if last_rebuild_response and last_rebuild_response.get("ok"):
+                    candidate = last_rebuild_response.get("body")
+                    if isinstance(candidate, dict):
+                        rebuild = candidate
+                        if candidate.get("status") in {"completed", "failed", "cancelled"}:
+                            break
+            except Exception as exc:
+                last_rebuild_response = {"error": repr(exc)}
+            admin.wait_for_timeout(1000)
+        if not rebuild or rebuild.get("status") != "completed":
+            raise AssertionError(
+                f"Background embedding rebuild did not complete: {rebuild}; "
+                f"last response={last_rebuild_response}"
             )
-            if (last_rebuild_response and last_rebuild_response.get("ok")):
-                candidate = last_rebuild_response.get("body")
-                if isinstance(candidate, dict):
-                    rebuild = candidate
-                    if candidate.get("status") in {"completed", "failed", "cancelled"}:
-                        break
-        except Exception as exc:
-            last_rebuild_response = {"error": repr(exc)}
-        page.wait_for_timeout(1000)
-    if not rebuild or rebuild.get("status") != "completed":
-        raise AssertionError(
-            f"Background embedding rebuild did not complete: {rebuild}; "
-            f"last response={last_rebuild_response}"
-        )
-    if "--catch-up" not in (rebuild.get("command") or []):
-        raise AssertionError(f"Embedding rebuild was not handed to the catch-up task: {rebuild}")
+        if rebuild.get("kind") != 'embed_stale' or not (rebuild.get('result') or {}).get('catchUp'):
+            raise AssertionError(f"Embedding rebuild was not handed to the catch-up task: {rebuild}")
+    finally:
+        admin_browser.close()
 
 
-def mcp_key_search_journey(page: Page) -> None:
+def mcp_key_search_journey(page: Page, origin: str) -> None:
     print("[journey 5/6] create MCP Key in Admin -> real HTTP MCP search", flush=True)
-    origin = open_admin_from_desktop(page)
-    page.goto(origin + "/admin/#mcp")
+    page.goto(origin + "/admin/#settings-integrations")
     page.get_by_role("heading", name="MCP 接入").wait_for()
     page.get_by_role("button", name="+ API Key").click()
     page.get_by_placeholder("例如 claude-code-local").fill("real-e2e-search")
@@ -581,15 +647,34 @@ def restart_persistence_check(
 ) -> None:
     print("[journey 6 precheck] restart current Desktop -> imported data persists", flush=True)
     session = DesktopSession(playwright, artifacts, home, executable=executable, application=application)
-    page = session.start()
+    page = None
+    admin_browser = None
     try:
-        origin = open_admin_from_desktop(page)
-        page.goto(origin + "/admin/#data")
-        page.get_by_role("heading", name="知识数据").wait_for()
-        page.get_by_placeholder("搜索 slug 或标题").fill("Real User Journey Orchid")
-        page.get_by_role("row", name=re.compile("Real User Journey Orchid")).wait_for(timeout=90_000)
+        page = session.start()
+        admin_browser, admin, origin = open_admin_browser(playwright, mint_admin_login_link(page, home))
+        admin.goto(origin + "/admin/#data")
+        admin.get_by_role("heading", name="知识库", exact=True).wait_for()
+        admin.get_by_placeholder("搜索 slug 或标题").fill("Real User Journey Orchid")
+        admin.get_by_role("row", name=re.compile("Real User Journey Orchid")).wait_for(timeout=90_000)
+    except Exception:
+        if page is not None:
+            try:
+                page.screenshot(path=str(artifacts / "failure-restart-desktop.png"), full_page=True)
+                state = page.evaluate("""async () => {
+                  const state = await window.pmbrainDesktop?.getState?.();
+                  return state && {phase: state.phase, port: state.port, message: state.message, error: state.error, startupPhase: state.startupPhase};
+                }""")
+                (artifacts / "failure-restart-state.json").write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+            except Exception:
+                pass
+        raise
     finally:
+        if admin_browser is not None:
+            admin_browser.close()
         session.stop()
+        logs = home / "electron-user-data" / "logs"
+        if logs.exists():
+            (artifacts / "desktop-restart-runtime.log").write_text("\n".join(log.read_text(encoding="utf-8", errors="replace") for log in sorted(logs.glob("*.log"))), encoding="utf-8")
 
 
 def run(args: argparse.Namespace) -> None:
@@ -607,24 +692,48 @@ def run(args: argparse.Namespace) -> None:
     with LocalOpenAIServer() as provider, sync_playwright() as playwright:
         session = DesktopSession(playwright, artifacts, home, executable=executable, application=application)
         page = session.start()
+        admin_browser = None
+        admin_page = page
         try:
-            origin, desktop_url = first_launch_journey(page, artifacts, provider)
-            import_search_journey(page, origin, markdown, pdf, artifacts)
-            delete_restore_journey(page, origin)
-            embedding_switch_journey(page, artifacts, provider, desktop_url)
-            mcp_key_search_journey(page)
+            desktop_url = first_launch_journey(page, artifacts, provider)
+            admin_browser, admin_page, origin = open_admin_browser(
+                playwright,
+                mint_admin_login_link(page, home),
+            )
+            import_search_journey(admin_page, origin, markdown, pdf, artifacts)
+            delete_restore_journey(admin_page, origin)
+            admin_browser.close()
+            admin_browser = None
+            embedding_switch_journey(page, artifacts, provider, playwright, desktop_url)
+            admin_browser, admin_page, origin = open_admin_browser(
+                playwright,
+                mint_admin_login_link(page, home),
+            )
+            mcp_key_search_journey(admin_page, origin)
         except Exception:
-            try:
-                page.screenshot(path=str(artifacts / "failure.png"), full_page=True)
-                (artifacts / "failure-page.txt").write_text(
-                    f"url={page.url}\ntitle={page.title()}\n\n{page.locator('body').inner_text()}\n",
-                    encoding="utf-8",
-                )
-            except Exception:
-                pass
+            for label, failure_page in (("desktop", page), ("admin", admin_page)):
+                try:
+                    failure_page.screenshot(path=str(artifacts / f"failure-{label}.png"), full_page=True)
+                    (artifacts / f"failure-{label}-page.txt").write_text(
+                        f"url={failure_page.url}\ntitle={failure_page.title()}\n\n"
+                        f"{failure_page.locator('body').inner_text()}\n",
+                        encoding="utf-8",
+                    )
+                except Exception:
+                    pass
             raise
         finally:
+            if admin_browser is not None:
+                admin_browser.close()
             session.stop()
+            logs = home / "electron-user-data" / "logs"
+            if logs.exists():
+                (artifacts / "desktop-runtime.log").write_text("\n".join(log.read_text(encoding="utf-8", errors="replace") for log in sorted(logs.glob("*.log"))), encoding="utf-8")
+        runtime_log = (artifacts / "desktop-runtime.log").read_text(encoding="utf-8")
+        if "graceful shutdown (desktop IPC)" not in runtime_log:
+            raise RuntimeError("Desktop did not wait for the Sidecar graceful shutdown before restart")
+        if "Sidecar stopped normally" not in runtime_log or "Sidecar graceful shutdown timed out" in runtime_log:
+            raise RuntimeError("Sidecar required forced termination during the normal Desktop journey")
         restart_persistence_check(
             playwright,
             artifacts,

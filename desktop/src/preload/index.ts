@@ -1,3 +1,4 @@
+import type { ModelService, ModelServicesState, ModelSyncResult } from '../../../shared/model-services.js';
 import type { MemoryWritebackStatus, MemoryWritebackUpdate } from '../../../shared/contracts/brain.js';
 import { contextBridge, ipcRenderer } from 'electron';
 import type { SidecarState } from '../main/sidecar-manager.js';
@@ -37,6 +38,7 @@ import type {
   DesktopModelConnectionTestResult,
 } from '../main/model-connection-test.js';
 import type {
+  DesktopBehaviorInput,
   DesktopSystemSettingsPayload,
   DesktopSystemSettingsSaveResult,
   DesktopSystemSettingsState,
@@ -166,13 +168,15 @@ export interface DesktopSetupState {
 }
 
 export interface PMBrainDesktopApi {
+  productRequest(request: import('../main/product-request.js').ProductRequest): Promise<import('../main/product-request.js').ProductResponse>;
+  onNavigate(listener: (target: string) => void): () => void;
   getState(): Promise<SidecarState | null>;
   getStartupProgress(): Promise<StartupProgress>;
   onStartupProgress(listener: (progress: StartupProgress) => void): () => void;
   getTheme(): Promise<DesktopThemeState>;
   setTheme(theme: DesktopTheme): Promise<DesktopThemeState>;
   onThemeState(listener: (state: DesktopThemeState) => void): () => void;
-  getSetup(): Promise<DesktopSetupState>;
+  getSetup(configurationOnly?: boolean): Promise<DesktopSetupState>;
   listDockerDatabases(): Promise<ManagedPostgresDatabase[]>;
   activateDockerDatabase(containerName: string): Promise<ManagedPostgresDatabase>;
   getIntegrations(probe?: boolean): Promise<IntegrationInfo[]>;
@@ -184,6 +188,7 @@ export interface PMBrainDesktopApi {
   onShowPanel(listener: (panel: DesktopSettingsPanel) => void): () => void;
   getSystemSettings(): Promise<DesktopSystemSettingsState>;
   saveSystemSettings(payload: DesktopSystemSettingsPayload): Promise<DesktopSystemSettingsSaveResult>;
+  saveDesktopBehavior(input: DesktopBehaviorInput): Promise<DesktopSystemSettingsSaveResult>;
   getMemoryWriteback(): Promise<MemoryWritebackStatus>;
   saveMemoryWriteback(payload: MemoryWritebackUpdate): Promise<MemoryWritebackStatus>;
   onSystemSettingsState(listener: (state: DesktopSystemSettingsState) => void): () => void;
@@ -193,6 +198,9 @@ export interface PMBrainDesktopApi {
   chooseDirectory(initialPath?: string): Promise<string | null>;
   inspectKnowledgeSourceDirectory(path: string): Promise<DesktopKnowledgeSourceStatus>;
   initializeKnowledgeSourceGit(path: string): Promise<DesktopKnowledgeSourceStatus>;
+  getModelServices(): Promise<ModelServicesState>;
+  saveModelServices(input: ModelServicesState): Promise<ModelServicesState>;
+  syncServiceModels(service: ModelService, kind?: 'chat' | 'embedding'): Promise<ModelSyncResult>;
   getProviderModels(provider: string, touchpoint: DesktopModelTouchpoint): Promise<DesktopProviderModels>;
   testModelConnection(input: DesktopModelConnectionTestInput): Promise<DesktopModelConnectionTestResult>;
   getAdvancedModelConfig(): Promise<AdvancedModelConfig>;
@@ -263,6 +271,12 @@ export interface PMBrainDesktopApi {
 }
 
 const api: PMBrainDesktopApi = {
+  onNavigate: listener => {
+    const handler = (_event: Electron.IpcRendererEvent, target: string) => listener(target);
+    ipcRenderer.on('desktop:navigate', handler);
+    return () => ipcRenderer.removeListener('desktop:navigate', handler);
+  },
+  productRequest: request => ipcRenderer.invoke('desktop:product-request', request),
   getState: () => ipcRenderer.invoke('desktop:get-state'),
   getStartupProgress: () => ipcRenderer.invoke('desktop:get-startup-progress'),
   onStartupProgress: (listener) => {
@@ -277,7 +291,7 @@ const api: PMBrainDesktopApi = {
     ipcRenderer.on('desktop:theme-state', handler);
     return () => ipcRenderer.removeListener('desktop:theme-state', handler);
   },
-  getSetup: () => ipcRenderer.invoke('desktop:get-setup'),
+  getSetup: (configurationOnly = false) => ipcRenderer.invoke('desktop:get-setup', configurationOnly),
   listDockerDatabases: () => ipcRenderer.invoke('desktop:list-docker-databases'),
   activateDockerDatabase: (containerName) => ipcRenderer.invoke('desktop:activate-docker-database', containerName),
   getIntegrations: (probe) => ipcRenderer.invoke('desktop:get-integrations', probe),
@@ -305,6 +319,7 @@ const api: PMBrainDesktopApi = {
   },
   getSystemSettings: () => ipcRenderer.invoke('desktop:get-system-settings'),
   saveSystemSettings: (payload) => ipcRenderer.invoke('desktop:save-system-settings', payload),
+  saveDesktopBehavior: (input) => ipcRenderer.invoke('desktop:save-desktop-behavior', input),
   getMemoryWriteback: () => ipcRenderer.invoke('desktop:get-memory-writeback'),
   saveMemoryWriteback: (payload) => ipcRenderer.invoke('desktop:save-memory-writeback', payload),
   onSystemSettingsState: (listener) => {
@@ -318,6 +333,9 @@ const api: PMBrainDesktopApi = {
   chooseDirectory: (initialPath) => ipcRenderer.invoke('desktop:choose-directory', initialPath),
   inspectKnowledgeSourceDirectory: (path) => ipcRenderer.invoke('desktop:inspect-knowledge-source', path),
   initializeKnowledgeSourceGit: (path) => ipcRenderer.invoke('desktop:initialize-knowledge-source-git', path),
+  getModelServices: () => ipcRenderer.invoke('desktop:get-model-services'),
+  saveModelServices: input => ipcRenderer.invoke('desktop:save-model-services', input),
+  syncServiceModels: (service, kind) => ipcRenderer.invoke('desktop:sync-service-models', service, kind),
   getProviderModels: (provider, touchpoint) => ipcRenderer.invoke('desktop:get-provider-models', provider, touchpoint),
   testModelConnection: input => ipcRenderer.invoke('desktop:test-model-connection', input),
   getAdvancedModelConfig: () => ipcRenderer.invoke('desktop:get-advanced-model-config'),

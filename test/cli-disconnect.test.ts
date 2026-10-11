@@ -114,4 +114,30 @@ describe('one-shot CLI disconnect deadline', () => {
     expect(disconnected).toBe(false);
     expect(exits).toEqual([0]);
   });
+
+  test('completed PGLite source commands return without closing WASM and preserve the actual verdict', async () => {
+    for (const exitCode of [0, 1]) {
+      const exits: number[] = [];
+      let closed = false;
+      const outcome = await disconnectCliEngine({
+        kind: 'pglite',
+        async disconnect() { closed = true; throw new Error('source close must not run'); },
+      }, 'sources', { exitCode, forceExit: code => { exits.push(code); } });
+      expect(outcome).toBe('forced_exit');
+      expect(closed).toBe(false);
+      expect(exits).toEqual([exitCode]);
+    }
+  });
+
+  test('Postgres source commands retain the normal database disconnect', async () => {
+    let closed = false;
+    const exits: number[] = [];
+    const outcome = await disconnectCliEngine({
+      kind: 'postgres',
+      async disconnect() { closed = true; },
+    }, 'sources', { forceExit: code => { exits.push(code); } });
+    expect(outcome).toBe('disconnected');
+    expect(closed).toBe(true);
+    expect(exits).toEqual([]);
+  });
 });

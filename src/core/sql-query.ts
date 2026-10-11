@@ -105,7 +105,7 @@ function assertSqlValue(value: unknown): asserts value is SqlValue {
  * call sites we're migrating are shaped.
  */
 export async function executeRawJsonb<R = Record<string, unknown>>(
-  engine: BrainEngine,
+  engine: Pick<BrainEngine,'executeRaw'>,
   sql: string,
   scalarParams: SqlValue[],
   jsonbParams: unknown[],

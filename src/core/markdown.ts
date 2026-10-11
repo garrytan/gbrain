@@ -410,7 +410,7 @@ const GBRAIN_BASE_PATH_PREFIXES: ReadonlyArray<{ prefixes: string[]; type: PageT
   { prefixes: ['/wiki/guides/', '/wiki/guide/'], type: 'guide' },
   { prefixes: ['/wiki/hardware/'], type: 'hardware' },
   { prefixes: ['/wiki/architecture/'], type: 'architecture' },
-  { prefixes: ['/wiki/concepts/', '/wiki/concept/'], type: 'concept' },
+  { prefixes: ['/wiki/concepts/', '/wiki/concept/', '/concepts/', '/concept/'], type: 'concept' },
   { prefixes: ['/people/', '/person/'], type: 'person' },
   { prefixes: ['/companies/', '/company/'], type: 'company' },
   { prefixes: ['/deals/', '/deal/'], type: 'deal' },
@@ -438,8 +438,8 @@ function inferType(filePath?: string): PageType {
  * `extends: null` pack) falls back to gbrain-base defaults.
  *
  * Algorithm: each pack page_type contributes its `path_prefixes` array
- * in declaration order. First prefix that matches wins. Default
- * 'concept' applies when nothing matches.
+ * in declaration order. First prefix that matches wins. A missing path
+ * or an unmatched path stays `note`; it is not guessed as `concept`.
  *
  * Note on prefix shape: gbrain-base stores prefixes WITHOUT the
  * leading `/` (e.g. `people/`). For matching, we lower-case the path
@@ -451,7 +451,7 @@ export function inferTypeFromPack(
   filePath: string | undefined,
   pack: { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string> }> },
 ): PageType {
-  if (!filePath) return 'concept';
+  if (!filePath) return 'note';
   // Empty pack → fall back to gbrain-base hardcoded defaults.
   if (pack.page_types.length === 0) {
     return inferTypeWithPrefixes(filePath, GBRAIN_BASE_PATH_PREFIXES);
@@ -465,7 +465,7 @@ export function inferTypeFromPack(
       }
     }
   }
-  return 'concept';
+  return 'note';
 }
 
 /**
@@ -498,7 +498,7 @@ export function inferTypeAndSubtypeFromPack(
   }> },
   frontmatter?: Record<string, unknown>,
 ): { type: PageType; subtype?: string } {
-  if (!filePath) return { type: 'concept' };
+  if (!filePath) return { type: 'note' };
   // Empty pack → legacy fallback; no subtype info available.
   if (pack.page_types.length === 0) {
     return { type: inferTypeWithPrefixes(filePath, GBRAIN_BASE_PATH_PREFIXES) };
@@ -515,7 +515,7 @@ export function inferTypeAndSubtypeFromPack(
       }
     }
   }
-  if (!matchedType) return { type: 'concept' };
+  if (!matchedType) return { type: 'note' };
   const typeName = matchedType.name as PageType;
   // Stage 2: subtype rule resolution (if any declared)
   const subtypes = matchedType.subtypes ?? [];
@@ -549,14 +549,14 @@ function inferTypeWithPrefixes(
   filePath: string | undefined,
   table: ReadonlyArray<{ prefixes: ReadonlyArray<string>; type: PageType }>,
 ): PageType {
-  if (!filePath) return 'concept';
+  if (!filePath) return 'note';
   const lower = ('/' + filePath).toLowerCase();
   for (const row of table) {
     for (const p of row.prefixes) {
       if (lower.includes(p)) return row.type;
     }
   }
-  return 'concept';
+  return 'note';
 }
 
 function inferTitle(filePath?: string): string {

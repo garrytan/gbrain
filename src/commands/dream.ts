@@ -27,6 +27,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import {
   runCycle,
   ALL_PHASES,
+  DEFAULT_PHASES,
   type CyclePhase,
   type CycleReport,
 } from '../core/cycle.ts';
@@ -93,7 +94,7 @@ interface DreamArgs {
 export type DreamPreset = 'full' | 'meeting' | 'quick';
 
 const DREAM_PRESET_PHASES: Record<DreamPreset, ReadonlySet<CyclePhase>> = {
-  full: new Set(ALL_PHASES),
+  full: new Set(DEFAULT_PHASES),
   meeting: new Set([
     'synthesize',
     'extract',
@@ -118,6 +119,16 @@ const DREAM_PRESET_PHASES: Record<DreamPreset, ReadonlySet<CyclePhase>> = {
 export function resolveDreamPresetPhases(preset: DreamPreset): CyclePhase[] {
   const selected = DREAM_PRESET_PHASES[preset];
   return ALL_PHASES.filter((phase) => selected.has(phase));
+}
+
+export function resolveDreamRelationOptions(preset?: DreamPreset | null, phase?: string | null) {
+  if (preset !== 'full' && (preset || (phase && phase !== 'all'))) return {};
+  return {
+    includeByMention: true,
+    includeHistoricalMarkdownCatchUp: true,
+    includeNer: true,
+    refreshRelationsAfterGeneration: true,
+  };
 }
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -424,10 +435,12 @@ export async function resolveBrainDir(
 function printHelp() {
   console.log(`用法：pmbrain dream [选项]
 
-运行一次 PMBrain 维护周期。当前阶段：
-  ${ALL_PHASES.join(' -> ')}
+运行一次 PMBrain 维护周期。默认阶段：
+  ${DEFAULT_PHASES.join(' -> ')}
 
-重点流程：
+默认暂停候选观点、观点评判和校准，优先识别实体并建立关联。
+
+显式启用观点阶段后的流程（默认关闭，使用 --phase）：
   1. sync / extract / extract_facts 等阶段把页面、链接、事实索引更新到数据库。
   2. propose_takes 从页面正文里抽取“候选观点”，写入 take_proposals，状态为 pending。
   3. 在 Admin Console 的“观点审批”页面查看原文依据，人工接受或拒绝。
@@ -603,7 +616,6 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
     } else if (opts.phase) {
       assertPhasesAllowGenerative([opts.phase]);
     } else {
-      // full, meeting, or bare dream (ALL_PHASES)
       assertDreamPresetAllowGenerative(opts.preset ?? 'full');
     }
   } catch (e) {
@@ -742,6 +754,7 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
       : undefined;
 
   const report = await runCycle(engine, {
+    ...resolveDreamRelationOptions(opts.preset, opts.phase),
     brainDir,
     dryRun: opts.dryRun,
     pull: opts.pull,

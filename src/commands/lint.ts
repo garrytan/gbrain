@@ -18,6 +18,7 @@
 
 import { readFileSync, writeFileSync, readdirSync, statSync, lstatSync, existsSync } from 'fs';
 import { join, relative } from 'path';
+import { setImmediate as yieldExecution } from 'node:timers/promises';
 import { parseMarkdown, type ParseValidationCode } from '../core/markdown.ts';
 import {
   assessContentSanity,
@@ -367,6 +368,7 @@ function collectPages(dir: string): string[] {
 
 export interface LintOpts {
   target: string;
+  signal?: AbortSignal;
   fix?: boolean;
   dryRun?: boolean;
   /** v0.41: optional pre-resolved content-sanity opts. When omitted,
@@ -412,6 +414,9 @@ export async function runLintCore(opts: LintOpts): Promise<LintResult> {
   let pagesWithIssues = 0;
 
   for (const page of pages) {
+    opts.signal?.throwIfAborted();
+    await yieldExecution();
+    opts.signal?.throwIfAborted();
     const content = readFileSync(page, 'utf-8');
     const issues = lintContent(content, isSingleFile ? page : relative(opts.target, page), lintOpts);
     if (issues.length === 0) continue;

@@ -48,7 +48,7 @@ mock.module('../../src/core/embedding.ts', () => ({
   estimateEmbeddingCostUsd: (tokens: number) => (tokens / 1000) * 0.00013,
 }));
 
-const { runCycle, ALL_PHASES } = await import('../../src/core/cycle.ts');
+const { runCycle, ALL_PHASES, DEFAULT_PHASES } = await import('../../src/core/cycle.ts');
 
 interface TestRig {
   engine: PGLiteEngine;
@@ -115,6 +115,7 @@ const EXPECTED_PHASES: CyclePhase[] = [
   'extract_facts',               // v0.32.2 — reconcile fence → DB facts index
   'extract_atoms',               // v0.41 — atom extraction
   'resolve_symbol_edges',       // v0.33.3 — within-file symbol resolution
+  'capture_entities',
   'patterns',
   'synthesize_concepts',         // v0.41 — concept aggregation
   'recompute_emotional_weight', // v0.29
@@ -146,7 +147,7 @@ describe('E2E full cycle phase order', () => {
         });
         // Phase ordering preserved across releases
         const phaseNames = report.phases.map(p => p.phase);
-        expect(phaseNames).toEqual(EXPECTED_PHASES);
+        expect(phaseNames).toEqual(DEFAULT_PHASES);
         // Additive totals fields across v0.23, v0.26.5, v0.31 all present
         expect(report.totals).toMatchObject({
           transcripts_processed: 0,

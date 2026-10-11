@@ -8,14 +8,14 @@ import { describe, expect, it } from 'bun:test';
 import { inferTypeAndSubtypeFromPack, inferTypeFromPack } from '../src/core/markdown.ts';
 
 describe('inferTypeAndSubtypeFromPack', () => {
-  it('returns concept for missing path', () => {
-    expect(inferTypeAndSubtypeFromPack(undefined, { page_types: [{ name: 'media', path_prefixes: ['/media/'] }] })).toEqual({ type: 'concept' });
+  it('returns note for missing path', () => {
+    expect(inferTypeAndSubtypeFromPack(undefined, { page_types: [{ name: 'media', path_prefixes: ['/media/'] }] })).toEqual({ type: 'note' });
   });
 
-  it('returns concept fallback when no prefix matches', () => {
+  it('returns note when no prefix matches', () => {
     expect(inferTypeAndSubtypeFromPack('foo/bar.md', {
       page_types: [{ name: 'media', path_prefixes: ['/media/'] }],
-    })).toEqual({ type: 'concept' });
+    })).toEqual({ type: 'note' });
   });
 
   it('matches prefix → returns canonical type', () => {

@@ -33,6 +33,10 @@ export class WindowController {
     };
   }
 
+  private shouldStartHidden(): boolean {
+    return getDesktopPreferences().startMinimized && !getSetupInfo().needsSetup;
+  }
+
   reveal(): void {
     if (!this.window) {
       void this.create();
@@ -45,6 +49,7 @@ export class WindowController {
 
   async showShell(): Promise<void> {
     if (!this.window) return;
+    if (isAllowedWindowNavigationUrl(this.window.webContents.getURL(), { rendererPath: this.dependencies.rendererPath, rendererUrl: this.dependencies.getRendererUrl() })) return;
     const rendererUrl = this.dependencies.getRendererUrl();
     if (rendererUrl) await this.window.loadURL(rendererUrl);
     else await this.window.loadFile(this.dependencies.rendererPath);
@@ -71,7 +76,10 @@ export class WindowController {
       if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
       return { action: 'deny' };
     });
-    window.once('ready-to-show', () => window.show());
+    window.once('ready-to-show', () => {
+      if (this.shouldStartHidden()) return;
+      window.show();
+    });
     window.on('close', event => {
       if (this.dependencies.getQuitting() || getDesktopPreferences().closeBehavior === 'quit') return;
       event.preventDefault();
@@ -102,14 +110,10 @@ export class WindowController {
       if (this.window === window) this.window = null;
     });
     await this.showShell();
-    if (!window.isVisible()) window.show();
+    if (!this.shouldStartHidden() && !window.isVisible()) window.show();
     if (!getSetupInfo().needsSetup) {
       try {
-        // ensureReady already auto-retries after upgrades; success → Admin.
         await this.dependencies.sidecar.ensureReady();
-        if (this.dependencies.sidecar.current && this.dependencies.sidecar.state?.phase === 'ready') {
-          await window.loadURL(await this.dependencies.sidecar.current.createAdminLink());
-        }
       } catch (error) {
         const { sanitizeStartupFailureMessage } = await import('../startup/post-upgrade-startup.js');
         const raw = error instanceof Error ? error.message : String(error);

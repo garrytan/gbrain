@@ -1,3 +1,4 @@
+import type { ModelService, ModelServicesState } from '../../../shared/model-services.js';
 import type { MemoryWritebackStatus, MemoryWritebackUpdate } from '../../../shared/contracts/brain.js';
 import {
   app,
@@ -17,6 +18,7 @@ import type {
 } from './model-connection-test.js';
 import type { SidecarState } from './sidecar-manager.js';
 import type {
+  DesktopBehaviorInput,
   DesktopSystemSettingsPayload,
   DesktopSystemSettingsSaveResult,
   DesktopSystemSettingsState,
@@ -33,10 +35,12 @@ import type { DesktopKnowledgeSourceStatus } from './knowledge-source-git.js';
 import type { PgliteOwnerStatus } from '../../../src/core/pglite-owner-control.js';
 import type { ProductSurfaceHandlers } from './product-surfaces.js';
 import { isSafeGoogleConsentUrl } from '../../../src/core/creds/oauth-envelope.js';
+import { validateProductRequest, type ProductRequest, type ProductResponse } from './product-request.js';
 
 type IpcHandler = (event: IpcMainInvokeEvent, ...args: any[]) => any;
 
 export interface DesktopIpcHandlers {
+  productRequest: (request: ProductRequest) => Promise<ProductResponse>;
   assertTrustedSender: (event: IpcMainInvokeEvent) => void;
   mainWindow: () => BrowserWindow | null;
   state: () => SidecarState | null;
@@ -45,18 +49,22 @@ export interface DesktopIpcHandlers {
   setTheme: (value: DesktopTheme) => unknown;
   systemSettings: () => DesktopSystemSettingsState;
   saveSystemSettings: (payload: DesktopSystemSettingsPayload) => Promise<DesktopSystemSettingsSaveResult>;
+  saveDesktopBehavior: (input: DesktopBehaviorInput) => Promise<DesktopSystemSettingsSaveResult>;
   memoryWriteback: () => Promise<unknown>;
   saveMemoryWriteback: (payload: MemoryWritebackUpdate) => Promise<unknown>;
   sharedAccess: () => Promise<unknown>;
   createSharedIntegration: (payload: SharedIntegrationPayload) => Promise<unknown>;
   revokeSharedIntegration: (credentialName: string) => Promise<unknown>;
   updateState: () => UpdateState | null;
-  setup: () => Promise<unknown>;
+  setup: (configurationOnly?: boolean) => Promise<unknown>;
   listDockerDatabases: () => Promise<unknown>;
   activateDockerDatabase: (containerName: string) => Promise<unknown>;
   integrations: (probe: boolean) => Promise<unknown>;
   inspectKnowledgeSourceDirectory: (path: string) => DesktopKnowledgeSourceStatus;
   initializeKnowledgeSourceGit: (path: string) => DesktopKnowledgeSourceStatus;
+  modelServices: () => ModelServicesState;
+  saveModelServices: (input: ModelServicesState) => Promise<ModelServicesState>;
+  syncServiceModels: (service: ModelService, kind?: 'chat' | 'embedding') => Promise<unknown>;
   providerModels: (provider: string, touchpoint: DesktopModelTouchpoint) => unknown;
   testModelConnection: (input: DesktopModelConnectionTestInput) => Promise<DesktopModelConnectionTestResult>;
   advancedModelConfig: () => Promise<unknown>;
@@ -108,19 +116,24 @@ function registerTrustedHandler(
 }
 
 export function registerDesktopIpcHandlers(handlers: DesktopIpcHandlers): void {
+  registerTrustedHandler('desktop:product-request', handlers, (_event, request) => handlers.productRequest(validateProductRequest(request)));
   registerTrustedHandler('desktop:get-state', handlers, () => handlers.state());
   registerTrustedHandler('desktop:get-startup-progress', handlers, () => handlers.startupProgress());
   registerTrustedHandler('desktop:get-theme', handlers, () => handlers.theme());
   registerTrustedHandler('desktop:set-theme', handlers, (_event, value: DesktopTheme) => handlers.setTheme(value));
   registerTrustedHandler('desktop:get-system-settings', handlers, () => handlers.systemSettings());
   registerTrustedHandler('desktop:save-system-settings', handlers, (_event, payload: DesktopSystemSettingsPayload) => handlers.saveSystemSettings(payload));
+  registerTrustedHandler('desktop:save-desktop-behavior', handlers, (_event, input: DesktopBehaviorInput) => handlers.saveDesktopBehavior(input));
   registerTrustedHandler('desktop:get-memory-writeback', handlers, () => handlers.memoryWriteback());
   registerTrustedHandler('desktop:save-memory-writeback', handlers, (_event, payload: MemoryWritebackUpdate) => handlers.saveMemoryWriteback(payload));
   registerTrustedHandler('desktop:get-shared-access', handlers, () => handlers.sharedAccess());
   registerTrustedHandler('desktop:create-shared-integration', handlers, (_event, payload: SharedIntegrationPayload) => handlers.createSharedIntegration(payload));
   registerTrustedHandler('desktop:revoke-shared-integration', handlers, (_event, credentialName: string) => handlers.revokeSharedIntegration(credentialName));
   registerTrustedHandler('desktop:get-update-state', handlers, () => handlers.updateState());
-  registerTrustedHandler('desktop:get-setup', handlers, () => handlers.setup());
+  registerTrustedHandler('desktop:get-setup', handlers, (_event, configurationOnly = false) => {
+    if (typeof configurationOnly !== 'boolean') throw new Error('Invalid configurationOnly');
+    return handlers.setup(configurationOnly);
+  });
   registerTrustedHandler('desktop:list-docker-databases', handlers, () => handlers.listDockerDatabases());
   registerTrustedHandler('desktop:activate-docker-database', handlers, (_event, containerName: string) => handlers.activateDockerDatabase(containerName));
   registerTrustedHandler('desktop:get-integrations', handlers, (_event, probe?: boolean) => handlers.integrations(probe === true));
@@ -135,6 +148,9 @@ export function registerDesktopIpcHandlers(handlers: DesktopIpcHandlers): void {
     });
     return result.canceled ? null : result.filePaths[0];
   });
+  registerTrustedHandler('desktop:get-model-services', handlers, () => handlers.modelServices());
+  registerTrustedHandler('desktop:save-model-services', handlers, (_event, input: ModelServicesState) => handlers.saveModelServices(input));
+  registerTrustedHandler('desktop:sync-service-models', handlers, (_event, service: ModelService, kind?: 'chat' | 'embedding') => handlers.syncServiceModels(service, kind));
   registerTrustedHandler('desktop:get-provider-models', handlers, (_event, provider: string, touchpoint: DesktopModelTouchpoint) => handlers.providerModels(provider, touchpoint));
   registerTrustedHandler('desktop:test-model-connection', handlers, (_event, input: DesktopModelConnectionTestInput) => handlers.testModelConnection(input));
   registerTrustedHandler('desktop:get-advanced-model-config', handlers, () => handlers.advancedModelConfig());
@@ -172,11 +188,11 @@ export function registerDesktopIpcHandlers(handlers: DesktopIpcHandlers): void {
   registerTrustedHandler('desktop:get-pglite-recovery-status', handlers, () => handlers.pgliteRecoveryStatus());
   registerTrustedHandler('desktop:terminate-pglite-owner-and-retry', handlers, async (_event, pid: number) => {
     const url = await handlers.terminatePgliteOwnerAndRetry(pid);
-    if (url) await handlers.mainWindow()?.loadURL(url);
+    if (url) handlers.mainWindow()?.webContents.send('desktop:navigate', 'import');
   });
   registerTrustedHandler('desktop:retry', handlers, async () => {
     const url = await handlers.retry();
-    if (url) await handlers.mainWindow()?.loadURL(url);
+    if (url) handlers.mainWindow()?.webContents.send('desktop:navigate', 'import');
   });
   registerTrustedHandler('desktop:open-logs', handlers, () => handlers.openLogs());
   registerTrustedHandler('desktop:export-diagnostic-bundle', handlers, () => handlers.exportDiagnosticBundle());

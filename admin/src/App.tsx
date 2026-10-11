@@ -1,24 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { LoginPage } from './pages/Login';
-import { AgentsPage } from './pages/Agents';
-import { RequestLogPage } from './pages/RequestLog';
-import { TaskCenterPage } from './pages/TaskCenter';
-import { CalibrationPage } from './pages/Calibration';
-import {
-  DreamCalibrationPage,
-  DreamExecutePage,
-  DreamInsightsPage,
-  DreamKnowledgePage,
-  DreamOverviewPage,
-  DreamScoringPage,
-  DreamTakesPage,
-} from './pages/Dream';
-import { BrainDataPage } from './pages/BrainData';
-import { ImportDataPage, NaturalLanguagePage } from './pages/Import';
-import { KnowledgeHealthPage, KnowledgeWorkbenchPage } from './pages/Knowledge';
-import { ConnectionCenterPage } from './pages/Connection';
-import { DocumentationPage } from './pages/Documentation';
-import { ModelConfigPage, SettingsPage, type SettingsSection } from './pages/Settings';
+import type { SettingsSection } from './pages/Settings';
 import { api } from './api';
 import {
   applyThemeMode,
@@ -35,6 +16,28 @@ import {
   Orbit,
 } from 'lucide-react';
 
+const LoginPage = React.lazy(() => import('./pages/Login').then(module => ({ default: module.LoginPage })));
+const AgentsPage = React.lazy(() => import('./pages/Agents').then(module => ({ default: module.AgentsPage })));
+const RequestLogPage = React.lazy(() => import('./pages/RequestLog').then(module => ({ default: module.RequestLogPage })));
+const TaskCenterPage = React.lazy(() => import('./pages/TaskCenter').then(module => ({ default: module.TaskCenterPage })));
+const CalibrationPage = React.lazy(() => import('./pages/Calibration').then(module => ({ default: module.CalibrationPage })));
+const DreamCalibrationPage = React.lazy(() => import('./pages/Dream').then(module => ({ default: module.DreamCalibrationPage })));
+const DreamExecutePage = React.lazy(() => import('./pages/Dream').then(module => ({ default: module.DreamExecutePage })));
+const DreamInsightsPage = React.lazy(() => import('./pages/Dream').then(module => ({ default: module.DreamInsightsPage })));
+const DreamKnowledgePage = React.lazy(() => import('./pages/Dream').then(module => ({ default: module.DreamKnowledgePage })));
+const DreamOverviewPage = React.lazy(() => import('./pages/Dream').then(module => ({ default: module.DreamOverviewPage })));
+const MaintenanceTasksPage = React.lazy(() => import('./product/MaintenanceTasks').then(module => ({ default: module.MaintenanceTasksPage })));
+const DreamScoringPage = React.lazy(() => import('./pages/Dream').then(module => ({ default: module.DreamScoringPage })));
+const DreamTakesPage = React.lazy(() => import('./pages/Dream').then(module => ({ default: module.DreamTakesPage })));
+const BrainDataPage = React.lazy(() => import('./pages/BrainData').then(module => ({ default: module.BrainDataPage })));
+const ImportDataPage = React.lazy(() => import('./pages/Import').then(module => ({ default: module.ImportDataPage })));
+const NaturalLanguagePage = React.lazy(() => import('./pages/Import').then(module => ({ default: module.NaturalLanguagePage })));
+const KnowledgeHealthPage = React.lazy(() => import('./pages/Knowledge').then(module => ({ default: module.KnowledgeHealthPage })));
+const KnowledgeWorkbenchPage = React.lazy(() => import('./pages/Knowledge').then(module => ({ default: module.KnowledgeWorkbenchPage })));
+const ConnectionCenterPage = React.lazy(() => import('./pages/Connection').then(module => ({ default: module.ConnectionCenterPage })));
+const DocumentationPage = React.lazy(() => import('./pages/Documentation').then(module => ({ default: module.DocumentationPage })));
+const ModelConfigPage = React.lazy(() => import('./pages/Settings').then(module => ({ default: module.ModelConfigPage })));
+const SettingsPage = React.lazy(() => import('./pages/Settings').then(module => ({ default: module.SettingsPage })));
 const PAGES = [
   'login', 'dashboard', 'natural',
   'dream', 'dream-execute', 'dream-knowledge', 'dream-takes', 'dream-scoring', 'dream-calibration', 'dream-insights',
@@ -105,7 +108,7 @@ function BrandMark() {
   return <span className="brand-mark" aria-hidden="true"><BrainCircuit /></span>;
 }
 
-export function App() {
+export function App({ embedded = false }: { embedded?: boolean } = {}) {
   const [page, setPage] = useState<Page>(getPage);
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => readThemeMode());
   const [supportPanel, setSupportPanel] = useState<'wecom' | 'donate' | null>(null);
@@ -142,11 +145,11 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    return applyThemeMode(themeMode);
-  }, [themeMode]);
+    if (!embedded) return applyThemeMode(themeMode);
+  }, [themeMode, embedded]);
 
   useEffect(() => {
-    if (page === 'login') return;
+    if (embedded || page === 'login') return;
     let active = true;
     const syncDesktopTheme = () => {
       void api.theme()
@@ -168,7 +171,7 @@ export function App() {
       window.removeEventListener('focus', syncDesktopTheme);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [page]);
+  }, [page, embedded]);
 
   const navigate = (target: string) => {
     window.location.hash = target;
@@ -181,7 +184,7 @@ export function App() {
   };
 
   if (page === 'login') {
-    return <LoginPage onLogin={() => navigate('dashboard')} />;
+    return <React.Suspense fallback={<p role="status">正在打开页面…</p>}><LoginPage onLogin={() => navigate('dashboard')} /></React.Suspense>;
   }
 
   const handleSignOutEverywhere = async () => {
@@ -261,9 +264,9 @@ export function App() {
         </select>
         <button type="button" className="mobile-signout" onClick={handleSignOutEverywhere}>退出</button>
       </header>
-      <main className="main">
+      <main className="main"><React.Suspense fallback={<p className="pm-empty" role="status">正在打开页面…</p>}>
         {page === 'dashboard' && <KnowledgeWorkbenchPage onNavigate={navigate} />}
-        {page === 'dream' && <DreamOverviewPage />}
+        {page === 'dream' && (embedded ? <MaintenanceTasksPage /> : <DreamOverviewPage />)}
         {page === 'dream-execute' && <DreamExecutePage />}
         {page === 'dream-knowledge' && <DreamKnowledgePage />}
         {page === 'dream-takes' && <DreamTakesPage />}
@@ -271,7 +274,7 @@ export function App() {
         {page === 'dream-calibration' && <DreamCalibrationPage />}
         {page === 'dream-insights' && <DreamInsightsPage />}
         {page === 'import' && <ImportDataPage />}
-        {page === 'data' && <BrainDataPage />}
+        {page === 'data' && <BrainDataPage product={embedded} />}
         {page === 'graph' && (
           <React.Suspense fallback={<div className="pm-empty">正在打开知识星图…</div>}>
             <KnowledgeGraphPage />
@@ -289,7 +292,7 @@ export function App() {
         {SETTINGS_PAGE_SECTIONS[page] && (
           <SettingsPage section={SETTINGS_PAGE_SECTIONS[page]} themeMode={themeMode} onThemeModeChange={changeThemeMode} />
         )}
-      </main>
+      </React.Suspense></main>
       {supportPanel && (
         <div className="modal-overlay" onClick={() => setSupportPanel(null)}>
           <div className={`modal support-modal${supportPanel === 'donate' ? ' support-modal-donation' : ''}`} onClick={e => e.stopPropagation()}>

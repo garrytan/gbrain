@@ -122,6 +122,7 @@ import type { BatchAuditSite } from './retry.ts';
 export interface BatchOpts {
   auditSite?: BatchAuditSite;
   signal?: AbortSignal;
+  linkAudit?: import('./pmbrain-adapters/task-relations.ts').LinkAudit;
 }
 
 /**
@@ -839,12 +840,13 @@ export interface BrainEngine {
    * Called by the autopilot purge phase and by the `gbrain pages purge-deleted`
    * CLI escape hatch. Cascades through existing FKs.
    */
-  purgeDeletedPages(olderThanHours: number): Promise<{ slugs: string[]; count: number }>;
+  purgeDeletedPages(olderThanHours: number, options?: { limit?: number }): Promise<{ slugs: string[]; count: number }>;
   /**
    * v0.26.5: by default `listPages` excludes soft-deleted rows. Set
    * `filters.includeDeleted: true` to surface them.
    */
   listPages(filters?: PageFilters): Promise<Page[]>;
+  listPageIds(filters?: PageFilters): Promise<number[]>;
   /**
    * Fuzzy slug resolver.
    *
@@ -1090,6 +1092,7 @@ export interface BrainEngine {
       toSourceId?: string;
       originSourceId?: string;
       resolutionType?: 'qualified' | 'unqualified';
+      linkAudit?: import('./pmbrain-adapters/task-relations.ts').LinkAudit;
     },
   ): Promise<void>;
   /**

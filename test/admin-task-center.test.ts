@@ -7,15 +7,29 @@ const dreamSource = readFileSync('admin/src/pages/Dream.tsx', 'utf8');
 const taskCenterSource = readFileSync('admin/src/pages/TaskCenter.tsx', 'utf8');
 const consoleSource = readFileSync('admin/src/pages/Knowledge.tsx', 'utf8');
 const adminCss = readFileSync('admin/src/index.css', 'utf8');
+const progressSource = readFileSync('admin/src/product/TaskProgress.tsx', 'utf8');
+const technicalSource = readFileSync('admin/src/product/TaskTechnicalLogs.tsx', 'utf8');
+const taskNames = readFileSync('shared/task-progress.ts', 'utf8');
+const maintenanceSource = readFileSync('admin/src/product/MaintenanceTasks.tsx', 'utf8');
 
 describe('Admin 任务中心与 Dream 忙碌态', () => {
   test('任务中心位于集成导航并显示现有长任务', () => {
     expect(appSource).toContain("{ page: 'tasks', label: '任务中心', icon: 'tasks' }");
     expect(appSource).toContain('<TaskCenterPage />');
-    expect(taskCenterSource).toContain('api.taskCenter()');
-    expect(taskCenterSource).toContain('历史任务');
-    expect(taskCenterSource).toContain('查看技术详情');
-    expect(taskCenterSource).toContain('安全取消');
+    expect(taskCenterSource).toContain('api.taskCenter(true)');
+    expect(taskCenterSource).toContain('useProductTasks');
+    expect(taskCenterSource).toContain('if (!snapshot) return liveTasks.rows');
+    expect(taskCenterSource).toContain('task-table');
+    expect(technicalSource).toContain('技术日志');
+    expect(taskCenterSource).toContain('停止任务');
+  });
+
+  test('查看任务使用已经拿到的进度，离开整理页时不把地址改回去', () => {
+    expect(taskCenterSource).toContain('preferLiveRun');
+    expect(taskCenterSource).toContain('正在读取后台任务…');
+    expect(taskCenterSource).toContain('!liveTasks.loaded');
+    expect(maintenanceSource).toContain("split('?')[0] || 'home') === 'dream'");
+    expect(maintenanceSource).toContain('查看任务');
   });
 
   test('任务中心展示 PGLite 残留占用进程并提供安全恢复入口', () => {
@@ -26,14 +40,14 @@ describe('Admin 任务中心与 Dream 忙碌态', () => {
   });
 
   test('有实际运行任务时不显示 PGLite 残留占用恢复卡片', () => {
-    expect(taskCenterSource).toContain('activeRows.length === 0 && snapshot.pglite_owner');
+    expect(taskCenterSource).toContain('activeRows.length === 0 && snapshot?.pglite_owner');
     expect(taskCenterSource).toContain("const activeRows = rows.filter(isActive);");
-    expect(taskCenterSource).toContain('当前没有正在运行的后台任务。');
+    expect(taskCenterSource).toContain('暂无任务记录');
   });
 
   test('PGlite 忙碌时 Dream 页面保留任务状态和取消路径', () => {
     expect(apiSource).toContain('error.status = res.status');
-    expect(apiSource).toContain('taskCenter: () => apiFetch');
+    expect(apiSource).toContain('taskCenter: (summary = false) => apiFetch');
     expect(dreamSource).toContain('isPgliteBusyError');
     expect(dreamSource).toContain('<DreamBusyRecovery');
     expect(dreamSource).toContain('api.cancelRun(run.id)');
@@ -53,20 +67,21 @@ describe('Admin 任务中心与 Dream 忙碌态', () => {
   });
 
   test('取消任务显示用户说明而不是把取消当成错误', () => {
-    expect(taskCenterSource).toContain('任务已取消，已完成的部分已保留，不会自动回滚。');
-    expect(taskCenterSource).toContain('任务已由管理员取消');
-    expect(taskCenterSource).toContain('task-run-cancelled');
+    expect(progressSource).toContain('已完成的内容会保留');
+    expect(progressSource).toContain('任务已停止');
+    expect(progressSource).toContain("run.status === 'cancelled'");
   });
 
-  test('Dream 任务显示当前阶段、页数和 JSON 心跳', () => {
-    expect(taskCenterSource).toContain('describeDreamRunProgress(run)');
+  test('Dream 任务显示统一产品进度，JSON 心跳只用于技术日志', () => {
+    expect(taskCenterSource).toContain('TaskProgressCard');
     expect(taskCenterSource).toContain('当前阶段');
-    expect(taskCenterSource).toContain('task-run-progress');
+    expect(progressSource).toContain('当前阶段');
+    expect(technicalSource).toContain('api.run(run.id)');
   });
 
   test('独立观点提炼不会冒充完整 AI 深度整理', () => {
-    expect(taskCenterSource).toContain("if (kind.includes('propose_takes')) return '观点提炼'");
-    expect(taskCenterSource).not.toContain("return 'AI 深度整理 · 观点提炼'");
+    expect(taskNames).toContain("if (kind === 'dream_propose_takes') return '观点提炼'");
+    expect(taskNames).not.toContain("return 'AI 深度整理 · 观点提炼'");
   });
 
   test('Dream 阶段执行页在深色主题使用控制台配色', () => {

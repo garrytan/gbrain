@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  readMigrationProgress,
   parseSuccessfulBackupJsonFromError,
   postUpgradeRetryDelayMs,
   resolveSidecarHealthTimeoutMs,
@@ -98,4 +99,12 @@ describe('post-upgrade startup helpers', () => {
     const message = sanitizeStartupFailureMessage('本地服务启动失败：健康检查超时。最后错误：fetch failed');
     expect(message).toContain('健康检查超时');
   });
+});
+
+test('migration progress stays on database upgrade until the schema-ready marker',()=>{
+ const log='[serve] opening database\nSchema version 130 → 134\n';
+ expect(readMigrationProgress(log)?.stage).toBe('migration');
+ expect(readMigrationProgress(log+'[migrate] page revision backfill: 100/3142 row(s) done, through page id 117')?.message).toContain('100 / 3142');
+ expect(readMigrationProgress(log+'[migrate] page revision backfill: 3142/3142 row(s) done\n[migrate] schema ready version=134')?.stage).toBe('health');
+ expect(readMigrationProgress('normal output')).toBeNull();
 });

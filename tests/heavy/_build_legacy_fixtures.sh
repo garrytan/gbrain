@@ -61,13 +61,8 @@ echo "[build_legacy_fixtures] db=$DATABASE_URL"
 echo "[build_legacy_fixtures] dropping public schema..."
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'
 
-# Step 2: bring to LATEST via gbrain. The CLI's `doctor --json` triggers
-# engine.connect() which runs applyForwardReferenceBootstrap → SCHEMA_SQL →
-# runMigrations. On an empty DB this is a no-op bootstrap + full schema replay
-# + zero migrations (already at LATEST).
-# NOTE: `--fast` short-circuits schema init checks; we deliberately omit it.
-echo "[build_legacy_fixtures] initializing to LATEST via gbrain doctor..."
-timeout 180s bun run src/cli.ts doctor --json > /dev/null
+echo "[build_legacy_fixtures] initializing to LATEST via migrate-only..."
+timeout 180s bun run src/cli.ts init --migrate-only --json > /dev/null
 
 # Step 3: down-mutate to the target shape
 echo "[build_legacy_fixtures] applying down-mutate from $SQL_FILE..."

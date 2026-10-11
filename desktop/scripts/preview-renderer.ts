@@ -1,3 +1,4 @@
+import { SERVICE_PRESETS, newServiceModel } from '../../shared/model-services.js';
 import { existsSync, readFileSync, writeFileSync, mkdtempSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -76,9 +77,35 @@ const panelScrollTarget: Record<Panel, string> = {
 };
 const scrollTarget = panelScrollTarget[panel];
 
+const previewServices = SERVICE_PRESETS.map(([provider, name, baseUrl]) => ({ id: provider, provider, name, baseUrl, apiKey: '', enabled: provider === 'ollama', models: provider === 'ollama' ? [
+  { ...newServiceModel('qwen3:4b'), group: 'ollama', capabilities: ['reasoning', 'tools'] },
+  { ...newServiceModel('gemma3:4b'), group: 'ollama', capabilities: ['vision'] },
+  { ...newServiceModel('qwen3-embedding:0.6b', 'embedding'), group: 'qwen3' },
+] : [] }));
+const workbenchApi = process.argv.includes('--workbench-api');
 const mockApi = `
 <script>
+let previewModelServices = ${JSON.stringify({ services: [], revision: 'preview' }).replace('"services":[]', '"services":' + JSON.stringify(previewServices))};
 window.pmbrainDesktop = {
+  getModelServices: async () => structuredClone(previewModelServices),
+  saveModelServices: async (next) => { previewModelServices = structuredClone(next); return structuredClone(next); },
+  syncServiceModels: async (service) => { if (service.provider !== 'ollama' && !service.apiKey) throw new Error('尚未配置 API 密钥，请填写后同步'); return { models: service.models, warnings: [] }; },
+
+   onNavigate: () => () => {},
+   productRequest: async ({ path, method = 'GET', body }) => {
+     if (${workbenchApi} && path.startsWith('/admin/api/workbench')) {
+       const response = await fetch(path, { method, body, headers: { 'Content-Type': 'application/json' } });
+       return { status: response.status, contentType: 'application/json', body: await response.text() };
+     }
+     const overview = {
+       version: 'preview', engine: 'pglite', schema_pack: 'preview', chat_model: 'mimo:mimo-v2.5-pro', embedding_model: 'zhipu:embedding-3', embedding_dimensions: 1024, expansion_model: null,
+       stats: { page_count: 0, chunk_count: 0, embedded_count: 0, link_count: 0, timeline_entry_count: 0, pages_by_type: {} },
+       embedding_coverage: 0, pending_embeddings: 0, recent_write_at: null, sources: [], main_source_id: 'default', federated_source_count: 0,
+       provider_status: { providers: { mimo: true, zhipu: true }, chat: { enabled: true, chat_model: 'mimo:mimo-v2.5-pro', provider: 'mimo', missing: [] } }, llm_enabled: true, config: {}
+     };
+     const responseBody = path.startsWith('/admin/api/brain/overview') ? overview : path === '/admin/api/theme' ? { source: '${theme}' } : { error: '此预览不连接真实知识服务' };
+     return { status: path.startsWith('/admin/api/brain/overview') || path === '/admin/api/theme' ? 200 : 503, contentType: 'application/json', body: JSON.stringify(responseBody) };
+   },
    getSetup: async () => ({
     setup: {
       needsSetup: ${firstRun},
@@ -142,7 +169,7 @@ window.pmbrainDesktop = {
   onThemeState: () => () => {},
   getSystemSettings: async () => ({
     preferences: {
-      networkMode: 'shared', closeBehavior: 'tray', sharedAdapter: 'Wi-Fi',
+      networkMode: 'shared', closeBehavior: 'tray', startMinimized: false, sharedAdapter: 'Wi-Fi',
       sharedIp: '192.168.1.20', sharedResumeRequired: false,
     },
     theme: { source: '${theme}', resolved: '${theme}' },
@@ -164,6 +191,13 @@ window.pmbrainDesktop = {
     canceled: false,
     state: { ...(await window.pmbrainDesktop.getSystemSettings()), launchAtLogin: payload.launchAtLogin },
   }),
+  saveDesktopBehavior: async (input) => {
+    const state = await window.pmbrainDesktop.getSystemSettings();
+    return {
+      canceled: false,
+      state: { ...state, launchAtLogin: input.launchAtLogin, preferences: { ...state.preferences, closeBehavior: input.closeBehavior, startMinimized: input.startMinimized === true } },
+    };
+  },
   onSystemSettingsState: () => () => {},
   getMemoryWriteback: async () => ({
     mode: 'off', enabled: false, ttl: '30d', notice_shown: false, visibility: 'private', agents: [], issues: [],
@@ -333,6 +367,7 @@ window.pmbrainDesktop = {
   quit: async () => {}
 };
 console.log('PMBrain mock injected: panel=${panel}, theme=${theme}, integrations count=9');
+window.location.hash = 'settings-${panel}';
 // HTML 初始状态已在 Node.js 侧修改，无需 setTimeout 切换面板
 // 等 DOM 渲染后滚动到目标区域
 setTimeout(() => {
@@ -364,7 +399,7 @@ const rendererAssetBase = prepareOnly
 html = html.replace(/(["'])\.\/assets\//g, `$1${rendererAssetBase}`);
 
 // 移除 CSP 限制
-html = html.replace(/<meta http-equiv="Content-Security-Policy"[^>]+ \/>/, '');
+html = html.replace(/<meta http-equiv="Content-Security-Policy"[^>]*>/, '');
 
 // 注入 mock API（插到 </head> 前），提供 JS 降级
 html = html.replace('</head>', `${mockApi}\n</head>`);

@@ -19,6 +19,7 @@ check-exports-count.sh	scanner	todo	Previously reachable only through the drifti
 check-fixture-privacy.sh	scanner	todo	Scanner guard; add fixtures when its rule is changed.
 check-fuzz-purity.sh	buildfresh	exempt	Executes the fuzz corpus.
 check-gateway-routed-no-direct-anthropic.sh	scanner	todo	Scanner guard; add fixtures when its rule is changed.
+check-gbrain-subsystems.ts	repostate	exempt	Validates recorded module hashes and the pinned upstream commit.
 check-image-decoders-embedded.sh	buildfresh	exempt	Binary embed check; not in the normal verify lane.
 check-jsonb-pattern.sh	scanner	yes	Catches JSONB double-encoding and schema max_stalled regression.
 check-no-double-retry.sh	scanner	yes	Catches single-line and multiline outer retry wrappers around engine batch methods.

@@ -287,6 +287,7 @@ export interface PageInput {
 }
 
 export interface PageFilters {
+  pageIds?: number[];
   type?: PageType;
   tag?: string;
   limit?: number;

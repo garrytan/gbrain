@@ -19,7 +19,7 @@ ALTER TABLE pages DROP CONSTRAINT IF EXISTS pages_source_slug_key;
 ALTER TABLE pages ADD CONSTRAINT pages_slug_key UNIQUE (slug);
 
 DROP INDEX IF EXISTS idx_pages_source_id;
-ALTER TABLE pages DROP COLUMN IF EXISTS source_id;
+ALTER TABLE pages DROP COLUMN IF EXISTS source_id CASCADE;
 
 -- DROP TABLE sources with CASCADE so any dangling FKs go too.
 DROP TABLE IF EXISTS sources CASCADE;
@@ -30,5 +30,7 @@ ALTER TABLE links DROP COLUMN IF EXISTS resolution_type;
 
 -- Mark the brain at a pre-v0.18 version so the migration runner walks forward.
 UPDATE config SET value = '20' WHERE key = 'version';
+UPDATE config SET value = '20' WHERE key = 'pmbrain.schema.version';
+DELETE FROM pmbrain_schema_migrations WHERE namespace = 'pmbrain' AND version > 20;
 
 COMMIT;

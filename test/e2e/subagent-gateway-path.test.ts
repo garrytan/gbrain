@@ -11,9 +11,7 @@
  *   - Returns SubagentResult mapped from gateway loop result
  *
  * Hermetic: PGLite in-memory engine, gateway transport stubbed via
- * `__setChatTransportForTests`. No ANTHROPIC_API_KEY, no real Anthropic
- * SDK instantiation (we stub `makeAnthropic` so the legacy-path fallback
- * doesn't trip on missing env).
+ * `__setChatTransportForTests`.
  *
  * Plan reference: ~/.claude/plans/system-instruction-you-are-working-shimmying-breeze.md
  * (Slice 1 verification step 6 + cross-provider crash-replay regression — the
@@ -150,7 +148,6 @@ function buildHandler(toolRegistry: ToolDef[]) {
     engine,
     config: {} as any,
     toolRegistry,
-    makeAnthropic: () => ({ messages: { create: async () => { throw new Error('legacy path should not be invoked'); } } }) as any,
   });
 }
 

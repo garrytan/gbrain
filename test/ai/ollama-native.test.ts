@@ -2,6 +2,10 @@ import { describe, expect, test } from 'bun:test';
 import { streamOllamaNativeChat, unwrapOllamaQwenResult } from '../../src/core/ai/ollama-native.ts';
 
 describe('streamOllamaNativeChat thinking fallback', () => {
+  test('assistant requests never promote reasoning-only output into an answer',async()=>{
+    const server=Bun.serve({port:0,fetch:()=>new Response(JSON.stringify({message:{content:'',thinking:'内部思考'},done:true,done_reason:'stop'})+'\n',{headers:{'content-type':'application/x-ndjson'}})});
+    try{const result=await streamOllamaNativeChat({baseURL:server.url.href,model:'qwen3.6:latest',messages:[{role:'user',content:'回答'}],maxTokens:128,allowReasoningFallback:false});expect(result.text).toBe('');}finally{server.stop(true);}
+  });
   test('promotes thinking text when content is empty', async () => {
     const server = Bun.serve({
       port: 0,

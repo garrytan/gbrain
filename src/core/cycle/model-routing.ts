@@ -13,7 +13,8 @@ export type DreamModelPhase =
   | 'extract_atoms'
   | 'synthesize_concepts'
   | 'consolidate'
-  | 'conversation_facts_backfill';
+  | 'conversation_facts_backfill'
+  | 'capture_entities';
 
 interface DreamModelSpec {
   tier: ModelTier;
@@ -44,6 +45,11 @@ const DREAM_MODEL_SPECS: Record<DreamModelPhase, DreamModelSpec> = {
   synthesize_concepts: { tier: 'reasoning', fallback: 'sonnet' },
   consolidate: { tier: 'reasoning', fallback: 'sonnet' },
   conversation_facts_backfill: { tier: 'reasoning', fallback: 'sonnet' },
+  capture_entities: {
+    tier: 'subagent',
+    fallbackTiers: ['reasoning'],
+    fallback: 'sonnet',
+  },
 };
 
 export async function resolveDreamModel(

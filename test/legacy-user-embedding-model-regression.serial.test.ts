@@ -112,16 +112,14 @@ describe('老用户回归矩阵 · 向量模型 / embed --stale', () => {
     const databaseUpgrade = readFileSync(resolve('desktop/src/main/database/database-upgrade.ts'), 'utf8');
     const modelSync = readFileSync(resolve('desktop/src/main/models/model-config-sync.ts'), 'utf8');
 
-    expect(setupController).not.toContain("'--force-reembed'");
     expect(setupController).toMatch(
       /payload\.confirmEmbeddingRebuild !== true[\s\S]*必须在桌面端明确确认重新向量化后才能继续/,
     );
     expect(setupController).toMatch(
-      /saved\.embeddingModelChanged && !legacyEmbeddingRecoveryConfirmed\)[\s\S]*pauseEmbeddingRebuild[\s\S]*waitEmbeddingRebuildChoice/,
+      /saved\.embeddingModelChanged && !legacyEmbeddingRecoveryConfirmed\)[\s\S]*'--force-reembed'/,
     );
-    expect(setupController).toMatch(
-      /choice === 'wait'[\s\S]*action: 'embed_stale', catchUp: true, forceReembed: true/,
-    );
+    expect(setupController).not.toContain('pauseEmbeddingRebuild');
+    expect(setupController).not.toContain("choice === 'wait'");
     expect(rebuildChoice).toContain("choice !== 'wait' && choice !== 'defer'");
     expect(databaseUpgrade).not.toContain('--force-reembed');
     expect(databaseUpgrade).toContain("'--empty-only'");

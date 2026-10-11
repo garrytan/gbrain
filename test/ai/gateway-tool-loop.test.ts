@@ -41,7 +41,7 @@ describe('gateway.toolLoop (v0.38 D11 — provider-agnostic loop control)', () =
 
     expect(result.stopReason).toBe('end');
     expect(result.finalText).toBe('hello world');
-    expect(result.totalTurns).toBe(0); // First turn ended cleanly without tool dispatch
+    expect(result.totalTurns).toBe(1);
     expect(result.totalUsage.input_tokens).toBe(5);
   });
 

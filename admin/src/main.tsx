@@ -1,8 +1,9 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import { App } from './App';
+import { ProductApp as App } from './product/ProductApp';
 import { readThemeMode, resolveTheme } from './lib/theme';
 import './index.css';
+import './product/product.css';
 
 const initialThemeMode = readThemeMode();
 const initialTheme = resolveTheme(initialThemeMode, window.matchMedia('(prefers-color-scheme: dark)').matches);
@@ -15,3 +16,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     <App />
   </React.StrictMode>,
 );
+
+import './product/model-services.css';
+import './product/product-theme.css';
+import './product/product-ui.css';

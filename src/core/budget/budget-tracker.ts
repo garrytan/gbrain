@@ -285,6 +285,16 @@ export class BudgetTracker {
     return this.opts.maxCostUsd;
   }
 
+  affordableOutputTokens(estimate:BudgetEstimate):number{
+    this.assertRuntime(estimate.modelId);
+    if(this.opts.maxCostUsd===undefined)return estimate.maxOutputTokens;
+    const pricing=lookupPricing(estimate.modelId,estimate.kind,this.opts.pricingOverrides);
+    if(!pricing)return 0;
+    const remaining=this.opts.maxCostUsd-this.cumulativeUsd-estimate.estimatedInputTokens*pricing.input/1_000_000;
+    if(remaining<0)return 0;
+    return pricing.output>0?Math.max(0,Math.min(estimate.maxOutputTokens,Math.floor(remaining*1_000_000/pricing.output))):estimate.maxOutputTokens;
+  }
+
   /**
    * Register a synchronous callback to fire the first time the tracker
    * throws BudgetExhausted (from reserve OR record). Fires once. Useful for
