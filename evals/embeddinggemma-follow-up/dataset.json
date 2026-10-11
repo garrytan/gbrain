@@ -1,0 +1,274 @@
+{
+  "version": 1,
+  "license": "CC0-1.0",
+  "documents": [
+    {
+      "id": "battery-cold-weather",
+      "title": "Cold-Weather Battery Checklist",
+      "language": "en",
+      "chunks": [
+        "Below -10 C, keep the spare pack indoors until departure. Start with a full charge, insulate the pack from wind, and expect less runtime because cold slows the cell chemistry. Let a chilled pack warm gradually before charging."
+      ]
+    },
+    {
+      "id": "air-filter-smoke",
+      "title": "Indoor Air Filter Guide",
+      "language": "en",
+      "chunks": [
+        "For wildfire haze, choose a true HEPA unit sized for the room. A useful clean-air delivery rate is about five room air changes per hour. Close windows during the smoky period and replace a loaded pre-filter when airflow drops."
+      ]
+    },
+    {
+      "id": "graywater-garden",
+      "title": "Graywater Irrigation Plan",
+      "language": "en",
+      "chunks": [
+        "Reuse lightly soiled shower and laundry water on ornamental plants through mulch basins or subsurface drip. Do not store it, spray edible leaves, or use water containing bleach or harsh cleaners. Rotate the outlet to avoid saturating one patch of soil."
+      ]
+    },
+    {
+      "id": "bicycle-gears",
+      "title": "Rear Derailleur Indexing Notes",
+      "language": "en",
+      "chunks": [
+        "Shift to the smallest rear cog, then turn the barrel adjuster a quarter-turn at a time until the chain climbs cleanly. Check cable tension under light pedaling. Set the high and low limit screws only to prevent the chain from leaving the cassette."
+      ]
+    },
+    {
+      "id": "passkey-recovery",
+      "title": "Passkey Recovery Runbook",
+      "language": "en",
+      "chunks": [
+        "If a phone is lost, sign in on a registered second device or use the account's printed recovery codes. Remove the missing authenticator after access is restored, enroll a replacement security key, and test it in a private browser window."
+      ]
+    },
+    {
+      "id": "harbor-ferry",
+      "title": "Harbor Ferry Schedule",
+      "language": "en",
+      "chunks": [
+        "Weekday boats leave Pier 4 at 06:20, 06:50, and then every thirty minutes until 20:20. The final return from North Quay is 20:45. Bicycles board after passengers with mobility devices, subject to deck space."
+      ]
+    },
+    {
+      "id": "chickpea-stew",
+      "title": "Chickpea Stew Recipe",
+      "language": "en",
+      "chunks": [
+        "Soften onion in oil, stir in cumin and smoked paprika, then add two cans of rinsed chickpeas and crushed tomatoes. Simmer for twenty minutes. Fold in spinach at the end and finish with lemon; serve with rice or flatbread."
+      ]
+    },
+    {
+      "id": "sqlite-wal-backup",
+      "title": "SQLite WAL Backup Example",
+      "language": "en",
+      "chunks": [
+        "Use SQLite's online backup API so committed pages in the write-ahead log are included while readers remain active. A minimal Python example is:\n```python\nsource = sqlite3.connect('app.db')\ntarget = sqlite3.connect('snapshot.db')\nsource.backup(target)\n```"
+      ]
+    },
+    {
+      "id": "nginx-rate-limit",
+      "title": "Nginx Rate Limit Snippet",
+      "language": "en",
+      "chunks": [
+        "This configuration limits requests by client address and returns status 429 after the small burst allowance is used:\n```nginx\nlimit_req_zone $binary_remote_addr zone=api:10m rate=5r/s;\nserver {\n  location /api/ {\n    limit_req zone=api burst=10 nodelay;\n    limit_req_status 429;\n  }\n}\n```"
+      ]
+    },
+    {
+      "id": "drip-irrigation-es",
+      "title": "Guía de riego por goteo",
+      "language": "es",
+      "chunks": [
+        "Coloca emisores junto a las raíces y riega temprano para reducir la evaporación. Comprueba la humedad a unos cinco centímetros antes de abrir la válvula. Limpia el filtro al comienzo de cada temporada y tapa las líneas durante las heladas."
+      ]
+    },
+    {
+      "id": "account-keys-es",
+      "title": "Recuperación de cuenta con llaves de acceso",
+      "language": "es",
+      "chunks": [
+        "Si pierdes el teléfono, inicia sesión desde otro dispositivo registrado o con los códigos de recuperación guardados fuera de línea. Después elimina la credencial perdida, registra una llave de seguridad nueva y prueba el acceso en una ventana privada."
+      ]
+    },
+    {
+      "id": "cat-vaccine-es",
+      "title": "Calendario de vacunas para gatos",
+      "language": "es",
+      "chunks": [
+        "El veterinario suele aplicar la primera dosis triple felina entre las seis y ocho semanas. Se administran refuerzos cada tres o cuatro semanas hasta las dieciséis semanas, con una revisión anual para ajustar el plan según la salud y el entorno del animal."
+      ]
+    },
+    {
+      "id": "balcony-herbs-zh",
+      "title": "阳台香草种植记录",
+      "language": "zh",
+      "chunks": [
+        "罗勒和薄荷放在朝南窗边，每天接受约六小时日照。盆土表面干燥后再浇水，花盆底部要有排水孔。每两周转动花盆一次，让枝叶均匀生长。"
+      ]
+    },
+    {
+      "id": "guest-wifi-zh",
+      "title": "家用路由器访客网络设置",
+      "language": "zh",
+      "chunks": [
+        "在路由器管理页启用独立访客无线网络，设置单独密码，并关闭访问家庭局域网的权限。使用 WPA2-AES 或 WPA3 加密；来客离开后可以更换密码。"
+      ]
+    },
+    {
+      "id": "humid-season-zh",
+      "title": "梅雨季室内除湿办法",
+      "language": "zh",
+      "chunks": [
+        "雨天关好外窗，使用除湿机把相对湿度维持在百分之五十至六十。家具离墙几厘米以便空气流通，衣物完全干燥后再放入柜中，并定期清理设备水箱。"
+      ]
+    },
+    {
+      "id": "expense-close",
+      "title": "Monthly Expense Reconciliation",
+      "language": "en",
+      "chunks": [
+        "At month end, compare each card statement with the ledger, mark reimbursable items, and investigate duplicate or missing charges. Record the closing balance and attach receipts before locking the reporting period."
+      ]
+    },
+    {
+      "id": "clamp-safety",
+      "title": "Workshop Clamp Safety",
+      "language": "en",
+      "chunks": [
+        "Inspect the screw and swivel pad before clamping. Use a scrap block to spread pressure across soft wood, keep fingers clear of the jaws, and tighten only until the work stops moving. Excess force can bow a panel or damage threads."
+      ]
+    },
+    {
+      "id": "microscope-stain",
+      "title": "Simple Microscope Slide Stain",
+      "language": "en",
+      "chunks": [
+        "Place a thin specimen on a clean slide, add one drop of dilute methylene blue, and wait sixty seconds. Rinse gently with water, blot the edge with lint-free paper, then lower a cover glass to avoid bubbles. Wear eye protection while handling the stain."
+      ]
+    },
+    {
+      "id": "trail-water-cache",
+      "title": "Trail Water Cache Notes",
+      "language": "en",
+      "chunks": [
+        "For the north loop, leave sealed bottles in the shaded marker box before the hike and note the date on the tag. Carry all empty containers back out. The spring near the ridge is seasonal, so do not count on it as a refill."
+      ]
+    },
+    {
+      "id": "seed-storage",
+      "title": "Garden Seed Storage Notes",
+      "language": "en",
+      "chunks": [
+        "Dry saved seeds fully, label each packet with the plant variety and collection year, then place packets in an airtight jar in a cool dark cupboard. Discard any packet that smells musty or shows condensation."
+      ]
+    },
+    {
+      "id": "blue-lane-maintenance",
+      "title": "Blue Lane Maintenance",
+      "language": "en",
+      "chunks": [
+        "Inspect the marked assembly at the start of shift. Record the measured clearance in the service log and notify the coordinator if it falls outside the allowed range."
+      ]
+    },
+    {
+      "id": "green-lane-maintenance",
+      "title": "Green Lane Maintenance",
+      "language": "en",
+      "chunks": [
+        "Inspect the marked assembly at the start of shift. Record the measured clearance in the service log and notify the coordinator if it falls outside the allowed range."
+      ]
+    }
+  ],
+  "queries": [
+    {
+      "id": "q-cold-battery-title",
+      "text": "Where are the cold-weather battery steps and what should I do before charging a chilled pack?",
+      "language": "en",
+      "relevant": ["battery-cold-weather"]
+    },
+    {
+      "id": "q-smoke-filter-title",
+      "text": "Which indoor air filter guide recommends a clean-air delivery rate for wildfire haze?",
+      "language": "en",
+      "relevant": ["air-filter-smoke"]
+    },
+    {
+      "id": "q-graywater-title",
+      "text": "Find the irrigation plan for reusing shower water on plants.",
+      "language": "en",
+      "relevant": ["graywater-garden"]
+    },
+    {
+      "id": "q-derailleur-vocabulary",
+      "text": "How do I fix rear shifting when the chain hesitates between cassette cogs?",
+      "language": "en",
+      "relevant": ["bicycle-gears"]
+    },
+    {
+      "id": "q-passkey-title",
+      "text": "I need the passkey recovery runbook after losing my phone.",
+      "language": "en",
+      "relevant": ["passkey-recovery"]
+    },
+    {
+      "id": "q-ferry-time",
+      "text": "What time does the last ferry leave North Quay?",
+      "language": "en",
+      "relevant": ["harbor-ferry"]
+    },
+    {
+      "id": "q-stew-ingredients",
+      "text": "Which recipe uses chickpeas, tomatoes, cumin, and spinach?",
+      "language": "en",
+      "relevant": ["chickpea-stew"]
+    },
+    {
+      "id": "q-sqlite-code",
+      "text": "Show a Python example that backs up a live SQLite database including WAL changes.",
+      "language": "en",
+      "relevant": ["sqlite-wal-backup"]
+    },
+    {
+      "id": "q-spanish-riego",
+      "text": "¿Qué documento explica cómo reducir la evaporación al regar las raíces?",
+      "language": "es",
+      "relevant": ["drip-irrigation-es"]
+    },
+    {
+      "id": "q-spanish-cuenta",
+      "text": "Perdí el móvil: ¿cómo recupero el acceso con una credencial alternativa?",
+      "language": "es",
+      "relevant": ["account-keys-es", "passkey-recovery"]
+    },
+    {
+      "id": "q-chinese-wifi",
+      "text": "如何让客人使用无线网络但不能访问家里的设备？",
+      "language": "zh",
+      "relevant": ["guest-wifi-zh"]
+    },
+    {
+      "id": "q-chinese-humidity",
+      "text": "梅雨天气怎样控制房间湿度并防止衣柜受潮？",
+      "language": "zh",
+      "relevant": ["humid-season-zh"]
+    },
+    {
+      "id": "q-ambiguous-labeled-supplies",
+      "text": "Which notes say to label stored supplies with a date?",
+      "language": "en",
+      "relevant": ["trail-water-cache", "seed-storage"]
+    },
+    {
+      "id": "q-blue-lane-title",
+      "text": "What does the Blue Lane Maintenance note say about the clearance measurement?",
+      "language": "en",
+      "relevant": ["blue-lane-maintenance"]
+    },
+    {
+      "id": "q-green-lane-title",
+      "text": "What does the Green Lane Maintenance note say about the clearance measurement?",
+      "language": "en",
+      "relevant": ["green-lane-maintenance"]
+    }
+  ]
+}

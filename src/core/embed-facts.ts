@@ -3,6 +3,7 @@ import { embed, getEmbeddingDimensions, getEmbeddingModel } from './ai/gateway.t
 import { withAIInvocationGuard } from './ai/invocation-guard.ts';
 import { BudgetTracker, loadPricingOverrides } from './budget/budget-tracker.ts';
 import { assertEmbeddingEnabled, readFactsEmbeddingDim } from './embedding-dim-check.ts';
+import { embedRequestCeilings } from './ai/embed-batch-plan.ts';
 import type { GBrainConfig } from './config.ts';
 import { redactConnectionInfo } from './audit/redact-connection-info.ts';
 import { redactUrlsInText } from './url-redact.ts';
@@ -44,7 +45,8 @@ interface PendingFact {
   version: string;
 }
 
-const eligible = `f.source_id = $1 AND ${eligibleFactEmbedding} AND ${staleFactEmbedding}`;
+const eligible = `f.source_id = $1 AND ${eligibleFactEmbedding}`;
+const stale = `${eligible} AND ${staleFactEmbedding}`;
 
 export async function embedStaleFacts(engine: BrainEngine, opts: EmbedFactsOpts, selectedConfig: GBrainConfig | null = null): Promise<EmbedFactsResult> {
   const { signal: externalSignal, assertOwned, ...wireOptions } = opts;
@@ -78,13 +80,16 @@ export async function embedStaleFacts(engine: BrainEngine, opts: EmbedFactsOpts,
   await authorize(engine);
   const model = getEmbeddingModel();
   const dims = getEmbeddingDimensions();
-  const params = [opts.sourceId, [...AUDIT_ROW_SOURCES], model, dims];
-  const census = async () => {
+  const eligibleParams = [opts.sourceId, [...AUDIT_ROW_SOURCES]];
+  const params = [...eligibleParams, model, dims];
+  const census = async (all = false) => {
+    const predicate = all ? eligible : stale;
     const [row] = await engine.executeRaw<{ count: string; last_id: string }>(
-      `SELECT count(*)::text AS count, COALESCE(max(f.id),0)::text AS last_id FROM facts f WHERE ${eligible}`, params);
+      `SELECT count(*)::text AS count, COALESCE(max(f.id),0)::text AS last_id FROM facts f WHERE ${predicate}`,
+      all ? eligibleParams : params);
     return { count: Number(row.count), lastId: row.last_id };
   };
-  const initial = await census();
+  const initial = await census(opts.all === true);
   const result: EmbedFactsResult = {
     source_id: opts.sourceId, dryRun, total_stale: initial.count,
     would_embed: dryRun ? Math.min(initial.count, maxFacts) : 0,
@@ -112,18 +117,38 @@ export async function embedStaleFacts(engine: BrainEngine, opts: EmbedFactsOpts,
     || selectedConfig?.embedding_dimensions !== undefined && selectedConfig.embedding_dimensions !== dims) {
     throw new Error('Embedding configuration differs from the database; finish the reviewed model migration first');
   }
+  const signal = AbortSignal.any([AbortSignal.timeout(budgetMs), ...(opts.signal ? [opts.signal] : [])]);
+  if (opts.all) {
+    signal.throwIfAborted();
+    await engine.transaction(async tx => {
+      signal.throwIfAborted();
+      await opts.assertOwned?.(tx);
+      const current = await tx.executeRaw('SELECT id FROM sources WHERE id=$1 AND incarnation=$2::uuid AND archived=false FOR SHARE',
+        [opts.sourceId, source.incarnation]);
+      if (!current.length) throw new Error('Source identity changed during fact backfill; rerun the scoped preview');
+      await authorize(tx, true);
+      await tx.executeRaw("SELECT key FROM config WHERE key IN ('embedding_model','embedding_dimensions','embedding_disabled') ORDER BY key FOR SHARE");
+      await assertEnabled(tx);
+      if (await tx.getConfig('embedding_model') !== dbModel || await tx.getConfig('embedding_dimensions') !== dbDims) {
+        throw new Error('Embedding model changed during fact backfill; rerun the scoped preview');
+      }
+      signal.throwIfAborted();
+      await tx.executeRaw(`UPDATE facts f SET embedding=NULL,embedded_at=NULL,embedding_model=NULL,embedded_text_hash=NULL
+        WHERE ${eligible} AND f.id<=$3::bigint`, [...eligibleParams, initial.lastId]);
+      signal.throwIfAborted();
+    });
+  }
   const tracker = new BudgetTracker({
     label: 'embed.facts', maxCostUsd: opts.maxCostUsd, maxRuntimeMs: budgetMs,
     pricingOverrides: await loadPricingOverrides(engine),
   });
-  const signal = AbortSignal.any([AbortSignal.timeout(budgetMs), ...(opts.signal ? [opts.signal] : [])]);
   const maxTokens = resolveMaxChunkTokens();
   let afterId = '0';
   while (result.attempted < maxFacts) {
     if (signal.aborted) { result.stopped = 'aborted'; result.failures++; break; }
     const batch = await engine.executeRaw<PendingFact>(
       `SELECT f.id::text, f.fact, f.xmin::text AS version FROM facts f
-       WHERE ${eligible} AND f.id > $5::bigint AND f.id <= $6::bigint
+       WHERE ${stale} AND f.id > $5::bigint AND f.id <= $6::bigint
        ORDER BY f.id LIMIT $7`, [...params, afterId, initial.lastId, Math.min(batchSize, maxFacts - result.attempted)]);
     if (!batch.length) break;
     result.attempted += batch.length;
@@ -132,7 +157,10 @@ export async function embedStaleFacts(engine: BrainEngine, opts: EmbedFactsOpts,
         throw new Error('A fact exceeds the embedding input limit; no batch was sent');
       }
       signal.throwIfAborted();
-      const inputCeiling = batch.reduce((sum, row) => sum + Math.max(1, Buffer.byteLength(row.fact, 'utf8')), 0);
+      const rawInputCeiling = batch.reduce((sum, row) => sum + Math.max(1, Buffer.byteLength(row.fact, 'utf8')), 0);
+      const inputCeiling = Math.max(rawInputCeiling,
+        embedRequestCeilings(batch.map(row => row.fact), model, undefined, { inputType: 'document' })
+          .reduce((sum, ceiling) => sum + ceiling, 0));
       const vectors = await withAIInvocationGuard(async call => {
         signal.throwIfAborted();
         if (call.kind !== 'embedding') throw new Error('Fact backfill permits embedding calls only');
@@ -174,7 +202,7 @@ export async function embedStaleFacts(engine: BrainEngine, opts: EmbedFactsOpts,
           const rows = await tx.executeRaw(
             `UPDATE facts f SET embedding=$7::${shape.columnType}, embedded_at=now(),
              embedding_model=$3,embedded_text_hash=md5(f.fact)
-             WHERE ${eligible} AND f.id=$5::bigint AND f.xmin::text=$6 RETURNING f.id::text`,
+             WHERE ${stale} AND f.id=$5::bigint AND f.xmin::text=$6 RETURNING f.id::text`,
             [...params, batch[i].id, batch[i].version, `[${Array.from(vectors[i]).join(',')}]`]);
           count += rows.length;
         }

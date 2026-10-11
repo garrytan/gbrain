@@ -55,6 +55,10 @@ export const ollama: Recipe = {
       // Ollama's batch capacity depends on the locally loaded model + the
       // OLLAMA_NUM_PARALLEL config; no static cap to declare. v0.32 (#779).
       no_batch_cap: true,
+      format_input: (text, { model, input_type, document_title }) =>
+        /^embeddinggemma(?::|$)/i.test(model) && input_type === 'document'
+          ? `title: ${document_title?.trim() ? document_title : 'none'} | text: ${text}`
+          : text,
     },
     expansion: {
       models: ['qwen2.5-coder:14b'],

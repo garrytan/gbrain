@@ -110,9 +110,39 @@ export async function embedStaleTakes(
         claim: row.claim,
         model,
       }));
-      const written = opts.assertOwned
-        ? await engine.transaction(async tx => { await opts.assertOwned!(tx); return tx.updateTakeEmbeddings(writes, { signal: opts.signal }); })
-        : await engine.updateTakeEmbeddings(writes, { signal: opts.signal });
+      const written = opts.sourceId
+        ? await engine.transaction(async tx => {
+          await opts.assertOwned?.(tx);
+          const takeIds = writes.map(row => row.take_id);
+          const [source] = await tx.executeRaw<{ id: string }>(
+            'SELECT id FROM sources WHERE id = $1 AND NOT archived FOR SHARE', [opts.sourceId],
+          );
+          if (!source) return 0;
+          const pages = await tx.executeRaw<{ id: number }>(
+            `SELECT p.id FROM pages p
+              WHERE p.source_id = $2 AND p.deleted_at IS NULL
+                AND EXISTS (SELECT 1 FROM takes t WHERE t.id = ANY($1::bigint[]) AND t.page_id = p.id)
+              ORDER BY p.id
+              FOR UPDATE OF p`,
+            [takeIds, opts.sourceId],
+          );
+          const pageIds = pages.map(row => Number(row.id));
+          if (pageIds.length === 0) return 0;
+          const current = await tx.executeRaw<{ id: number }>(
+            `SELECT t.id FROM takes t
+               JOIN pages p ON p.id = t.page_id
+              WHERE t.id = ANY($1::bigint[]) AND t.page_id = ANY($2::bigint[]) AND p.source_id = $3
+                AND t.active AND p.deleted_at IS NULL
+              ORDER BY t.id
+              FOR UPDATE OF t`,
+            [takeIds, pageIds, opts.sourceId],
+          );
+          const ids = new Set(current.map(row => Number(row.id)));
+          return tx.updateTakeEmbeddings(writes.filter(row => ids.has(row.take_id)), { signal: opts.signal });
+        })
+        : opts.assertOwned
+          ? await engine.transaction(async tx => { await opts.assertOwned!(tx); return tx.updateTakeEmbeddings(writes, { signal: opts.signal }); })
+          : await engine.updateTakeEmbeddings(writes, { signal: opts.signal });
       result.embedded += written;
       result.discarded += batch.length - written;
     } catch (error: unknown) {

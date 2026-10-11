@@ -1,0 +1,1992 @@
+{
+  "schemaVersion": 1,
+  "experimentDate": "2026-10-11",
+  "source": {
+    "upstreamBaseCommit": "f95338f94d3c679b5d0cb1182de052cce4b8e44f",
+    "experimentCommit": "3eeee1968a6c3f552125ff7244ee80c48bd264e7",
+    "originalEvidenceSha256": "7712f60e7a627e6d6b8000d17c58e4b6dc94161a3f46be25508e445c1aa46dc0",
+    "datasetSha256": "8d19b7db7eb73cbaf50b6ee66e82e3a4bf4df19a0e1960996f55610b7a36156b",
+    "querySha256": "352d2b3b7bead602f6f73f1ae906dc41213ad726d19c05ed814c2ab96923f15b",
+    "labelSha256": "56dce529d4d2f05679073de73596d82d8216a18c39b33f97272a18f5527498aa",
+    "datasetLicense": "CC0-1.0"
+  },
+  "model": {
+    "tag": "embeddinggemma:latest",
+    "digest": "85462619ee721b466c5927d109d4cb765861907d5417b9109caebc4e614679f1",
+    "size": 621875917,
+    "quantizationLevel": "BF16",
+    "dimensions": 768
+  },
+  "corpus": {
+    "documents": 22,
+    "queries": 15,
+    "languages": {
+      "en": 11,
+      "es": 2,
+      "zh": 2
+    },
+    "embeddingDimensions": 768
+  },
+  "retrieval": {
+    "mode": "vector-only cosine",
+    "documents": "per-chunk vectors grouped by document; maximum chunk cosine per document",
+    "tieBreak": "document ID ascending",
+    "lexical": false,
+    "reranking": false,
+    "queryExpansion": false,
+    "queryCacheClearedBeforeEveryTimedCall": true
+  },
+  "runtime": {
+    "harnessObserved": {
+      "initiallyLoaded": false,
+      "primerMs": 2598.194221,
+      "modelLoadedAfterPrimer": true,
+      "modelBytesAfterPrimer": 673028505,
+      "modelBytesInVramAfterPrimer": 673028505,
+      "allArmsWarm": true,
+      "armOrder": [
+        "A",
+        "B",
+        "C"
+      ],
+      "backgroundConsumerLoad": "not controlled or measured"
+    },
+    "coordinatorObservedAfterRun": {
+      "bun": "1.4.2",
+      "ollama": "0.35.1",
+      "gpu": "Vulkan AMD Radeon 680M RADV REMBRANDT",
+      "selectedModelGpuResidentBytes": 673028505,
+      "serviceChanges": "none",
+      "selectedModelPlacement": "100% GPU"
+    },
+    "timingCaveat": "No cold-latency claim: a model already loaded at startup is recorded; one separately timed primer precedes all arms, and fixed arm order plus uncontrolled background consumers may affect latency."
+  },
+  "arms": {
+    "A": {
+      "queryInput": "raw query",
+      "documentInput": "raw chunk",
+      "indexingLatencyMs": {
+        "medianMs": 27.17998899999975,
+        "p95Ms": 62.43669600000021,
+        "totalMs": 773.2645600000005
+      },
+      "queryLatencyMs": {
+        "medianMs": 17.273927999999614,
+        "p95Ms": 18.646279999999933
+      },
+      "primaryFirstRepeat": {
+        "queryRuns": 15,
+        "topK": {
+          "1": {
+            "hitQueries": 14,
+            "queryCount": 15,
+            "hitRate": 0.9333333333333333,
+            "relevantHits": 14,
+            "relevantCount": 17,
+            "relevantRecall": 0.8235294117647058
+          },
+          "3": {
+            "hitQueries": 15,
+            "queryCount": 15,
+            "hitRate": 1,
+            "relevantHits": 17,
+            "relevantCount": 17,
+            "relevantRecall": 1
+          },
+          "5": {
+            "hitQueries": 15,
+            "queryCount": 15,
+            "hitRate": 1,
+            "relevantHits": 17,
+            "relevantCount": 17,
+            "relevantRecall": 1
+          }
+        },
+        "languageSlices": {
+          "en": {
+            "1": {
+              "hitQueries": 10,
+              "queryCount": 11,
+              "hitRate": 0.9090909090909091,
+              "relevantHits": 10,
+              "relevantCount": 12,
+              "relevantRecall": 0.8333333333333334
+            },
+            "3": {
+              "hitQueries": 11,
+              "queryCount": 11,
+              "hitRate": 1,
+              "relevantHits": 12,
+              "relevantCount": 12,
+              "relevantRecall": 1
+            },
+            "5": {
+              "hitQueries": 11,
+              "queryCount": 11,
+              "hitRate": 1,
+              "relevantHits": 12,
+              "relevantCount": 12,
+              "relevantRecall": 1
+            }
+          },
+          "es": {
+            "1": {
+              "hitQueries": 2,
+              "queryCount": 2,
+              "hitRate": 1,
+              "relevantHits": 2,
+              "relevantCount": 3,
+              "relevantRecall": 0.6666666666666666
+            },
+            "3": {
+              "hitQueries": 2,
+              "queryCount": 2,
+              "hitRate": 1,
+              "relevantHits": 3,
+              "relevantCount": 3,
+              "relevantRecall": 1
+            },
+            "5": {
+              "hitQueries": 2,
+              "queryCount": 2,
+              "hitRate": 1,
+              "relevantHits": 3,
+              "relevantCount": 3,
+              "relevantRecall": 1
+            }
+          },
+          "zh": {
+            "1": {
+              "hitQueries": 2,
+              "queryCount": 2,
+              "hitRate": 1,
+              "relevantHits": 2,
+              "relevantCount": 2,
+              "relevantRecall": 1
+            },
+            "3": {
+              "hitQueries": 2,
+              "queryCount": 2,
+              "hitRate": 1,
+              "relevantHits": 2,
+              "relevantCount": 2,
+              "relevantRecall": 1
+            },
+            "5": {
+              "hitQueries": 2,
+              "queryCount": 2,
+              "hitRate": 1,
+              "relevantHits": 2,
+              "relevantCount": 2,
+              "relevantRecall": 1
+            }
+          }
+        }
+      },
+      "firstRepeatQueries": [
+        {
+          "id": "q-cold-battery-title",
+          "language": "en",
+          "relevantIds": [
+            "battery-cold-weather"
+          ],
+          "bestRelevantRank": 1,
+          "top1Hit": true,
+          "top5": [
+            {
+              "id": "battery-cold-weather",
+              "score": 0.6260427908998429
+            },
+            {
+              "id": "drip-irrigation-es",
+              "score": 0.34626256917709075
+            },
+            {
+              "id": "bicycle-gears",
+              "score": 0.33388035324354115
+            },
+            {
+              "id": "trail-water-cache",
+              "score": 0.31805531963351497
+            },
+            {
+              "id": "graywater-garden",
+              "score": 0.3027032442502604
+            }
+          ]
+        },
+        {
+          "id": "q-smoke-filter-title",
+          "language": "en",
+          "relevantIds": [
+            "air-filter-smoke"
+          ],
+          "bestRelevantRank": 1,
+          "top1Hit": true,
+          "top5": [
+            {
+              "id": "air-filter-smoke",
+              "score": 0.6981135220962905
+            },
+            {
+              "id": "humid-season-zh",
+              "score": 0.33650821486464294
+            },
+            {
+              "id": "drip-irrigation-es",
+              "score": 0.3244075664442196
+            },
+            {
+              "id": "graywater-garden",
+              "score": 0.29164795183221665
+            },
+            {
+              "id": "nginx-rate-limit",
+              "score": 0.24998556206963238
+            }
+          ]
+        },
+        {
+          "id": "q-graywater-title",
+          "language": "en",
+          "relevantIds": [
+            "graywater-garden"
+          ],
+          "bestRelevantRank": 1,
+          "top1Hit": true,
+          "top5": [
+            {
+              "id": "graywater-garden",
+              "score": 0.7172843506717201
+            },
+            {
+              "id": "drip-irrigation-es",
+              "score": 0.32864714548453267
+            },
+            {
+              "id": "seed-storage",
+              "score": 0.32303242125054094
+            },
+            {
+              "id": "balcony-herbs-zh",
+              "score": 0.2889476613058589
+            },
+            {
+              "id": "sqlite-wal-backup",
+              "score": 0.26187149142595767
+            }
+          ]
+        },
+        {
+          "id": "q-derailleur-vocabulary",
+          "language": "en",
+          "relevantIds": [
+            "bicycle-gears"
+          ],
+          "bestRelevantRank": 1,
+          "top1Hit": true,
+          "top5": [
+            {
+              "id": "bicycle-gears",
+              "score": 0.6951640454658221
+            },
+            {
+              "id": "clamp-safety",
+              "score": 0.3426883528698012
+            },
+            {
+              "id": "blue-lane-maintenance",
+              "score": 0.29516607452156113
+            },
+            {
+              "id": "green-lane-maintenance",
+              "score": 0.29516607452156113
+            },
+            {
+              "id": "battery-cold-weather",
+              "score": 0.2938515792937695
+            }
+          ]
+        },
+        {
+          "id": "q-passkey-title",
+          "language": "en",
+          "relevantIds": [
+            "passkey-recovery"
+          ],
+          "bestRelevantRank": 1,
+          "top1Hit": true,
+          "top5": [
+            {
+              "id": "passkey-recovery",
+              "score": 0.6072097124101058
+            },
+            {
+              "id": "account-keys-es",
+              "score": 0.5363984040240409
+            },
+            {
+              "id": "sqlite-wal-backup",
+              "score": 0.26372124870647573
+            },
+            {
+              "id": "guest-wifi-zh",
+              "score": 0.22285554563145385
+            },
+            {
+              "id": "battery-cold-weather",
+              "score": 0.21632958021963417
+            }
+          ]
+        },
+        {
+          "id": "q-ferry-time",
+          "language": "en",
+          "relevantIds": [
+            "harbor-ferry"
+          ],
+          "bestRelevantRank": 1,
+          "top1Hit": true,
+          "top5": [
+            {
+              "id": "harbor-ferry",
+              "score": 0.614981924206656
+            },
+            {
+              "id": "trail-water-cache",
+              "score": 0.34352955242218125
+            },
+            {
+              "id": "blue-lane-maintenance",
+              "score": 0.20858305201174138
+            },
+            {
+              "id": "green-lane-maintenance",
+              "score": 0.20858305201174138
+            },
+            {
+              "id": "clamp-safety",
+              "score": 0.2062814485861153
+            }
+          ]
+        },
+        {
+          "id": "q-stew-ingredients",
+          "language": "en",
+          "relevantIds": [
+            "chickpea-stew"
+          ],
+          "bestRelevantRank": 1,
+          "top1Hit": true,
+          "top5": [
+            {
+              "id": "chickpea-stew",
+              "score": 0.6524964148694768
+            },
+            {
+              "id": "graywater-garden",
+              "score": 0.2396251422592319
+            },
+            {
+              "id": "seed-storage",
+              "score": 0.22226852149237064
+            },
+            {
+              "id": "nginx-rate-limit",
+              "score": 0.154535423560369
+            },
+            {
+              "id": "blue-lane-maintenance",
+              "score": 0.152835513420099
+            }
+          ]
+        },
+        {
+          "id": "q-sqlite-code",
+          "language": "en",
+          "relevantIds": [
+            "sqlite-wal-backup"
+          ],
+          "bestRelevantRank": 1,
+          "top1Hit": true,
+          "top5": [
+            {
+              "id": "sqlite-wal-backup",
+              "score": 0.7167131600876054
+            },
+            {
+              "id": "nginx-rate-limit",
+              "score": 0.2557989728448843
+            },
+            {
+              "id": "battery-cold-weather",
+              "score": 0.24801304872071137
+            },
+            {
+              "id": "graywater-garden",
+              "score": 0.23270614581983878
+            },
+            {
+              "id": "clamp-safety",
+              "score": 0.2094300063455805
+            }
+          ]
+        },
+        {
+          "id": "q-spanish-riego",
+          "language": "es",
+          "relevantIds": [
+            "drip-irrigation-es"
+          ],
+          "bestRelevantRank": 1,
+          "top1Hit": true,
+          "top5": [
+            {
+              "id": "drip-irrigation-es",
+              "score": 0.5434029197235369
+            },
+            {
+              "id": "graywater-garden",
+              "score": 0.4099761490988578
+            },
+            {
+              "id": "balcony-herbs-zh",
+              "score": 0.3688309758460361
+            },
+            {
+              "id": "humid-season-zh",
+              "score": 0.35540718670671656
+            },
+            {
+              "id": "seed-storage",
+              "score": 0.2740073087821034
+            }
+          ]
+        },
+        {
+          "id": "q-spanish-cuenta",
+          "language": "es",
+          "relevantIds": [
+            "account-keys-es",
+            "passkey-recovery"
+          ],
+          "bestRelevantRank": 1,
+          "top1Hit": true,
+          "top5": [
+            {
+              "id": "account-keys-es",
+              "score": 0.6762570025401774
+            },
+            {
+              "id": "passkey-recovery",
+              "score": 0.6738174976286364
+            },
+            {
+              "id": "guest-wifi-zh",
+              "score": 0.26239784725703086
+            },
+            {
+              "id": "battery-cold-weather",
+              "score": 0.21312069241060974
+            },
+            {
+              "id": "sqlite-wal-backup",
+              "score": 0.20000920162365302
+            }
+          ]
+        },
+        {
+          "id": "q-chinese-wifi",
+          "language": "zh",
+          "relevantIds": [
+            "guest-wifi-zh"
+          ],
+          "bestRelevantRank": 1,
+          "top1Hit": true,
+          "top5": [
+            {
+              "id": "guest-wifi-zh",
+              "score": 0.6268170582305667
+            },
+            {
+              "id": "graywater-garden",
+              "score": 0.37100246429797507
+            },
+            {
+              "id": "nginx-rate-limit",
+              "score": 0.347727214888459
+            },
+            {
+              "id": "air-filter-smoke",
+              "score": 0.3264160859638643
+            },
+            {
+              "id": "humid-season-zh",
+              "score": 0.30986556210163524
+            }
+          ]
+        },
+        {
+          "id": "q-chinese-humidity",
+          "language": "zh",
+          "relevantIds": [
+            "humid-season-zh"
+          ],
+          "bestRelevantRank": 1,
+          "top1Hit": true,
+          "top5": [
+            {
+              "id": "humid-season-zh",
+              "score": 0.7291479990270413
+            },
+            {
+              "id": "air-filter-smoke",
+              "score": 0.38089987971080014
+            },
+            {
+              "id": "drip-irrigation-es",
+              "score": 0.3729447802123216
+            },
+            {
+              "id": "balcony-herbs-zh",
+              "score": 0.3721174728918499
+            },
+            {
+              "id": "seed-storage",
+              "score": 0.35009883277490117
+            }
+          ]
+        },
+        {
+          "id": "q-ambiguous-labeled-supplies",
+          "language": "en",
+          "relevantIds": [
+            "trail-water-cache",
+            "seed-storage"
+          ],
+          "bestRelevantRank": 1,
+          "top1Hit": true,
+          "top5": [
+            {
+              "id": "trail-water-cache",
+              "score": 0.43886730809473545
+            },
+            {
+              "id": "seed-storage",
+              "score": 0.40612909605881925
+            },
+            {
+              "id": "blue-lane-maintenance",
+              "score": 0.3275445643145156
+            },
+            {
+              "id": "green-lane-maintenance",
+              "score": 0.3275445643145156
+            },
+            {
+              "id": "expense-close",
+              "score": 0.29766279704524384
+            }
+          ]
+        },
+        {
+          "id": "q-blue-lane-title",
+          "language": "en",
+          "relevantIds": [
+            "blue-lane-maintenance"
+          ],
+          "bestRelevantRank": 1,
+          "top1Hit": true,
+          "top5": [
+            {
+              "id": "blue-lane-maintenance",
+              "score": 0.48499313522699844
+            },
+            {
+              "id": "green-lane-maintenance",
+              "score": 0.48499313522699844
+            },
+            {
+              "id": "clamp-safety",
+              "score": 0.30827769958418033
+            },
+            {
+              "id": "microscope-stain",
+              "score": 0.2928932407406363
+            },
+            {
+              "id": "bicycle-gears",
+              "score": 0.2611464506721466
+            }
+          ]
+        },
+        {
+          "id": "q-green-lane-title",
+          "language": "en",
+          "relevantIds": [
+            "green-lane-maintenance"
+          ],
+          "bestRelevantRank": 2,
+          "top1Hit": false,
+          "top5": [
+            {
+              "id": "blue-lane-maintenance",
+              "score": 0.4827759573043501
+            },
+            {
+              "id": "green-lane-maintenance",
+              "score": 0.4827759573043501
+            },
+            {
+              "id": "clamp-safety",
+              "score": 0.3245747237549818
+            },
+            {
+              "id": "humid-season-zh",
+              "score": 0.2611849718811782
+            },
+            {
+              "id": "bicycle-gears",
+              "score": 0.26040041778708967
+            }
+          ]
+        }
+      ]
+    },
+    "B": {
+      "queryInput": "task: search result | query: {query}",
+      "documentInput": "raw chunk",
+      "indexingLatencyMs": {
+        "status": "reused immutable raw-document index from A",
+        "sourceArm": "A",
+        "medianMs": 27.17998899999975,
+        "p95Ms": 62.43669600000021,
+        "totalMs": 773.2645600000005
+      },
+      "queryLatencyMs": {
+        "medianMs": 17.82185699999991,
+        "p95Ms": 19.602297000000362
+      },
+      "primaryFirstRepeat": {
+        "queryRuns": 15,
+        "topK": {
+          "1": {
+            "hitQueries": 14,
+            "queryCount": 15,
+            "hitRate": 0.9333333333333333,
+            "relevantHits": 14,
+            "relevantCount": 17,
+            "relevantRecall": 0.8235294117647058
+          },
+          "3": {
+            "hitQueries": 15,
+            "queryCount": 15,
+            "hitRate": 1,
+            "relevantHits": 17,
+            "relevantCount": 17,
+            "relevantRecall": 1
+          },
+          "5": {
+            "hitQueries": 15,
+            "queryCount": 15,
+            "hitRate": 1,
+            "relevantHits": 17,
+            "relevantCount": 17,
+            "relevantRecall": 1
+          }
+        },
+        "languageSlices": {
+          "en": {
+            "1": {
+              "hitQueries": 10,
+              "queryCount": 11,
+              "hitRate": 0.9090909090909091,
+              "relevantHits": 10,
+              "relevantCount": 12,
+              "relevantRecall": 0.8333333333333334
+            },
+            "3": {
+              "hitQueries": 11,
+              "queryCount": 11,
+              "hitRate": 1,
+              "relevantHits": 12,
+              "relevantCount": 12,
+              "relevantRecall": 1
+            },
+            "5": {
+              "hitQueries": 11,
+              "queryCount": 11,
+              "hitRate": 1,
+              "relevantHits": 12,
+              "relevantCount": 12,
+              "relevantRecall": 1
+            }
+          },
+          "es": {
+            "1": {
+              "hitQueries": 2,
+              "queryCount": 2,
+              "hitRate": 1,
+              "relevantHits": 2,
+              "relevantCount": 3,
+              "relevantRecall": 0.6666666666666666
+            },
+            "3": {
+              "hitQueries": 2,
+              "queryCount": 2,
+              "hitRate": 1,
+              "relevantHits": 3,
+              "relevantCount": 3,
+              "relevantRecall": 1
+            },
+            "5": {
+              "hitQueries": 2,
+              "queryCount": 2,
+              "hitRate": 1,
+              "relevantHits": 3,
+              "relevantCount": 3,
+              "relevantRecall": 1
+            }
+          },
+          "zh": {
+            "1": {
+              "hitQueries": 2,
+              "queryCount": 2,
+              "hitRate": 1,
+              "relevantHits": 2,
+              "relevantCount": 2,
+              "relevantRecall": 1
+            },
+            "3": {
+              "hitQueries": 2,
+              "queryCount": 2,
+              "hitRate": 1,
+              "relevantHits": 2,
+              "relevantCount": 2,
+              "relevantRecall": 1
+            },
+            "5": {
+              "hitQueries": 2,
+              "queryCount": 2,
+              "hitRate": 1,
+              "relevantHits": 2,
+              "relevantCount": 2,
+              "relevantRecall": 1
+            }
+          }
+        }
+      },
+      "firstRepeatQueries": [
+        {
+          "id": "q-cold-battery-title",
+          "language": "en",
+          "relevantIds": [
+            "battery-cold-weather"
+          ],
+          "bestRelevantRank": 1,
+          "top1Hit": true,
+          "top5": [
+            {
+              "id": "battery-cold-weather",
+              "score": 0.6210725496501097
+            },
+            {
+              "id": "trail-water-cache",
+              "score": 0.30555981588960973
+            },
+            {
+              "id": "drip-irrigation-es",
+              "score": 0.2880349375599133
+            },
+            {
+              "id": "bicycle-gears",
+              "score": 0.28302352662572805
+            },
+            {
+              "id": "clamp-safety",
+              "score": 0.20306034775320345
+            }
+          ]
+        },
+        {
+          "id": "q-smoke-filter-title",
+          "language": "en",
+          "relevantIds": [
+            "air-filter-smoke"
+          ],
+          "bestRelevantRank": 1,
+          "top1Hit": true,
+          "top5": [
+            {
+              "id": "air-filter-smoke",
+              "score": 0.7076286514737584
+            },
+            {
+              "id": "drip-irrigation-es",
+              "score": 0.2526640535491237
+            },
+            {
+              "id": "humid-season-zh",
+              "score": 0.24997080011482317
+            },
+            {
+              "id": "nginx-rate-limit",
+              "score": 0.184037974810763
+            },
+            {
+              "id": "graywater-garden",
+              "score": 0.17275810426281152
+            }
+          ]
+        },
+        {
+          "id": "q-graywater-title",
+          "language": "en",
+          "relevantIds": [
+            "graywater-garden"
+          ],
+          "bestRelevantRank": 1,
+          "top1Hit": true,
+          "top5": [
+            {
+              "id": "graywater-garden",
+              "score": 0.6664057947015091
+            },
+            {
+              "id": "drip-irrigation-es",
+              "score": 0.28541010943774564
+            },
+            {
+              "id": "balcony-herbs-zh",
+              "score": 0.24920291035646974
+            },
+            {
+              "id": "seed-storage",
+              "score": 0.23972723405522242
+            },
+            {
+              "id": "trail-water-cache",
+              "score": 0.2298185028535162
+            }
+          ]
+        },
+        {
+          "id": "q-derailleur-vocabulary",
+          "language": "en",
+          "relevantIds": [
+            "bicycle-gears"
+          ],
+          "bestRelevantRank": 1,
+          "top1Hit": true,
+          "top5": [
+            {
+              "id": "bicycle-gears",
+              "score": 0.6934334627370433
+            },
+            {
+              "id": "battery-cold-weather",
+              "score": 0.24334616747911944
+            },
+            {
+              "id": "clamp-safety",
+              "score": 0.23720910684314248
+            },
+            {
+              "id": "blue-lane-maintenance",
+              "score": 0.21072923501588012
+            },
+            {
+              "id": "green-lane-maintenance",
+              "score": 0.21072923501588012
+            }
+          ]
+        },
+        {
+          "id": "q-passkey-title",
+          "language": "en",
+          "relevantIds": [
+            "passkey-recovery"
+          ],
+          "bestRelevantRank": 1,
+          "top1Hit": true,
+          "top5": [
+            {
+              "id": "passkey-recovery",
+              "score": 0.6109223596072967
+            },
+            {
+              "id": "account-keys-es",
+              "score": 0.5688844184312463
+            },
+            {
+              "id": "sqlite-wal-backup",
+              "score": 0.19347876681879078
+            },
+            {
+              "id": "guest-wifi-zh",
+              "score": 0.16887497632390955
+            },
+            {
+              "id": "battery-cold-weather",
+              "score": 0.14930159283381916
+            }
+          ]
+        },
+        {
+          "id": "q-ferry-time",
+          "language": "en",
+          "relevantIds": [
+            "harbor-ferry"
+          ],
+          "bestRelevantRank": 1,
+          "top1Hit": true,
+          "top5": [
+            {
+              "id": "harbor-ferry",
+              "score": 0.6010347201627948
+            },
+            {
+              "id": "trail-water-cache",
+              "score": 0.30313661530028174
+            },
+            {
+              "id": "nginx-rate-limit",
+              "score": 0.12275352599824155
+            },
+            {
+              "id": "bicycle-gears",
+              "score": 0.11923223443873088
+            },
+            {
+              "id": "blue-lane-maintenance",
+              "score": 0.11471355451886824
+            }
+          ]
+        },
+        {
+          "id": "q-stew-ingredients",
+          "language": "en",
+          "relevantIds": [
+            "chickpea-stew"
+          ],
+          "bestRelevantRank": 1,
+          "top1Hit": true,
+          "top5": [
+            {
+              "id": "chickpea-stew",
+              "score": 0.6705674194259559
+            },
+            {
+              "id": "seed-storage",
+              "score": 0.12818234737758247
+            },
+            {
+              "id": "graywater-garden",
+              "score": 0.10920368775303461
+            },
+            {
+              "id": "blue-lane-maintenance",
+              "score": 0.07371994113624251
+            },
+            {
+              "id": "green-lane-maintenance",
+              "score": 0.07371994113624251
+            }
+          ]
+        },
+        {
+          "id": "q-sqlite-code",
+          "language": "en",
+          "relevantIds": [
+            "sqlite-wal-backup"
+          ],
+          "bestRelevantRank": 1,
+          "top1Hit": true,
+          "top5": [
+            {
+              "id": "sqlite-wal-backup",
+              "score": 0.6806028780794148
+            },
+            {
+              "id": "battery-cold-weather",
+              "score": 0.17798599121654415
+            },
+            {
+              "id": "nginx-rate-limit",
+              "score": 0.16613022133378808
+            },
+            {
+              "id": "trail-water-cache",
+              "score": 0.14953511889951207
+            },
+            {
+              "id": "passkey-recovery",
+              "score": 0.11973720243463769
+            }
+          ]
+        },
+        {
+          "id": "q-spanish-riego",
+          "language": "es",
+          "relevantIds": [
+            "drip-irrigation-es"
+          ],
+          "bestRelevantRank": 1,
+          "top1Hit": true,
+          "top5": [
+            {
+              "id": "drip-irrigation-es",
+              "score": 0.5453024858576483
+            },
+            {
+              "id": "balcony-herbs-zh",
+              "score": 0.3388640817065317
+            },
+            {
+              "id": "graywater-garden",
+              "score": 0.3319014241529645
+            },
+            {
+              "id": "humid-season-zh",
+              "score": 0.3121555599678492
+            },
+            {
+              "id": "seed-storage",
+              "score": 0.2278229816170641
+            }
+          ]
+        },
+        {
+          "id": "q-spanish-cuenta",
+          "language": "es",
+          "relevantIds": [
+            "account-keys-es",
+            "passkey-recovery"
+          ],
+          "bestRelevantRank": 1,
+          "top1Hit": true,
+          "top5": [
+            {
+              "id": "account-keys-es",
+              "score": 0.7306986610441908
+            },
+            {
+              "id": "passkey-recovery",
+              "score": 0.6944707776017834
+            },
+            {
+              "id": "guest-wifi-zh",
+              "score": 0.20852120792367643
+            },
+            {
+              "id": "battery-cold-weather",
+              "score": 0.17102823379969356
+            },
+            {
+              "id": "sqlite-wal-backup",
+              "score": 0.1638067597500885
+            }
+          ]
+        },
+        {
+          "id": "q-chinese-wifi",
+          "language": "zh",
+          "relevantIds": [
+            "guest-wifi-zh"
+          ],
+          "bestRelevantRank": 1,
+          "top1Hit": true,
+          "top5": [
+            {
+              "id": "guest-wifi-zh",
+              "score": 0.6825939121013651
+            },
+            {
+              "id": "humid-season-zh",
+              "score": 0.2977113728610307
+            },
+            {
+              "id": "nginx-rate-limit",
+              "score": 0.29063735456934725
+            },
+            {
+              "id": "air-filter-smoke",
+              "score": 0.2809826571489423
+            },
+            {
+              "id": "account-keys-es",
+              "score": 0.2682804911911261
+            }
+          ]
+        },
+        {
+          "id": "q-chinese-humidity",
+          "language": "zh",
+          "relevantIds": [
+            "humid-season-zh"
+          ],
+          "bestRelevantRank": 1,
+          "top1Hit": true,
+          "top5": [
+            {
+              "id": "humid-season-zh",
+              "score": 0.6677607309333325
+            },
+            {
+              "id": "air-filter-smoke",
+              "score": 0.3200371732694679
+            },
+            {
+              "id": "balcony-herbs-zh",
+              "score": 0.3038845837140357
+            },
+            {
+              "id": "drip-irrigation-es",
+              "score": 0.2818219207294442
+            },
+            {
+              "id": "seed-storage",
+              "score": 0.2804194891819122
+            }
+          ]
+        },
+        {
+          "id": "q-ambiguous-labeled-supplies",
+          "language": "en",
+          "relevantIds": [
+            "trail-water-cache",
+            "seed-storage"
+          ],
+          "bestRelevantRank": 1,
+          "top1Hit": true,
+          "top5": [
+            {
+              "id": "trail-water-cache",
+              "score": 0.38714957506356495
+            },
+            {
+              "id": "seed-storage",
+              "score": 0.3701976718707493
+            },
+            {
+              "id": "blue-lane-maintenance",
+              "score": 0.2629976719585041
+            },
+            {
+              "id": "green-lane-maintenance",
+              "score": 0.2629976719585041
+            },
+            {
+              "id": "expense-close",
+              "score": 0.23450942313479292
+            }
+          ]
+        },
+        {
+          "id": "q-blue-lane-title",
+          "language": "en",
+          "relevantIds": [
+            "blue-lane-maintenance"
+          ],
+          "bestRelevantRank": 1,
+          "top1Hit": true,
+          "top5": [
+            {
+              "id": "blue-lane-maintenance",
+              "score": 0.40996269483643694
+            },
+            {
+              "id": "green-lane-maintenance",
+              "score": 0.40996269483643694
+            },
+            {
+              "id": "microscope-stain",
+              "score": 0.263087985826483
+            },
+            {
+              "id": "trail-water-cache",
+              "score": 0.2141237963443887
+            },
+            {
+              "id": "bicycle-gears",
+              "score": 0.20685145663354057
+            }
+          ]
+        },
+        {
+          "id": "q-green-lane-title",
+          "language": "en",
+          "relevantIds": [
+            "green-lane-maintenance"
+          ],
+          "bestRelevantRank": 2,
+          "top1Hit": false,
+          "top5": [
+            {
+              "id": "blue-lane-maintenance",
+              "score": 0.4014635674081321
+            },
+            {
+              "id": "green-lane-maintenance",
+              "score": 0.4014635674081321
+            },
+            {
+              "id": "clamp-safety",
+              "score": 0.21974498225795955
+            },
+            {
+              "id": "trail-water-cache",
+              "score": 0.21016173948342073
+            },
+            {
+              "id": "bicycle-gears",
+              "score": 0.20618840040346156
+            }
+          ]
+        }
+      ]
+    },
+    "C": {
+      "queryInput": "task: search result | query: {query}",
+      "documentInput": "title: {real dataset title} | text: {raw chunk}",
+      "indexingLatencyMs": {
+        "medianMs": 28.56490500000018,
+        "p95Ms": 44.32838400000037,
+        "totalMs": 722.6146129999988
+      },
+      "queryLatencyMs": {
+        "medianMs": 18.88528200000019,
+        "p95Ms": 20.540469999999914
+      },
+      "primaryFirstRepeat": {
+        "queryRuns": 15,
+        "topK": {
+          "1": {
+            "hitQueries": 15,
+            "queryCount": 15,
+            "hitRate": 1,
+            "relevantHits": 15,
+            "relevantCount": 17,
+            "relevantRecall": 0.8823529411764706
+          },
+          "3": {
+            "hitQueries": 15,
+            "queryCount": 15,
+            "hitRate": 1,
+            "relevantHits": 17,
+            "relevantCount": 17,
+            "relevantRecall": 1
+          },
+          "5": {
+            "hitQueries": 15,
+            "queryCount": 15,
+            "hitRate": 1,
+            "relevantHits": 17,
+            "relevantCount": 17,
+            "relevantRecall": 1
+          }
+        },
+        "languageSlices": {
+          "en": {
+            "1": {
+              "hitQueries": 11,
+              "queryCount": 11,
+              "hitRate": 1,
+              "relevantHits": 11,
+              "relevantCount": 12,
+              "relevantRecall": 0.9166666666666666
+            },
+            "3": {
+              "hitQueries": 11,
+              "queryCount": 11,
+              "hitRate": 1,
+              "relevantHits": 12,
+              "relevantCount": 12,
+              "relevantRecall": 1
+            },
+            "5": {
+              "hitQueries": 11,
+              "queryCount": 11,
+              "hitRate": 1,
+              "relevantHits": 12,
+              "relevantCount": 12,
+              "relevantRecall": 1
+            }
+          },
+          "es": {
+            "1": {
+              "hitQueries": 2,
+              "queryCount": 2,
+              "hitRate": 1,
+              "relevantHits": 2,
+              "relevantCount": 3,
+              "relevantRecall": 0.6666666666666666
+            },
+            "3": {
+              "hitQueries": 2,
+              "queryCount": 2,
+              "hitRate": 1,
+              "relevantHits": 3,
+              "relevantCount": 3,
+              "relevantRecall": 1
+            },
+            "5": {
+              "hitQueries": 2,
+              "queryCount": 2,
+              "hitRate": 1,
+              "relevantHits": 3,
+              "relevantCount": 3,
+              "relevantRecall": 1
+            }
+          },
+          "zh": {
+            "1": {
+              "hitQueries": 2,
+              "queryCount": 2,
+              "hitRate": 1,
+              "relevantHits": 2,
+              "relevantCount": 2,
+              "relevantRecall": 1
+            },
+            "3": {
+              "hitQueries": 2,
+              "queryCount": 2,
+              "hitRate": 1,
+              "relevantHits": 2,
+              "relevantCount": 2,
+              "relevantRecall": 1
+            },
+            "5": {
+              "hitQueries": 2,
+              "queryCount": 2,
+              "hitRate": 1,
+              "relevantHits": 2,
+              "relevantCount": 2,
+              "relevantRecall": 1
+            }
+          }
+        }
+      },
+      "firstRepeatQueries": [
+        {
+          "id": "q-cold-battery-title",
+          "language": "en",
+          "relevantIds": [
+            "battery-cold-weather"
+          ],
+          "bestRelevantRank": 1,
+          "top1Hit": true,
+          "top5": [
+            {
+              "id": "battery-cold-weather",
+              "score": 0.6959490191154764
+            },
+            {
+              "id": "trail-water-cache",
+              "score": 0.3086140274103227
+            },
+            {
+              "id": "drip-irrigation-es",
+              "score": 0.26018512048039427
+            },
+            {
+              "id": "bicycle-gears",
+              "score": 0.24685074654318376
+            },
+            {
+              "id": "clamp-safety",
+              "score": 0.19635615595966582
+            }
+          ]
+        },
+        {
+          "id": "q-smoke-filter-title",
+          "language": "en",
+          "relevantIds": [
+            "air-filter-smoke"
+          ],
+          "bestRelevantRank": 1,
+          "top1Hit": true,
+          "top5": [
+            {
+              "id": "air-filter-smoke",
+              "score": 0.7768281804463534
+            },
+            {
+              "id": "humid-season-zh",
+              "score": 0.2591513556066671
+            },
+            {
+              "id": "graywater-garden",
+              "score": 0.21478626077994484
+            },
+            {
+              "id": "drip-irrigation-es",
+              "score": 0.203850200253284
+            },
+            {
+              "id": "blue-lane-maintenance",
+              "score": 0.17109153352572506
+            }
+          ]
+        },
+        {
+          "id": "q-graywater-title",
+          "language": "en",
+          "relevantIds": [
+            "graywater-garden"
+          ],
+          "bestRelevantRank": 1,
+          "top1Hit": true,
+          "top5": [
+            {
+              "id": "graywater-garden",
+              "score": 0.6695036366476855
+            },
+            {
+              "id": "drip-irrigation-es",
+              "score": 0.3654655337579099
+            },
+            {
+              "id": "balcony-herbs-zh",
+              "score": 0.2514510582292394
+            },
+            {
+              "id": "trail-water-cache",
+              "score": 0.24793512936445078
+            },
+            {
+              "id": "seed-storage",
+              "score": 0.23212821034657255
+            }
+          ]
+        },
+        {
+          "id": "q-derailleur-vocabulary",
+          "language": "en",
+          "relevantIds": [
+            "bicycle-gears"
+          ],
+          "bestRelevantRank": 1,
+          "top1Hit": true,
+          "top5": [
+            {
+              "id": "bicycle-gears",
+              "score": 0.644396366552741
+            },
+            {
+              "id": "battery-cold-weather",
+              "score": 0.22949615599884093
+            },
+            {
+              "id": "blue-lane-maintenance",
+              "score": 0.20120113706539672
+            },
+            {
+              "id": "green-lane-maintenance",
+              "score": 0.1873764776541403
+            },
+            {
+              "id": "clamp-safety",
+              "score": 0.18613182568527373
+            }
+          ]
+        },
+        {
+          "id": "q-passkey-title",
+          "language": "en",
+          "relevantIds": [
+            "passkey-recovery"
+          ],
+          "bestRelevantRank": 1,
+          "top1Hit": true,
+          "top5": [
+            {
+              "id": "passkey-recovery",
+              "score": 0.7541418751439347
+            },
+            {
+              "id": "account-keys-es",
+              "score": 0.5374534487847402
+            },
+            {
+              "id": "sqlite-wal-backup",
+              "score": 0.1649431773080284
+            },
+            {
+              "id": "guest-wifi-zh",
+              "score": 0.14314374465210908
+            },
+            {
+              "id": "expense-close",
+              "score": 0.12304538624119672
+            }
+          ]
+        },
+        {
+          "id": "q-ferry-time",
+          "language": "en",
+          "relevantIds": [
+            "harbor-ferry"
+          ],
+          "bestRelevantRank": 1,
+          "top1Hit": true,
+          "top5": [
+            {
+              "id": "harbor-ferry",
+              "score": 0.6291439488590155
+            },
+            {
+              "id": "trail-water-cache",
+              "score": 0.2814279779072655
+            },
+            {
+              "id": "bicycle-gears",
+              "score": 0.12684415082828676
+            },
+            {
+              "id": "nginx-rate-limit",
+              "score": 0.10755083682643962
+            },
+            {
+              "id": "balcony-herbs-zh",
+              "score": 0.08942810432774409
+            }
+          ]
+        },
+        {
+          "id": "q-stew-ingredients",
+          "language": "en",
+          "relevantIds": [
+            "chickpea-stew"
+          ],
+          "bestRelevantRank": 1,
+          "top1Hit": true,
+          "top5": [
+            {
+              "id": "chickpea-stew",
+              "score": 0.6892950754407431
+            },
+            {
+              "id": "seed-storage",
+              "score": 0.11293164964543889
+            },
+            {
+              "id": "green-lane-maintenance",
+              "score": 0.09390879007332198
+            },
+            {
+              "id": "nginx-rate-limit",
+              "score": 0.07629503683426135
+            },
+            {
+              "id": "graywater-garden",
+              "score": 0.06610763841025753
+            }
+          ]
+        },
+        {
+          "id": "q-sqlite-code",
+          "language": "en",
+          "relevantIds": [
+            "sqlite-wal-backup"
+          ],
+          "bestRelevantRank": 1,
+          "top1Hit": true,
+          "top5": [
+            {
+              "id": "sqlite-wal-backup",
+              "score": 0.7893603621799181
+            },
+            {
+              "id": "battery-cold-weather",
+              "score": 0.16688480245679777
+            },
+            {
+              "id": "trail-water-cache",
+              "score": 0.1599437576958084
+            },
+            {
+              "id": "nginx-rate-limit",
+              "score": 0.15807841306126108
+            },
+            {
+              "id": "graywater-garden",
+              "score": 0.131510141786173
+            }
+          ]
+        },
+        {
+          "id": "q-spanish-riego",
+          "language": "es",
+          "relevantIds": [
+            "drip-irrigation-es"
+          ],
+          "bestRelevantRank": 1,
+          "top1Hit": true,
+          "top5": [
+            {
+              "id": "drip-irrigation-es",
+              "score": 0.5941999214158076
+            },
+            {
+              "id": "graywater-garden",
+              "score": 0.36609506702199673
+            },
+            {
+              "id": "balcony-herbs-zh",
+              "score": 0.3262794209412786
+            },
+            {
+              "id": "humid-season-zh",
+              "score": 0.3025781738468355
+            },
+            {
+              "id": "trail-water-cache",
+              "score": 0.2474161333675298
+            }
+          ]
+        },
+        {
+          "id": "q-spanish-cuenta",
+          "language": "es",
+          "relevantIds": [
+            "account-keys-es",
+            "passkey-recovery"
+          ],
+          "bestRelevantRank": 1,
+          "top1Hit": true,
+          "top5": [
+            {
+              "id": "account-keys-es",
+              "score": 0.6590600191353513
+            },
+            {
+              "id": "passkey-recovery",
+              "score": 0.6386533240791517
+            },
+            {
+              "id": "guest-wifi-zh",
+              "score": 0.192874501227841
+            },
+            {
+              "id": "expense-close",
+              "score": 0.15647913870806987
+            },
+            {
+              "id": "sqlite-wal-backup",
+              "score": 0.14913933989116265
+            }
+          ]
+        },
+        {
+          "id": "q-chinese-wifi",
+          "language": "zh",
+          "relevantIds": [
+            "guest-wifi-zh"
+          ],
+          "bestRelevantRank": 1,
+          "top1Hit": true,
+          "top5": [
+            {
+              "id": "guest-wifi-zh",
+              "score": 0.6643802598520998
+            },
+            {
+              "id": "nginx-rate-limit",
+              "score": 0.2834857962190276
+            },
+            {
+              "id": "air-filter-smoke",
+              "score": 0.2550293782729773
+            },
+            {
+              "id": "humid-season-zh",
+              "score": 0.2530526374312653
+            },
+            {
+              "id": "graywater-garden",
+              "score": 0.23280641526844642
+            }
+          ]
+        },
+        {
+          "id": "q-chinese-humidity",
+          "language": "zh",
+          "relevantIds": [
+            "humid-season-zh"
+          ],
+          "bestRelevantRank": 1,
+          "top1Hit": true,
+          "top5": [
+            {
+              "id": "humid-season-zh",
+              "score": 0.7213851082940441
+            },
+            {
+              "id": "balcony-herbs-zh",
+              "score": 0.2925856180785098
+            },
+            {
+              "id": "air-filter-smoke",
+              "score": 0.28857169491144646
+            },
+            {
+              "id": "drip-irrigation-es",
+              "score": 0.27342233568767355
+            },
+            {
+              "id": "seed-storage",
+              "score": 0.24469235474548048
+            }
+          ]
+        },
+        {
+          "id": "q-ambiguous-labeled-supplies",
+          "language": "en",
+          "relevantIds": [
+            "trail-water-cache",
+            "seed-storage"
+          ],
+          "bestRelevantRank": 1,
+          "top1Hit": true,
+          "top5": [
+            {
+              "id": "seed-storage",
+              "score": 0.4335004624303649
+            },
+            {
+              "id": "trail-water-cache",
+              "score": 0.40610051146223874
+            },
+            {
+              "id": "green-lane-maintenance",
+              "score": 0.2546221330097423
+            },
+            {
+              "id": "expense-close",
+              "score": 0.2338130459342194
+            },
+            {
+              "id": "blue-lane-maintenance",
+              "score": 0.2302563883195735
+            }
+          ]
+        },
+        {
+          "id": "q-blue-lane-title",
+          "language": "en",
+          "relevantIds": [
+            "blue-lane-maintenance"
+          ],
+          "bestRelevantRank": 1,
+          "top1Hit": true,
+          "top5": [
+            {
+              "id": "blue-lane-maintenance",
+              "score": 0.6884261591194806
+            },
+            {
+              "id": "green-lane-maintenance",
+              "score": 0.5625528224394378
+            },
+            {
+              "id": "bicycle-gears",
+              "score": 0.2674647514857938
+            },
+            {
+              "id": "microscope-stain",
+              "score": 0.263100442936054
+            },
+            {
+              "id": "trail-water-cache",
+              "score": 0.2448777609719468
+            }
+          ]
+        },
+        {
+          "id": "q-green-lane-title",
+          "language": "en",
+          "relevantIds": [
+            "green-lane-maintenance"
+          ],
+          "bestRelevantRank": 1,
+          "top1Hit": true,
+          "top5": [
+            {
+              "id": "green-lane-maintenance",
+              "score": 0.6774848272486679
+            },
+            {
+              "id": "blue-lane-maintenance",
+              "score": 0.5334288826047153
+            },
+            {
+              "id": "bicycle-gears",
+              "score": 0.24659528554482107
+            },
+            {
+              "id": "clamp-safety",
+              "score": 0.24500404795531297
+            },
+            {
+              "id": "trail-water-cache",
+              "score": 0.22833364229110853
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "comparisons": {
+    "primaryFirstRepeat": {
+      "B-vs-A": {
+        "1": {
+          "k": 1,
+          "hitQueryDelta": 0,
+          "hitRateDelta": 0,
+          "gains": [],
+          "regressions": [],
+          "unchanged": 15
+        },
+        "3": {
+          "k": 3,
+          "hitQueryDelta": 0,
+          "hitRateDelta": 0,
+          "gains": [],
+          "regressions": [],
+          "unchanged": 15
+        },
+        "5": {
+          "k": 5,
+          "hitQueryDelta": 0,
+          "hitRateDelta": 0,
+          "gains": [],
+          "regressions": [],
+          "unchanged": 15
+        }
+      },
+      "C-vs-B": {
+        "1": {
+          "k": 1,
+          "hitQueryDelta": 1,
+          "hitRateDelta": 0.06666666666666665,
+          "gains": [
+            {
+              "queryId": "q-green-lane-title",
+              "repetition": 1
+            }
+          ],
+          "regressions": [],
+          "unchanged": 14
+        },
+        "3": {
+          "k": 3,
+          "hitQueryDelta": 0,
+          "hitRateDelta": 0,
+          "gains": [],
+          "regressions": [],
+          "unchanged": 15
+        },
+        "5": {
+          "k": 5,
+          "hitQueryDelta": 0,
+          "hitRateDelta": 0,
+          "gains": [],
+          "regressions": [],
+          "unchanged": 15
+        }
+      }
+    },
+    "repeatedPooled": {
+      "B-vs-A": {
+        "1": {
+          "k": 1,
+          "hitQueryDelta": 0,
+          "hitRateDelta": 0,
+          "gains": [],
+          "regressions": [],
+          "unchanged": 45
+        },
+        "3": {
+          "k": 3,
+          "hitQueryDelta": 0,
+          "hitRateDelta": 0,
+          "gains": [],
+          "regressions": [],
+          "unchanged": 45
+        },
+        "5": {
+          "k": 5,
+          "hitQueryDelta": 0,
+          "hitRateDelta": 0,
+          "gains": [],
+          "regressions": [],
+          "unchanged": 45
+        }
+      },
+      "C-vs-B": {
+        "1": {
+          "k": 1,
+          "hitQueryDelta": 3,
+          "hitRateDelta": 0.06666666666666665,
+          "gains": [
+            {
+              "queryId": "q-green-lane-title",
+              "repetition": 1
+            },
+            {
+              "queryId": "q-green-lane-title",
+              "repetition": 2
+            },
+            {
+              "queryId": "q-green-lane-title",
+              "repetition": 3
+            }
+          ],
+          "regressions": [],
+          "unchanged": 42
+        },
+        "3": {
+          "k": 3,
+          "hitQueryDelta": 0,
+          "hitRateDelta": 0,
+          "gains": [],
+          "regressions": [],
+          "unchanged": 45
+        },
+        "5": {
+          "k": 5,
+          "hitQueryDelta": 0,
+          "hitRateDelta": 0,
+          "gains": [],
+          "regressions": [],
+          "unchanged": 45
+        }
+      }
+    }
+  },
+  "wireAndRepeatChecks": {
+    "exactWireInputsRetainedInEvidenceBundle": true,
+    "all15QueriesHaveThreeStableTopFiveRankingsPerArm": true,
+    "BAndCVectorsForAll45QueriesAreExactlyEqual": true,
+    "anonymousBlueAndGreenRawDocumentVectorsAreExactlyEqual": true
+  },
+  "interpretation": [
+    "A and B each retrieved a relevant document at Top 1 for 14/15 first-repeat queries (93.3%); C did so for 15/15 (100%). All arms retrieved every labeled relevant document by Top 3 and Top 5.",
+    "C versus B gained only q-green-lane-title at Top 1, with no regressions. B versus A had no Top-1 gain or regression.",
+    "English Top-1 was A/B 10/11 and C 11/11. Spanish and Chinese were 2/2 for every arm; each slice has only two queries and is too small to support generalization.",
+    "The corpus is tiny, synthetic and mostly saturated; it includes a designed title-only distinction. No production quality threshold or acceptance decision was defined.",
+    "All three repeats produced stable rankings. No labels, prompts or corpus content were tuned after the run.",
+    "The model was initially unloaded; the 2598.194 ms primer was separate. Arms then ran warm in fixed order without controlled background load. These timings do not support a cold-start or speed conclusion.",
+    "A indexed raw chunks in 773.26456 ms total (median 27.18 ms); C indexed titled chunks in 722.614613 ms total (median 28.56 ms). B explicitly reused A’s index and has no independent indexing duration.",
+    "This prototype does not implement the complete title path, provenance, title invalidation, legacy-vector handling or a safe refresh/migration path. Production migration remains gated by upstream maintainer direction and issue #99; #159 remains open. No full CI pass is claimed.",
+    "Model choice was gpt-6-luna at high reasoning with fresh contexts. The harness reports no token usage or cost, so no savings or comparison against a stronger implementation is claimed."
+  ],
+  "developmentAndReview": [
+    "The staged Luna/high workflow implemented recipe #175, corpus #176, gateway #177, wrappers #178 and harness #179, with coordinator review and serial merging.",
+    "Independent Standards and Specification reviews at experiment commit 3eeee1968a6c3f552125ff7244ee80c48bd264e7 found no findings within the bounded prototype.",
+    "Review-driven rework covered nullable guards and blank-title fallback; fixture typing, cross-language equivalence and a title-only pair before freeze; SDK seam typing; and evaluation payload, warm-state and unique-query reporting.",
+    "A pilot blank-title discrimination result was incorrectly attributed to upstream and later corrected; separate initial formatter, gateway and wrapper behavioral reversals were valid. Full-title callers, provenance, legacy-vector behavior, migration and upstream PR remain gated pending maintainer direction."
+  ]
+}

@@ -150,6 +150,10 @@ test/embed-stale-chunkless-pages.serial.test.ts	global-state	global-state: proce
 test/embed-stale-dry-run-restamp-5289.serial.test.ts	global-state	global-state: process-wide test seams __setEmbedTransportForTests; configureGateway changes the process-wide AI gateway
 test/embed-stale-signature-pagination.serial.test.ts	R1	R1: mutates process.env (GBRAIN_EMBED_CONCURRENCY)
 test/embed-stale-unavailable-snapshot.serial.test.ts	global-state	global-state: process-wide test seams __setEmbedTransportForTests; configureGateway changes the process-wide AI gateway
+test/embedding-document-stale.serial.test.ts	global-state	global-state: configureGateway mutates the process-wide embedding gateway; binds the fake Ollama loopback server
+test/embedding-document-manual.serial.test.ts	global-state	global-state: configureGateway mutates the process-wide embedding gateway; binds the fake Ollama loopback server
+test/embedding-document-refresh-safety.serial.test.ts	global-state	global-state: configureGateway mutates the process-wide embedding gateway; binds a held fake Ollama loopback response
+test/embedding-document-refresh.serial.test.ts	global-state	global-state: configureGateway mutates the process-wide embedding gateway; binds the fake Ollama loopback server; sets process.env through withEnv
 test/embed.serial.test.ts	R2	R2: mock.module(../src/core/embedding.ts) replaces modules for every file in the process
 test/embedding-completion-atomic.serial.test.ts	global-state	global-state: process-wide test seams __setChatTransportForTests, __setEmbedTransportForTests; configureGateway changes the process-wide AI gateway
 test/embedding-identity-companions.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll; R4: PGLiteEngine without an afterAll disconnect; process-wide test seams __setEmbedTransportForTests, __setRerankTransportForTests; configureGateway changes the process-wide AI gateway; spyOn globalThis.fetch

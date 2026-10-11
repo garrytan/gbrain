@@ -3,6 +3,7 @@ import { isValidSourceId } from './source-id.ts';
 
 export interface EmbedFactsOptions {
   sourceId: string;
+  all?: boolean;
   dryRun?: boolean;
   yes?: boolean;
   maxCostUsd?: number;
@@ -16,15 +17,15 @@ export function validateEmbedFactsOptions(value: unknown): EmbedFactsOptions {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return invalid('Fact backfill requires typed options',
     'Run fact repair through gbrain embed --stale --facts, which builds the typed options; an owner-proxy caller sends options as a JSON object.');
   const options = value as Record<string, unknown>;
-  const allowed = ['sourceId', 'dryRun', 'yes', 'maxCostUsd', 'maxFacts', 'batchSize', 'budgetMs'];
+  const allowed = ['sourceId', 'all', 'dryRun', 'yes', 'maxCostUsd', 'maxFacts', 'batchSize', 'budgetMs'];
   const extra = Object.keys(options).filter(key => !allowed.includes(key));
   if (extra.length) return invalid('Unsupported fact backfill options',
     `Remove ${extra.join(', ')}; fact repair options are ${allowed.join(', ')}. Run one gbrain release on the caller and the brain host.`);
   if (!isValidSourceId(options.sourceId)) return invalid('Fact backfill requires an explicit --source <id>',
     'Name the source with --source, e.g. gbrain embed --stale --facts --source default --dry-run; gbrain sources list --json lists the source ids.');
-  for (const flag of ['dryRun', 'yes']) {
+  for (const flag of ['all', 'dryRun', 'yes']) {
     if (options[flag] !== undefined && typeof options[flag] !== 'boolean') return invalid(`${flag} must be a boolean`,
-      `Send ${flag} as a JSON boolean; on the CLI it is the bare flag ${flag === 'dryRun' ? '--dry-run' : '--yes'}.`);
+      `Send ${flag} as a JSON boolean; on the CLI it is the bare flag ${flag === 'dryRun' ? '--dry-run' : flag === 'all' ? '--all' : '--yes'}.`);
   }
   for (const [key, flag, max] of [
     ['maxFacts', '--max-facts', 10_000], ['batchSize', '--batch-size', 100], ['budgetMs', '--budget-ms', 3_600_000],

@@ -28,6 +28,8 @@ import {
 import { resolveSourceId } from '../core/source-resolver.ts';
 import { resolveOwnerHolder } from '../core/owner-holder.ts';
 import { embedStaleTakes } from '../core/embed-takes.ts';
+import { embedTakesWithConsent } from '../core/embed-takes-refresh.ts';
+import { isValidSourceId } from '../core/source-id.ts';
 import { assertBrainEmbeddingEnabled } from '../core/embedding-dim-check.ts';
 import { loadConfig } from '../core/config.ts';
 import { embedQuery } from '../core/embedding.ts';
@@ -204,8 +206,15 @@ async function cmdSearch(engine: BrainEngine, args: string[]): Promise<void> {
 }
 
 async function cmdEmbed(engine: BrainEngine, args: string[]): Promise<void> {
+  if (['--all', '--yes', '--max-cost-usd', '--budget-ms'].some(flag => flagPresent(args, flag))) {
+    return cmdRefreshEmbedTakes(engine, args);
+  }
   const dryRun = flagPresent(args, '--dry-run');
   const json = flagPresent(args, '--json');
+  const sourceId = flagValue(args, '--source-id');
+  if (flagPresent(args, '--source-id') && (!sourceId || !isValidSourceId(sourceId))) {
+    throw new Error('--source-id requires a valid source id');
+  }
   const batchSizeRaw = flagValue(args, '--batch-size');
   const batchSize = batchSizeRaw === undefined ? undefined : Number.parseInt(batchSizeRaw, 10);
   if (batchSize !== undefined && (!Number.isInteger(batchSize) || batchSize < 1)) {
@@ -219,7 +228,7 @@ async function cmdEmbed(engine: BrainEngine, args: string[]): Promise<void> {
     validateEmbeddingCreds();
   }
 
-  const result = await embedStaleTakes(engine, { batchSize, dryRun });
+  const result = await embedStaleTakes(engine, { batchSize, dryRun, sourceId });
   if (json) {
     console.log(JSON.stringify(result, null, 2));
   } else if (dryRun) {
@@ -232,6 +241,64 @@ async function cmdEmbed(engine: BrainEngine, args: string[]): Promise<void> {
   }
   if (result.failures > 0) {
     throw new Error(`takes embedding failed for ${result.failures} take(s)`);
+  }
+}
+
+async function cmdRefreshEmbedTakes(engine: BrainEngine, args: string[]): Promise<void> {
+  const value = (flag: string) => flagValue(args, flag);
+  const sourceId = value('--source-id');
+  if (!sourceId || !isValidSourceId(sourceId)) throw new Error('--source-id requires an explicit valid source id for takes refresh');
+
+  const maxCostRaw = value('--max-cost-usd');
+  if (flagPresent(args, '--max-cost-usd') && maxCostRaw === undefined) throw new Error('--max-cost-usd requires a value');
+  const maxCostUsd = maxCostRaw === undefined ? undefined : Number(maxCostRaw);
+  if (maxCostRaw !== undefined && (!maxCostRaw.trim() || !Number.isFinite(maxCostUsd) || maxCostUsd! < 0)) {
+    throw new Error(`Invalid --max-cost-usd "${maxCostRaw}". Expected a finite non-negative number.`);
+  }
+  const budgetRaw = value('--budget-ms');
+  if (flagPresent(args, '--budget-ms') && budgetRaw === undefined) throw new Error('--budget-ms requires a value');
+  const budgetMs = budgetRaw === undefined ? undefined : Number(budgetRaw);
+  if (budgetRaw !== undefined && (!budgetRaw.trim() || !Number.isSafeInteger(budgetMs)
+    || budgetMs! < 1 || budgetMs! > 3_600_000)) {
+    throw new Error(`Invalid --budget-ms "${budgetRaw}". Expected an integer from 1 to 3600000.`);
+  }
+  const batchSizeRaw = value('--batch-size');
+  if (flagPresent(args, '--batch-size') && batchSizeRaw === undefined) throw new Error('--batch-size requires a value');
+  const batchSize = batchSizeRaw === undefined ? undefined : Number(batchSizeRaw);
+  if (batchSizeRaw !== undefined && (!Number.isSafeInteger(batchSize) || batchSize! < 1 || batchSize! > 500)) {
+    throw new Error(`Invalid --batch-size "${batchSizeRaw}". Expected an integer from 1 to 500.`);
+  }
+
+  const yes = flagPresent(args, '--yes');
+  const dryRun = flagPresent(args, '--dry-run');
+  if (yes && maxCostUsd === undefined) throw new Error('--yes requires --max-cost-usd with a finite non-negative cap');
+  if (yes && !dryRun) {
+    await assertBrainEmbeddingEnabled(engine, loadConfig());
+    const { validateEmbeddingCreds } = await import('../core/embed-preflight.ts');
+    validateEmbeddingCreds();
+  }
+
+  const result = await embedTakesWithConsent(engine, {
+    sourceId,
+    all: flagPresent(args, '--all'),
+    dryRun,
+    yes,
+    maxCostUsd,
+    budgetMs,
+    batchSize,
+  }, loadConfig());
+  const json = flagPresent(args, '--json');
+  if (json) {
+    console.log(JSON.stringify(result, null, 2));
+  } else if (result.stopped === 'preview') {
+    console.log(`[dry-run] Would refresh ${result.would_embed} active take(s) in source ${result.source_id}`);
+  } else if (result.stopped === 'complete') {
+    console.log(`Refreshed ${result.takes.embedded} take(s) in source ${result.source_id}; ${result.remaining} remain stale.`);
+  } else {
+    console.error(`Take refresh ${result.stopped}; ${result.remaining} remain stale (spent $${result.cost_usd.toFixed(6)}).`);
+  }
+  if (result.stopped === 'failed' || result.stopped === 'aborted') {
+    throw new Error(`takes refresh ${result.stopped}; ${result.remaining} remain stale`);
   }
 }
 
@@ -473,7 +540,8 @@ Subcommands:
   takes search "<query>" [--semantic] [--limit N] [--json]
                                           Keyword search, or semantic search with --semantic
   takes embed [--dry-run] [--batch-size N] [--json]
-                                          Embed active takes for semantic think/search retrieval (#2089)
+              [--source-id S] [--all] [--yes --max-cost-usd N] [--budget-ms N]
+                                          Embed active takes; preview or consent-gated source refresh
   takes add <slug> --claim "..." --kind <fact|take|bet|hunch> --who <holder>
                    [--weight 0.5] [--source "..."] [--since YYYY-MM]
                                           Append a take (markdown + DB)

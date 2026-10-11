@@ -28,6 +28,8 @@ test/e2e/chronicle-event-projection-parity.test.ts
 test/e2e/code-edges-read-parity.test.ts
 test/e2e/doctor-silent-death-parity.test.ts
 test/e2e/embedding-recovery-parity.test.ts
+test/e2e/embedding-document-take-lock-order-postgres.test.ts
+test/e2e/persistence-embedding-effects.test.ts
 test/e2e/engine-parity-cjk.test.ts
 test/e2e/engine-parity-salience.test.ts
 test/e2e/engine-parity.test.ts

@@ -3,17 +3,18 @@
  *
  * `content_chunks.embedding_input_hash` is written in the same statement as the
  * vector. It digests the vector column, model and dimensions, the wrapping tier
- * the vector was built under, and the exact embedding input: the chunk text for
- * `none` and fenced code, the title prefix plus the chunk text for `title`, and
- * (because a generated synopsis cannot be recomputed) the page's synopsis
- * corpus generation, the full title the synopsis prompt read, the document-body hash and the chunk text for
- * `per_chunk_synopsis`. A projection rebuild keeps a vector only when the stored
- * hash equals one recomputed from the current page, so an unchanged input keeps
+ * the vector was built under, and the exact embedding input. Recipe-formatted
+ * inputs use the prepared request bytes; generated synopsis text cannot be
+ * recomputed, so its hash keeps the semantic receipt. A projection rebuild
+ * keeps a vector only when its stored hash matches one recomputed from the
+ * current page, so an unchanged input keeps
  * its vector and any change to it (title, body in synopsis mode, model, column,
  * dimensions, wrapper bytes) nulls it. `embedded_text_hash` keeps its meaning.
  */
 import { digest, sha256 } from './persistence/digest.ts';
 import { buildContextualPrefix, wrapChunkForEmbedding } from './embedding-context.ts';
+import { formatEmbeddingInput } from './ai/model-resolver.ts';
+import { prepareEmbedInputs } from './ai/embed-batch-plan.ts';
 
 export type EmbeddingTier = 'none' | 'title' | 'per_chunk_synopsis';
 
@@ -29,6 +30,16 @@ export interface EmbeddingInputContext {
 }
 
 type HashedChunk = { chunk_text: string; chunk_source?: string | null };
+
+const DOCUMENT_FORMAT_PROBE = 'gbrain document format probe';
+const DOCUMENT_FORMAT_TITLE_PROBE = 'gbrain document title probe';
+
+/** Whether the model's existing document recipe changes a titled non-empty input. */
+export function requiresEmbeddingInputProof(model: string | null): boolean {
+  return model !== null && formatEmbeddingInput(DOCUMENT_FORMAT_PROBE, model, {
+    inputType: 'document', documentTitle: DOCUMENT_FORMAT_TITLE_PROBE,
+  }) !== DOCUMENT_FORMAT_PROBE;
+}
 
 /** The document a synopsis is generated from: every non-image chunk, in order. */
 export function synopsisBodyHash(chunks: ReadonlyArray<HashedChunk>): string {
@@ -50,8 +61,24 @@ export function embeddingInputHash(ctx: EmbeddingInputContext, tier: EmbeddingTi
   const input = raw ? chunk.chunk_text
     : tier === 'title' ? wrapChunkForEmbedding(chunk.chunk_text, buildContextualPrefix(ctx.title, null), chunk.chunk_source)
     : digest([ctx.title, ctx.bodyHash, chunk.chunk_text]);
-  return digest(['embedding-input-v1', ctx.column, ctx.model, ctx.dimensions, tier,
-    tier === 'per_chunk_synopsis' ? ctx.corpusGeneration : null, sha256(input)]);
+  const generation = tier === 'per_chunk_synopsis' ? ctx.corpusGeneration : null;
+  if (ctx.model === null || !requiresEmbeddingInputProof(ctx.model)) {
+    return digest(['embedding-input-v1', ctx.column, ctx.model, ctx.dimensions, tier, generation, sha256(input)]);
+  }
+
+  const synopsis = tier === 'per_chunk_synopsis' && chunk.chunk_source !== 'fenced_code';
+  const inputHash = synopsis ? sha256(input) : sha256(prepareEmbedInputs([input], ctx.model, {
+    inputType: 'document', documentTitle: ctx.title,
+  })[0]!);
+  const provenance: unknown[] = ['embedding-input-v2', ctx.column, ctx.model, ctx.dimensions, tier,
+    generation, inputHash];
+  if (synopsis) {
+    const formatIdentity = prepareEmbedInputs([DOCUMENT_FORMAT_PROBE], ctx.model, {
+      inputType: 'document', documentTitle: ctx.title,
+    })[0]!;
+    provenance.push(sha256(formatIdentity));
+  }
+  return digest(provenance);
 }
 
 /**

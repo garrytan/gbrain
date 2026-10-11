@@ -164,6 +164,8 @@ Recipe ships with `nomic-embed-text` (768d, recommended), `mxbai-embed-large` (1
 
 The recipe default is `nomic-embed-text`'s 768 dims. If you run one of the larger models, declare its native dimension with `--embedding-dimensions <N>` at init — gbrain trusts the value you declare for local recipes instead of rejecting a non-768 width.
 
+The source proposal tracked in [system issue #200](https://github.com/xorets/ubuntu-server-system/issues/200) adds title-aware document input formatting for the Ollama EmbeddingGemma family. This is not a claim that a released build includes it or that maintainers have approved production use. On a build containing both the formatter and title transport, each document is sent as `title: {actual title} | text: {body}` before truncation; missing title metadata uses `none`. Queries continue to use only the brain's explicit `embedding_query_prefix` setting. See the [proposed refresh and rollback procedure](../guides/embedding-migration.md#embeddinggemma-document-format-refresh-proposal) before refreshing existing vectors.
+
 Ollama also exposes an OpenAI-compatible `/v1/chat/completions` endpoint, so gbrain can use local chat models for query expansion, `think`, facts extraction, and dream synthesis. A minimal local setup:
 
 ```bash

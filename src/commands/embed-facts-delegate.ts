@@ -18,11 +18,11 @@ const invalid = (message: string, suggestion: string) => opError('invalid_params
 
 export function parseFactEmbedArgs(args: string[]): EmbedFactsOptions {
   if (!args.includes('--stale') || !args.includes('--facts')) {
-    throw invalid('Use embed --stale --facts --source <id> [--dry-run | --yes --max-cost-usd N] [--max-facts N]',
+    throw invalid('Use embed --stale --facts --source <id> [--all] [--dry-run | --yes --max-cost-usd N] [--max-facts N]',
       'Fact repair takes both --stale and --facts: preview with gbrain embed --stale --facts --source SOURCE --dry-run, then apply with --yes --max-cost-usd N after the user approves the cost.');
   }
   const options: Record<string, unknown> = {};
-  const booleans = { '--dry-run': 'dryRun', '--yes': 'yes' } as const;
+  const booleans = { '--all': 'all', '--dry-run': 'dryRun', '--yes': 'yes' } as const;
   const values = { '--source': 'sourceId', '--max-cost-usd': 'maxCostUsd', '--max-facts': 'maxFacts', '--batch-size': 'batchSize', '--budget-ms': 'budgetMs' } as const;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -30,8 +30,8 @@ export function parseFactEmbedArgs(args: string[]): EmbedFactsOptions {
     const boolean = booleans[arg as keyof typeof booleans];
     if (boolean) { options[boolean] = true; continue; }
     const key = values[arg as keyof typeof values];
-    if (!key) throw invalid('Use embed --stale --facts with only source, preview, approval, and bounded repair options',
-      `Remove ${arg.split('=')[0]}; fact repair accepts --source, --dry-run, --yes, --max-cost-usd, --max-facts, --batch-size, --budget-ms, --json and --quiet.`);
+    if (!key) throw invalid('Use embed --stale --facts with only source, refresh, preview, approval, and bounded repair options',
+      `Remove ${arg.split('=')[0]}; fact repair accepts --source, --all, --dry-run, --yes, --max-cost-usd, --max-facts, --batch-size, --budget-ms, --json and --quiet.`);
     const value = args[++i];
     if (!value || value.startsWith('--')) throw invalid(`${arg} requires a value`, `Give ${arg} its value right after it, e.g. ${arg} ${FACT_EMBED_EXAMPLES[arg]}.`);
     if (options[key] !== undefined) throw invalid(`${arg} may be supplied only once`, `Pass ${arg} once, with the one value you mean.`);

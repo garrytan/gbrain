@@ -24,8 +24,7 @@ import { installPageEmbeddings, installPageProjection, preparePageProjection, pr
   sealPageTextProjection, stampEmbeddingInputs, type ProjectionSnapshot } from './page-state/projections.ts';
 import { sanitizeText } from './batch-rows.ts';
 import { hasProtectedBody, safeChunksFilter } from './search/safe-chunks.ts';
-import { planEmbeddingReuse } from './embed-reuse.ts';
-import { reuseStoredChunkVectors } from './import-chunk-reuse.ts';
+import { reuseCodeChunkVectors, reuseStoredChunkVectors } from './import-chunk-reuse.ts';
 import { extractCodeRefs, imageOfCandidates } from './link-extraction.ts';
 import { embedMultimodal, currentEmbeddingSignature } from './embedding.ts';
 // #3374 — import-path embeds ride the shared retry loop (429 retry-after +
@@ -647,7 +646,7 @@ export async function importFromContent(
         : null;
     const wrappedTexts = pending.map(i => prefix ? wrapChunkForEmbedding(chunks[i].chunk_text, prefix, chunks[i].chunk_source) : chunks[i].chunk_text);
     // #4616: store the usable vectors; refused chunks stay NULL for embed --stale.
-    const { vectors: embeddings, refused } = await embedBatchKeepingUsable(wrappedTexts);
+    const { vectors: embeddings, refused } = await embedBatchKeepingUsable(wrappedTexts, { documentTitle: parsed.title });
     embeddingPartial = refused;
     pending.forEach((i, j) => {
       if (!embeddings[j]) return;
@@ -1266,34 +1265,18 @@ export async function importCodeFile(
   const code = await prepareCodeChunks(parsedPage, relativePath);
   const { chunks, edges: extractedEdges } = code;
 
-  // v0.19.0 E2 — incremental chunking. Embedding calls dominate the cost
-  // of a sync; re-embedding unchanged chunks wastes money without
-  // improving retrieval. Look up existing chunks by slug and, for any
-  // whose body matches a new chunk's, reuse the existing embedding. Only truly
-  // new/changed chunks hit the embedding API. The match runs on the
-  // header-stripped body: the header carries line numbers and the index shifts
-  // when a symbol is added above, so keying on either re-embedded
-  // byte-identical bodies.
   // `includeEmbedding` is load-bearing: #2544 dropped the vector from the
-  // default column list, which silently made this whole cache a no-op.
-  const existingChunks = existing && !opts.noEmbed
-    ? await engine.getChunks(slug, { sourceId: sourceId ?? 'default', includeEmbedding: true, requireSafeChunks: true })
-    : [];
-  const { reuse, needsEmbedIndexes } = planEmbeddingReuse(existingChunks, chunks);
-  for (const [i, matched] of reuse) {
-    // Reuse the existing embedding verbatim. No API call, no cost. Carry the
-    // stored model stamp with the vector so provenance survives a model swap.
-    chunks[i]!.embedding = matched.embedding as Float32Array;
-    chunks[i]!.token_count = matched.token_count ?? undefined;
-    if (matched.model) chunks[i]!.model = matched.model;
-  }
+  // default column list, which silently made this cache a no-op.
+  const needsEmbedIndexes = existing && !opts.noEmbed
+    ? await reuseCodeChunkVectors(engine, slug, sourceId ?? 'default', title, chunks)
+    : chunks.map((_, index) => index);
 
   // Embed only the new/changed chunks.
   let codeEmbeddingFailed = false;
   if (!opts.noEmbed && needsEmbedIndexes.length > 0) {
     try {
       const textsToEmbed = needsEmbedIndexes.map((i) => chunks[i]!.chunk_text);
-      const embeddings = await embedBatchWithBackoff(textsToEmbed);
+      const embeddings = await embedBatchWithBackoff(textsToEmbed, { documentTitle: title });
       for (let j = 0; j < needsEmbedIndexes.length; j++) {
         const i = needsEmbedIndexes[j]!;
         chunks[i]!.embedding = embeddings[j]!;
