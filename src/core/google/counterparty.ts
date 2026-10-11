@@ -94,7 +94,7 @@ export async function resolveCounterparty(
 
 /**
  * The `(counterparty_slug, source)` predicate readers confine a loop → entity
- * join with: a row written before v234 has no counterparty source and is read
+ * join with: a row written before v235 has no counterparty source and is read
  * as its own source, the posture it was written under.
  */
 export const COUNTERPARTY_SOURCE_SQL = 'COALESCE(counterparty_source_id, source_id)';
