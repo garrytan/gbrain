@@ -92,9 +92,9 @@ async function seedLegacyPage(page: typeof pages[number]) {
 
 async function storedRows() {
   return engine.executeRaw<{ slug: string; embedding: string | null; model: string | null;
-    signature: string | null; embedding_input_hash: string | null; body: string }>(
+    signature: string | null; embedding_input_hash: string | null; body: string; chunk_text: string }>(
     `SELECT p.slug,cc.embedding::text AS embedding,cc.model,p.embedding_signature AS signature,
-            cc.embedding_input_hash,p.compiled_truth AS body
+            cc.embedding_input_hash,p.compiled_truth AS body,cc.chunk_text
        FROM content_chunks cc JOIN pages p ON p.id=cc.page_id
       WHERE p.slug LIKE 'refresh-safety/%' ORDER BY p.slug`);
 }
@@ -129,10 +129,15 @@ test('full refresh refuses a zero vector without stamping its proof and still re
   const refused = after.find(row => row.slug === pages[0]!.slug)!;
   const healthy = after.find(row => row.slug === pages[1]!.slug)!;
   expect(refused.body).toBe(pages[0]!.body);
+  expect(refused.chunk_text).toBe(pages[0]!.body);
   expect(isZeroVector(refused.embedding)).toBe(false);
   expect(refused.embedding_input_hash).toBeNull();
   expect(healthy.body).toBe(pages[1]!.body);
-  expect(isZeroVector(healthy.embedding)).toBe(false);
+  expect(healthy.chunk_text).toBe(pages[1]!.body);
+  expect(healthy.embedding).not.toBeNull();
+  const healthyVector = healthy.embedding!.slice(1, -1).split(',').map(Number);
+  expect(healthyVector).toHaveLength(DIMS);
+  expect(healthyVector.every(value => value === 0.2)).toBe(true);
   expect(healthy.embedding_input_hash).toBe(await expectedProof(pages[1]!));
 });
 
@@ -154,15 +159,23 @@ test('a held full-refresh response arriving after cancellation cannot change per
   const operation = withEnv({ GBRAIN_HOME: home, GBRAIN_EMBEDDING_MODEL: undefined,
     GBRAIN_EMBEDDING_DIMENSIONS: undefined, GBRAIN_EMBED_CONCURRENCY: '1' }, () =>
     runEmbedCore(engine, { all: true, quiet: true, signal: controller.signal }));
-  await startedPromise;
-  controller.abort();
-  const atCancellation = await storedRows();
-  expect(atCancellation[0]!.body).toBe(page.body);
-  expect(atCancellation[0]!.embedding_input_hash).toBeNull();
+  try {
+    await Promise.race([startedPromise, operation.then(() => {
+      throw new Error('Full refresh completed without starting the held HTTP request');
+    })]);
+    controller.abort();
+    const atCancellation = await storedRows();
+    expect(atCancellation[0]!.body).toBe(page.body);
+    expect(atCancellation[0]!.chunk_text).toBe(page.body);
+    expect(atCancellation[0]!.embedding_input_hash).toBeNull();
 
-  releaseHeldResponse?.();
-  await operation;
-  expect(await storedRows()).toEqual(atCancellation);
-  expect(requests).toHaveLength(1);
-  expect(requests[0]!.model).toBe(MODEL_ID);
+    releaseHeldResponse?.();
+    await operation;
+    expect(await storedRows()).toEqual(atCancellation);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]!.model).toBe(MODEL_ID);
+  } finally {
+    releaseHeldResponse?.();
+    await operation;
+  }
 });
