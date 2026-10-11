@@ -382,10 +382,21 @@ test('migration 176: re-keys the newest committed checkpoint, re-walks a compact
     const snapshot = await engine.executeRaw("SELECT op,fingerprint,completed_keys FROM op_checkpoints WHERE op LIKE 'managed-connector%' ORDER BY op,fingerprint");
     expect(await migrateConnectorCheckpoints(engine, () => {})).toEqual({ rekeyed: [], rewalking: [], removed: { checkpoints: 0, retries: 0 } });
     expect(await engine.executeRaw("SELECT op,fingerprint,completed_keys FROM op_checkpoints WHERE op LIKE 'managed-connector%' ORDER BY op,fingerprint")).toEqual(snapshot);
-    // The first post-upgrade runs: the live source resumes its legacy cursor and is pinned with unverified continuity; the compacted one re-walks once.
+    // Migration preserves the legacy checkpoint, but People tokens are bound
+    // to their old field mask. The first new-mask sweep must re-list contacts
+    // (including unchanged phone-only entries); subsequent sweeps use its token.
     calls.length = 0;
-    await google(engine, live, fetcher);
-    expect(calls.some(url => url.includes('syncToken=legacy-token'))).toBe(true);
+    const phoneContact = { resourceName: 'people/phone-only', names: [{ displayName: 'Phone Only Example' }], emailAddresses: [], phoneNumbers: [{ value: '+12025550100' }] };
+    const upgraded = people(() => [contact('first', 'First Example'), phoneContact]);
+    await google(engine, live, upgraded.fetcher);
+    const contactCalls = upgraded.calls.filter(url => url.includes('/people/me/connections'));
+    expect(contactCalls).toHaveLength(1);
+    expect(new URL(contactCalls[0]).searchParams.has('syncToken')).toBe(false);
+    expect(new URL(contactCalls[0]).searchParams.get('personFields')).toContain('phoneNumbers');
+    expect((await engine.getPage('people/phone-only-example', { sourceId: live.id }))?.frontmatter.phones).toEqual(['+12025550100']);
+    upgraded.calls.length = 0;
+    await google(engine, live, upgraded.fetcher);
+    expect(upgraded.calls.some(url => url.includes('syncToken=contacts-stable'))).toBe(true);
     expect((await readConnectorSourceStatuses(engine)).get(live.id)).toMatchObject({ upgrade_recovery: 'resumed', continuity_unverified: true, account_pinned: true });
     await google(engine, compacted, fetcher);
     expect((await readConnectorSourceStatuses(engine)).get(compacted.id)).toMatchObject({ upgrade_recovery: 'none' });
