@@ -113,7 +113,80 @@ describe('doctor supervisor_singleton — honors the recorded pid_file (custom -
       const check = await findSingletonCheck();
       expect(check).toBeDefined();
       expect(check?.status).toBe('warn');
-      expect(check?.message).toContain('singleton lock is held by');
+      expect(check?.message).toBe(
+        `Queue 'default' singleton lock is held by ${os.hostname()}:${process.pid}, ` +
+        `but the local pidfile points to ${os.hostname()}:none. A second supervisor may be ` +
+        `running with a different --max-rss (effective cap here: 512MB). Stop the extra one ` +
+        `and keep a single supervisor per queue: gbrain jobs supervisor stop.`,
+      );
+      expect(check?.details).toEqual({
+        queue: 'default', lock_holder: `${os.hostname()}:${process.pid}`,
+        local: `${os.hostname()}:none`, effective_max_rss_mb: 512,
+      });
+      expect(check?.details).not.toHaveProperty('same_pid_host_label_differs');
+    });
+  });
+
+  test('same pid with a different host label asks to check every host before stopping', async () => {
+    await withEnv({ GBRAIN_AUDIT_DIR: auditDir }, async () => {
+      const localHost = os.hostname();
+      const holderHost = localHost === 'host-a' ? 'host-b' : 'host-a';
+      const customPidFile = path.join(pidFileDir, 'custom-supervisor.pid');
+      fs.writeFileSync(customPidFile, String(process.pid), 'utf8');
+      writeStartedEvent({ pid_file: customPidFile, queue: 'default', max_rss_mb: 512 });
+      await holdLiveLock('default', process.pid, holderHost);
+
+      const check = await findSingletonCheck();
+      expect(check).toBeDefined();
+      expect(check?.status).toBe('warn');
+      const message = check?.message ?? '';
+      expect(message).toContain('host label differs');
+      expect(message).toContain('may mean this machine');
+      expect(message).toContain('hostname changed after the lock was acquired');
+      expect(message).toContain('does not rule out a supervisor on another host');
+      expect(message).toContain('every host that uses this database');
+      expect(message).toContain('that acquires the lock records the current hostname');
+      expect(message).toContain('effective cap here: 512MB');
+      // No overclaim and no unconditional instruction to stop a supervisor.
+      expect(message).not.toContain('usually');
+      expect(message).not.toContain('refreshes the label');
+      expect(message).not.toContain('Stop the extra one');
+      const checkIndex = message.indexOf('Check for a second supervisor');
+      const stopIndex = message.indexOf('gbrain jobs supervisor stop');
+      expect(checkIndex).toBeGreaterThanOrEqual(0);
+      expect(stopIndex).toBeGreaterThan(checkIndex);
+      expect(check?.details).toEqual({
+        queue: 'default', lock_holder: `${holderHost}:${process.pid}`,
+        local: `${localHost}:${process.pid}`, effective_max_rss_mb: 512,
+        same_pid_host_label_differs: true,
+      });
+    });
+  });
+
+  test('different pid and host preserve the existing mismatch warning', async () => {
+    await withEnv({ GBRAIN_AUDIT_DIR: auditDir }, async () => {
+      const localHost = os.hostname();
+      const holderHost = localHost === 'host-a' ? 'host-b' : 'host-a';
+      const holderPid = process.pid + 1;
+      const customPidFile = path.join(pidFileDir, 'custom-supervisor.pid');
+      fs.writeFileSync(customPidFile, String(process.pid), 'utf8');
+      writeStartedEvent({ pid_file: customPidFile, queue: 'default', max_rss_mb: 512 });
+      await holdLiveLock('default', holderPid, holderHost);
+
+      const check = await findSingletonCheck();
+      expect(check).toBeDefined();
+      expect(check?.status).toBe('warn');
+      expect(check?.message).toBe(
+        `Queue 'default' singleton lock is held by ${holderHost}:${holderPid}, ` +
+        `but the local pidfile points to ${localHost}:${process.pid}. A second supervisor may be ` +
+        `running with a different --max-rss (effective cap here: 512MB). Stop the extra one ` +
+        `and keep a single supervisor per queue: gbrain jobs supervisor stop.`,
+      );
+      expect(check?.details).toEqual({
+        queue: 'default', lock_holder: `${holderHost}:${holderPid}`,
+        local: `${localHost}:${process.pid}`, effective_max_rss_mb: 512,
+      });
+      expect(check?.details).not.toHaveProperty('same_pid_host_label_differs');
     });
   });
 });
