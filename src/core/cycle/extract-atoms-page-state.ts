@@ -4,6 +4,14 @@ import { stableJson } from '../persistence/digest.ts';
 import type { BrainEngine } from '../engine.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 
+/**
+ * gbrain#4148: consecutive same-content failures of a content-deterministic
+ * class (malformed model output or provider content block) before the page is tombstoned so the
+ * backlog floor can clear. A content edit resets the streak. #6325: a managed
+ * page or transcript settles held_failed at the same bound.
+ */
+export const MAX_DETERMINISTIC_FAILURES = 3;
+
 export interface AtomPageIdentity {
   pageId: number;
   sourceIncarnation: string;

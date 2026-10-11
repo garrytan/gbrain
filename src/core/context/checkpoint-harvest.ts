@@ -36,7 +36,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { CapabilityReport } from '../capability.ts';
 import { acquireCorpusClaim, CORPUS_CLAIM_SUFFIX, CORPUS_INGESTED_SUFFIX } from '../sweep.ts';
 import { appendCheckpointManifest } from './session-state.ts';
-import { corpusFileSessionId, corpusTextForExtraction, readSegmentLedger, selfCaptureSidecarJson, HARVEST_RECEIPT_SUFFIX } from './corpus-segments.ts';
+import { corpusFileSessionId, corpusTextForExtraction, parseSegmentFileName, readSegmentLedger, selfCaptureSidecarJson, HARVEST_RECEIPT_SUFFIX } from './corpus-segments.ts';
 import { corpusFileStat, readCorpusProgress, runCorpusWindows } from './corpus-windows.ts';
 import { isClaudeCliSelfSessionId } from '../ai/providers/claude-cli-scratch.ts';
 import { writeHeartbeat } from './hook-heartbeat.ts';
@@ -60,7 +60,10 @@ export { HARVEST_RECEIPT_SUFFIX };
 
 export interface HarvestJob {
   engine: BrainEngine;
+  /** #6268: the file's resolved source (its stamp or its session's frozen record), never a serve default. */
   sourceId: string;
+  /** #6268: `sources.incarnation` the source resolved to; binds the receipt and window progress. */
+  sourceIncarnation?: string;
   /** Harness session id — manifest lane + fact provenance. */
   sessionId: string;
   /** Absolute corpus dir (resolved by the CALLER the serve way). */
@@ -89,6 +92,9 @@ interface HarvestReceipt {
   seg: string;
   links: string[];
   ts: string;
+  /** #6268: the source + incarnation the links were extracted into; a replay under another is refused. */
+  source_id?: string;
+  source_incarnation?: string;
 }
 
 const queue: HarvestJob[] = [];
@@ -337,10 +343,9 @@ function logFirstHarvestError(job: HarvestJob, reason: string, e: unknown): void
     + '(logged once per serve run; later failures with this reason are counted in the hooks heartbeat only)');
 }
 
-/** `<sessionId>.seg-<hash12>.txt` → hash12 ('' when the name has no hash part). */
+/** A segment basename's content hash ('' when the name is not a segment). */
 function segHashFromName(file: string): string {
-  const m = /\.seg-([0-9a-f]+)\.txt$/.exec(file);
-  return m ? m[1] : '';
+  return parseSegmentFileName(file)?.hash ?? '';
 }
 
 async function runOne(job: HarvestJob): Promise<{
@@ -380,6 +385,10 @@ async function runOne(job: HarvestJob): Promise<{
     // Receipt retry path (codex round 2): extraction already happened; the
     // manifest publish failed transiently. Re-publish WITHOUT re-extracting.
     let receipt = await readReceipt(receiptPath);
+    if (receipt?.source_id !== undefined && (receipt.source_id !== job.sourceId
+      || (job.sourceIncarnation !== undefined && receipt.source_incarnation !== job.sourceIncarnation))) {
+      return { outcome: 'degraded', reason: 'receipt_source_mismatch' };
+    }
     let counts: { inserted: number; duplicate: number } | null = null;
     // #5887: the harvest extracts window 1 only; when more remains, `.progress`
     // stands in for `.ingested` and the sweep finishes the tail.
@@ -421,6 +430,7 @@ async function runOne(job: HarvestJob): Promise<{
         // Paste stripping happens per turn inside the window planner (#5812).
         run = await runCorpusWindows({
           full, raw, fileStat, maxWindows: 1, overBudget: () => false, signal: abort.signal,
+          ...(job.sourceIncarnation ? { source: { id: job.sourceId, incarnation: job.sourceIncarnation } } : {}),
           extract: (text) => runFactsPipeline(text, {
             engine: job.engine,
             sourceId: job.sourceId,
@@ -441,6 +451,7 @@ async function runOne(job: HarvestJob): Promise<{
       // no .ingested, no progress) and releases the claim — fully retryable.
       if (abort.signal.aborted || run.status === 'aborted') return { outcome: 'degraded', reason: 'aborted' };
       if (run.status === 'contended') return { outcome: 'degraded', reason: 'claimed_elsewhere' };
+      if (run.status === 'source_changed') return { outcome: 'degraded', reason: 'corpus_source_changed' };
       windowsPending = run.status !== 'complete';
       const r = run.result;
 
@@ -450,6 +461,8 @@ async function runOne(job: HarvestJob): Promise<{
         seg: segHashFromName(job.file),
         links: r.entity_slugs,
         ts: new Date().toISOString(),
+        source_id: job.sourceId,
+        ...(job.sourceIncarnation ? { source_incarnation: job.sourceIncarnation } : {}),
       };
       await writeFile(receiptPath, JSON.stringify(receipt) + '\n', { mode: 0o600 });
     }

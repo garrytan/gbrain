@@ -275,11 +275,13 @@ for (const backend of testBackends()) {
           }
 
           // Session capture: session-end wrote A's transcript to the corpus, and the sweep ingests it.
-          const corpus = join(hookHome, '.gbrain', 'transcripts', 'corpus');
+          // #6268: session files land in the corpus spool, the session's source stamped in the name.
+          const corpusRoot = join(hookHome, '.gbrain', 'transcripts', 'corpus');
+          const corpus = join(corpusRoot, 'sourced');
           const files = readdirSync(corpus).filter(name => name.endsWith('.txt'));
           expect(files.some(name => name.startsWith('sess-a'))).toBe(true);
           for (const name of files) for (const secret of secrets) expect(readFileSync(join(corpus, name), 'utf8')).not.toContain(secret);
-          await engine.setConfig('dream.synthesize.session_corpus_dir', corpus);
+          await engine.setConfig('dream.synthesize.session_corpus_dir', corpusRoot);
           const prompts: string[] = [];
           __setChatTransportForTests(async (req: unknown): Promise<ChatResult> => {
             const prompt = JSON.stringify(req);

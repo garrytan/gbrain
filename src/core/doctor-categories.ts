@@ -115,6 +115,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'entity_link_coverage',
   'eval_drift',
   'extract_atoms_backlog',
+  // #6325: managed atom origins held after repeated extraction failures.
+  'extract_atoms_held_failed',
   'extract_health',
   'facts_embedding_width_consistency',
   'facts_extraction_health',

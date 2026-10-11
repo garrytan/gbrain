@@ -172,6 +172,7 @@ export async function generatePerChunkSynopsis(
     system: SYSTEM_PROMPT,
     messages: [{ role: 'user', content: userPrompt }],
     maxTokens,
+    thinking: 'off',
     abortSignal: args.abortSignal,
     cacheSystem: true,
   };

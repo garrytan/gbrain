@@ -743,6 +743,10 @@
       },
       {
         "category": "brain",
+        "name": "extract_atoms_held_failed"
+      },
+      {
+        "category": "brain",
         "name": "fence_integrity"
       },
       {

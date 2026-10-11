@@ -282,24 +282,83 @@ test('unfinished synthesis refuses an intervening user revision rather than adop
     const bytes = readFileSync(path, 'utf8');
     const spent = calls();
     const replay = await runPhaseSynthesize(engine, opts);
-    expect(replay.status).toBe('fail');
+    // #6360: a user revision is a per-page warn, not a phase failure every cycle.
+    expect(replay.status).toBe('warn');
     expect(calls()).toBe(spent);
     expect((await engine.readPageSnapshot(slug, { sourceId }))!.revision).toBe(snapshot.revision);
     expect(readFileSync(path, 'utf8')).toBe(bytes);
   });
 }, 120_000);
 
-test('a revision_conflict phase failure keeps the suggestion that names the slug (#6242)', async () => {
+test('a revision_conflict output keeps the suggestion that names the slug (#6242, #6360)', async () => {
   await fixture(async ({ engine, sourceId, opts, edit }) => {
     await interruptAfterChild(engine, sourceId, opts);
     const slug = await outputSlug(engine, sourceId);
     await edit(slug);
     const replay = await runPhaseSynthesize(engine, opts);
-    expect(replay.status).toBe('fail');
-    expect(replay.error?.code).toBe('SYNTH_PHASE_FAIL');
-    expect(replay.details.error_code).toBe('revision_conflict');
-    expect(replay.error?.hint).toContain(slug);
-    expect(replay.error?.hint).toContain(sourceId);
+    expect(replay.status).toBe('warn');
+    const [conflict] = replay.details.postprocess_conflicts as Array<{ slug: string; message: string; fix: { argv: string[] } }>;
+    expect(conflict.slug).toBe(slug);
+    expect(conflict.message).toContain(slug);
+    expect(conflict.message).toContain(sourceId);
+    expect(conflict.fix.argv).toEqual(['gbrain', 'get', '--source', sourceId, '--', slug]);
+    expect(replay.details.pages_written).toBe(0);
+    expect(await engine.getConfig('dream.synthesize.last_completion_ts')).toBeTruthy();
+    const again = await runPhaseSynthesize(engine, opts);
+    expect(again.status).toBe('ok');
+    expect(again.details.postprocess_conflicts).toBeUndefined();
+  });
+}, 120_000);
+
+/** A local maintenance write that only adds `created:` to the child's page, as the next cycle's lint fix does (#6360). */
+async function maintenanceFrontmatterDrift(engine: BrainEngine, sourceId: string, slug: string) {
+  const { maintenancePreflight, publishMaintenancePage } = await import('../src/core/persistence/prepared-maintenance.ts');
+  const { serializePageToMarkdown } = await import('../src/core/markdown.ts');
+  const snapshot = (await engine.readPageSnapshot(slug, { sourceId }))!;
+  const authority = (await maintenancePreflight(engine, sourceId))!;
+  const content = serializePageToMarkdown({ ...snapshot.page, frontmatter: { ...snapshot.page.frontmatter, created: '2026-09-20' } }, snapshot.tags);
+  await publishMaintenancePage(engine, authority, slug, content, { expectedRevision: snapshot.revision });
+  await disposePersistenceConsumer(engine);
+}
+
+test('a maintenance-only frontmatter drift after the child commit is adopted (#6360)', async () => {
+  await fixture(async ({ engine, sourceId, opts, calls }) => {
+    await interruptAfterChild(engine, sourceId, opts);
+    const slug = await outputSlug(engine, sourceId);
+    await maintenanceFrontmatterDrift(engine, sourceId, slug);
+    const spent = calls();
+    const recovered = await runPhaseSynthesize(engine, opts);
+    expect(recovered.status).toBe('ok');
+    expect(calls()).toBe(spent);
+    expect(recovered.details.pages_written).toBe(1);
+    const snapshot = (await engine.readPageSnapshot(slug, { sourceId }))!;
+    expect(snapshot.page.frontmatter.dream_generated).toBe(true);
+    expect(String(snapshot.page.frontmatter.created)).toContain('2026-09-20');
+    expect(snapshot.page.compiled_truth).not.toContain('"an entirely invented');
+    await disposePersistenceConsumer(engine);
+    const replay = await runPhaseSynthesize(engine, opts);
+    expect(replay.status).toBe('ok');
+    expect(replay.details.pages_written).toBe(0);
+    expect((await engine.readPageSnapshot(slug, { sourceId }))!.revision).toBe(snapshot.revision);
+  });
+}, 120_000);
+
+test('a user put_page that only changes frontmatter is still refused, not adopted (#6360)', async () => {
+  await fixture(async ({ engine, sourceId, opts }) => {
+    await interruptAfterChild(engine, sourceId, opts);
+    const slug = await outputSlug(engine, sourceId);
+    const snapshot = (await engine.readPageSnapshot(slug, { sourceId }))!;
+    const ctx = { engine, sourceId, remote: false as const, config: { engine: engine.kind, embedding_disabled: true },
+      dryRun: false, logger: { info() {}, warn() {}, error() {} } };
+    const { serializePageToMarkdown } = await import('../src/core/markdown.ts');
+    await submitPageMutation(ctx, { operation: 'put_page', params: { slug, request_id: randomUUID(), expected_revision: snapshot.revision,
+      content: serializePageToMarkdown({ ...snapshot.page, frontmatter: { ...snapshot.page.frontmatter, created: '2026-09-20' } }, snapshot.tags) } });
+    await disposePersistenceConsumer(engine);
+    const moved = (await engine.readPageSnapshot(slug, { sourceId }))!;
+    const replay = await runPhaseSynthesize(engine, opts);
+    expect(replay.status).toBe('warn');
+    expect((replay.details.postprocess_conflicts as unknown[]).length).toBe(1);
+    expect((await engine.readPageSnapshot(slug, { sourceId }))!.revision).toBe(moved.revision);
   });
 }, 120_000);
 

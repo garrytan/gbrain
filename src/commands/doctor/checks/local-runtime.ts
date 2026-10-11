@@ -104,6 +104,7 @@ async function runConnectors(ctx: DoctorContext): Promise<Check[]> {
 export const connectorsEntry: DoctorEntry = {
   name: 'connectors',
   emits: ['connectors', 'dream_paid_loop'],
+  engineChecks: ['connectors', 'dream_paid_loop'],
   run: runConnectors,
 };
 
