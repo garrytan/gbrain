@@ -137,7 +137,9 @@ export function patchConfig(h: DoctorHome, patch: (cfg: Record<string, unknown>)
 }
 
 const UUID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
-const VOLATILE_KEYS = /(^|_)(ms|pid|elapsed|duration|uptime)$|_ms$|^elapsed/i;
+// `day` is a bare YYYY-MM-DD the fixture derives from its own created_at (lost_caller_writes trend);
+// ISO timestamps are scrubbed by text, a bare date is not, so a golden captured today would fail tomorrow.
+const VOLATILE_KEYS = /(^|_)(ms|pid|elapsed|duration|uptime)$|_ms$|^elapsed|^day$/i;
 
 export function normalizeDoctorText(text: string, roots: Record<string, string>, extra: Array<[RegExp | string, string]> = []): string {
   let out = scrubPaths(text, roots);
