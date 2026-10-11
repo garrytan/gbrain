@@ -36,12 +36,15 @@ is recorded; all arms run warm after the primer, so the report makes no
 cold-latency claim. The selected model must remain GPU-resident after the
 primer. The harness never unloads a model or changes Ollama configuration.
 
-This is an evaluation hook prototype. It does not implement real import or
-embedding provenance, title-edit invalidation, legacy-vector handling, or a
-safe refresh/migration path. Those paths and the upstream maintainer decision
-remain pending; do not use this prototype on a real brain. No production
-acceptance threshold is implied. The small frozen corpus is a bounded
-comparison set, not the fresh production acceptance set owned by #99.
+This harness covers only the isolated A/B/C retrieval comparison and its
+sanitized evidence. It does not test real GBrain imports, persisted provenance,
+title-edit invalidation, or legacy-vector refresh. The current proposal's
+operator procedure is in the [Ollama provider guide](../../docs/integrations/embedding-providers.md#ollama-local)
+and [embedding refresh guide](../../docs/guides/embedding-migration.md#embeddinggemma-document-format-refresh-proposal);
+the [results note](results/README.md) marks these numbers as historical. Upstream
+maintainer direction, merge/release and production acceptance remain pending.
+No production acceptance threshold is implied; the small frozen corpus is not
+the fresh production acceptance set owned by #99.
 
 Offline checks, with no model calls:
 
