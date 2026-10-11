@@ -234,7 +234,8 @@ import { v230 } from './v230-trust-generation.ts';
 import { v231 } from './v231-fact-purge-lookup-indexes.ts';
 import { v232 } from './v232-fts-cjk-boundary.ts';
 import { v233 } from './v233-oauth-client-registered-via.ts';
-import { v234 } from './v234-pinned-questions.ts';
+import { v234 } from './v234-persistence-git-durability.ts';
+import { v235 } from './v235-pinned-questions.ts';
 
 // Array order is historical (see HISTORICAL_ARRAY_ORDER in the generator); the
 // runner sorts by version before applying.
@@ -468,4 +469,5 @@ export const MIGRATIONS: Migration[] = [
   v232,
   v233,
   v234,
+  v235,
 ];
