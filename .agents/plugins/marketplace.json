@@ -1,0 +1,12 @@
+{
+  "name": "gbrain",
+  "interface": { "displayName": "GBrain" },
+  "plugins": [
+    {
+      "name": "gbrain",
+      "source": { "source": "local", "path": "./" },
+      "policy": { "installation": "AVAILABLE", "authentication": "ON_USE" },
+      "category": "Productivity"
+    }
+  ]
+}

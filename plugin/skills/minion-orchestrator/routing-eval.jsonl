@@ -1,0 +1,11 @@
+// Routing eval additions for skills/minion-orchestrator v1.1.0 (durable
+// execution merge: long-ops + subagent-deadman + pipeline-stage-cache).
+// Each line: {intent, expected_skill, ambiguous_with?}. Intents paraphrase
+// the new trigger phrases; the negative case protects cron-scheduler.
+{"intent":"This embed backfill will take 40 minutes — set it up as a durable execution so it survives a restart","expected_skill":"minion-orchestrator"}
+{"intent":"Arm a deadman on that extract job so we notice if the result never gets reported","expected_skill":"minion-orchestrator"}
+{"intent":"The job went silent an hour ago and I never saw a completion message — recover it","expected_skill":"minion-orchestrator","ambiguous_with":[]}
+{"intent":"The scoring stage is expensive — make this pipeline resumable so a crash doesn't re-spend the LLM calls","expected_skill":"minion-orchestrator"}
+{"intent":"Schedule the nightly sync for 2am and keep it out of quiet hours","expected_skill":"cron-scheduler"}
+// Negative: adjacent (a misbehaving process) but out of scope — local OS process management, not gbrain jobs or subagents.
+{"intent":"Kill the runaway local process that is pegging my laptop CPU","expected_skill":null}

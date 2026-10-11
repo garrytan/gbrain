@@ -1,0 +1,14 @@
+// Routing eval fixtures for skills/measure-before-you-fix. Positive cases
+// exercise temporal-alert triage (stale/timeout/freshness/wedged) where the
+// user reaches for a structural fix. Negatives protect smoke-test (binary
+// post-restart health) and general code debugging (GStack investigate, not a
+// skills/ target → null). The ambiguous case borders maintain's health-run
+// surface.
+{"intent":"gbrain doctor says source-a is stale — should I just raise the timeout on the sync?","expected_skill":"measure-before-you-fix"}
+{"intent":"The embed job is slow and died with ETIMEDOUT — bump the timeout and rerun","expected_skill":"measure-before-you-fix"}
+{"intent":"Sync is stuck again, third freshness alert today, let's rewrite the wrapper","expected_skill":"measure-before-you-fix"}
+{"intent":"The pipeline looks wedged — it says 14 hours behind, split the step so it can't starve","expected_skill":"measure-before-you-fix"}
+{"intent":"Raise the timeout on the cycle step, it keeps timing out overnight","expected_skill":"measure-before-you-fix"}
+{"intent":"Why is this function returning undefined? Debug it","expected_skill":null}
+{"intent":"run a brain health check — citations, orphans, stale pages","expected_skill":"maintain","ambiguous_with":["citation-fixer","smoke-test"]}
+{"intent":"Doctor flagged a sync freshness alert — triage brain health before we change anything","expected_skill":"measure-before-you-fix","ambiguous_with":["maintain"]}

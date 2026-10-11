@@ -1,0 +1,11 @@
+// Routing eval fixtures for skills/resolve-before-asking. Each positive
+// intent contains at least one frontmatter trigger as substring. This skill
+// owns WHETHER an identity question reaches the user; plain lookups route to
+// query, page enrichment to enrich, choice-gate mechanics to ask-user.
+{"intent":"I have an unidentified contact in this reply draft — run resolve before asking","expected_skill":"resolve-before-asking"}
+{"intent":"This person page still says to be filled by content analysis — resolve it from the brain","expected_skill":"resolve-before-asking"}
+{"intent":"The briefing lists three people with unknown relationship — exhaust the brain before asking the user","expected_skill":"resolve-before-asking"}
+{"intent":"I don't know who this is — should I ask who they are or can the brain answer first?","expected_skill":"resolve-before-asking"}
+{"intent":"There's a placeholder on this page left by the email import — fill in who charlie-example is before asking me","expected_skill":"resolve-before-asking","ambiguous_with":["enrich"]}
+{"intent":"who is alice-example? tell me about her background","expected_skill":"query"}
+{"intent":"what's for breakfast","expected_skill":null,"ambiguous_with":[]}

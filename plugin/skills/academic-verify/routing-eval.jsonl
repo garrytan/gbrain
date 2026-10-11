@@ -1,0 +1,7 @@
+// Routing eval fixtures for skills/academic-verify. Each intent
+// includes at least one trigger string as substring.
+{"intent":"Please verify this academic claim from the book against the original paper","expected_skill":"academic-verify"}
+{"intent":"Check this study cited in the article — has it been replicated","expected_skill":"academic-verify"}
+{"intent":"Run academic verify on the 40% reduction claim and trace it to the source data","expected_skill":"academic-verify"}
+{"intent":"Validate citation for the Stanford study referenced in the policy brief","expected_skill":"academic-verify"}
+{"intent":"Is this study real, or is it on Retraction Watch","expected_skill":"academic-verify"}
