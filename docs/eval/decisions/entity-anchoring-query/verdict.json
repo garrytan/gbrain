@@ -1,0 +1,305 @@
+{
+  "decision_id": "entity-anchoring-query",
+  "stage": "dev",
+  "decided_at": "2026-10-05T22:00:00Z",
+  "measured_build": "garrytan/gbrain@2fa44f149",
+  "gate_1": {
+    "status": "pass",
+    "metered_spend_usd": 1.5243,
+    "seeds": [
+      {
+        "seed": 42,
+        "on_accuracy": 1,
+        "off_accuracy": 0.875,
+        "on_lag": 0,
+        "off_lag": 0.15,
+        "on_stale": 0,
+        "off_stale": 0.125,
+        "wins": true,
+        "accuracy_lower": false
+      },
+      {
+        "seed": 7,
+        "on_accuracy": 1,
+        "off_accuracy": 0.9027777777777778,
+        "on_lag": 0,
+        "off_lag": 0.11666666666666667,
+        "on_stale": 0,
+        "off_stale": 0.09722222222222222,
+        "wins": true,
+        "accuracy_lower": false
+      },
+      {
+        "seed": 1234,
+        "on_accuracy": 1,
+        "off_accuracy": 0.875,
+        "on_lag": 0,
+        "off_lag": 0.15,
+        "on_stale": 0,
+        "off_stale": 0.125,
+        "wins": true,
+        "accuracy_lower": false
+      }
+    ],
+    "triggered": {
+      "42": "72/72",
+      "7": "72/72",
+      "1234": "72/72"
+    },
+    "aggregate": [
+      {
+        "reads_per_write": 1,
+        "arm": "anchoring_on",
+        "seeds": 3,
+        "accuracy": {
+          "mean": 1,
+          "min": 1,
+          "max": 1
+        },
+        "stale_wrong_rate": {
+          "mean": 0,
+          "min": 0,
+          "max": 0
+        },
+        "mean_lag_batches": {
+          "mean": 0,
+          "min": 0,
+          "max": 0
+        },
+        "correct_at_change": {
+          "mean": 1,
+          "min": 1,
+          "max": 1
+        },
+        "lifecycle_usd": {
+          "mean": 0,
+          "min": 0,
+          "max": 0
+        },
+        "usd_per_correct": {
+          "mean": 0.001270787037037037,
+          "min": 0.0012603888888888888,
+          "max": 0.0012843055555555555
+        }
+      },
+      {
+        "reads_per_write": 1,
+        "arm": "anchoring_off",
+        "seeds": 3,
+        "accuracy": {
+          "mean": 0.8842592592592592,
+          "min": 0.875,
+          "max": 0.9027777777777778
+        },
+        "stale_wrong_rate": {
+          "mean": 0.11574074074074074,
+          "min": 0.09722222222222222,
+          "max": 0.125
+        },
+        "mean_lag_batches": {
+          "mean": 0.13888888888888887,
+          "min": 0.11666666666666667,
+          "max": 0.15
+        },
+        "correct_at_change": {
+          "mean": 0.8611111111111112,
+          "min": 0.85,
+          "max": 0.8833333333333333
+        },
+        "lifecycle_usd": {
+          "mean": 0,
+          "min": 0,
+          "max": 0
+        },
+        "usd_per_correct": {
+          "mean": 0.001333720309320309,
+          "min": 0.001280430769230769,
+          "max": 0.0013843174603174605
+        }
+      },
+      {
+        "reads_per_write": 1,
+        "arm": "anchoring_on_full",
+        "seeds": 3,
+        "accuracy": {
+          "mean": 1,
+          "min": 1,
+          "max": 1
+        },
+        "stale_wrong_rate": {
+          "mean": 0,
+          "min": 0,
+          "max": 0
+        },
+        "mean_lag_batches": {
+          "mean": 0,
+          "min": 0,
+          "max": 0
+        },
+        "correct_at_change": {
+          "mean": 1,
+          "min": 1,
+          "max": 1
+        },
+        "lifecycle_usd": {
+          "mean": 0,
+          "min": 0,
+          "max": 0
+        },
+        "usd_per_correct": {
+          "mean": 0.0022993333333333334,
+          "min": 0.002282222222222222,
+          "max": 0.002310111111111111
+        }
+      },
+      {
+        "reads_per_write": 1,
+        "arm": "anchoring_off_full",
+        "seeds": 3,
+        "accuracy": {
+          "mean": 0.9814814814814815,
+          "min": 0.9722222222222222,
+          "max": 0.9861111111111112
+        },
+        "stale_wrong_rate": {
+          "mean": 0.009259259259259259,
+          "min": 0,
+          "max": 0.027777777777777776
+        },
+        "mean_lag_batches": {
+          "mean": 0.022222222222222223,
+          "min": 0.016666666666666666,
+          "max": 0.03333333333333333
+        },
+        "correct_at_change": {
+          "mean": 0.9777777777777777,
+          "min": 0.9666666666666667,
+          "max": 0.9833333333333333
+        },
+        "lifecycle_usd": {
+          "mean": 0,
+          "min": 0,
+          "max": 0
+        },
+        "usd_per_correct": {
+          "mean": 0.0023514169014084503,
+          "min": 0.0023353802816901397,
+          "max": 0.0023617999999999994
+        }
+      }
+    ]
+  },
+  "gate_2": {
+    "status": "pass",
+    "reports": [
+      {
+        "corpus": "namedthing",
+        "questions": 12,
+        "triggered": 0,
+        "recall10_lower": [],
+        "recall10_higher": 0,
+        "mean_recall10": {
+          "on": 0.9166666666666667,
+          "off": 0.9166666666666667
+        },
+        "mean_rr": {
+          "on": 1,
+          "off": 1
+        },
+        "negative_clean_lost": []
+      },
+      {
+        "corpus": "namedthing+now",
+        "questions": 12,
+        "triggered": 0,
+        "recall10_lower": [],
+        "recall10_higher": 0,
+        "mean_recall10": {
+          "on": 0.8333333333333334,
+          "off": 0.8333333333333334
+        },
+        "mean_rr": {
+          "on": 0.9166666666666667,
+          "off": 0.9166666666666667
+        },
+        "negative_clean_lost": []
+      },
+      {
+        "corpus": "relational",
+        "questions": 38,
+        "triggered": 0,
+        "recall10_lower": [],
+        "recall10_higher": 0,
+        "mean_recall10": {
+          "on": 0.9999999999999992,
+          "off": 0.9999999999999992
+        },
+        "mean_rr": {
+          "on": 0.28890977443609034,
+          "off": 0.28890977443609034
+        },
+        "negative_clean_lost": []
+      },
+      {
+        "corpus": "relational+now",
+        "questions": 38,
+        "triggered": 24,
+        "recall10_lower": [],
+        "recall10_higher": 8,
+        "mean_recall10": {
+          "on": 0.13596491228070173,
+          "off": 0
+        },
+        "mean_rr": {
+          "on": 0.09649122807017543,
+          "off": 0
+        },
+        "negative_clean_lost": []
+      },
+      {
+        "corpus": "longmemeval-nightly",
+        "questions": 10,
+        "triggered": 0,
+        "recall10_lower": [],
+        "recall10_higher": 0,
+        "mean_recall10": {
+          "on": 0.9999999999999999,
+          "off": 0.9999999999999999
+        },
+        "mean_rr": {
+          "on": 0.9999999999999999,
+          "off": 0.9999999999999999
+        },
+        "negative_clean_lost": []
+      },
+      {
+        "corpus": "longmemeval-nightly+now",
+        "questions": 10,
+        "triggered": 0,
+        "recall10_lower": [],
+        "recall10_higher": 0,
+        "mean_recall10": {
+          "on": 0.9999999999999999,
+          "off": 0.9999999999999999
+        },
+        "mean_rr": {
+          "on": 0.9999999999999999,
+          "off": 0.9999999999999999
+        },
+        "negative_clean_lost": []
+      }
+    ],
+    "off_path": "key-off responses equal the pre-change build modulo clock-dependent recency scores and random revision UUIDs (120 responses)"
+  },
+  "gate_3": {
+    "status": "pending",
+    "owner": "harness lane",
+    "requires": "retrieve through the query op (or gbrain query) with search.entity_anchoring=true"
+  },
+  "overall": "off_pending_gate_3",
+  "caveats": [
+    "The seeded workload was built around the failure mode: every question is entity-scoped current-state (216/216 triggered).",
+    "Gate 2 never triggered on as-written questions; the cue-added relational diagnostic triggered 24/38 with 8 recall gains and 0 losses.",
+    "Voyage embedding and rerank calls are not metered."
+  ]
+}

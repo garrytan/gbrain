@@ -38,6 +38,7 @@ describeE2E('E2E SyncRun: parallel worker completion under abort (W4 sync)', () 
   afterAll(async () => {
     if (repoPath) rmSync(repoPath, { recursive: true, force: true });
     delete process.env.GBRAIN_SYNC_CHECKPOINT_EVERY;
+    await getConn().unsafe('DELETE FROM sources WHERE id = $1', [SOURCE]);
     await teardownDB();
   });
 

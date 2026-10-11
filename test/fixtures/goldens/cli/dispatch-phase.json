@@ -1337,6 +1337,13 @@
           "list"
         ]
       },
+      "questions": {
+        "hasSwitchCase": true,
+        "phase": "post-connect",
+        "preConnectRules": [],
+        "thinClient": "refuse",
+        "thinClientRoutedSubcommands": []
+      },
       "recall": {
         "hasSwitchCase": true,
         "phase": "post-connect",

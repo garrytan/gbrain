@@ -78,12 +78,10 @@ describe('put_pages', () => {
     expect(await engine.readPageSnapshot('notes/ok', { sourceId: 'default' })).not.toBeNull();
   });
 
-  test('caps, duplicates and a missing request_id refuse before anything is written', async () => {
+  test('caps and a missing request_id refuse before anything is written', async () => {
     const count = await requestCount();
     const tooMany = Array.from({ length: PAGE_BATCH_MAX_PAGES + 1 }, (_, i) => page(`notes/m${i}`));
     await expect(putPages.handler(ctx(), { request_id: randomUUID(), pages: tooMany })).rejects.toMatchObject({ code: 'invalid_params' });
-    await expect(putPages.handler(ctx(), { request_id: randomUUID(), pages: [page('notes/d'), page('Notes/D')] }))
-      .rejects.toMatchObject({ code: 'invalid_params', message: expect.stringContaining('twice') });
     await expect(putPages.handler(ctx(), { request_id: randomUUID(), pages: [page('notes/huge', 'x'.repeat(9 * 1024 * 1024))] }))
       .rejects.toMatchObject({ code: 'invalid_params', message: expect.stringContaining('bytes') });
     await expect(putPages.handler(ctx(), { request_id: randomUUID(), pages: [{ ...page('notes/k'), kind: 'managed_file_import' }] }))
@@ -91,6 +89,34 @@ describe('put_pages', () => {
     await expect(putPages.handler(ctx(), { pages: [page('notes/n')] })).rejects.toMatchObject({ code: 'invalid_params' });
     await expect(putPages.handler(ctx(), { request_id: randomUUID() })).rejects.toMatchObject({ code: 'not_found' });
     expect(await requestCount()).toBe(count);
+  });
+
+  test('a byte-identical repeat of a slug is one write; status and replay report it as a repeat', async () => {
+    const batch = randomUUID();
+    const pages = [page('notes/same', 'One session.'), page('notes/other'), page('notes/same', 'One session.')];
+    const before = await requestCount();
+    const result = await putPages.handler(ctx(), { request_id: batch, pages }) as any;
+    expect(result).toMatchObject({ state: 'committed', terminal: true, counts: { total: 3, committed: 3, failed: 0 }, next: { action: 'done' } });
+    expect(result.pages[2]).toMatchObject({ index: 2, slug: 'notes/same', state: 'committed', repeat_of: 0, request_id: result.pages[0].request_id, revision: result.pages[0].revision });
+    expect(result.pages[0].repeat_of).toBeUndefined();
+    expect(await requestCount()).toBe(before + 2);
+    const status = await putPages.handler(ctx(), { request_id: batch }) as any;
+    expect(status.pages.map((p: any) => [p.index, p.slug, p.state, p.repeat_of])).toEqual([[0, 'notes/same', 'committed', undefined], [1, 'notes/other', 'committed', undefined], [2, 'notes/same', 'committed', 0]]);
+    await putPages.handler(ctx(), { request_id: batch, pages, wait_ms: 1000 });
+    expect(await requestCount()).toBe(before + 2);
+  });
+
+  test('repeats of a slug that differ are each refused with their own error; the rest of the batch is written', async () => {
+    const result = await putPages.handler(ctx(), { request_id: randomUUID(), pages: [page('notes/x', 'First.'), page('notes/y'), page('notes/x', 'Second.'), page('Notes/X', 'First.')] }) as any;
+    expect(result).toMatchObject({ state: 'partial', terminal: true, counts: { total: 4, committed: 1, failed: 3 }, next: { action: 'fix_pages' } });
+    expect(result.pages[1]).toMatchObject({ slug: 'notes/y', state: 'committed' });
+    for (const index of [0, 2, 3]) {
+      expect(result.pages[index]).toMatchObject({ state: 'refused', error: { code: 'invalid_params' } });
+      expect(result.pages[index].error.message).toContain(`pages[${index}]`);
+    }
+    expect(result.pages[0].error.message).toContain('pages[2], pages[3]');
+    expect(await engine.readPageSnapshot('notes/x', { sourceId: 'default' })).toBeNull();
+    expect(await engine.readPageSnapshot('notes/y', { sourceId: 'default' })).not.toBeNull();
   });
 
   test('capacity is reserved for the whole batch or none of it', async () => {

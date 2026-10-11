@@ -1,4 +1,4 @@
-<!-- gbrain-plugin-tree-stamp: 0.60.163.0 -->
+<!-- gbrain-plugin-tree-stamp: 0.60.164.0 -->
 # gbrain plugin skill tree (generated — do not hand-edit)
 
 This tree is the curated skill set for the gbrain Codex and Claude Code
@@ -8,7 +8,7 @@ addition/exclusion).
 
 ## MCP surface note (read once)
 
-The plugin's MCP server runs `gbrain serve --surface full` — 165
+The plugin's MCP server runs `gbrain serve --surface full` — 170
 operations, the same surface every stdio registration gbrain writes pins.
 Every gbrain operation the bundled skills name is on it. A harness that caps
 its tool count can narrow this machine's plugin surface with

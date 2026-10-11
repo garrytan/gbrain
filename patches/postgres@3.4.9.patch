@@ -1,5 +1,5 @@
 diff --git a/cjs/src/connection.js b/vendor/postgres/cjs/src/connection.js
-index 07f67167..472ac81e 100644
+index 07f67167..fd279e5d 100644
 --- a/cjs/src/connection.js
 +++ b/vendor/postgres/cjs/src/connection.js
 @@ -20,6 +20,7 @@ const Sync = b().S().end()
@@ -33,7 +33,16 @@ index 07f67167..472ac81e 100644
      , errorResponse = null
      , result = new Result()
      , incoming = Buffer.alloc(0)
-@@ -105,11 +110,13 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -95,6 +100,8 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+     , rows = 0
+     , serverSignature = null
+     , nextWriteTimer = null
++    , lastWritten = null
++    , deferredRetries = []
+     , terminated = false
+     , incomings = null
+     , results = null
+@@ -105,11 +112,13 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
      , ended = null
      , nonce = null
      , query = null
@@ -47,7 +56,7 @@ index 07f67167..472ac81e 100644
      connect(query) {
        initial = query
        reconnect()
-@@ -143,11 +150,13 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -143,11 +152,13 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
    }
  
    async function cancel({ pid, secret }, resolve, reject) {
@@ -63,7 +72,7 @@ index 07f67167..472ac81e 100644
      } catch (error) {
        reject(error)
      }
-@@ -167,21 +176,70 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -167,21 +178,71 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
        q.state = backend
        query
          ? sent.push(q)
@@ -71,6 +80,7 @@ index 07f67167..472ac81e 100644
 +        : (query = q, query.active = true, armInflight())
  
        build(q)
++      lastWritten = q
 +      const mayPipeline = !q.options.onexecute || q.options.onexecute(connection)
        return write(toBuffer(q))
          && !q.describeFirst
@@ -138,7 +148,7 @@ index 07f67167..472ac81e 100644
    function toBuffer(q) {
      if (q.parameters.length >= 65534)
        throw Errors.generic('MAX_PARAMETERS_EXCEEDED', 'Max number of parameters (65534) exceeded')
-@@ -235,10 +293,15 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -235,10 +296,15 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
      q.onlyDescribe && (delete statements[q.signature])
      q.parameters = q.parameters || parameters
      q.prepared = q.prepare && q.signature in statements
@@ -156,7 +166,7 @@ index 07f67167..472ac81e 100644
  
      typeof options.debug === 'function' && options.debug(id, string, parameters, types)
    }
-@@ -295,10 +358,11 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -295,10 +361,11 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
  
    /* c8 ignore next 3 */
    function drain() {
@@ -169,7 +179,7 @@ index 07f67167..472ac81e 100644
      if (incomings) {
        incomings.push(x)
        remaining -= x.length
-@@ -379,6 +443,8 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -379,15 +446,21 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
    }
  
    function error(err) {
@@ -178,7 +188,11 @@ index 07f67167..472ac81e 100644
      if (connection.queue === queues.connecting && options.host[retries + 1])
        return
  
-@@ -388,6 +454,8 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+     errored(err)
+     while (sent.length)
+       queryError(sent.shift(), err)
++    while (deferredRetries.length)
++      queryError(deferredRetries.shift(), err)
    }
  
    function errored(err) {
@@ -187,7 +201,7 @@ index 07f67167..472ac81e 100644
      stream && (stream.destroy(err), stream = null)
      query && queryError(query, err)
      initial && (queryError(initial, err), initial = null)
-@@ -438,19 +506,38 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -438,19 +511,38 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
      remaining = 0
      incomings = null
      clearImmediate(nextWriteTimer)
@@ -227,11 +241,12 @@ index 07f67167..472ac81e 100644
      closedTime = performance.now()
      hadError && options.shared.retries++
      delay = (typeof backoff === 'function' ? backoff(options.shared.retries) : backoff) * 1000
-@@ -533,8 +620,13 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -533,8 +625,14 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
    }
  
    function ReadyForQuery(x) {
 +    connection.status = x[5]
++    query && query === lastWritten && (lastWritten = null)
 +    connection.inflightSince = 0
      if (query) {
 +      options.shared.completed++
@@ -241,7 +256,7 @@ index 07f67167..472ac81e 100644
          query.retried
            ? errored(query.retried)
            : query.prepared && retryRoutines.has(errorResponse.routine)
-@@ -550,6 +642,7 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -550,6 +648,7 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
      query = results = errorResponse = null
      result = new Result()
      connectTimer.cancel()
@@ -249,7 +264,7 @@ index 07f67167..472ac81e 100644
  
      if (initial) {
        if (target_session_attrs) {
-@@ -564,23 +657,25 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -564,23 +663,27 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
          return fetchArrayTypes()
        }
  
@@ -266,6 +281,8 @@ index 07f67167..472ac81e 100644
      while (sent.length && (query = sent.shift()) && (query.active = true, query.cancelled))
        Connection(options).cancel(query.state, query.cancelled.resolve, query.cancelled.reject)
  
++    flushRetries()
++
      if (query)
 -      return // Consider opening if able and sent.length < 50
 +      return armInflight() // Consider opening if able and sent.length < 50
@@ -279,7 +296,7 @@ index 07f67167..472ac81e 100644
          : connection.reserved()
        : ending
          ? terminate()
-@@ -630,6 +725,9 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -630,7 +733,11 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
        !query.statement.types[i] && (query.statement.types[i] = x.readUInt32BE(7 + i * 4))
  
      query.prepare && (statements[query.signature] = query.statement)
@@ -287,9 +304,11 @@ index 07f67167..472ac81e 100644
 +    query.typesKey && query.statement.types.every(t => t > 0 && t < 16384)
 +      && options.shared_types.set(query.typesKey, query.statement.types.slice())
      query.describeFirst && !query.onlyDescribe && (write(prepared(query)), query.describeFirst = false)
++    flushRetries()
    }
  
-@@ -767,14 +865,21 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+   function RowDescription(x) {
+@@ -767,14 +874,21 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
  
    async function fetchArrayTypes() {
      needsTypes = false
@@ -319,6 +338,24 @@ index 07f67167..472ac81e 100644
      types.forEach(({ oid, typarray }) => addArrayType(oid, typarray))
    }
  
+@@ -821,7 +935,16 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+   function retry(q, error) {
+     delete statements[q.signature]
+     q.retried = error
+-    execute(q)
++    deferredRetries.push(q)
++    flushRetries()
++  }
++
++  // GBrain: a describe-first or cursor query writes its next messages only when the server answers its first
++  // ones. A retry written in that gap lands between them on the wire, and every later response is then read
++  // for the wrong query (rows built with another statement's columns). Retries wait for that query.
++  function flushRetries() {
++    while (deferredRetries.length && !(lastWritten && (lastWritten.describeFirst || lastWritten.cursorFn)))
++      execute(deferredRetries.shift())
+   }
+ 
+   function NotificationResponse(x) {
 diff --git a/cjs/src/index.js b/vendor/postgres/cjs/src/index.js
 index f09c61c7..abb4a158 100644
 --- a/cjs/src/index.js
@@ -744,7 +781,7 @@ index 8438f5da..c444310f 100644
        const out = xs[index++]
  
 diff --git a/src/connection.js b/vendor/postgres/src/connection.js
-index 1b1cccde..a178b3b6 100644
+index 1b1cccde..f570aaab 100644
 --- a/src/connection.js
 +++ b/vendor/postgres/src/connection.js
 @@ -20,6 +20,7 @@ const Sync = b().S().end()
@@ -778,7 +815,16 @@ index 1b1cccde..a178b3b6 100644
      , errorResponse = null
      , result = new Result()
      , incoming = Buffer.alloc(0)
-@@ -105,11 +110,13 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -95,6 +100,8 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+     , rows = 0
+     , serverSignature = null
+     , nextWriteTimer = null
++    , lastWritten = null
++    , deferredRetries = []
+     , terminated = false
+     , incomings = null
+     , results = null
+@@ -105,11 +112,13 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
      , ended = null
      , nonce = null
      , query = null
@@ -792,7 +838,7 @@ index 1b1cccde..a178b3b6 100644
      connect(query) {
        initial = query
        reconnect()
-@@ -143,11 +150,13 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -143,11 +152,13 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
    }
  
    async function cancel({ pid, secret }, resolve, reject) {
@@ -808,7 +854,7 @@ index 1b1cccde..a178b3b6 100644
      } catch (error) {
        reject(error)
      }
-@@ -167,21 +176,70 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -167,21 +178,71 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
        q.state = backend
        query
          ? sent.push(q)
@@ -816,6 +862,7 @@ index 1b1cccde..a178b3b6 100644
 +        : (query = q, query.active = true, armInflight())
  
        build(q)
++      lastWritten = q
 +      const mayPipeline = !q.options.onexecute || q.options.onexecute(connection)
        return write(toBuffer(q))
          && !q.describeFirst
@@ -883,7 +930,7 @@ index 1b1cccde..a178b3b6 100644
    function toBuffer(q) {
      if (q.parameters.length >= 65534)
        throw Errors.generic('MAX_PARAMETERS_EXCEEDED', 'Max number of parameters (65534) exceeded')
-@@ -235,10 +293,15 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -235,10 +296,15 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
      q.onlyDescribe && (delete statements[q.signature])
      q.parameters = q.parameters || parameters
      q.prepared = q.prepare && q.signature in statements
@@ -901,7 +948,7 @@ index 1b1cccde..a178b3b6 100644
  
      typeof options.debug === 'function' && options.debug(id, string, parameters, types)
    }
-@@ -295,10 +358,11 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -295,10 +361,11 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
  
    /* c8 ignore next 3 */
    function drain() {
@@ -914,7 +961,7 @@ index 1b1cccde..a178b3b6 100644
      if (incomings) {
        incomings.push(x)
        remaining -= x.length
-@@ -379,6 +443,8 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -379,15 +446,21 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
    }
  
    function error(err) {
@@ -923,7 +970,11 @@ index 1b1cccde..a178b3b6 100644
      if (connection.queue === queues.connecting && options.host[retries + 1])
        return
  
-@@ -388,6 +454,8 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+     errored(err)
+     while (sent.length)
+       queryError(sent.shift(), err)
++    while (deferredRetries.length)
++      queryError(deferredRetries.shift(), err)
    }
  
    function errored(err) {
@@ -932,7 +983,7 @@ index 1b1cccde..a178b3b6 100644
      stream && (stream.destroy(err), stream = null)
      query && queryError(query, err)
      initial && (queryError(initial, err), initial = null)
-@@ -438,19 +506,38 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -438,19 +511,38 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
      remaining = 0
      incomings = null
      clearImmediate(nextWriteTimer)
@@ -972,11 +1023,12 @@ index 1b1cccde..a178b3b6 100644
      closedTime = performance.now()
      hadError && options.shared.retries++
      delay = (typeof backoff === 'function' ? backoff(options.shared.retries) : backoff) * 1000
-@@ -533,8 +620,13 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -533,8 +625,14 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
    }
  
    function ReadyForQuery(x) {
 +    connection.status = x[5]
++    query && query === lastWritten && (lastWritten = null)
 +    connection.inflightSince = 0
      if (query) {
 +      options.shared.completed++
@@ -986,7 +1038,7 @@ index 1b1cccde..a178b3b6 100644
          query.retried
            ? errored(query.retried)
            : query.prepared && retryRoutines.has(errorResponse.routine)
-@@ -550,6 +642,7 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -550,6 +648,7 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
      query = results = errorResponse = null
      result = new Result()
      connectTimer.cancel()
@@ -994,7 +1046,7 @@ index 1b1cccde..a178b3b6 100644
  
      if (initial) {
        if (target_session_attrs) {
-@@ -564,23 +657,25 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -564,23 +663,27 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
          return fetchArrayTypes()
        }
  
@@ -1011,6 +1063,8 @@ index 1b1cccde..a178b3b6 100644
      while (sent.length && (query = sent.shift()) && (query.active = true, query.cancelled))
        Connection(options).cancel(query.state, query.cancelled.resolve, query.cancelled.reject)
  
++    flushRetries()
++
      if (query)
 -      return // Consider opening if able and sent.length < 50
 +      return armInflight() // Consider opening if able and sent.length < 50
@@ -1024,7 +1078,7 @@ index 1b1cccde..a178b3b6 100644
          : connection.reserved()
        : ending
          ? terminate()
-@@ -630,6 +725,9 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+@@ -630,7 +733,11 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
        !query.statement.types[i] && (query.statement.types[i] = x.readUInt32BE(7 + i * 4))
  
      query.prepare && (statements[query.signature] = query.statement)
@@ -1032,9 +1086,11 @@ index 1b1cccde..a178b3b6 100644
 +    query.typesKey && query.statement.types.every(t => t > 0 && t < 16384)
 +      && options.shared_types.set(query.typesKey, query.statement.types.slice())
      query.describeFirst && !query.onlyDescribe && (write(prepared(query)), query.describeFirst = false)
++    flushRetries()
    }
  
-@@ -767,14 +865,21 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+   function RowDescription(x) {
+@@ -767,14 +874,21 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
  
    async function fetchArrayTypes() {
      needsTypes = false
@@ -1064,6 +1120,24 @@ index 1b1cccde..a178b3b6 100644
      types.forEach(({ oid, typarray }) => addArrayType(oid, typarray))
    }
  
+@@ -821,7 +935,16 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
+   function retry(q, error) {
+     delete statements[q.signature]
+     q.retried = error
+-    execute(q)
++    deferredRetries.push(q)
++    flushRetries()
++  }
++
++  // GBrain: a describe-first or cursor query writes its next messages only when the server answers its first
++  // ones. A retry written in that gap lands between them on the wire, and every later response is then read
++  // for the wrong query (rows built with another statement's columns). Retries wait for that query.
++  function flushRetries() {
++    while (deferredRetries.length && !(lastWritten && (lastWritten.describeFirst || lastWritten.cursorFn)))
++      execute(deferredRetries.shift())
+   }
+ 
+   function NotificationResponse(x) {
 diff --git a/src/index.js b/vendor/postgres/src/index.js
 index c7fba3da..32efd8bf 100644
 --- a/src/index.js

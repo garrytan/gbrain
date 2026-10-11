@@ -149,7 +149,7 @@ describe('progress reporter', () => {
     expect(events[events.length - 1]).toMatchObject({ event: 'finish', phase: 'doctor.jsonb_integrity' });
   });
 
-  test('json tick cpu_ms counts CPU work since the phase started, not time spent waiting', async () => {
+  test('json tick cpu_ms counts CPU work since the phase started, not time spent waiting', () => {
     const { stream, read } = sink(false);
     const p = createProgress({ mode: 'json', stream, minIntervalMs: 0, minItems: 1 });
     p.start('import.files', 3);
@@ -157,7 +157,9 @@ describe('progress reporter', () => {
     const spinUntil = cpuMs() + 60;
     while (cpuMs() < spinUntil) { /* burn 60 ms of CPU */ }
     p.tick(1);
-    await new Promise(resolve => setTimeout(resolve, 200));
+    // Block the thread for 200 ms without yielding: an await would let other queued main-thread work (an earlier
+    // test's timer, a GC pause) run and be billed to the phase, and the test means "the thread sat idle".
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200);
     p.tick(1);
     p.finish();
     const [, worked, waited] = parseJsonl(read()) as Array<{ cpu_ms: number; elapsed_ms: number }>;

@@ -27,11 +27,12 @@ export const REMOTE_PRIVATE_PAGES_KEY = 'search.remote_private_pages';
 /**
  * #5525 — extracted atoms and synthesized concept pages are derived from
  * other pages or from private transcripts, so a missing `visibility` field on
- * them means "origin unknown", not "world". They fail closed; every other page
- * keeps the documented default (absent visibility is world).
+ * them means "origin unknown", not "world". Pinned-question pages (`type:
+ * question`) are owner-private. They fail closed; every other page keeps the
+ * documented default (absent visibility is world).
  */
 function derivedPageSql(pageAlias: string): string {
-  return `(${pageAlias}.type = 'atom' OR (${pageAlias}.type = 'concept' AND ${pageAlias}.frontmatter->>'synthesized_by' IS NOT NULL))`;
+  return `(${pageAlias}.type IN ('atom', 'question') OR (${pageAlias}.type = 'concept' AND ${pageAlias}.frontmatter->>'synthesized_by' IS NOT NULL))`;
 }
 
 /**
@@ -82,10 +83,13 @@ function declaredLineagePrivateSql(p: string): string {
 /**
  * The same rule on a row's own `type`/`frontmatter` only, for snapshots such
  * as `page_versions` that have no page identity to follow to an origin. Callers
- * pair it with privatePagesFilterFragment on the live page.
+ * pair it with privatePagesFilterFragment on the live page. A page carrying the
+ * `pinned_question` marker is private whatever its `visibility` says (pinned
+ * questions are owner-private, src/core/questions/pages.ts).
  */
 export function privateSnapshotFilterFragment(alias: string): string {
-  return `COALESCE(${alias}.frontmatter->>'visibility', CASE WHEN ${derivedPageSql(alias)} THEN 'private' ELSE 'world' END) <> 'private'`;
+  return `(COALESCE(${alias}.frontmatter->>'visibility', CASE WHEN ${derivedPageSql(alias)} THEN 'private' ELSE 'world' END) <> 'private'
+    AND NOT COALESCE(${alias}.frontmatter ? 'pinned_question', false))`;
 }
 
 /**
@@ -182,7 +186,8 @@ export function privateProvenanceFilterFragment(factAlias: string): string {
 export function isPrivatePage(page: { type?: string | null; frontmatter?: unknown }): boolean {
   const frontmatter = typeof page.frontmatter === 'object' && page.frontmatter !== null
     ? page.frontmatter as Record<string, unknown> : {};
-  const derived = page.type === 'atom' || (page.type === 'concept' && frontmatter.synthesized_by != null);
+  if (frontmatter.pinned_question != null) return true;
+  const derived = page.type === 'atom' || page.type === 'question' || (page.type === 'concept' && frontmatter.synthesized_by != null);
   return (frontmatter.visibility ?? (derived ? 'private' : 'world')) === 'private';
 }
 

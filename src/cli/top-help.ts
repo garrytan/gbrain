@@ -115,6 +115,7 @@ TOOLS
   facts relink [--dry-run]           Link facts saved without an entity to the entity they name
   check-resolvable [--json] [--fix]  Validate skill tree (reachability/MECE/DRY)
   report --type <name> --content ... Save timestamped report to brain/reports/
+  questions pin|list|status|refresh|unpin  Pinned questions: cited answers kept current (owner-private)
 
 OPEN LOOPS (Gmail/Calendar/Contacts connector — v0.47)
   google setup [--account <email>]   One command: BYO OAuth → source → first sync → first digest

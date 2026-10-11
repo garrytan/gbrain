@@ -2174,6 +2174,26 @@ More: [docs/guides/memory-boundaries.md#purge](../../docs/guides/memory-boundari
 
 More: [docs/guides/memory-boundaries.md#purge](../../docs/guides/memory-boundaries.md#purge)
 
+### question_not_found
+
+<a id="question_not_found"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| No pinned question has this id in the caller's scope; ids are source-qualified (default:questions/<slug>). | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/pinned-questions.md#ids-and-scope](../../docs/guides/pinned-questions.md#ids-and-scope)
+
+### question_owner_only
+
+<a id="question_owner_only"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Pinned questions are owner-private: this connection cannot read private pages (or is slug-fenced or delegated), so the owner runs the command on the brain host. | Only the operator of the brain host can change what blocks this. | Only the brain host's operator can resolve this. Tell the user the message and run `gbrain doctor --json` on the brain host. | host_admin | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/pinned-questions.md#who-can-see-pinned-questions](../../docs/guides/pinned-questions.md#who-can-see-pinned-questions)
+
 ### queue_capacity
 
 <a id="queue_capacity"></a>

@@ -34,6 +34,7 @@ const load_page_edit = () => import('./ops/page-edit.ts') as Promise<Record<stri
 const load_pages = () => import('./ops/pages.ts') as Promise<Record<string, unknown>>;
 const load_persistence = () => import('./ops/persistence.ts') as Promise<Record<string, unknown>>;
 const load_purge = () => import('./ops/purge.ts') as Promise<Record<string, unknown>>;
+const load_questions = () => import('./ops/questions.ts') as Promise<Record<string, unknown>>;
 const load_raw_data = () => import('./ops/raw-data.ts') as Promise<Record<string, unknown>>;
 const load_request_tools = () => import('./ops/request-tools.ts') as Promise<Record<string, unknown>>;
 const load_salience = () => import('./ops/salience.ts') as Promise<Record<string, unknown>>;
@@ -216,5 +217,10 @@ export const OPERATION_LOADERS: Record<string, readonly [() => Promise<Record<st
   "loops_close": [load_loops, "loopsOperations"],
   "loops_mute": [load_loops, "loopsOperations"],
   "loops_unmute": [load_loops, "loopsOperations"],
+  "questions_pin": [load_questions, "questionsOperations"],
+  "questions_list": [load_questions, "questionsOperations"],
+  "questions_status": [load_questions, "questionsOperations"],
+  "questions_refresh": [load_questions, "questionsOperations"],
+  "questions_unpin": [load_questions, "questionsOperations"],
   "mute_notice": [load_notices, "noticesOperations"],
 };

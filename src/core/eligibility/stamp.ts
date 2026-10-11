@@ -18,6 +18,8 @@ const withFlag = (fields: TrustFields, flagged: unknown): TrustFields => (flagge
 interface PageRef {
   page_id?: number | null; source_id?: string | null; slug: string; chunk_text?: string | null;
   trust_tier?: string; origin?: string; unconfirmed?: true; contested?: Contested;
+  /** A saved-fact row (search/facts-arm.ts): labeled with the fact's own tier, not a page's. */
+  fact_row?: { id: number };
 }
 
 type Exec = Pick<BrainEngine, 'executeRaw'>;
@@ -59,9 +61,13 @@ export async function loadPageTrust(engine: Exec, refs: readonly PageRef[]): Pro
  */
 export async function stampPageTrust<T extends PageRef>(engine: Exec, rows: T[], floor?: TrustTier): Promise<T[]> {
   if (rows.length === 0) return rows;
+  const factRows = rows.filter(row => typeof row.fact_row?.id === 'number');
+  const factTrust = factRows.length ? await stampRowTrust(engine, 'facts', factRows, row => row.fact_row!.id) : [];
+  factRows.forEach((row, i) => Object.assign(row, factTrust[i]));
+  const pageRows = rows.filter(row => typeof row.fact_row?.id !== 'number');
   let found: Awaited<ReturnType<typeof loadPageTrust>> | null = null;
-  try { found = await loadPageTrust(engine, rows); } catch { found = null; }
-  for (const row of rows) {
+  try { found = pageRows.length ? await loadPageTrust(engine, pageRows) : null; } catch { found = null; }
+  for (const row of pageRows) {
     const fields = (typeof row.page_id === 'number' ? found?.byId.get(row.page_id) : undefined)
       ?? found?.byKey.get(key(row.source_id, row.slug))
       ?? { trust_tier: 'unknown' as const, origin: 'unrecorded' };
@@ -71,7 +77,7 @@ export async function stampPageTrust<T extends PageRef>(engine: Exec, rows: T[],
     row.origin = lowered ? FENCE_TRUST_ORIGIN : fields.origin;
     if (fields.unconfirmed) row.unconfirmed = true;
   }
-  await applyFenceRowTrust(engine, rows);
+  await applyFenceRowTrust(engine, pageRows);
   return floor ? rows.filter(row => admitsTrust(row.trust_tier as TrustTier, floor)) : rows;
 }
 

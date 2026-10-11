@@ -189,6 +189,11 @@ const LEDGER: Record<string, string> = {
   loops_close: 'test/ops-loops.test.ts',
   loops_mute: 'test/ops-loops.test.ts',
   loops_unmute: 'test/ops-loops.test.ts',
+  questions_pin: 'test/helpers/pinned-questions-scenarios.ts',
+  questions_list: 'test/helpers/pinned-questions-scenarios.ts',
+  questions_status: 'test/helpers/pinned-questions-scenarios.ts',
+  questions_refresh: 'test/helpers/pinned-questions-scenarios.ts',
+  questions_unpin: 'test/helpers/pinned-questions-scenarios.ts',
   mute_notice: 'test/notice-ledger.test.ts',
   // v0.46.28.0+ master-wave ops, mapped at the test-gap-wave master merge.
   fetch: 'test/deep-research-fetch.test.ts',

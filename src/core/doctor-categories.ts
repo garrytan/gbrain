@@ -158,6 +158,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'source_routing_health',
   'stale_mentions',
   'stub_guard_24h',
+  // Fact supersession threshold calibrated for the active embedding model (facts/supersession-threshold.ts).
+  'supersession_calibration',
   'sync_failures',
   // #5984: unfinished managed sync cursors, their remaining entries and indexing ETA.
   'managed_sync_backlog',

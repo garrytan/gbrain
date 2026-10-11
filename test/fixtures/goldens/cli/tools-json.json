@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 224981,
-    "stdoutSha256": "b27edd3edca8caa134feebe84d34ebf9f9ab3c8358209d6aa215ef9131763333",
+    "stdoutBytes": 230356,
+    "stdoutSha256": "053248a9f24a3417e826c0985c79f12d11381b60bc50b1e26ab51e5e6929f1cc",
     "toolNames": [
       "remember",
       "entity",
@@ -169,11 +169,16 @@
       "loops_close",
       "loops_mute",
       "loops_unmute",
+      "questions_pin",
+      "questions_list",
+      "questions_status",
+      "questions_refresh",
+      "questions_unpin",
       "mute_notice"
     ],
     "tools": [
       {
-        "description": "MEMORY VERB (v1): save facts with provenance. Set `entity` to the subject or entity recall misses it. Branch on `status` (inserted|duplicate|superseded); write_pending: poll get_write_request.",
+        "description": "MEMORY VERB (v1): save facts with provenance. Set `entity` (the subject) or recall misses it. Branch on `status` (inserted|duplicate|superseded); write_pending: poll get_write_request.",
         "idempotent": true,
         "local_only": false,
         "mutating": true,
@@ -192,6 +197,7 @@
           "request_id": "string?",
           "source_id": "string?",
           "ttl": "string?",
+          "valid_from": "string?",
           "visibility": "string?"
         },
         "required_scopes": [],
@@ -207,7 +213,7 @@
               "type": "string"
             },
             "entity": {
-              "description": "Subject (name or slug).",
+              "description": "Name or slug.",
               "type": "string"
             },
             "expected_revision": {
@@ -245,7 +251,7 @@
               "type": "string"
             },
             "provenance": {
-              "description": "Fact source (max 500 chars).",
+              "description": "Source (≤500 chars).",
               "type": "string"
             },
             "replaces": {
@@ -261,7 +267,11 @@
               "type": "string"
             },
             "ttl": {
-              "description": "\"30d\", \"12h\" or ISO 8601; omit = never.",
+              "description": "\"30d\", \"12h\", ISO; omit = never.",
+              "type": "string"
+            },
+            "valid_from": {
+              "description": "When true (ISO).",
               "type": "string"
             },
             "visibility": {
@@ -1202,7 +1212,7 @@
         "scope": "read"
       },
       {
-        "description": "Hybrid search plus multi-query expansion for concept or landscape questions (expansion recovers synonym-phrased matches). Still top-K; return_unit returns whole sections or conversations. Lists: list_pages. Exact tokens: `search` is cheaper (no expansion LLM call). Personal: get_recent_salience, find_anomalies; transcripts: `gbrain transcripts recent` on the host. Do NOT assume 'crazy' means impressive (often difficult or emotionally charged). Needs an embedding key (else keyword-only); expansion needs a chat key. fields: \"full\" adds diagnostics.",
+        "description": "Hybrid search plus multi-query expansion for concept/landscape questions (expansion recovers synonym phrasings). Still top-K; return_unit returns whole sections/conversations. Lists: list_pages. Exact tokens: `search` is cheaper (no LLM call). Personal: get_recent_salience, find_anomalies; host transcripts: `gbrain transcripts recent`. Do NOT assume 'crazy' means impressive (often difficult or emotionally charged). Needs an embedding key (else keyword-only); expansion needs a chat key. Fact rows aren't pages: use follow_up. fields: \"full\" adds diagnostics.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -5758,7 +5768,7 @@
               "type": "number"
             },
             "entity": {
-              "description": "Entity slug; facts about it, newest first.",
+              "description": "Entity slug; its facts, newest first.",
               "type": "string"
             },
             "grep": {
@@ -5766,11 +5776,11 @@
               "type": "string"
             },
             "include_expired": {
-              "description": "Include expired facts.",
+              "description": "Include expired.",
               "type": "boolean"
             },
             "include_pending": {
-              "description": "Add pending count.",
+              "description": "Pending count.",
               "type": "boolean"
             },
             "limit": {
@@ -5790,11 +5800,11 @@
               "type": "string"
             },
             "query": {
-              "description": "Also search pages (results[] arm).",
+              "description": "Also search pages (results[]).",
               "type": "string"
             },
             "return_unit": {
-              "description": "Evidence unit for results[] (see search).",
+              "description": "results[] evidence unit (see search).",
               "enum": [
                 "chunk",
                 "window",
@@ -5809,19 +5819,19 @@
               "type": "number"
             },
             "session_id": {
-              "description": "Facts captured in this session.",
+              "description": "This session's facts.",
               "type": "string"
             },
             "since": {
-              "description": "Facts since (ISO 8601 or \"8 hours ago\").",
+              "description": "Since (ISO 8601 or \"8 hours ago\").",
               "type": "string"
             },
             "source_id": {
-              "description": "Narrow to one source you may read.",
+              "description": "One source you may read.",
               "type": "string"
             },
             "supersessions": {
-              "description": "Only the supersession audit log.",
+              "description": "Supersession audit log only.",
               "type": "boolean"
             }
           },
@@ -7078,6 +7088,183 @@
           "required": [
             "kind",
             "value"
+          ],
+          "type": "object"
+        },
+        "scope": "write"
+      },
+      {
+        "description": "Pin a question: gbrain keeps a cited answer current from your notes and flags sentences whose evidence changed. Idempotent. Pins made over MCP stay inactive (paid refresh) until the owner activates them; returns the first answer when a key and consent exist, else awaiting_refresh with next_action.",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": true,
+        "name": "questions_pin",
+        "parameters": {
+          "defer": "boolean?",
+          "id": "string?",
+          "publish": "boolean?",
+          "question": "string?",
+          "scope": "object?",
+          "wait_ms": "number?"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "defer": {
+              "description": "Skip the first answer.",
+              "type": "boolean"
+            },
+            "id": {
+              "description": "Existing pin id: re-pin or (owner, on the host) activate it.",
+              "type": "string"
+            },
+            "publish": {
+              "description": "Owner only: publish a draft-only pin.",
+              "type": "boolean"
+            },
+            "question": {
+              "description": "The question (omit when passing id).",
+              "type": "string"
+            },
+            "scope": {
+              "additionalProperties": false,
+              "description": "Evidence scope; default: the current source.",
+              "properties": {
+                "entity": {
+                  "description": "Entity page slug the question is about.",
+                  "type": "string"
+                },
+                "slug_prefix": {
+                  "description": "Only pages under this prefix, e.g. projects/.",
+                  "type": "string"
+                },
+                "source": {
+                  "description": "Source id.",
+                  "type": "string"
+                }
+              },
+              "required": [],
+              "type": "object"
+            },
+            "wait_ms": {
+              "description": "Max ms to wait for the answer (pin default 30000, refresh 120000; max 300000).",
+              "type": "number"
+            }
+          },
+          "required": [],
+          "type": "object"
+        },
+        "scope": "write"
+      },
+      {
+        "description": "List pinned questions with freshness, blocked reason and next action, plus fresh/stale/pending counts. Owner-capable connections only.",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": false,
+        "name": "questions_list",
+        "parameters": {
+          "include_archived": "boolean?",
+          "source": "string?"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "include_archived": {
+              "description": "Include unpinned (archived) questions.",
+              "type": "boolean"
+            },
+            "source": {
+              "description": "Only this source.",
+              "type": "string"
+            }
+          },
+          "required": [],
+          "type": "object"
+        },
+        "scope": "read"
+      },
+      {
+        "description": "One pinned question: the answer with per-sentence stale flags, evidence watermark, last refresh, blocked reason, next action and verify step. Owner-capable connections only.",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": false,
+        "name": "questions_status",
+        "parameters": {
+          "id": "string",
+          "include_answer": "boolean?"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "id": {
+              "description": "Source-qualified id from questions_list, e.g. default:questions/<slug>.",
+              "type": "string"
+            },
+            "include_answer": {
+              "description": "Include answer sentences (default true).",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "type": "object"
+        },
+        "scope": "read"
+      },
+      {
+        "description": "Refresh a pinned answer now (a paid model call): re-retrieves current evidence and edits the answer, or recomputes with full or after deletions. A failed refresh keeps the previous answer with its stale flags.",
+        "idempotent": false,
+        "local_only": false,
+        "mutating": true,
+        "name": "questions_refresh",
+        "parameters": {
+          "full": "boolean?",
+          "id": "string",
+          "wait_ms": "number?"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "full": {
+              "description": "Recompute from scratch.",
+              "type": "boolean"
+            },
+            "id": {
+              "description": "Source-qualified id from questions_list, e.g. default:questions/<slug>.",
+              "type": "string"
+            },
+            "wait_ms": {
+              "description": "Max ms to wait for the answer (pin default 30000, refresh 120000; max 300000).",
+              "type": "number"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "type": "object"
+        },
+        "scope": "write"
+      },
+      {
+        "description": "Unpin a question: refreshes stop and its page is archived (your notes on it are kept). Idempotent.",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": true,
+        "name": "questions_unpin",
+        "parameters": {
+          "id": "string"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "id": {
+              "description": "Source-qualified id from questions_list, e.g. default:questions/<slug>.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id"
           ],
           "type": "object"
         },

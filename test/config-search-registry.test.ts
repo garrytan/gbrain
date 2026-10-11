@@ -43,6 +43,10 @@ const DIRECTLY_READ_SINGLETONS = [
   'search.return_budget_conversation',
   'search.return_budget_max_remote',
   'search.auto_packing',                     // search/evidence-delivery.ts (explicit-budget cap)
+  'search.evidence_date_header',             // search/evidence-delivery.ts (C1)
+  'search.entity_anchoring',                 // search/entity-anchor.ts (ops/search.ts)
+  'search.query_facts_arm',                  // search/facts-arm.ts (search/query-arms.ts)
+  'search.temporal_fact_reserve',            // search/facts-arm.ts (search/query-arms.ts)
 ];
 
 describe('KNOWN_CONFIG_KEYS search.* rows mirror what the code reads (#4605)', () => {

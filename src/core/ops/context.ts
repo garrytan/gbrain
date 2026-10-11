@@ -1220,7 +1220,7 @@ export function stampEvidenceSafe(results: SearchResult[]): void {
 }
 
 export function stampDeepResearchIds(results: SearchResult[]): void {
-  for (const r of results) (r as SearchResult & { id?: string }).id = encodeDeepResearchId(r.source_id, r.slug);
+  for (const r of results) if (r.result_type !== 'fact') (r as SearchResult & { id?: string }).id = encodeDeepResearchId(r.source_id, r.slug);
 }
 
 /** T4 — shared eval-capture for the `search` op (keyword-only + cheap-hybrid paths). */

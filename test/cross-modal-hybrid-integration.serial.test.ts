@@ -5,6 +5,7 @@
 // correct embeddingColumn.
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { forgetImageVectorPresence } from '../src/core/search/image-vector-presence.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { installFixtureChunks } from './helpers/page-projection.ts';
@@ -34,6 +35,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await resetPgliteState(engine);
+  forgetImageVectorPresence(engine);
   fetchHandler = null;
   fetchUrlsSeen = [];
   fetchBodiesSeen = [];
@@ -58,6 +60,15 @@ afterEach(() => {
   globalThis.fetch = origFetch;
   resetGateway();
 });
+
+/** One image chunk, so the brain counts as holding image embeddings for auto routing. */
+async function seedImageChunk() {
+  await engine.putPage('media/hackathon-photo', { type: 'note', title: 'Hackathon photo', compiled_truth: 'A hackathon photo.', timeline: '' });
+  const [page] = await engine.executeRaw<{ id: number }>("SELECT id FROM pages WHERE slug = 'media/hackathon-photo'");
+  await engine.executeRaw(`INSERT INTO content_chunks (page_id, chunk_index, chunk_text, chunk_source, modality, embedding_image)
+    VALUES ($1, 1, 'hackathon photo', 'image_asset', 'image', $2::vector)`, [page!.id, `[${Array(1024).fill(0.1).join(',')}]`]);
+  forgetImageVectorPresence(engine);
+}
 
 function configureBoth() {
   // Gateway needs BOTH text and multimodal models configured. Use a single
@@ -167,9 +178,18 @@ describe('hybridSearch cross-modal routing (Phase 1 integration)', () => {
       }), { status: 200 });
     };
 
+    await seedImageChunk();
     await hybridSearch(engine, 'show me photos from the hackathon', { limit: 5 });
     // Auto-detection should have fired image routing.
     expect(fetchUrlsSeen.some(u => u.includes('multimodalembeddings'))).toBe(true);
+  });
+
+  test('on a brain with no image embeddings, auto-detection stays on text and never calls the multimodal endpoint', async () => {
+    configureBoth();
+    let meta: { degraded?: Array<{ stage?: string } | string> } | undefined;
+    await hybridSearch(engine, 'show me photos from the hackathon', { limit: 5, onMeta: m => { meta = m as typeof meta; } });
+    expect(fetchUrlsSeen.some(u => u.includes('multimodalembeddings'))).toBe(false);
+    expect((meta?.degraded ?? []).map(d => typeof d === 'string' ? d : d.stage)).not.toContain('vector_arm_failed');
   });
 
   test("'both' mode hits BOTH endpoints in parallel", async () => {
@@ -239,6 +259,7 @@ describe('hybridSearch cross-modal routing (Phase 1 integration)', () => {
 
   test('the same inferred image intent still routes to the image arm when a multimodal model is configured', async () => {
     configureBoth();
+    await seedImageChunk();
     await hybridSearch(engine, 'A photo of Half Dome during sunset', { limit: 5 });
     expect(fetchUrlsSeen.some(u => u.includes('multimodalembeddings'))).toBe(true);
   });

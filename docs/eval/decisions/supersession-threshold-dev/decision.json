@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "decision_id": "supersession-threshold-dev",
+  "plan": "MEMORY_PROOF_WAVE C2 follow-up",
+  "title": "Fact supersession cosine threshold with production embeddings (explicit lane)",
+  "verdict_type": "quality",
+  "stage": "dev",
+  "candidate": {
+    "gbrain": "garrytan/gbrain@7d2cc1c7049ae6820131b91d146d2c950714583d",
+    "config": {
+      "thresholds": "0.80:0.97:0.01",
+      "facts.candidate_fusion": [
+        "rrf_free",
+        "interleave"
+      ]
+    }
+  },
+  "baseline": {
+    "gbrain": "garrytan/gbrain@7d2cc1c7049ae6820131b91d146d2c950714583d",
+    "config": {
+      "threshold": 0.95,
+      "facts.candidate_fusion": "rrf_free"
+    }
+  },
+  "sources": [
+    {
+      "kind": "offline-fixture",
+      "id": "c2-twin-fixture",
+      "split": "dev",
+      "engine": "pglite",
+      "fixture": {
+        "generator": "scripts/eval-c2-candidate-fusion.ts buildFixture",
+        "seed": 20261005,
+        "companies": 40,
+        "dense_companies": 10,
+        "probes": 400
+      },
+      "embed": [
+        {
+          "model": "voyage:voyage-4",
+          "dims": 1024,
+          "role": "primary: DEFAULT_EMBEDDING_MODEL for a keyed install",
+          "path": "product gateway embed(), inputType document"
+        },
+        {
+          "model": "openai:text-embedding-3-large",
+          "dims": 1536,
+          "role": "secondary: the common OpenAI-keyed configuration",
+          "path": "product gateway embed(), inputType document"
+        }
+      ],
+      "metrics": {
+        "correction_miss_rate": "correction, back-to-back and private correction probes with an active twin that were inserted beside the old value",
+        "restatement_miss_rate": "restatements inserted beside the old value",
+        "coexisting_false_supersession_rate": "new members of coexisting claims (next round, quarter, office, board date) that replaced or deduplicated another row",
+        "false_supersession_rate": "all probes whose decision replaced or deduplicated a row of a different claim",
+        "preserved_distinct_share": "claims ever established that still have an active row after the replay",
+        "correct_decision_rate": "probes decided as the fixture expects"
+      },
+      "threshold_pick_rule": "guarded: lowest correction miss rate with false supersession <= 1% of probes and preserved distinct claims >= 99.5% (rrf_free arm); balanced: argmin(correction miss + coexisting false supersession). Rule fixed in the script before the production runs.",
+      "product_parity": "at 0.95 the real decideSingleFact runs beside the replayed rule and must agree"
+    }
+  ],
+  "alpha": 0.05,
+  "seed": 42,
+  "draws": 10000,
+  "budget_usd": 5,
+  "spend_usd_estimate": 0.005,
+  "created_at": "2026-10-05T05:45:00.000Z",
+  "notes": "Same fixture and replay as c2-interleave-dev, embedded through the product gateway with real provider models instead of a local model, swept over 18 thresholds for both candidate-fusion arms. Paid calls: two embedding passes of 1,506 short texts (about 23K tokens each). The threshold is not changed by this decision; the parent routes it."
+}

@@ -129,6 +129,14 @@ export const GRADUATION_INVENTORY: Inventory = {
       transforms: [{ column: 'heartbeat_at', rule: 'cleared', expression: 'NULL' }],
     }),
     carry('persistence_writer_protocols', 'operational', 'Writer protocol registrations per worktree owner.'),
+    carry('pinned_questions', 'user_data', 'Pinned questions with their consent state, answers (paid work) and spend; a refresh lease held mid-graduation is cleared so the target can refresh.', {
+      transforms: [
+        { column: 'lease_token', rule: 'cleared', expression: 'NULL' },
+        { column: 'lease_owner', rule: 'cleared', expression: 'NULL' },
+        { column: 'lease_expires_at', rule: 'cleared', expression: 'NULL' },
+      ],
+    }),
+    carry('question_evidence', 'user_data', 'Per-sentence evidence pointers of pinned answers; without them every answer reads stale.'),
     carry('raw_data', 'user_data', 'Raw source payloads per page.'),
     carry('retrieval_event_links', 'operational', 'Typed edges each recorded answer used; keeps recent answers rateable.'),
     carry('retrieval_event_pages', 'operational', 'Pages and revisions each recorded answer used; keeps recent answers rateable.'),

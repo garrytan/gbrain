@@ -38,6 +38,7 @@ boundary and link it here rather than raising the cap.
 | [Core Ai](key-files/core-ai.md) | `src/core/ai/` gateway, embedding, dims, errors, fallbacks |
 | [Core Ai (continued)](key-files/core-ai-continued.md) | `src/core/ai/providers/*`, `recipes/*`, `voyage-gateway.ts` |
 | [Core Decide](key-files/core-decide.md) | `src/core/ai/decide/*`, `src/core/search/decide-stage.ts`, `gbrain decide`, `decide_health` (System One) |
+| [Core Questions](key-files/core-questions.md) | Pinned questions: `src/core/questions/*`, `gbrain questions`, `standing_questions` |
 | [Core Cycle](key-files/core-cycle.md) | `src/core/cycle/anomaly.ts` through `src/core/cycle/phase-table.ts`: atoms, facts, drains, probes, phase scope |
 | [Core Cycle (continued)](key-files/core-cycle-continued.md) | `src/core/cycle/` synthesis, patterns, consolidation, concept publication and `connector-atoms.ts` |
 | [Core Minions (1/2)](key-files/core-minions-1.md) | `src/core/minions/` through `src/core/minions/rss-default.ts` |
@@ -71,16 +72,16 @@ boundary and link it here rather than raising the cap.
 | [Tooling And Tests](key-files/tooling-and-tests.md) | `.github/workflows/test.yml` through `test/remote-privacy-sweep.test.ts` |
 | [CI Health And Test Guards](key-files/ci-health-and-test-guards.md) | `.github/workflows/nightly-watch.yml` through `scripts/check-image-decoders-embedded.sh`, plus contributor audit, fix-wave gate |
 | [BrainBench — in a sibling repo](key-files/brainbench.md) | Cross-file subsystem contract |
-| [Hindsight calibration (key files cluster)](key-files/hindsight.md) | Cross-file subsystem contract |
-| [Schema packs: mutation surface (key files cluster)](key-files/schema-mutation.md) | Cross-file subsystem contract |
+| [Hindsight calibration](key-files/hindsight.md) | Cross-file subsystem contract |
+| [Schema packs: mutation surface](key-files/schema-mutation.md) | Cross-file subsystem contract |
 | [Agent bootstrap cluster (the paste-in desktop-agent install)](key-files/agent-bootstrap.md) | Cross-file subsystem contract |
 | [Agent Bootstrap (continued)](key-files/agent-bootstrap-continued.md) | Remaining cross-file entries |
-| [Google connector + open-loop engine (key files cluster)](key-files/google-and-loops.md) | Cross-file subsystem contract |
+| [Google connector + open-loop engine](key-files/google-and-loops.md) | Cross-file subsystem contract |
 | [Google And Loops (continued)](key-files/google-and-loops-continued.md) | Remaining cross-file entries |
-| [Always-loaded core memory (key files cluster)](key-files/core-memory.md) | Core tier, write-path guard and lock order, delivery lanes, pressure notice |
-| [Workspace push and backup coverage (key files cluster)](key-files/workspace-push-and-backup.md) | Workspace push, hook push backstops, backup verdicts |
-| [Ambient capture consent gate (key files cluster)](key-files/ambient-capture.md) | `memory.auto_writeback` capture lanes |
-| [Quarantine (cluster)](key-files/quarantine.md) | Gate-marker strip; quarantined pages in facts, reads, writes |
+| [Always-loaded core memory](key-files/core-memory.md) | Core tier, write-path guard and lock order, delivery lanes, pressure notice |
+| [Workspace push and backup coverage](key-files/workspace-push-and-backup.md) | Workspace push, hook push backstops, backup verdicts |
+| [Ambient capture consent gate](key-files/ambient-capture.md) | `memory.auto_writeback` capture lanes |
+| [Quarantine](key-files/quarantine.md) | Gate-marker strip; quarantined pages in facts, reads, writes |
 
 ## BrainBench — in a sibling repo
 
@@ -88,11 +89,11 @@ See [BrainBench — in a sibling repo](key-files/brainbench.md).
 
 ## Hindsight calibration (key files cluster)
 
-See [Hindsight calibration (key files cluster)](key-files/hindsight.md).
+See [Hindsight calibration](key-files/hindsight.md).
 
 ## Schema packs: mutation surface (key files cluster)
 
-See [Schema packs: mutation surface (key files cluster)](key-files/schema-mutation.md).
+See [Schema packs: mutation surface](key-files/schema-mutation.md).
 
 ## Agent bootstrap cluster (the paste-in desktop-agent install)
 
@@ -100,8 +101,8 @@ See [Agent bootstrap cluster (the paste-in desktop-agent install)](key-files/age
 
 ## Google connector + open-loop engine (key files cluster)
 
-See [Google connector + open-loop engine (key files cluster)](key-files/google-and-loops.md).
+See [Google connector + open-loop engine](key-files/google-and-loops.md).
 
 ## Always-loaded core memory (key files cluster)
 
-See [Always-loaded core memory (key files cluster)](key-files/core-memory.md).
+See [Always-loaded core memory](key-files/core-memory.md).

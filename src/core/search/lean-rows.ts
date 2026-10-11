@@ -28,7 +28,7 @@ const KEPT_FIELDS: ReadonlySet<string> = new Set([
   'id', 'slug', 'title', 'type', 'chunk_text', 'score', 'effective_date', 'source_id', 'chunk_id',
   'evidence', 'create_safety',
   'injection_suspected', 'injection_p', 'unverified', 'content_flag', 'status', 'superseded', 'superseded_by',
-  'message_id', 'thread_id', 'source_subject', 'relational',
+  'message_id', 'thread_id', 'source_subject', 'relational', 'result_type', 'fact_id', 'page_slug', 'follow_up',
   // #5575 A6: every row says how much it deserves influence.
   'trust_tier', 'origin', 'unconfirmed',
   // Present only when the caller asked for `explain: true`.
