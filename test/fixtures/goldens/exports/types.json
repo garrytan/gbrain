@@ -5162,6 +5162,13 @@
       },
       {
         "kind": "function",
+        "name": "resolveMarkdownLinkSlug",
+        "signature": [
+          "(pageSlug: string, href: string) => string | null"
+        ]
+      },
+      {
+        "kind": "function",
         "name": "resolvedLinkCandidate",
         "signature": [
           "(candidate: LinkCandidate, originSlug: string, originSourceId: string, resolved: { fromSlug: string; fromSourceId: string; toSourceId: string; }) => LinkBatchInput"
@@ -7259,7 +7266,7 @@
         "kind": "interface",
         "members": [
           "_embeddingOptedOut?: boolean | undefined",
-          "_queryEmbedDeadline?: QueryEmbedDeadline | undefined",
+          "_queryEmbedDeadline?: (() => QueryEmbedDeadline) | undefined",
           "_queryPrefix?: string | undefined",
           "_searchModeInput?: ResolveSearchModeInput | undefined",
           "_telemetryCacheStatus?: \"miss\" | \"disabled\" | undefined",
@@ -7545,6 +7552,13 @@
         "name": "isExcludedIdentity",
         "signature": [
           "(slug: string, opts: Pick<IdentityTierOpts, \"excludeSlugs\" | \"excludeSlugPrefixes\">) => boolean"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "lazyQueryEmbedDeadline",
+        "signature": [
+          "(ms?: number) => () => QueryEmbedDeadline"
         ]
       },
       {

@@ -14,8 +14,8 @@
  * Normalizer `doctor-json-v1`: ordered checks (name, status, message,
  * details, issues) plus the report envelope, with volatile tokens replaced:
  * temp home / repo / os tmpdir paths, UUIDs, ISO timestamps, the running
- * package and Bun versions, the machine hostname, `*_ms` / elapsed / pid-style
- * detail keys, and wall-clock `day` keys (the fence trend's UTC day buckets), and the latest schema migration number in the `schema_version`
+ * package and Bun versions, the machine hostname, and `*_ms` / elapsed / pid-style
+ * detail keys, and the latest schema migration number in the `schema_version`
  * message (`<latest>`, so a migration renumber does not churn the goldens;
  * `expectSchemaLatestMatchesRegistry` keeps the hidden number honest). Check order is emitted order (deterministic; no Map/Set
  * iteration is re-sorted). stderr lines are kept (normalized) because the
@@ -31,6 +31,7 @@ import { MIGRATIONS } from '../../src/core/schema-migrations/registry.generated.
 const REPO_ROOT = join(import.meta.dir, '..', '..');
 const CLI = join(REPO_ROOT, 'src', 'cli.ts');
 const PRELOAD = join(import.meta.dir, 'no-network-preload.ts');
+const CLOCK_PRELOAD = join(import.meta.dir, 'fixed-clock-preload.ts');
 const PACKAGE_VERSION = (JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf-8')) as { version: string }).version;
 const REGISTRY_LATEST = Math.max(...MIGRATIONS.map((m) => m.version));
 const SCHEMA_LATEST = /\b(Version |latest: |latest is |latest known version \()(\d+)\b/g;
@@ -40,10 +41,13 @@ export interface DoctorHome {
   work: string;
   skillsDir: string;
   netLog: string;
+  /** Milliseconds every CLI process of this home adds to the real clock (fixed-clock-preload.ts); unset runs on the real clock. */
+  clockOffsetMs?: number;
   cleanup: () => void;
 }
 
-export function makeDoctorHome(prefix: string): DoctorHome {
+/** `opts.clock`: an ISO instant; the home's CLI processes share one clock that reads it now and moves forward from it. */
+export function makeDoctorHome(prefix: string, opts: { clock?: string } = {}): DoctorHome {
   const home = mkdtempSync(join(tmpdir(), `gbrain-${prefix}-`));
   const work = join(home, 'work');
   const skillsDir = join(home, 'skills');
@@ -65,6 +69,7 @@ export function makeDoctorHome(prefix: string): DoctorHome {
     work,
     skillsDir,
     netLog: join(home, 'net.log'),
+    ...(opts.clock ? { clockOffsetMs: Date.parse(opts.clock) - Date.now() } : {}),
     cleanup: () => rmSync(home, { recursive: true, force: true }),
   };
 }
@@ -98,11 +103,13 @@ export async function runGbrain(h: DoctorHome, args: string[], env: Record<strin
     NO_COLOR: '1',
     PATH: [join(h.home, 'bin'), '/usr/bin', '/bin'].join(delimiter),
   });
+  delete childEnv.GBRAIN_TEST_CLOCK_OFFSET_MS;
+  if (h.clockOffsetMs !== undefined) childEnv.GBRAIN_TEST_CLOCK_OFFSET_MS = String(h.clockOffsetMs);
   for (const [k, v] of Object.entries(env)) {
     if (v === undefined) delete childEnv[k];
     else childEnv[k] = v;
   }
-  const proc = Bun.spawn([process.execPath, '--no-env-file', '--preload', PRELOAD, CLI, ...args], {
+  const proc = Bun.spawn([process.execPath, '--no-env-file', '--preload', PRELOAD, '--preload', CLOCK_PRELOAD, CLI, ...args], {
     cwd: h.work,
     env: childEnv,
     stdin: 'ignore',
@@ -137,7 +144,7 @@ export function patchConfig(h: DoctorHome, patch: (cfg: Record<string, unknown>)
 }
 
 const UUID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
-const VOLATILE_KEYS = /(^|_)(ms|pid|elapsed|duration|uptime)$|_ms$|^elapsed|^day$/i;
+const VOLATILE_KEYS = /(^|_)(ms|pid|elapsed|duration|uptime)$|_ms$|^elapsed/i;
 
 export function normalizeDoctorText(text: string, roots: Record<string, string>, extra: Array<[RegExp | string, string]> = []): string {
   let out = scrubPaths(text, roots);

@@ -324,6 +324,7 @@
       "gbrain_advance_page_revision()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=ae793ff5263f7b76311e0c22593fb658db9f82e7b3781914421d9508b6da0e88",
       "gbrain_advance_tag_revision()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=7807b26b4933148aa63c67fca824a60d3492396728205d04e16c48c81174cbd5",
       "gbrain_forget_page_retrievals()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=0f053c08f9d5a4512d10406f7b20b9c60ec43d9bbea48b28b7e4cf7187ee191b",
+      "gbrain_fts_input(t text)": "RETURNS text kind=f lang=sql volatility=i secdef=false config=[search_path=pg_catalog] body_sha256=c73d0dbc333c6dccc9714a6b8d1b7785f48170556b9024002ddca1c80b25d87d",
       "gbrain_guard_effect_protocol()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=e8b5589dafd4a355106104daffdf57c7776d34fe18c5b5f5336a27de188688a1",
       "gbrain_guard_protocol_activation()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=f27354966c25d961fcecbffebba0e45747ad3de23575351319f6aee4f9aefd47",
       "gbrain_guard_request_protocol()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=12baf1d365a8aa3009ac0fe6605497e6433304e8d5915a3fc0b0b39ad748f6c2",
@@ -333,8 +334,8 @@
       "gbrain_require_managed_writer()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=d444fd431abe188062c7266caa9ab41327336c916805d7dd02a362affe2f26a7",
       "gbrain_require_persistence_protocol(required integer)": "RETURNS void kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=af07b7fac60dec0a4fe568217931ac449d32f73b3a53a047b3b02a5f59cb5058",
       "notify_minion_job_change()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=17f7c36408688409c80befd0a9ef9314e597d78a195418d1b94426e3d0b662f8",
-      "update_chunk_search_vector()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=d6d7b39b09838a1f5aaf343b766f21d2cd36f9d552a72b757266c779467f9647",
-      "update_page_search_vector()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=a05af543ed339a3e7b2b86b3eeddab6d6b14d9f2f52116dfe300caadde0dc230"
+      "update_chunk_search_vector()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=b870de46705a62891bb318ecdeca1d0d5ea1f8da9a9a79c4cec6569e515dbdeb",
+      "update_page_search_vector()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public] body_sha256=f255236df404045eebb7bc67cda1339c5be26cf508a95bca2595c8ee8f064784"
     },
     "grants": {
       "access_tokens": [

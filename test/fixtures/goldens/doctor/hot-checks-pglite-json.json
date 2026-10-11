@@ -2418,7 +2418,7 @@
                   "by_day": [
                     {
                       "count": 1,
-                      "day": "<volatile>"
+                      "day": "2026-10-10"
                     }
                   ],
                   "normalized_7d": 1,
@@ -5450,7 +5450,7 @@
                   "by_day": [
                     {
                       "count": 1,
-                      "day": "<volatile>"
+                      "day": "2026-10-10"
                     }
                   ],
                   "normalized_7d": 1,

@@ -630,6 +630,14 @@ async function probeRerankerConfig(engine: BrainEngine): Promise<ProbeResult> {
  * when set — so a CPU-only local reranker's cold-start warmup doesn't
  * cause the probe to false-fail with `network`/timeout.
  */
+/** #6381: one relevant and one unrelated passage; a working cross-encoder separates them by a clear margin. */
+const RERANK_PROBE = {
+  query: 'What is the capital of France?',
+  relevant: 'Paris is the capital of France.',
+  unrelated: 'Bananas are a yellow fruit.',
+} as const;
+const RERANK_PROBE_MIN_MARGIN = 0.1;
+
 export async function probeRerankerReachability(engine: BrainEngine, deps: ProbeDeps = {}): Promise<ProbeResult | null> {
   const modelStr = await resolveLiveRerankerModel(engine);
   if (!modelStr) return null;
@@ -648,18 +656,34 @@ export async function probeRerankerReachability(engine: BrainEngine, deps: Probe
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(new Error(`probe timed out after ${probeTimeoutMs}ms`)), probeTimeoutMs);
     try {
-      await rerank({
+      const results = await rerank({
         model: modelStr,
-        query: 'probe',
-        documents: ['probe document'],
+        query: RERANK_PROBE.query,
+        documents: [RERANK_PROBE.relevant, RERANK_PROBE.unrelated],
         signal: controller.signal,
         timeoutMs: probeTimeoutMs,
       });
+      const relevant = results.find(r => r.index === 0)?.relevanceScore;
+      const unrelated = results.find(r => r.index === 1)?.relevanceScore;
+      const discriminates = Number.isFinite(relevant) && Number.isFinite(unrelated)
+        && (relevant as number) - (unrelated as number) > RERANK_PROBE_MIN_MARGIN;
+      if (!discriminates) {
+        return {
+          model: modelStr,
+          touchpoint: 'reranker_config',
+          status: 'config',
+          message: Number.isFinite(relevant) && Number.isFinite(unrelated)
+            ? `reachable, but it scores an unrelated passage as high as a relevant one (${relevant} vs ${unrelated})`
+            : 'reachable, but it did not return a score for both probe passages',
+          elapsed_ms: Date.now() - start,
+          fix: 'The model is likely a broken GGUF conversion; see docs/ai-providers/llama-server-reranker.md step 2.',
+        };
+      }
       return {
         model: modelStr,
         touchpoint: 'reranker_config',
         status: 'ok',
-        message: 'reachable',
+        message: 'reachable; ranks a relevant passage above an unrelated one',
         elapsed_ms: Date.now() - start,
       };
     } finally {

@@ -7,7 +7,7 @@ import { brainHasImageVectors } from '../image-vector-presence.ts';
 import type { ModalityMode } from '../query-intent.ts';
 import type { ExactLookupOpts } from '../exact-lookup.ts';
 import type { HybridRequest } from './request.ts';
-import { type PostFusionOpts, embedQueryBounded, makeQueryEmbedDeadline } from '../hybrid.ts';
+import { type PostFusionOpts, embedQueryBounded, lazyQueryEmbedDeadline } from '../hybrid.ts';
 import type { SearchOpts, SearchResult } from '../../types.ts';
 import { type VectorArm, pushVectorList } from '../fusion-lists.ts';
 import { buildRelationalArm } from '../relational-recall.ts';
@@ -386,7 +386,7 @@ export async function runVectorArms(
     // threaded from hybridSearchCached (so the cache-lookup embed + this one
     // share one ~6s budget); direct callers get a fresh deadline. On timeout
     // the embed rejects → salvage below (or keyword-only when all reject).
-    const embedDl = opts?._queryEmbedDeadline ?? makeQueryEmbedDeadline();
+    const embedDl = opts?._queryEmbedDeadline ?? lazyQueryEmbedDeadline();
     // Hermetic eval canaries/CI: queryEmbedFn (non-semantic deterministic
     // embeddings) replaces the gateway query-embed for the text vector arm.
     // No deadline needed — it's a synchronous-ish local computation with no
@@ -394,7 +394,7 @@ export async function runVectorArms(
     const embedOneQuery = (q: string): Promise<Float32Array> =>
       opts?.queryEmbedFn
         ? Promise.resolve(opts.queryEmbedFn(q))
-        : embedQueryBounded(q, embedOpts, embedDl);
+        : embedQueryBounded(q, embedOpts, embedDl());
     if (!searchSalvageEnabled()) {
       // ENG-7 kill switch (GBRAIN_SEARCH_SALVAGE=off): pre-wave
       // all-or-nothing fan-outs — one variant's failure abandons every
