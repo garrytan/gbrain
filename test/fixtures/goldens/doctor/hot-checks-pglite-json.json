@@ -2410,7 +2410,7 @@
                   "by_day": [
                     {
                       "count": 1,
-                      "day": "2026-10-10"
+                      "day": "<today>"
                     }
                   ],
                   "normalized_7d": 1,
@@ -5433,7 +5433,7 @@
                   "by_day": [
                     {
                       "count": 1,
-                      "day": "2026-10-10"
+                      "day": "<today>"
                     }
                   ],
                   "normalized_7d": 1,

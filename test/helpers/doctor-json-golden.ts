@@ -143,6 +143,8 @@ export function normalizeDoctorText(text: string, roots: Record<string, string>,
   let out = scrubPaths(text, roots);
   for (const [pattern, label] of extra) out = typeof pattern === 'string' ? out.split(pattern).join(label) : out.replace(pattern, label);
   out = scrubTimestamps(out).replace(UUID, '<uuid>');
+  // Bare UTC day buckets (`by_day[].day`) of events the fixture records at capture time.
+  for (const [ago, label] of [[0, '<today>'], [1, '<yesterday>']] as const) out = out.split(new Date(Date.now() - ago * 86_400_000).toISOString().slice(0, 10)).join(label);
   out = out.replace(/\(most recent caller: at [^()]*\([^()]*\)\)/g, '(most recent caller: <frame>)');
   out = out.split(PACKAGE_VERSION).join('<version>');
   out = out.replace(SCHEMA_LATEST, (match, prefix: string, n: string) => (Number(n) === REGISTRY_LATEST ? `${prefix}<latest>` : match));
