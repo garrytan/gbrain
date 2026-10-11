@@ -263,6 +263,40 @@ test('writer grant revoked by an in-flight embedding cannot authorize installati
   expect((await engine.executeRaw<{ embedding: unknown }>('SELECT embedding FROM takes WHERE id=$1::bigint', [id]))[0]?.embedding).toBeNull();
 }));
 
+test('gateway model changed during a request cannot install or dispatch another vector', () => inHome(async () => {
+  const id = await seed('gateway identity changes');
+  beforeResponse = async () => {
+    beforeResponse = undefined;
+    configureGateway({ embedding_model: 'ollama:Other:latest', embedding_dimensions: 768,
+      base_urls: { ollama: `http://127.0.0.1:${server.port}/v1` }, env: {} });
+  };
+
+  const first = await embedTakesWithConsent(engine, { sourceId, yes: true, maxCostUsd: 1 });
+  expect(first).toMatchObject({ takes: { embedded: 0, failures: 1 }, remaining: 1, stopped: 'failed' });
+  expect((await engine.executeRaw<{ embedding: unknown }>('SELECT embedding FROM takes WHERE id=$1::bigint', [id]))[0]?.embedding).toBeNull();
+  expect(wire).toEqual([['title: none | text: gateway identity changes']]);
+
+  await expect(embedTakesWithConsent(engine, { sourceId, yes: true, maxCostUsd: 1 })).rejects.toThrow('configuration differs');
+  expect(wire).toEqual([['title: none | text: gateway identity changes']]);
+}));
+
+test('gateway dimension changed during a request cannot install or dispatch another vector', () => inHome(async () => {
+  const id = await seed('gateway width changes');
+  beforeResponse = async () => {
+    beforeResponse = undefined;
+    configureGateway({ embedding_model: 'ollama:EmbeddingGemma:latest', embedding_dimensions: 384,
+      base_urls: { ollama: `http://127.0.0.1:${server.port}/v1` }, env: {} });
+  };
+
+  const first = await embedTakesWithConsent(engine, { sourceId, yes: true, maxCostUsd: 1 });
+  expect(first).toMatchObject({ takes: { embedded: 0, failures: 1 }, remaining: 1, stopped: 'failed' });
+  expect((await engine.executeRaw<{ embedding: unknown }>('SELECT embedding FROM takes WHERE id=$1::bigint', [id]))[0]?.embedding).toBeNull();
+  expect(wire).toEqual([['title: none | text: gateway width changes']]);
+
+  await expect(embedTakesWithConsent(engine, { sourceId, yes: true, maxCostUsd: 1 })).rejects.toThrow('configuration differs');
+  expect(wire).toEqual([['title: none | text: gateway width changes']]);
+}));
+
 test('formatted request ceiling enforces a zero-call cost cap', () => inHome(async () => {
   await seed('x');
   const refused = await embedTakesWithConsent(engine, { sourceId, yes: true, maxCostUsd: 0 });

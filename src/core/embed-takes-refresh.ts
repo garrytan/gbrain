@@ -110,7 +110,8 @@ export async function embedTakesWithConsent(
     const disabled = await target.getConfig('embedding_disabled');
     if (disabled !== null && disabled !== 'true' && disabled !== 'false') throw new Error('Selected brain embedding_disabled must be true or false');
     assertEmbeddingEnabled({ engine: target.kind, ...selectedConfig, embedding_disabled: disabled === 'true' });
-    if (await target.getConfig('embedding_model') !== model || await target.getConfig('embedding_dimensions') !== String(dims)
+    if (getEmbeddingModel() !== model || getEmbeddingDimensions() !== dims
+      || await target.getConfig('embedding_model') !== model || await target.getConfig('embedding_dimensions') !== String(dims)
       || dbModel !== model || dbDims !== String(dims)
       || selectedConfig?.embedding_model !== undefined && selectedConfig.embedding_model !== model
       || selectedConfig?.embedding_dimensions !== undefined && selectedConfig.embedding_dimensions !== dims) {
@@ -188,6 +189,7 @@ export async function embedTakesWithConsent(
   const takes = await withAIInvocationGuard(async call => {
     signal.throwIfAborted();
     if (call.kind !== 'embedding') throw new Error('Take refresh permits embedding calls only');
+    if (call.model !== model) throw new Error('Embedding gateway model changed during take refresh; rerun the scoped preview');
     if (!Number.isSafeInteger(call.maxInputTokens) || call.maxInputTokens! < 0) throw new Error('Embedding request has no safe input-token ceiling');
     await assertOwned(engine);
     const reservation = tracker.reserve({ modelId: call.model, kind: 'embed', estimatedInputTokens: call.maxInputTokens!, maxOutputTokens: 0 });
