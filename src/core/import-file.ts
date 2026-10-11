@@ -647,7 +647,7 @@ export async function importFromContent(
         : null;
     const wrappedTexts = pending.map(i => prefix ? wrapChunkForEmbedding(chunks[i].chunk_text, prefix, chunks[i].chunk_source) : chunks[i].chunk_text);
     // #4616: store the usable vectors; refused chunks stay NULL for embed --stale.
-    const { vectors: embeddings, refused } = await embedBatchKeepingUsable(wrappedTexts);
+    const { vectors: embeddings, refused } = await embedBatchKeepingUsable(wrappedTexts, { documentTitle: parsed.title });
     embeddingPartial = refused;
     pending.forEach((i, j) => {
       if (!embeddings[j]) return;
