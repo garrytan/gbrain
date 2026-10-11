@@ -313,6 +313,7 @@ export const timelineHistoryEntry: DoctorEntry = {
     'git_held_files',
     'frontmatter_hook',
     'orphan_persistence_bindings',
+    'foreign_ownership_marker',
     'unbound_source',
     'writer_version',
     'self_capture',

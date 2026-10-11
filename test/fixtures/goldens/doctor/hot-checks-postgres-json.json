@@ -535,7 +535,7 @@
           },
           {
             "category": "meta",
-            "message": "1116 column(s) verified against live schema",
+            "message": "1117 column(s) verified against live schema",
             "name": "schema_columns",
             "status": "ok"
           },
@@ -1066,6 +1066,17 @@
             },
             "message": "Every persistence source binding belongs to an existing source.",
             "name": "orphan_persistence_bindings",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "count": 0,
+              "docs": "docs/guides/write-refusals.md#foreign-ownership-marker",
+              "markers": []
+            },
+            "message": "Every ownership marker beside a source checkout belongs to this brain.",
+            "name": "foreign_ownership_marker",
             "status": "ok"
           },
           {
@@ -3556,7 +3567,7 @@
           },
           {
             "category": "meta",
-            "message": "1116 column(s) verified against live schema",
+            "message": "1117 column(s) verified against live schema",
             "name": "schema_columns",
             "status": "ok"
           },
@@ -4087,6 +4098,17 @@
             },
             "message": "Every persistence source binding belongs to an existing source.",
             "name": "orphan_persistence_bindings",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "count": 0,
+              "docs": "docs/guides/write-refusals.md#foreign-ownership-marker",
+              "markers": []
+            },
+            "message": "Every ownership marker beside a source checkout belongs to this brain.",
+            "name": "foreign_ownership_marker",
             "status": "ok"
           },
           {

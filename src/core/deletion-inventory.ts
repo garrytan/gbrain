@@ -115,7 +115,7 @@ const ROWS: readonly Row[] = [
   ['persistence_counters', 'out_of_scope', 'no_memory_text', 'key'],
   ['persistence_effects', 'swept', 'effect_recovery', 'kind data state source_id error_code outcome recovery'],
   ['persistence_graduation', 'out_of_scope', 'probed_reported', 'role state source_data_dir trigger_bypass table_receipts replay_probe timings doctor rollback', 'table_receipts'],
-  ['persistence_host_bindings', 'out_of_scope', 'no_memory_text', 'local_path coordination_path'],
+  ['persistence_host_bindings', 'out_of_scope', 'no_memory_text', 'local_path coordination_path git_durability'],
   ['persistence_local_writers', 'out_of_scope', 'secret_material', 'lane credential_hash grant_ceiling'],
   ['persistence_requests', 'swept', 'request_intent', 'principal_kind principal_id operation source_id slug digest intent authority state recovery outcome error_code error_message blocked_reason target_kind admitter_version consumer_version error_detail claim_phase'],
   ['persistence_source_bindings', 'out_of_scope', 'no_memory_text', 'source_id relative_path'],

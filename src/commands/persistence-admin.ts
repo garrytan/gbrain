@@ -18,6 +18,7 @@ export const WRITER_HELP = `Usage:
   gbrain sources writer status [<source>] [--probe] [--json]
   gbrain sources writer movement [<source>] [--wait <dur>] [--warn-only] [--json]
   gbrain sources writer retry-effects <source> --request-id <uuid> [--dry-run] [--json]
+  gbrain sources writer git-durability <source> --enable|--disable [--pat-file <path>] [administration options] [--dry-run] [--json]
   gbrain sources writer claim <source> --path <directory> [administration options] [--dry-run] [--json]
   gbrain sources writer activate --confirm-quiesced [--cleanup-dead-local-locks] [--shared-skills] [administration options] [--dry-run] [--json]
   gbrain sources writer deactivate [--admin-intent writer_deactivate --expected-state <admin_state>] [--dry-run] [--json]
@@ -32,7 +33,11 @@ restarting serve and the workers; see movement --help for its states and exits.
 Routine diagnosis, doctor --fix, startup, and maintenance
 must not change ownership or activate managed persistence. Read the operator
 procedure in docs/architecture/topologies.md before deliberate administration.
-Non-dry-run changes require --admin-intent <writer_claim|writer_activate|writer_deactivate|writer_transfer_prepare|writer_transfer_accept>
+git-durability records whether this owner commits (and pushes) page writes through
+its Git effect; --enable runs a read-only push probe first and re-queues the Git
+effects skipped while it was off, --pat-file wires a repo-scoped push credential
+(same keys as sources harden) and retries this worktree's parked pushes.
+Non-dry-run changes require --admin-intent <writer_claim|writer_activate|writer_deactivate|writer_transfer_prepare|writer_transfer_accept|writer_git_durability>
 matching the action and --expected-state <admin_state from reviewed status>.
 These checks also apply to interactive terminals; --yes is not a substitute.
 Explicit noninteractive administration is supported. Stale state is rejected.
@@ -110,7 +115,7 @@ export function adminHostConfig<T extends GBrainConfig>(config: T | null | undef
 
 type Group = 'writer' | 'local-writer';
 const GROUP_ARGV: Record<Group, string[]> = { writer: ['gbrain', 'sources', 'writer'], 'local-writer': ['gbrain', 'auth', 'local-writer'] };
-const BARE_FLAGS = ['--json', '--dry-run', '--replace', '--probe', '--confirm-quiesced', '--self-transfer', '--cleanup-dead-local-locks', '--shared-skills'];
+const BARE_FLAGS = ['--json', '--dry-run', '--replace', '--probe', '--confirm-quiesced', '--self-transfer', '--cleanup-dead-local-locks', '--shared-skills', '--enable', '--disable'];
 /** A CLI usage refusal: the exact usage in the suggestion, the group's help as the read-only fix. */
 function invalid(group: Group, message: string, suggestion: string) {
   return opError('invalid_params', message, suggestion, {
@@ -127,7 +132,7 @@ export function parsePersistenceAdminArgs(group: Group, args: string[]): {
     '--path': 'path', '--source': 'source_id', '--expected-epoch': 'expected_epoch', '--manifest': 'manifest',
     '--source-ids': 'source_ids', '--scopes': 'scopes', '--allowed-operations': 'allowed_operations',
     '--slug-prefixes': 'slug_prefixes', '--limit': 'limit', '--before': 'before',
-    '--admin-intent': 'admin_intent', '--expected-state': 'expected_state', '--request-id': 'request_id',
+    '--admin-intent': 'admin_intent', '--expected-state': 'expected_state', '--request-id': 'request_id', '--pat-file': 'pat_file',
   };
   const arrays = new Set(['source_ids', 'scopes', 'allowed_operations', 'slug_prefixes']);
   const seen = new Set<string>();
@@ -152,13 +157,14 @@ export function parsePersistenceAdminArgs(group: Group, args: string[]): {
     if (flag === '--brain') { brain = value; continue; }
     const key = values[flag];
     params[key] = arrays.has(key) ? value.split(',').map(part => part.trim()).filter(Boolean)
-      : key === 'limit' ? Number(value) : key === 'path' ? resolve(value) : value;
+      : key === 'limit' ? Number(value) : key === 'path' || key === 'pat_file' ? resolve(value) : value;
   }
   let operation: PersistenceAdminOperation;
   if (group === 'writer') {
     const verb = positional.shift();
     if (verb === 'status') operation = 'writer_status';
     else if (verb === 'retry-effects') operation = 'writer_retry_effects';
+    else if (verb === 'git-durability') operation = 'writer_git_durability';
     else if (verb === 'claim') operation = 'writer_claim';
     else if (verb === 'activate') operation = 'writer_activate';
     else if (verb === 'deactivate') operation = 'writer_deactivate';
@@ -169,7 +175,7 @@ export function parsePersistenceAdminArgs(group: Group, args: string[]): {
       if (phase !== 'prepare' && phase !== 'accept') throw invalid(group, 'Transfer requires prepare or accept.',
         'Run gbrain sources writer transfer prepare on the current owner host first, then gbrain sources writer transfer accept on the successor with the epoch and manifest prepare printed.');
       operation = phase === 'prepare' ? 'writer_transfer_prepare' : 'writer_transfer_accept';
-    } else throw invalid(group, 'Writer administration requires status, movement, retry-effects, claim, activate, deactivate, transfer, lock, or unlock.',
+    } else throw invalid(group, 'Writer administration requires status, movement, retry-effects, git-durability, claim, activate, deactivate, transfer, lock, or unlock.',
       `Name the action after gbrain sources writer${verb ? ` instead of ${verb}` : ''}; start with gbrain sources writer status --json, which changes nothing.`);
     const source = positional.shift();
     if (source !== undefined) {

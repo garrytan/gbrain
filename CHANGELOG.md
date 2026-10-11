@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.164.0] - 2026-10-11
 
 **`query` now answers with the facts you corrected, and gbrain can keep a question answered for you.**
 
@@ -30,7 +30,42 @@ A fact you save with `remember` used to lose to the stale page text it corrected
   - `query` skips the image arm on brains with no image embeddings.
   - `query` returning whole pages with a `token_budget` sizes its hit list to the budget instead of stopping at the default row count with budget unused.
   - `gbrain extract-conversation-facts` reads plain `user:` / `assistant:` transcripts, and exits 0 on partial success with a summary of the pages that failed.
-- Migration v234 adds the pinned-question tables.
+- Migration v235 adds the pinned-question tables.
+
+## [0.60.163.0] - 2026-10-11
+
+**A managed brain's Git durability is now a recorded owner setting, and the managed-worktree refusals name the command to run instead of a dead end.**
+
+On a managed brain the persistence owner commits and pushes page writes through its Git effect, but until now that depended on a post-commit hook the owner probed for on every pass, and nothing told an operator how to turn it on (#5182). `gbrain sources writer git-durability <source> --enable|--disable [--pat-file <path>]` records the setting on the host binding (migration v234 adds the nullable `git_durability` column; nothing recorded keeps today's probe), `--enable` runs a read-only push probe first and re-queues the Git effects skipped while it was off, and `--pat-file` wires the repo-scoped push credential and retries the parked pushes. `sources push`, `bootstrap verify`'s `push_probe` and the skill-pack writer guard now name that route on a managed worktree instead of a bare `writer_coordinator_required` (#5606). Doctor's new `foreign_ownership_marker` names the stale ownership stamp that blocks a claim (#5808), `writer activate` on an already-managed brain answers `already_enabled` with the owner process to check (#5514), `gbrain repair managed-sync-orphans` retires sync bookkeeping nothing current can resume (#5459), transcript re-ingest deletes a stale part through the coordinator instead of refusing (#5235), `gbrain sources set-strategy <id> <strategy>` persists a code source's sync strategy and refuses under an unfinished managed run (contributed by @rokas-tarasevicius, supersedes #5955), and `bootstrap status` tells a project-scoped Codex MCP connection you manage yourself apart from "nothing wired" (#4082).
+
+### To take advantage of this release
+
+`gbrain upgrade` should do this automatically. If it didn't, or if `gbrain doctor`
+warns about a partial migration:
+
+```bash
+gbrain apply-migrations --yes --no-autopilot-install   # v234: persistence_host_bindings.git_durability
+gbrain doctor --json | grep -E 'schema_version|foreign_ownership_marker|sync_failures'
+```
+
+On a managed brain, `gbrain sources writer status <source> --json` now reports `git_durability` (`on`, `off` or `unknown`); `gbrain sources writer git-durability <source> --enable --dry-run` previews the switch.
+
+### Itemized changes
+
+- **Git durability as an owner setting (#5182, [R7i]/[R7ii]).** `persistence_host_bindings.git_durability` (`enabled` | `disabled` | NULL) via migration v234 on PGLite, Postgres and PgBouncer transaction mode; `gitDurabilityPolicy` resolves `enabled`/`disabled` from the binding and consults the legacy hook probe only when nothing is recorded (fail-closed on probe error). The effect worker's per-root probe routes through it. New verb `writer git-durability` (`writer_git_durability` admin operation; `--enable`, `--disable`, `--pat-file`, `--dry-run`, the usual `--admin-intent`/`--expected-state`) with error codes `git_branch_unborn`, `git_checkout_required`, `git_detached_head`, `pat_file_unreadable`. `writer activate` and `writer status` list `git_durability` per binding. Catch-up re-queues `durability_not_enabled` Git effects without inserting under `UNIQUE(request_id, kind)`.
+- **Managed-worktree refusals name the route (#5606).** `gbrain sources push` on a managed canonical worktree refuses with the owner's `writer status` and `writer git-durability` commands; `bootstrap verify`'s `push_probe` reports the managed route instead of a failure; the skill-pack writer guard and doctor's skill checks point at `gbrain call --source <source> import_skill_proposal`.
+- **Doctor `foreign_ownership_marker` (#5808).** A stamp or reservation beside a source checkout whose brain or worktree this brain does not know is listed with its path and the operator step (`docs/guides/write-refusals.md#foreign-ownership-marker`).
+- **`writer activate` already managed (#5514).** Reason `already_enabled` with a `next_action` naming the owner process to check, instead of a generic refusal.
+- **`gbrain repair managed-sync-orphans --source <id>` (#5459).** Explicit-only, preview-bound: retires failure rows with no cursor, cursors recorded by a principal that is no longer an active local writer, and superseded pre-options cursors; live pending requests and resumable cursors are kept. Doctor `sync_failures` names it; `docs/guides/repair.md#managed-sync-orphans` and the sync-unblock runbook explain when.
+- **Transcripts on a managed brain (#5235).** A stale transcript part is deleted through the coordinator (`delete_page` with the expected revision) instead of refusing the re-ingest.
+- **`gbrain sources set-strategy <id> <markdown|code|auto>` (PR #5955).** Persists the sync strategy on the source; refuses `sync_run_unfinished` (exit 1) while a managed sync run is unfinished, naming the resume and the orphan-repair commands. Contributed by @rokas-tarasevicius.
+- **`bootstrap status` and Codex project config (#4082).** A `<workspace>/.codex/config.toml` MCP server is reported `partial` (detected, not verified) with an adopt hint; `gbrain bootstrap hooks --adopt --harness codex` records it after a passing verify in the versioned `<home>/bootstrap/adopted-connections.json` sidecar (sha256 over transport, URL and header names; no tokens) and the phase reads `done`; a drifted or removed table reads `partial` again. Nothing is written to the Codex config and no receipt registration is fabricated.
+
+### For contributors
+
+- New modules: `src/core/persistence/git-durability-policy.ts`, `git-durability-administration.ts`, `managed-sync-orphans.ts` (+ `src/core/repair/managed-sync-orphans.ts`), `src/commands/sources-strategy.ts`, `src/core/bootstrap/adopted-connections.ts`, `adopt-connection.ts`, `src/core/schema-migrations/v234-persistence-git-durability.ts`.
+- Tests (each proven failing on master first): `test/persistence-admin-git-durability.test.ts`, `test/doctor-foreign-ownership-marker.test.ts`, `test/persistence-activation.test.ts`, `test/repair-managed-sync-orphans.test.ts`, `test/transcripts-managed-ingest.test.ts`, `test/managed-push-remedy.serial.test.ts`, `test/doctor-skill-checks.test.ts`, `test/sources-strategy.test.ts`, `test/bootstrap-adopted-connection.serial.test.ts`. Doctor goldens regenerated (new check row; schema column count +1).
+- Two hunks on wave 13 PR1's files (`effect-git.ts` resolver call, `hardenBrainRepo` managed refusal) ship as patches with the integrator, not in this PR.
 
 ## [0.60.162.0] - 2026-10-11
 

@@ -6,8 +6,8 @@ import { migrateAutoThinkToPins } from '../questions/auto-think-migration.ts';
 // (DDL in src/core/questions/schema.ts), then the dream.auto_think config
 // keys become pins. The handler reads config only: no provider call, no page
 // write, and a second run changes nothing.
-export const v234: Migration = {
-  version: 234,
+export const v235: Migration = {
+  version: 235,
   name: 'pinned_questions',
   idempotent: true,
   sql: PINNED_QUESTIONS_SCHEMA_SQL,
