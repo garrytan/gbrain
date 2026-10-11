@@ -419,6 +419,10 @@
       },
       {
         "category": "brain",
+        "name": "foreign_ownership_marker"
+      },
+      {
+        "category": "brain",
         "name": "unbound_source"
       },
       {

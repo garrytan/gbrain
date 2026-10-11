@@ -560,6 +560,38 @@ after binding it warns, because those pages sit outside the canonical files.
 There is no command yet that turns them into files; to move one, save its
 content under a new slug and delete the database-only page.
 
+## Foreign ownership marker
+
+<a id="foreign-ownership-marker"></a>
+
+When a host claims a source checkout, gbrain writes two private ownership
+markers: `.gbrain-owner.json` inside the checkout and
+`.gbrain-owner-<sha256 of the path>.json` beside it. Both record the brain id
+and the worktree id they belong to. A claim of a checkout whose markers name
+another brain refuses `recovery_required` ("The physical checkout identity
+changed or belongs to another owner"), because removing a live brain's marker
+to claim its files would let two brains write the same checkout.
+
+A marker left behind by a brain that no longer exists (a PGLite brain later
+moved to Postgres with `gbrain migrate`, a `gbrain init` that was
+redone, a database dropped by hand) refuses the same way, and the refusal does
+not say which file or which brain. `gbrain doctor` reports the
+`foreign_ownership_marker` check for every source checkout and owner binding
+on this host: the marker's path, the brain id it records, and whether this
+brain knows the worktree. The check is read-only and runs only on the brain
+host.
+
+Clearing it is the operator's decision, in this order:
+
+1. Confirm with the user that the recorded brain is retired: it was moved into
+   this database, or it was deleted on purpose. `gbrain doctor --json` on the
+   old brain's home, if it still exists, shows its `brain_id`.
+2. Remove exactly the file doctor names on the brain host. Do not remove a
+   marker of a brain that is still in use; transfer ownership with
+   `gbrain sources writer transfer prepare|accept` instead.
+3. Claim again: `gbrain sources writer claim <source> --path <checkout> --dry-run`,
+   then the printed apply command.
+
 ## Secret scan refusals and redaction
 
 GBrain runs one secret scanner in several places. Depending on where a

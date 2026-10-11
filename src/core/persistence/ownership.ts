@@ -38,7 +38,10 @@ export interface WorktreeBinding {
   state: 'active' | 'draining' | 'recovering';
   local_path: string | null;
   coordination_path: string | null;
+  /** #5182 per-host Git-durability opt-in: null until an operator records one. */
+  git_durability: GitDurabilitySetting;
 }
+export type GitDurabilitySetting = 'enabled' | 'disabled' | null;
 export function containsPath(root: string, path: string): boolean {
   const rel = relative(root, path);
   return !isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`);
@@ -65,7 +68,7 @@ export async function persistenceEnabledForHealth(engine: BrainEngine): Promise<
 export async function getWorktreeBinding(engine: SqlEngine, sourceId: string, hostId: string | null = localHostId()): Promise<WorktreeBinding | null> {
   const [row] = await engine.executeRaw<WorktreeBinding>(`SELECT s.source_id,s.source_incarnation,s.worktree_id,s.relative_path,
     s.topology_generation::text AS topology_generation,w.owner_host_id,w.owner_epoch::text AS owner_epoch,w.state,
-    h.local_path,h.coordination_path FROM persistence_source_bindings s
+    h.local_path,h.coordination_path,h.git_durability FROM persistence_source_bindings s
     JOIN persistence_worktrees w ON w.id=s.worktree_id
     LEFT JOIN persistence_host_bindings h ON h.worktree_id=w.id AND h.host_id=$2::uuid
     WHERE s.source_id=$1`, [sourceId, hostId]);

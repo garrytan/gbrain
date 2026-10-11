@@ -1,4 +1,4 @@
-import { assertManagedFilesystemWrite } from './persistence/filesystem-guard.ts';
+import { assertManagedFilesystemWrite, hasFilesystemPublication, managedFilesystemRootFor } from './persistence/filesystem-guard.ts';
 /**
  * brain-repo-durability.ts — auto-harden a brain's git working tree (v0.42.44).
  *
@@ -988,6 +988,17 @@ function pullDetail(o: PullOutcome): { status: StepStatus; detail: string } {
  * already-hardened repo produces all ok/skipped and NO new commit.
  */
 export async function hardenBrainRepo(opts: HardenOpts): Promise<DurabilityReport> {
+  // #5182: a managed canonical worktree gets no hook, cron or helper here — the
+  // owner's recorded git_durability setting decides, and its verb installs
+  // the credential. Name that verb instead of the bare coordinator refusal.
+  const managed = managedFilesystemRootFor(opts.repoPath);
+  if (managed && !hasFilesystemPublication(opts.repoPath)) {
+    const sourceId = managed.sourceId ?? opts.sourceId;
+    throw opError('writer_coordinator_required',
+      `${opts.repoPath} is the managed canonical worktree of source ${sourceId}; its Git durability is an owner setting, not a hook.`,
+      `Run gbrain sources writer git-durability ${sourceId} --enable${opts.pat ? ' --pat-file <path>' : ''} (add --dry-run to preview). The owner commits and pushes page writes itself; no pull cron or post-commit hook is installed on a managed root.`,
+      { fix: readFix('Shows the owner and whether it commits and pushes page writes, read-only.', { argv: ['gbrain', 'sources', 'writer', 'status', sourceId, '--json'] }) });
+  }
   if (!opts.dryRun) assertManagedFilesystemWrite(opts.repoPath);
   const { sourceId } = opts;
   const dryRun = !!opts.dryRun;
