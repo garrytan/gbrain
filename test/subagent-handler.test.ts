@@ -164,6 +164,34 @@ describe('subagent handler happy path', () => {
     expect(parseInt(msgs[0]!.count, 10)).toBe(2); // user seed + assistant
   });
 
+  test('empty terminal output remains an error on live completion and replay without another request', async () => {
+    for (const content of [[], [{ type: 'thinking', thinking: 'internal reasoning', signature: 'fixture' }], [{ type: 'text', text: ' \n ' }]]) {
+      const client = new FakeMessagesClient([{ content: content as any, stop_reason: 'end_turn' }]);
+      const handler = makeSubagentHandler({ engine, client, toolRegistry: [] });
+      const ctx = await makeCtx({ prompt: `answer ${content[0]?.type ?? 'blockless'}` });
+      const live = await handler(ctx);
+      expect(live.stop_reason).toBe('error');
+      const replay = await handler(ctx);
+      expect(replay.stop_reason).toBe('error');
+      expect(client.calls).toHaveLength(1);
+      expect(replay.tokens).toEqual(live.tokens);
+      const messages = await engine.executeRaw<{ content_blocks: unknown }>(
+        "SELECT content_blocks FROM subagent_messages WHERE job_id=$1 AND role='assistant'", [ctx.id]);
+      expect(messages).toHaveLength(1);
+      expect(messages[0]!.content_blocks).toEqual(content);
+    }
+  });
+
+  test('empty output at the cap stays max_tokens on live completion and replay', async () => {
+    const client = new FakeMessagesClient([{ content: [] as any, stop_reason: 'max_tokens',
+      usage: { input_tokens: 10, output_tokens: 4 } as any }]);
+    const handler = makeSubagentHandler({ engine, client, toolRegistry: [] });
+    const ctx = await makeCtx({ prompt: 'capped reasoning', max_tokens: 4 });
+    expect((await handler(ctx)).stop_reason).toBe('max_tokens');
+    expect((await handler(ctx)).stop_reason).toBe('max_tokens');
+    expect(client.calls).toHaveLength(1);
+  });
+
   test('single tool_use turn: tool executes, two-phase row goes complete', async () => {
     const tool = makeEchoTool();
     const client = new FakeMessagesClient([

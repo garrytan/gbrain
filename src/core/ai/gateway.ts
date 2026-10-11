@@ -3963,7 +3963,7 @@ export type TurnPermit =
   | (() => Promise<void> | void)
   | { release: () => Promise<void> | void; signal?: AbortSignal };
 
-export type ToolLoopStopReason = 'end' | 'length' | 'max_turns' | 'refusal' | 'content_filter' | 'aborted' | 'unrecoverable';
+export type ToolLoopStopReason = 'end' | 'length' | 'max_turns' | 'refusal' | 'content_filter' | 'empty_response' | 'aborted' | 'unrecoverable';
 
 export interface ToolLoopResult {
   finalText: string;
@@ -4098,7 +4098,7 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
       // 'end' made truncated zero-tool-call runs indistinguishable from the
       // model choosing to stop — the exact honesty bug #2778 fixed on the
       // direct Anthropic path.
-      stopReason = chatResult.stopReason === 'length' ? 'length' : 'end';
+      stopReason = chatResult.stopReason === 'length' ? 'length' : chatResult.text.trim() === '' ? 'empty_response' : 'end';
       finalText = chatResult.text;
       break;
     }

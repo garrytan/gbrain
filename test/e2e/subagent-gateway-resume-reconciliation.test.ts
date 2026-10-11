@@ -320,6 +320,66 @@ describe('gateway resume reconciliation', () => {
     expect(rows[0].status).toBe('failed');
   });
 
+  it('empty terminal output remains an error on live completion and replay, never assistant prefill', async () => {
+    for (const blocks of [[], [{ type: 'reasoning', text: 'internal reasoning' }], [{ type: 'text', text: ' \n ' }]] as ChatBlock[][]) {
+      const { jobId, ctx } = await makeJob('answer', 'anthropic:claude-sonnet-4-6');
+      let calls = 0;
+      __setChatTransportForTests(async () => {
+        calls++;
+        return { text: blocks[0]?.type === 'text' ? blocks[0].text : '', blocks, stopReason: 'end',
+          usage: { input_tokens: 1, output_tokens: 2, cache_read_tokens: 0, cache_creation_tokens: 0 },
+          model: 'anthropic:claude-sonnet-4-6', providerId: 'anthropic' } satisfies ChatResult;
+      });
+      const handler = buildHandler([]);
+      const live = await handler(ctx);
+      expect(live.stop_reason).toBe('error');
+      const replay = await handler(ctx);
+      expect(replay.stop_reason).toBe('error');
+      expect(calls).toBe(1);
+      expect(replay.tokens).toEqual(live.tokens);
+      const messages = await engine.executeRaw<{ content_blocks: unknown }>(
+        "SELECT content_blocks FROM subagent_messages WHERE job_id=$1 AND role='assistant'", [jobId]);
+      expect(messages).toHaveLength(1);
+      expect(messages[0]!.content_blocks).toEqual(blocks);
+    }
+  });
+
+  it('empty output at the cap stays max_tokens on live completion and replay', async () => {
+    const { ctx } = await makeJob('capped reasoning', 'anthropic:claude-sonnet-4-6');
+    ctx.data.max_tokens = 4;
+    let calls = 0;
+    __setChatTransportForTests(async () => {
+      calls++;
+      return { text: '', blocks: [{ type: 'reasoning', text: 'internal reasoning' }], stopReason: 'length',
+        usage: { input_tokens: 1, output_tokens: 4, cache_read_tokens: 0, cache_creation_tokens: 0 },
+        model: 'anthropic:claude-sonnet-4-6', providerId: 'anthropic' } satisfies ChatResult;
+    });
+    const handler = buildHandler([]);
+    expect((await handler(ctx)).stop_reason).toBe('max_tokens');
+    expect((await handler(ctx)).stop_reason).toBe('max_tokens');
+    expect(calls).toBe(1);
+  });
+
+  it('a legacy thinking-only assistant tail is terminal, not a new provider request', async () => {
+    const { jobId, ctx } = await makeJob('resume reasoning', 'anthropic:claude-sonnet-4-6');
+    await seedMessage(jobId, 0, 'user', [{ type: 'text', text: 'resume reasoning' }]);
+    await seedMessage(jobId, 1, 'assistant', [{ type: 'thinking', thinking: 'internal reasoning', signature: 'fixture' }] as any);
+    let calls = 0;
+    __setChatTransportForTests(async () => {
+      calls++;
+      return { text: 'unexpected prefill', blocks: [{ type: 'text', text: 'unexpected prefill' }], stopReason: 'end',
+        usage: { input_tokens: 1, output_tokens: 2, cache_read_tokens: 0, cache_creation_tokens: 0 },
+        model: 'anthropic:claude-sonnet-4-6', providerId: 'anthropic' } satisfies ChatResult;
+    });
+    const result = await buildHandler([])(ctx);
+    expect(calls).toBe(0);
+    expect(result.stop_reason).toBe('error');
+    expect(result.result).toBe('');
+    const messages = await engine.executeRaw<{ message_idx: number }>(
+      'SELECT message_idx FROM subagent_messages WHERE job_id=$1 ORDER BY message_idx', [jobId]);
+    expect(messages.map(row => row.message_idx)).toEqual([0, 1]);
+  });
+
   it('terminal resume: a completed transcript returns its text without calling the model', async () => {
     const { jobId, ctx } = await makeJob('already done', 'openai:gpt-4o');
     await seedMessage(jobId, 0, 'user', [{ type: 'text', text: 'already done' }]);

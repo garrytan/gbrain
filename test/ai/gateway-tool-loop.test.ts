@@ -66,6 +66,25 @@ describe('gateway.toolLoop (v0.38 D11 — provider-agnostic loop control)', () =
     expect(result.finalText).toBe('truncated partial outp');
   });
 
+  for (const blocks of [[], [{ type: 'reasoning', text: 'internal reasoning' }], [{ type: 'text', text: ' \n ' }]] as ChatBlock[][]) {
+    it(`does not report an empty terminal ${blocks[0]?.type ?? 'blockless'} response as success`, async () => {
+      let calls = 0;
+      __setChatTransportForTests(async () => {
+        calls++;
+        return { text: blocks[0]?.type === 'text' ? blocks[0].text : '', blocks, stopReason: 'end',
+          usage: { input_tokens: 5, output_tokens: 2, cache_read_tokens: 0, cache_creation_tokens: 0 },
+          model: 'anthropic:claude-sonnet-4-6', providerId: 'anthropic' };
+      });
+      const persisted: ChatBlock[][] = [];
+      const result = await toolLoop({ initialMessages: [{ role: 'user', content: 'answer' }],
+        tools: [], toolHandlers: new Map(), onAssistantTurn: async (_turn, _idx, saved) => { persisted.push(saved); } });
+      expect(result.stopReason).toBe('empty_response');
+      expect(calls).toBe(1);
+      expect(persisted).toEqual([blocks]);
+      expect(result.totalUsage.output_tokens).toBe(2);
+    });
+  }
+
   it('dispatches a single tool call and feeds the result back to the next turn', async () => {
     let turn = 0;
     __setChatTransportForTests(async () => {

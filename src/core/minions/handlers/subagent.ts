@@ -248,8 +248,10 @@ async function runLoopConvertingLeaseLoss<T>(
 function replayTerminalStopReason(
   tokensOut: number | null | undefined,
   maxOutputTokens: number,
+  finalText: string,
 ): SubagentStopReason {
-  return tokensOut != null && tokensOut >= maxOutputTokens ? 'max_tokens' : 'end_turn';
+  return tokensOut != null && tokensOut >= maxOutputTokens ? 'max_tokens'
+    : finalText.trim() === '' ? 'error' : 'end_turn';
 }
 
 export function makeSubagentHandler(deps: SubagentDeps) {
@@ -662,7 +664,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
         return {
           result: finalText,
           turns_count: assistantTurns,
-          stop_reason: replayTerminalStopReason(last.tokens_out, maxOutputTokens),
+          stop_reason: replayTerminalStopReason(last.tokens_out, maxOutputTokens, finalText),
           tokens: tokenTotals,
         };
       }
@@ -985,6 +987,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
           .filter(b => b.type === 'text' && typeof b.text === 'string')
           .map(b => b.text as string)
           .join('\n');
+        if (stopReason === 'end_turn' && finalText.trim() === '') stopReason = 'error';
         break;
       }
 
@@ -1261,7 +1264,7 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
     return {
       result: terminalText,
       turns_count: priorChatMessages.filter(m => m.role === 'assistant').length,
-      stop_reason: replayTerminalStopReason(lastAssistant?.tokens_out, maxOutputTokens),
+      stop_reason: replayTerminalStopReason(lastAssistant?.tokens_out, maxOutputTokens, terminalText),
       tokens: priorTokens,
     };
   }
@@ -1492,9 +1495,7 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
           ? 'refusal'
           : result.stopReason === 'content_filter'
             ? 'refusal'
-            : result.stopReason === 'aborted'
-              ? 'error'
-              : 'end_turn';
+            : 'error';
 
   return {
     result: result.finalText,
@@ -1681,11 +1682,10 @@ async function reconcileGatewayReplay(args: ReconcileArgs): Promise<ReconcileRes
   const chatMessages: ChatMessage[] = work.map(w => ({ role: w.role, content: w.blocks }));
 
   // Terminal case: the transcript already ends on an assistant turn that
-  // carried real text and made no tool calls (prior run reached end_turn).
-  // Surface its text; skip the loop. An assistant turn whose blocks are all
-  // empty (e.g. a reasoning-only/null-text turn that adaptation dropped) is NOT
-  // terminal — falling through lets the loop re-issue the call rather than
-  // returning an empty result.
+  // made no tool calls. Surface its text (including empty output); skip the
+  // loop. Reissuing a reasoning-only turn sends an assistant prefill, which
+  // providers can reject. The caller classifies empty output as an error,
+  // preserving the transcript and usage without inventing an answer.
   const lastMsg = work[work.length - 1];
   let terminalText: string | null = null;
   if (lastMsg && lastMsg.role === 'assistant' && !lastMsg.blocks.some(b => b.type === 'tool-call')) {
@@ -1693,7 +1693,7 @@ async function reconcileGatewayReplay(args: ReconcileArgs): Promise<ReconcileRes
       .filter((b): b is Extract<ChatBlock, { type: 'text' }> => b.type === 'text')
       .map(b => b.text)
       .join('\n');
-    if (text.trim() !== '') terminalText = text;
+    terminalText = text;
   }
 
   return { chatMessages, nextMessageIdx: maxIdx + 1, terminalText };
