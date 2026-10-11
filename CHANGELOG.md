@@ -38,6 +38,7 @@ Eleven reports from large brains, managed checkouts and the schema tooling. Each
 - **Export output gains a line.** A page whose slug the path cannot derive is exported with `slug:` in its frontmatter; byte-for-byte comparisons of such exports change once.
 - **A live-destination rename is not held.** Holding it would break the pinned fallback-reconcile contract (#3056, #3479, #3583); the fallback keeps running and now carries the page's identity. The hold design is parked, not shipped.
 - **`init` and `upgrade` can now fail where they used to wait.** A blocked step exits with `schema_lock_blocked` after the bound; rerun after the named session ends. Set `GBRAIN_SCHEMA_LOCK_TIMEOUT_SECONDS` higher for a maintenance window where waiting is wanted.
+- **Ten shipped migrations' SQL text changed** (v184–v187, v204, v212, v213, v227 and the shared-skills and purge fragments): they share the schema fragments whose `ENABLE ROW LEVEL SECURITY` became conditional. A brain already past them never re-runs them; a brain behind them runs the equivalent conditional form. The migrations golden was regenerated for exactly these ten records.
 - **Not fixed here:** the `transaction: false` handler migrations and the post-migration `verifySchema` run outside the lock bound (they issue their own statements); the recorded flake in the v24 RLS test stays open while that test now calls the migration handler directly.
 
 ### Itemized changes
@@ -51,6 +52,7 @@ Eleven reports from large brains, managed checkouts and the schema tooling. Each
 - Source retire hashes a checkout only when a binding lacks a verified digest; `canonical_stamp` is refreshed in place; the worktree-manifest refusal no longer talks about a transfer (#5200).
 - `localToUtcIso` / `isValidTimeZone` in the conversation parser; `DateContext.invalid_timezone` (#5430).
 - `slugStampedFrontmatter` in markdown serialization and export; `slugStampCandidate` safe repair; reconcile-audit verdict `slug_rule_mismatch` (#5966).
+- Schema-pack loader reads a pack bundled into a compiled binary (`/$bunfs/...`) whole and bounds it on the bytes read, since the virtual filesystem has no descriptors (#6432). A managed import of a new file renders its page with the request slug, so the #5966 stamp never sees a slug-less page.
 - `postgres-engine/schema-lock-timeout.ts`: session-level `lock_timeout` on the reserved DDL backend restored on release, `SET LOCAL` inside transaction-wrapped migrations, `pg_blocking_pids()` sampling on a one-backend diagnostic connection, `schema_lock_blocked` registry row; conditional `ENABLE ROW LEVEL SECURITY` in `schema.sql` and eight fragment schemas; `init-schema-retry` retries SQLSTATE 55P03; the v24 RLS E2E test calls `runMigrationSQL` directly and the remaining `init` spawns dump `pg_stat_activity` at half their budget (#5227).
 
 Contributed by @andreineacsu (#5517 diagnosis of #5491).
