@@ -1,7 +1,7 @@
 # Key files — per-file index (gbrain repo)
 
 Read a file's entry before editing it. This page routes to bounded subsystem
-references; **do not load every file in the directory**.
+references; **do not load the whole directory**.
 
 Find a path locally, then read its entry and surrounding contract:
 
@@ -17,14 +17,14 @@ Where a new storage method, migration, doctor check, command, route or sync
 phase goes: [CONTRIBUTING.md](../../CONTRIBUTING.md#where-does-my-change-go).
 A branch written before refactor wave 1 follows the generated
 [porting guide](wave-1-porting.md) ([JSON map](wave-1-moves.json)).
-`scripts/check-key-files-current-state.sh` checks every subsystem for history,
-duplicate file entries and size growth. Split a growing subsystem at a useful
-boundary and link it here rather than raising the cap.
+`scripts/check-key-files-current-state.sh` checks each subsystem for history,
+duplicate entries and size growth. Split a growing subsystem and link it
+here rather than raising the cap.
 
 | Subsystem | Entry range / scope |
 |---|---|
 | [Page identity and writer administration](key-files/page-identity-and-administration.md) | Opaque result IDs, current grants, state-bound ownership changes |
-| [Canonical reconciliation](key-files/canonical-reconciliation.md) | Exact-page repair, private retained originals, derived atom state and receipt diagnostics |
+| [Canonical reconciliation](key-files/canonical-reconciliation.md) | Exact-page repair, retained originals, derived atom state, receipt diagnostics |
 | [Company-brain ingestion](key-files/company-brain.md) | Inspection, admission, receipts, derived relationships and schema; [operator guide](../guides/company-brain-ingestion.md) |
 | [Agent operator contract](key-files/agent-contract.md) | `agent-output.ts`, error registry + docs, notice ledger, `isCallable`, `--json` guard, contract scanner |
 | [Commands (1/6)](key-files/commands-1.md) | `src/commands/agent-logs.ts` through `src/commands/db-repair.ts` |
@@ -74,7 +74,7 @@ boundary and link it here rather than raising the cap.
 | [Hindsight calibration (key files cluster)](key-files/hindsight.md) | Cross-file subsystem contract |
 | [Schema packs: mutation surface (key files cluster)](key-files/schema-mutation.md) | Cross-file subsystem contract |
 | [Agent bootstrap cluster (the paste-in desktop-agent install)](key-files/agent-bootstrap.md) | Cross-file subsystem contract |
-| [Agent Bootstrap (continued)](key-files/agent-bootstrap-continued.md) | Remaining entries |
+| [Agent Bootstrap (continued)](key-files/agent-bootstrap-continued.md) | Rest |
 | [Google connector + open-loop engine (key files cluster)](key-files/google-and-loops.md) | Cross-file subsystem contract |
 | [Google And Loops (continued)](key-files/google-and-loops-continued.md) | Remaining entries |
 | [Open loops](key-files/open-loops-engine.md) | detect, extract, store |
