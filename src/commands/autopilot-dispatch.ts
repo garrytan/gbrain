@@ -11,6 +11,7 @@ import { isConnectorSourceKind } from '../core/persistence/connector-identity.ts
 import { attemptedConnectorSourceIds } from '../core/persistence/connector-state.ts';
 import { automaticSyncPull } from '../core/persistence/automatic-sync-policy.ts';
 import { isSyncDisabledConfig } from '../core/sync-policy.ts';
+import { syncContentDirectory } from '../core/sync-applicability.ts';
 import { loadActivationPendingSourceIds, skipActivationPendingSync } from '../core/sync-policy.ts';
 import { resolveAutopilotDispatchTimeoutMs } from './autopilot-timeout.ts';
 import {
@@ -244,6 +245,9 @@ export function connectorAwaitingFirstSync(src: { id: string; config: unknown },
   return true;
 }
 
+/** Sources already reported as not syncable by this process (one notice each, not one per tick). */
+const reportedNotApplicable = new Set<string>();
+
 /**
  * v0.40 D17 freshness: runs first each tick, independent of the score gate.
  */
@@ -292,6 +296,18 @@ export async function dispatchFreshnessSyncs(
         const lastSyncMs = src.last_sync_at ? new Date(src.last_sync_at).getTime() : 0;
         const ageMs = now - lastSyncMs;
         if (ageMs < intervalMs) continue; // fresh enough
+        // A gbrain-owned content directory is not a Git checkout: sync refuses
+        // it (sync_not_applicable) and never stamps last_sync_at, so without
+        // this skip it is re-dispatched every slot and dies every time.
+        // Same check `sync --all` uses to skip it.
+        if (await syncContentDirectory(engine, { sourceId: src.id, repoPath: src.local_path })) {
+          if (!reportedNotApplicable.has(src.id)) {
+            reportedNotApplicable.add(src.id);
+            const why = `Sync does not apply to source "${src.id}" (gbrain-owned content directory, not a Git checkout); automatic sync skips it.`;
+            process.stderr.write((jsonMode ? JSON.stringify({ event: 'freshness_sync_not_applicable', source_id: src.id }) : why) + '\n');
+          }
+          continue;
+        }
         try {
           const job = await queue.add(
             'sync',
