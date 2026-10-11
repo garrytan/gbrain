@@ -66,7 +66,7 @@ export function embeddingInputHash(ctx: EmbeddingInputContext, tier: EmbeddingTi
     return digest(['embedding-input-v1', ctx.column, ctx.model, ctx.dimensions, tier, generation, sha256(input)]);
   }
 
-  const synopsis = tier === 'per_chunk_synopsis';
+  const synopsis = tier === 'per_chunk_synopsis' && chunk.chunk_source !== 'fenced_code';
   const inputHash = synopsis ? sha256(input) : sha256(prepareEmbedInputs([input], ctx.model, {
     inputType: 'document', documentTitle: ctx.title,
   })[0]!);

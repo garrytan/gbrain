@@ -125,4 +125,24 @@ describe('embedding document provenance', () => {
       embeddingInputHash(base, 'title', chunk),
     );
   });
+
+  test('hashes truncated, titled fenced code as prepared bytes in the synopsis tier', () => {
+    const fencedText = `\`\`\`ts\n${'x'.repeat(9000)}\n\`\`\``;
+    const formatPrefix = `title: ${base.title} | text: `;
+    const expectedInput = formatPrefix + fencedText.slice(0, 8000 - formatPrefix.length);
+    expect(expectedInput.length).toBe(8000);
+    const expectedHash = digest(['embedding-input-v2', base.column, model, base.dimensions,
+      'per_chunk_synopsis', base.corpusGeneration, sha256(expectedInput)]);
+    const code = { chunk_text: fencedText, chunk_source: 'fenced_code' };
+
+    expect(embeddingInputHash(base, 'per_chunk_synopsis', code)).toBe(expectedHash);
+
+    const renamed = { ...base, title: 'A new title' };
+    const renamedPrefix = `title: ${renamed.title} | text: `;
+    const renamedInput = renamedPrefix + fencedText.slice(0, 8000 - renamedPrefix.length);
+    const renamedHash = digest(['embedding-input-v2', renamed.column, model, renamed.dimensions,
+      'per_chunk_synopsis', renamed.corpusGeneration, sha256(renamedInput)]);
+    expect(embeddingInputHash(renamed, 'per_chunk_synopsis', code)).toBe(renamedHash);
+    expect(renamedHash).not.toBe(expectedHash);
+  });
 });
