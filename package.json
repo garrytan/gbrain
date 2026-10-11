@@ -155,6 +155,7 @@
     "check:layering": "bun scripts/check-layering.ts",
     "check:ai-sdk-importers": "bun scripts/check-ai-sdk-importers.ts",
     "check:durable-flush": "bun scripts/check-durable-flush.ts",
+    "check:windows-hide": "bun scripts/check-windows-hide.ts",
     "check:engine-sql-ratchet": "bun scripts/check-engine-sql-ratchet.ts",
     "check:engine-sql-dynamic": "bun scripts/check-engine-sql-dynamic.ts",
     "check:engine-sql-brands": "bun scripts/check-engine-sql-brands.ts",
