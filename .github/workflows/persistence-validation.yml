@@ -151,6 +151,7 @@ jobs:
           test/persistence-reconcile.test.ts
           test/persistence-reconcile-additive-5974.test.ts
           test/e2e/reconcile-pgbouncer.test.ts
+          test/e2e/publication-deadline-pgbouncer.test.ts
           test/e2e/extract-atoms-page-state.test.ts
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
