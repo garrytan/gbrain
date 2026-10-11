@@ -856,6 +856,8 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
 
   const report = await runCycle(engine, {
     brainDir,
+    // #6023: the local CLI sees private fact text in the consolidate dry-run preview.
+    remote: false,
     dryRun: opts.dryRun,
     pull: opts.pull,
     phases,

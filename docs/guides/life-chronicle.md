@@ -62,10 +62,14 @@ Two rules are enforced after the model answers, before anything is written:
 - **No invented days.** Events are stored by day. A past event the text dates
   only by year or month ("back in 2024", "last month") is dropped as
   `date_imprecise` rather than pinned to January 1 or the first of the month.
+- **At most `chronicle.max_events_per_page` events per page** (default 25).
+  The cap runs after the two date rules, so a proposal dropped for its date
+  never takes a slot; the first dated proposals in the extraction's order are
+  kept and the rest are dropped as `over_cap`. Counting costs no model call.
 
 The phase result reports dropped proposals by reason in `events_dropped`. When
 every proposed event of a page is dropped, its ledger row records that reason
-instead of `no_events`.
+instead of `no_events` (never `over_cap`: the cap always keeps at least one).
 
 ## Calendar invites
 
@@ -116,6 +120,7 @@ correcting one event moves only that event.
 | `chronicle.auto_recent_days` | `30` | How old a page's own date may be for automatic extraction. |
 | `chronicle.auto_settle_seconds` | `180` | How long a page must stay unchanged before extraction. |
 | `chronicle.judge_max_tokens` | `4000` | Output-token cap for one extraction call. |
+| `chronicle.max_events_per_page` | `25` | Events published from one page extraction; later proposals are dropped as `over_cap` (1 to 1000). |
 
 `gbrain config set` refuses values outside each range and names the range. A
 value already stored out of range falls back to its default, and doctor warns

@@ -43,7 +43,7 @@ import { validatePageSlug } from '../ops/context.ts';
 import { privatePagesFilterFragment, strictestVisibility, type Visibility } from '../search/private-visibility.ts';
 import { maintenancePreflight } from '../persistence/prepared-maintenance.ts';
 import { derivedWriteThrough } from './derived-write-through.ts';
-import { canonicalConceptStem, loadConceptRedirects } from './concept-redirects.ts';
+import { addSpellingRedirects, canonicalConceptStem, loadConceptRedirects, loadLiveConceptStems } from './concept-redirects.ts';
 import {
   addManagedProvenanceLinks, CONCEPT_DEFERRAL_CODES, CONCEPT_HOLD_CODES, publishClassicConcept, publishManagedConcept, stripFenceSections,
 } from './concept-publication.ts';
@@ -216,12 +216,11 @@ export async function runPhaseSynthesizeConcepts(
     };
   }
 
-  // 2. Group atoms by normalized concept slug (#6161: a merged concept groups under its canonical one); one atom counts once per concept.
-  const redirects = await loadConceptRedirects(engine, opts.sourceId ?? 'default', conceptStemFor).catch(() => new Map<string, string>());
+  // 2. Group atoms by concept stem (#6161 human redirects, then #5965 spelling folds; see resolveAtomConceptStems); one atom counts once per concept.
+  const { atomStems, foldedSpellings } = await resolveAtomConceptStems(engine, opts.sourceId ?? 'default', atoms);
   const groups = new Map<string, { slugs: string[]; titles: string[]; bodies: string[]; visibilities: Visibility[] }>();
-  for (const atom of atoms) {
-    const conceptSlugs = new Set(atom.concept_refs.map(conceptStemFor).filter((s): s is string => s !== null).map((stem) => canonicalConceptStem(stem, redirects)));
-    for (const conceptSlug of conceptSlugs) {
+  for (const [i, atom] of atoms.entries()) {
+    for (const conceptSlug of atomStems[i]!) {
       const existing = groups.get(conceptSlug) ?? { slugs: [], titles: [], bodies: [], visibilities: [] };
       existing.slugs.push(atom.slug);
       existing.titles.push(atom.title);
@@ -644,6 +643,7 @@ export async function runPhaseSynthesizeConcepts(
       rehashed,
       kept_existing_narrative: keptExistingNarrative,
       skipped_retry_bound: skippedRetryBound,
+      folded_spellings: foldedSpellings,
       publication_deferred: publicationDeferred,
       publication_held: publicationHeld,
       ...(abortedGlobalError ? { aborted_global_error: abortedGlobalError } : {}),
@@ -653,6 +653,24 @@ export async function runPhaseSynthesizeConcepts(
       dry_run: opts.dryRun ?? false,
     },
   };
+}
+
+/**
+ * Each atom's concept stems, one entry per atom: the ref's stem through the
+ * human redirects (#6161), then through the run's spelling folds (#5965:
+ * `network-effects` / `networkeffects` become one stem; the live page's
+ * spelling wins, else the most frequent, tie to the hyphenated one; two live
+ * spellings are left apart). The folds are reported, never written.
+ */
+async function resolveAtomConceptStems(engine: BrainEngine, sourceId: string, atoms: Array<{ concept_refs: string[] }>):
+  Promise<{ atomStems: Set<string>[]; foldedSpellings: Array<{ from: string; to: string }> }> {
+  const redirects = await loadConceptRedirects(engine, sourceId, conceptStemFor).catch(() => new Map<string, string>());
+  const afterHumanHop = atoms.map((atom) => new Set(atom.concept_refs.map(conceptStemFor).filter((s): s is string => s !== null).map((stem) => canonicalConceptStem(stem, redirects))));
+  const atomCounts = new Map<string, number>();
+  for (const stems of afterHumanHop) for (const stem of stems) atomCounts.set(stem, (atomCounts.get(stem) ?? 0) + 1);
+  const liveStems = await loadLiveConceptStems(engine, sourceId, conceptStemFor).catch(() => new Set<string>());
+  const foldedSpellings = addSpellingRedirects(redirects, atomCounts, liveStems);
+  return { atomStems: afterHumanHop.map((stems) => new Set([...stems].map((stem) => canonicalConceptStem(stem, redirects)))), foldedSpellings };
 }
 
 /**

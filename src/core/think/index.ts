@@ -32,7 +32,7 @@ import { chat as gatewayChat, probeChatModel, isThinkingModel, type ChatResult }
 import { AIConfigError } from '../ai/errors.ts';
 import { normalizeModelId } from '../model-id.ts';
 import { hasAnthropicKey } from '../ai/anthropic-key.ts';
-import { parseTemporalWindow } from './temporal-window.ts';
+import { resolveThinkWindow } from './temporal-window.ts';
 import { resolveThinkTemporalContext } from './temporal-context.ts';
 import { resolveExcludePrivatePages } from '../search/private-visibility.ts';
 import { deliverEvidence, effectivePlan, resolveEvidencePlan, EVIDENCE_BLOCK_CHAR_CAP, THINK_RETURN_UNIT_CONFIG_KEY, type DeliveryMeta } from '../search/evidence-delivery.ts';
@@ -248,6 +248,8 @@ export interface ThinkResult {
   abstained?: ThinkAbstention;
   /** The date frame the synthesis read in (reference date + brain timezone). */
   temporal?: { reference_date: string; time_zone: string };
+  /** PR #5086: who bounded the evidence, when a window applied: the caller's `since`/`until`, or the one explicit date the question named (`WINDOW_FROM_QUESTION` warning). */
+  window_source?: 'caller' | 'question';
 }
 
 const DEFAULT_MAX_OUTPUT_TOKENS = 4000;
@@ -576,7 +578,11 @@ export async function runThink(
 ): Promise<ThinkResult> {
   const rounds = Math.max(1, opts.rounds ?? 1);
   const warnings: string[] = [];
-  const window = parseTemporalWindow(opts.since, opts.until);
+  // PR #5086: caller bounds are authoritative; with none, the one explicit date the question names bounds the synthesis.
+  const resolvedWindow = resolveThinkWindow(opts.question, opts.since, opts.until);
+  const window = resolvedWindow?.window ?? null;
+  if (resolvedWindow?.source === 'question') warnings.push('WINDOW_FROM_QUESTION');
+  const windowMeta = resolvedWindow ? { window_source: resolvedWindow.source } : {};
   const temporal = await resolveThinkTemporalContext(engine, { referenceDate: opts.referenceDate });
 
   // Resolve the model through the 6-tier chain.
@@ -778,8 +784,8 @@ export async function runThink(
   const systemPrompt = buildThinkSystemPrompt({
     currentDate: true, intent, willSave: opts.save, withCalibration: !!calibrationBlockOpts,
     ...(opts.anchor !== undefined ? { anchor: opts.anchor } : {}),
-    ...(opts.since !== undefined ? { since: opts.since } : {}),
-    ...(opts.until !== undefined ? { until: opts.until } : {}),
+    ...(resolvedWindow?.since !== undefined ? { since: resolvedWindow.since } : {}),
+    ...(resolvedWindow?.until !== undefined ? { until: resolvedWindow.until } : {}),
   });
   const userMessage = buildThinkUserMessage({
     question: opts.question, pagesBlock, takesBlock, currentDate: `${temporal.referenceDate} (${temporal.timeZone})`,
@@ -858,6 +864,7 @@ export async function runThink(
         synthesis_status: modelProblem ? 'model_unusable' : 'no_llm',
         ...(stubExtractive ? { extractive: stubExtractive } : {}),
         usage: null,         // [E2] no LLM ran — no accounting
+        ...windowMeta,
         diagnostics: {
           pagesFromHybrid: gather.diagnostics.pagesFromHybrid,
           takesFromKeyword: gather.diagnostics.takesFromKeyword,
@@ -1010,6 +1017,7 @@ export async function runThink(
       graphHits: gather.diagnostics.graphHits,
     },
     temporal: { reference_date: temporal.referenceDate, time_zone: temporal.timeZone },
+    ...windowMeta,
   };
 }
 

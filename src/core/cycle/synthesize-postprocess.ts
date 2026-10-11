@@ -16,6 +16,7 @@ import type { DiscoveredTranscript } from './transcript-discovery.ts';
 import { transcriptDerivation } from './dream-taint.ts';
 import { declareDerivation, readDerivationDeclaration } from '../trust/taint.ts';
 import { emptyQuoteVerifyStats, groundSource, isDreamOwnedPage, resolveVerifyPrior, verifyDreamPage, type GroundedSource, type GroundingPass } from './synthesize-verify.ts';
+import { attributionChecksEnabled } from './attribution-checks.ts';
 
 interface OutputRef { slug: string; source_id: string; raw_source?: string; seat?: string; first_write_at?: Date; }
 interface RetainedOutput { job_id: number | bigint; job_key: string; request: WriteRequest; }
@@ -62,6 +63,7 @@ export async function postprocessManagedSynthesis(
   let pending = 0;
   if (!refs.length) return { writtenRefs, finalizedRefs, stats, pending, conflicts };
   const reported = await readReportedConflicts(engine);
+  const supersession = opts.quoteVerify ? await attributionChecksEnabled(engine) : false; // #5425 [UC4], default off
   const outputs = await engine.executeRaw<RetainedOutput>(
     `SELECT t.job_id,j.idempotency_key AS job_key,row_to_json(p) AS request
        FROM subagent_tool_executions t JOIN minion_jobs j ON j.id=t.job_id
@@ -147,7 +149,7 @@ export async function postprocessManagedSynthesis(
         else {
           if (prior) stats.preexisting_diffed++;
           const source = grounded?.path === transcript.filePath ? grounded : (grounded = groundSource(transcript.filePath, transcript.content));
-          const mechanical = verifyDreamPage(page, [source], { prior, checkedAt: opts.cycleDate }, stats);
+          const mechanical = verifyDreamPage(page, [source], { prior, checkedAt: opts.cycleDate, supersession }, stats);
           const verified = opts.grounding ? await opts.grounding.apply(mechanical, [source], `page:${ref.source_id}:${ref.slug}`, opts.cycleDate) : mechanical;
           if (verified.changed) stats.pages_repaired++;
           page = { ...page, compiled_truth: verified.compiled_truth, timeline: verified.timeline, frontmatter: verified.frontmatter as typeof page.frontmatter };

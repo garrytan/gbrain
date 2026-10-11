@@ -692,6 +692,9 @@ describe('writeSingleFact — supersession rule [X1] + degraded dedup', () => {
     installDeterministicEmbedder();
     // Calibrate the deterministic test embedder: an uncalibrated model never supersedes by cosine (supersession-threshold.ts).
     await engine.setConfig('facts.supersession_thresholds', JSON.stringify({ 'openai:text-embedding-3-small@1536': 0.95 }));
+    // #5504: an entity the resolver can only slugify is stored with entity_slug NULL, and a NULL-entity fact dedups
+    // by exact fingerprint only (candidate lookup is entity-keyed), so the supersession rule needs a live entity page.
+    await seedEntityPage('people/supersede-test', 'Supersede Test');
     const a = await writeSingleFact(engine, 'default', {
       fact: 'SUPERSEDE-PAIR alice works at acme-example',
       provenance: 'test', entity: 'people/supersede-test', kind: 'fact',

@@ -1532,7 +1532,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'dream.synthesize.link_manifest',
   'dream.synthesize.quote_verify',
   'dream.quote_verify',
-  'think.quote_verify',
+  'think.quote_verify', 'dream.attribution_checks', // #5425 [UC4] mechanical attribution checks, default off (cycle/attribution-checks.ts)
   'dream.synthesize.inline_concurrency',
   // #4152 triage knobs. The triage model's preferred key is
   // `models.dream.triage` (models.* prefix, registered via the models.dream.*
@@ -1672,6 +1672,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // no_events; the cap is now configurable and truncation is surfaced.
   'chronicle.judge_max_tokens',
   'chronicle.job_budget_usd', 'chronicle.auto_daily_limit', 'chronicle.auto_recent_days', 'chronicle.auto_settle_seconds', // #5876 rails (chronicle/config.ts validates)
+  'chronicle.max_events_per_page', // #5329: events published per page extraction (default 25); the surplus is counted over_cap
   // Takes bootstrap (v0.41.18.0, A12). The onboard remediation's two-gate
   // consent reads this key, and enabling it is the documented path to
   // `gbrain takes extract --from-pages` — same unregistered-key class.

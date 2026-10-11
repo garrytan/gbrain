@@ -21,6 +21,7 @@
 import { chunkText as recursiveChunk } from './recursive.ts';
 import { buildQualifiedName } from './qualified-names.ts';
 import { MERGE_PROTECTED_SYMBOL_TYPES, declaresFunctionValue } from './def-types.ts';
+import { isModuleChunk, mergedRunSymbol, moduleChunkQualifiedName, moduleStatementSymbol } from './code-module-chunks.ts';
 import { estimateTokens, estimateEmbedTokens, estimateEmbedTokensCeiling, DEFAULT_MAX_CHUNK_TOKENS } from './token-estimate.ts';
 import { safeSplitIndex } from '../text-safe.ts';
 import {
@@ -143,13 +144,14 @@ import G_ZIG from '../../assets/wasm/grammars/tree-sitter-zig.wasm' with { type:
 // v8 (N13-1): `const f = () => …` definitions keep their own named chunk.
 export const CHUNKER_VERSION = 8;
 /**
- * Per-language grammar revisions, folded into that language's code-file hash
- * and into `chunkerStamp()`. A grammar swap re-chunks only its own language's
- * files instead of every code page in the brain (a CHUNKER_VERSION bump).
+ * Per-language chunker revisions (a grammar swap or a language-specific emission rule), folded into that language's
+ * code-file hash and into `chunkerStamp()`: a change re-chunks only its own language's files instead of every code
+ * page in the brain (a CHUNKER_VERSION bump).
  * lua 1: tree-sitter-grammars v0.3.0 replaced a build whose scanner ran every
  * parse after the first on uninitialized state; Lua defs now become chunks.
+ * typescript/tsx/javascript/python/ruby 1 (#5001): top-level call statements become `__module__` chunks (code-module-chunks.ts).
  */
-export const GRAMMAR_REVISIONS: Partial<Record<SupportedCodeLanguage, number>> = { lua: 1 };
+export const GRAMMAR_REVISIONS: Partial<Record<SupportedCodeLanguage, number>> = { lua: 1, typescript: 1, tsx: 1, javascript: 1, python: 1, ruby: 1 };
 /** The `sources.chunker_version` gate value: a change forces the next sync to walk every file (hash compare, no re-import of unchanged hashes). */
 export const chunkerStamp = (): string => [String(CHUNKER_VERSION), ...Object.entries(GRAMMAR_REVISIONS).map(([lang, rev]) => `${lang}=${rev}`)].join(';');
 
@@ -800,10 +802,8 @@ async function chunkParsedLanguage(
     }
 
     const root = (tree as any).rootNode;
-    const topLevelTypes = TOP_LEVEL_TYPES[language];
-    const semanticNodes = topLevelTypes
-      ? root.namedChildren.filter((n: any) => topLevelTypes.has(n.type))
-      : [];
+    const topLevelTypes = TOP_LEVEL_TYPES[language]!;
+    const semanticNodes = root.namedChildren.filter((n: any) => topLevelTypes.has(n.type) || moduleStatementSymbol(n, language) !== null);
 
     if (semanticNodes.length === 0) {
       return { chunks: fallbackChunks(source, filePath, language, opts), edges: [] };
@@ -834,16 +834,17 @@ async function chunkParsedLanguage(
       // declaration; top-level chunk still uses the outer node's range
       // so the header shows the `export` keyword for completeness.
       const nestableNode = findNestableParent(node, nestedConfig);
-      const symbolName = extractSymbolName(nestableNode ?? node);
+      const moduleSymbol = moduleStatementSymbol(node, language); // #5001: a top-level statement containing a call
+      const symbolName = moduleSymbol?.symbolName ?? extractSymbolName(nestableNode ?? node);
       // For SQL `statement` wrappers, the meaningful type lives on the inner
       // child. extractSymbolName already dives in for the name; mirror that
       // here so chunk headers say "table users" not "statement users".
       // #3821: same for Python decorated_definition — the header must say
       // "function cached_fn" / "class Config", not "decorated definition".
       const typeNode = unwrapDecorated(nestableNode ?? node);
-      const symbolType = (typeNode.type === 'statement' && typeNode.namedChildCount === 1)
+      const symbolType = moduleSymbol?.symbolType ?? ((typeNode.type === 'statement' && typeNode.namedChildCount === 1)
         ? normalizeSymbolType(typeNode.namedChild(0).type)
-        : normalizeSymbolType(typeNode.type);
+        : normalizeSymbolType(typeNode.type));
 
       if (nestableNode && symbolName && nestedConfig) {
         const before = chunks.length;
@@ -939,9 +940,9 @@ async function chunkParsedLanguage(
  * the chunker respect the user's chunkSizeTokens budget instead of
  * letting the file's AST dictate it.
  *
- * Merged chunks lose their individual symbolName (set to null) and
- * get symbolType='merged'. The header shows the line range of the
- * merged group. Single-chunk groups pass through unchanged.
+ * Merged chunks lose their individual symbolName (set to null) and get symbolType='merged', except a run holding a
+ * #5001 `__module__` statement, which keeps that identity (code-module-chunks.ts). The header shows the line range
+ * of the merged group. Single-chunk groups pass through unchanged.
  */
 function mergeSmallSiblings(chunks: CodeChunk[], chunkTarget: number): CodeChunk[] {
   if (chunks.length <= 1) return chunks;
@@ -966,7 +967,7 @@ function mergeSmallSiblings(chunks: CodeChunk[], chunkTarget: number): CodeChunk
   // accumulated into one. The set is a derived view of code-def's DEF_TYPES
   // (def-types.ts), so the lookup allowlist and this guard cannot drift.
   const isDefChunk = (c: CodeChunk): boolean =>
-    c.metadata.symbolName != null &&
+    c.metadata.symbolName != null && !isModuleChunk(c) &&
     (MERGE_PROTECTED_SYMBOL_TYPES.has(c.metadata.symbolType) || c.metadata.definesFunction === true);
   const merged: CodeChunk[] = [];
   let i = 0;
@@ -1031,8 +1032,7 @@ function buildMergedChunk(group: CodeChunk[], index: number): CodeChunk {
     index,
     text: `${header}\n\n${mergedBody}`,
     metadata: {
-      symbolName: null,
-      symbolType: 'merged',
+      ...mergedRunSymbol(group),
       filePath: first.metadata.filePath,
       language: first.metadata.language,
       startLine: first.metadata.startLine,
@@ -1216,7 +1216,7 @@ function buildChunk(input: {
   const header = `[${displayLang(input.language)}] ${input.filePath}:${input.startLine}-${input.endLine} ${symbol}${parentPath}`;
   // v0.20.0 Cathedral II Layer 5 (A1): fold the qualified name into
   // metadata so edge extraction has a stable identity key.
-  const qualified = buildQualifiedName({
+  const qualified = moduleChunkQualifiedName(input) ?? buildQualifiedName({
     language: input.language,
     symbolName: input.symbolName,
     symbolType: input.symbolType,
