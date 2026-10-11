@@ -171,6 +171,9 @@ CHECKS=(
   # #5595/#5475: no fsync of a read-only descriptor outside src/core/fs-durable.ts
   # (Windows refuses it with EPERM).
   "check:durable-flush"
+  # #4992: subprocess launches go through src/core/spawn.ts (windowsHide
+  # default); NOT_YET_MIGRATED is a ratchet that only shrinks.
+  "check:windows-hide"
   # Goal (a) (refactor wave 1): engine SQL only shrinks; baseline
   # scripts/engine-sql-baseline.tsv.
   "check:engine-sql-ratchet"

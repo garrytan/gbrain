@@ -50,7 +50,7 @@ mock.module('../src/core/ai/gateway.ts', () => ({
 }));
 
 const { PGLiteEngine } = await import('../src/core/pglite-engine.ts');
-const { runLoopsExtract, isLoopsExtractionEnabled } = await import(
+const { runLoopsExtract, isLoopsExtractionEnabled, LoopsExtractRetryableError } = await import(
   '../src/core/google/loops-extract.ts'
 );
 const { normalizeAlias } = await import('../src/core/search/alias-normalize.ts');
@@ -720,6 +720,50 @@ describe('runLoopsExtract', () => {
     expect(byType['awaiting_reply_from']).toBe('I will share the pilot metrics by Wednesday.');
     expect(byType['owes_to']).toBe('Send Alice the compliance checklist');
     for (const e of edges) expect(e.context).not.toContain('compliance checklist by Tuesday');
+  });
+
+  describe('#5445 execution-time label exclusion (the policy in force when the job RUNS, not when it was queued)', () => {
+    const LABELLED_SLUG = 'emails/2026/08/2026-08-21-labelled-thread-0a1b2c3d';
+    beforeAll(async () => {
+      await engine.putPage(LABELLED_SLUG, {
+        type: 'email', title: 'A labelled synthetic thread',
+        compiled_truth: 'Me: I will send the summary on Monday.\nPeer: Thanks, which deck should I read first?\n',
+        frontmatter: { thread_id: 'thread-0a1b2c3d', date: '2026-08-21T10:00:00Z', labels: ['INBOX', 'Label_7'] },
+        effective_date: new Date('2026-08-21T10:00:00Z'),
+      }, { sourceId: SRC });
+    });
+
+    test('a label excluded after enqueue skips the job before any model call (excluded_label)', async () => {
+      const before = chatCalls;
+      await engine.setConfig('loops.extraction_exclude_labels', 'Label_7');
+      try {
+        const r = await runLoopsExtract(engine, { slug: LABELLED_SLUG, sourceId: SRC });
+        expect(r.status).toBe('skipped');
+        expect(r.reason).toBe('excluded_label');
+        expect(chatCalls).toBe(before);
+        const other = await runLoopsExtract(engine, { slug: EMAIL_SLUG, sourceId: SRC });
+        expect(other.status).not.toBe('skipped');
+        expect(chatCalls).toBe(before + 1);
+      } finally {
+        await engine.setConfig('loops.extraction_exclude_labels', '');
+      }
+    });
+
+    test('a name no sweep has resolved fails closed: retryable excluded_label_unresolved, zero model calls, for every page', async () => {
+      const before = chatCalls;
+      await engine.setConfig('loops.extraction_exclude_labels', 'Newsletters');
+      try {
+        for (const slug of [LABELLED_SLUG, EMAIL_SLUG]) {
+          const thrown = await runLoopsExtract(engine, { slug, sourceId: SRC }).then(() => null, (e: unknown) => e);
+          expect(thrown).toBeInstanceOf(LoopsExtractRetryableError);
+          expect((thrown as InstanceType<typeof LoopsExtractRetryableError>).reason).toBe('excluded_label_unresolved');
+          expect((thrown as Error).message).toContain('"Newsletters"');
+        }
+        expect(chatCalls).toBe(before);
+      } finally {
+        await engine.setConfig('loops.extraction_exclude_labels', '');
+      }
+    });
   });
 });
 

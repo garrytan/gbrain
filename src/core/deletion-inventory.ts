@@ -102,7 +102,7 @@ const ROWS: readonly Row[] = [
   ['oauth_tokens', 'out_of_scope', 'secret_material', 'token_hash token_type client_id scopes resource'],
   ['op_checkpoint_paths', 'out_of_scope', 'no_memory_text', 'op fingerprint path'],
   ['op_checkpoints', 'out_of_scope', 'no_memory_text', 'op fingerprint completed_keys'],
-  ['open_loops', 'swept', 'open_loops', 'source_id dedup_key loop_type counterparty_slug counterparty_email summary evidence thread_id page_slug status detector closed_by'],
+  ['open_loops', 'swept', 'open_loops', 'source_id dedup_key loop_type counterparty_slug counterparty_source_id counterparty_email summary evidence thread_id page_slug status detector closed_by'],
   ['page_aliases', 'out_of_scope', 'probed_reported', 'source_id alias_norm slug origin alias_text', 'alias_text'],
   ['page_facts_reconcile', 'out_of_scope', 'no_memory_text', 'outcome'],
   ['page_mention_state', 'out_of_scope', 'no_memory_text', 'source_id'],

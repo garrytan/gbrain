@@ -8,7 +8,10 @@
  *
  * Postgres: a renewable TTL lease row in `gbrain_cycle_locks` (db-lock.ts),
  * which survives transaction-mode poolers and reuses its dead-holder
- * takeover rules. A schema without that table has no lease yet; the runner
+ * takeover rules. The lease identity is (id, holder_pid, acquisition_token);
+ * the epoch text of `acquired_at` on the handle is reported by
+ * MigrationLeaseLostError and never compared, so a rewrite of that column
+ * under a live runner cannot make it refuse itself (#6028). A schema without that table has no lease yet; the runner
  * then relies on the initSchema lock and acquires the lease once the table
  * exists. An unreachable database has nothing to coordinate.
  *

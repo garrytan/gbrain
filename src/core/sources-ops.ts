@@ -56,6 +56,7 @@ import {
 } from './git-remote.ts';
 import { gbrainPath } from './config.ts';
 import { isValidSourceId } from './source-id.ts';
+import { googleTuningConfig } from './google/source-config.ts';
 import { isSyncStrategy, type SyncStrategy } from './sync.ts';
 import { DEFAULT_CALENDAR_ID } from './google/types.ts';
 import { resolveSourceWithTier, type SourceTier } from './source-resolver.ts';
@@ -199,6 +200,12 @@ export interface AddSourceOpts {
     historyDays: number;
     /** Calendar swept by this source (default DEFAULT_CALENDAR_ID). */
     calendarId?: string;
+    /** #4845: directory under `dir` for contact pages (`g_contacts_dir`; default `people`). */
+    contactsDir?: string;
+    /** #5442: days ahead the calendar sweep covers (`g_future_days`; default CALENDAR_HORIZON_DAYS when absent). */
+    futureDays?: number;
+    /** #5445: Gmail label names/ids whose threads never enter loop extraction (`g_loops_exclude_labels`). */
+    loopsExcludeLabels?: string[];
     /** Managed dir where pages are materialized. */
     dir: string;
     /** Token acquisition: gbrain vault (default), a token-printing command, or an env var. */
@@ -662,9 +669,7 @@ export async function addSource(
       g_history_days: opts.google.historyDays,
       // Only written when non-default so every existing source's config keeps
       // its exact shape (DEFAULT_CALENDAR_ID stays the parse-time fallback).
-      ...(opts.google.calendarId && opts.google.calendarId !== DEFAULT_CALENDAR_ID
-        ? { g_calendar_id: opts.google.calendarId }
-        : {}),
+      ...googleTuningConfig(opts.google),
       // Non-vault access (v0.47): 'command' runs g_token_command locally at
       // sync time (same trust class as recipe health_check argv — the google
       // kind is hard-rejected on remote sources_add and these keys are not

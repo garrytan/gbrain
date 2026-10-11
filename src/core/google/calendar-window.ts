@@ -2,7 +2,7 @@
  * Which calendar events a google source keeps pages for (#5442).
  *
  * The source mirrors one rolling range: from `historyDays` back to
- * `CALENDAR_HORIZON_DAYS` ahead. Google can only apply that range to a
+ * `futureDays` ahead (`g_future_days`, default `CALENDAR_HORIZON_DAYS`). Google can only apply that range to a
  * windowed list; a syncToken delta carries no timeMin/timeMax, and with
  * singleEvents=true a single edit to a recurring series brings back every
  * expanded instance of it, years in both directions. So the sweep checks each
@@ -16,18 +16,22 @@
  *   `GoogleSourceState.calendar_horizon_ms` records how far ahead the calendar
  *   was last listed, and `coverageStartMs` says where the next catch-up list
  *   must begin;
- * - which existing pages a complete `--full` list has dropped
- *   (`unlistedCalendarPages`). Only events starting inside the listed range
- *   qualify, so pages older than the floor (for example after historyDays
- *   shrinks) are never removed by a reconcile.
+ * - which existing pages a complete `--full` list should drop
+ *   (`staleCalendarPages`): sweep pages whose event starts inside the listed
+ *   range but was not listed, and sweep pages whose event starts at or past
+ *   the ceiling (a windowed list never names those, so they are only ever
+ *   reconciled here). Pages older than the floor (for example after
+ *   historyDays shrinks) are never removed by a reconcile.
  *
  * `planCalendarPage` turns one listed event into a page change; google-source
  * performs it with its own write and delete primitives.
  */
 import type { CalendarEventData } from './types.ts';
 
-/** How far ahead of now calendar pages are kept, in days. */
+/** How far ahead of now calendar pages are kept, in days, unless `g_future_days` says otherwise. */
 export const CALENDAR_HORIZON_DAYS = 60;
+/** The largest `g_future_days` a source may ask for. */
+export const CALENDAR_FUTURE_DAYS_MAX = 3650;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -37,9 +41,9 @@ export class CalendarSyncWindow {
   readonly floorMs: number;
   readonly ceilMs: number;
 
-  constructor(readonly nowMs: number, historyDays: number) {
+  constructor(readonly nowMs: number, historyDays: number, readonly futureDays: number = CALENDAR_HORIZON_DAYS) {
     this.floorMs = nowMs - historyDays * DAY_MS;
-    this.ceilMs = nowMs + CALENDAR_HORIZON_DAYS * DAY_MS;
+    this.ceilMs = nowMs + futureDays * DAY_MS;
   }
 
   /** timeMin/timeMax for a windowed list that starts at `fromMs` (the floor unless given). */
@@ -79,6 +83,11 @@ export class CalendarSyncWindow {
     const start = Date.parse(startIso ?? '');
     return start >= this.floorMs && start < this.ceilMs;
   }
+
+  /** Whether an event starting at `startIso` begins at or past the ceiling (an unparseable start never does). */
+  startsAfter(startIso: string | null): boolean {
+    return Date.parse(startIso ?? '') >= this.ceilMs;
+  }
 }
 
 /** The page change one listed event calls for. */
@@ -115,4 +124,18 @@ export function planCalendarPage(side: CalendarWindowSide, targetPath: string | 
 export function unlistedCalendarPages<T extends { event_id: string | null; start_iso: string | null }>(pages: T[],
   listedIds: ReadonlySet<string>, window: CalendarSyncWindow): T[] {
   return pages.filter(page => page.event_id !== null && !listedIds.has(page.event_id) && window.startsInside(page.start_iso));
+}
+
+/**
+ * Every sweep page a complete `--full` list should remove: the unlisted
+ * in-window pages above, plus sweep pages whose event starts at or past the
+ * ceiling (#5442). A windowed list cannot name an event past its timeMax, so
+ * pages written beyond the horizon (before the window existed, or under a
+ * wider `g_future_days`) are reconciled here and nowhere else. Pages without
+ * an event id (hand-written) are never touched.
+ */
+export function staleCalendarPages<T extends { event_id: string | null; start_iso: string | null }>(pages: T[],
+  listedIds: ReadonlySet<string>, window: CalendarSyncWindow): T[] {
+  return pages.filter(page => page.event_id !== null
+    && (window.startsAfter(page.start_iso) || (!listedIds.has(page.event_id) && window.startsInside(page.start_iso))));
 }

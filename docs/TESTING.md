@@ -880,12 +880,11 @@ parameter and import types from `src/core/engine.ts`; migration helpers live in
 `scripts/check-ai-sdk-importers.ts` (in `bun run verify`) fails when a file
 outside `scripts/ai-sdk-importers.allowlist` imports a provider SDK (`ai`,
 `@ai-sdk/*`, `@anthropic-ai/sdk`, `openai`) as a value, so every model call
-goes through `invokeAI`. Each mutating op has a
-write-inference class (`src/core/ops/write-inference.ts`).
-`test/write-path-zero-llm.serial.test.ts` asserts no generative call before
-commit and only attributed facts extraction after it.
-`test/write-path-no-egress.serial.test.ts`: keyless CLI writes open no
-connection. Helper: `test/helpers/ai-tripwire.ts`.
+goes through `invokeAI`. Each mutating op has a write-inference class
+(`src/core/ops/write-inference.ts`). `test/write-path-zero-llm.serial.test.ts`
+asserts no generative call before commit and only attributed facts extraction
+after it; `test/write-path-no-egress.serial.test.ts`: keyless CLI writes open
+no connection. Helper: `test/helpers/ai-tripwire.ts`.
 
 #### Durable-flush guard
 
@@ -894,21 +893,23 @@ connection. Helper: `test/helpers/ai-tripwire.ts`.
 `src/core/fs-durable.ts` whose `fd` is assigned from a read-only `openSync`
 (flags omitted, a flag string without `w`/`a`/`+`, or `O_RDONLY` without
 `O_WRONLY`/`O_RDWR`), file or directory, and on one whose flags it cannot
-read. Windows refuses fsync on a read-only handle and has no directory flush
-(EPERM), which wedges the managed write queue (#5595) and every skill-bundle
-publication (#5475). Flushes of descriptors opened for writing pass. Each
-failure prints `FAIL [durable_flush_read_handle]: <file>:<line>`, the open it
-traced, a `Fix:` line and this anchor. Fix: fsync the descriptor you wrote
-through before closing it (set its final mode with `fchmodSync(fd)` first), or
-call `flushFile(path)` / `flushDirectory(path, { bestEffort? })` from
-`src/core/fs-durable.ts`. A file that cannot migrate yet goes in the guard's
-`ALLOWLIST` with a reason (empty today); an entry whose file no longer needs it fails as
-`durable_flush_stale_allowlist`. Fixtures:
-`test/fixtures/guards/check-durable-flush.ts/`; forms are driven in
-`test/scripts/durable-flush-guard.test.ts`. The helper and the #5595/#5475
-regressions run natively on the `windows-latest` row of the test.yml
-`security-regressions` job; `test/helpers/win32-flush-semantics.ts` makes them
-discriminate on POSIX hosts too.
+read: Windows refuses fsync on a read-only handle and has no directory flush
+(EPERM; #5595, #5475). Fix: fsync the descriptor you wrote through before
+closing it (`fchmodSync(fd)` first for its final mode), or call `flushFile` /
+`flushDirectory(path, { bestEffort? })` from `src/core/fs-durable.ts`. A file
+that cannot migrate yet goes in the guard's `ALLOWLIST` with a reason; a stale
+entry fails. Fixtures: `test/fixtures/guards/check-durable-flush.ts/`. The
+#5595/#5475 regressions run natively on the `windows-latest` row of the
+test.yml `security-regressions` job; `test/helpers/win32-flush-semantics.ts`
+makes them discriminate on POSIX.
+
+#### Windows hidden-console guard
+
+`scripts/check-windows-hide.ts` (`bun run check:windows-hide`, in `verify`;
+#4992): a runtime `child_process` import or `Bun.spawn*` in `src/` outside
+`src/core/spawn.ts` fails unless the file is in `NOT_YET_MIGRATED` (a ratchet;
+a stale entry fails); `windowsHide: false` needs an `ALLOWLIST` reason.
+`test/windows-hidden-console.test.ts` is the native proof on the same row.
 
 #### Engine-sql ratchet
 

@@ -6,7 +6,7 @@
  * `brain-repo-durability.ts` re-exports it for its older callers.
  */
 import { readFileSync } from 'fs';
-import { execFile, type ChildProcess, type ExecFileException } from 'child_process';
+import { execFile, type ChildProcess, type ExecFileException } from './spawn.ts';
 
 const BOUNDED_EXEC_TERM_GRACE_MS = 2_000;
 

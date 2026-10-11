@@ -232,9 +232,12 @@ interface CounterpartyGroup {
   counterparty: string;
   counterparty_slug: string | null;
   counterparty_email: string | null;
-  /** The loops' home source — entity cards/aliases live THERE, not in the
-   *  caller's (often 'default') scope. */
+  /** The loops' home source. */
   source_id: string;
+  /** Where the counterparty page lives (#5504): entity cards/aliases live
+   *  THERE, not in the caller's (often 'default') scope and not always in
+   *  the loops' source. A pre-v235 row reads as its own source. */
+  counterparty_source_id: string;
   loop_count: number;
   oldest_opened_at: string;
   nearest_due_at: string | null;
@@ -462,7 +465,9 @@ const open_loops: Operation = {
     const unattributed: LoopView[] = [];
     const byType: NoCounterpartyLoops['by_type'] = {};
     for (const l of loops) {
-      const key = l.counterparty_slug ?? l.counterparty_email;
+      const counterpartySource = l.counterparty_source_id ?? l.source_id;
+      // Two people with the same slug in different sources are two groups.
+      const key = l.counterparty_slug ? `${counterpartySource}:${l.counterparty_slug}` : l.counterparty_email;
       if (key === null) {
         unattributed.push(loopView(l, trusted, deepLinks));
         byType[l.loop_type] = (byType[l.loop_type] ?? 0) + 1;
@@ -471,10 +476,11 @@ const open_loops: Operation = {
       let g = byKey.get(key);
       if (!g) {
         g = {
-          counterparty: key,
+          counterparty: l.counterparty_slug ?? key,
           counterparty_slug: l.counterparty_slug,
           counterparty_email: l.counterparty_email,
           source_id: l.source_id,
+          counterparty_source_id: counterpartySource,
           loop_count: 0,
           oldest_opened_at: l.opened_at,
           nearest_due_at: null,
@@ -496,9 +502,9 @@ const open_loops: Operation = {
         .filter((s): s is string => s !== null);
       if (slugs.length > 0) {
         // getBacklinkCounts takes numeric page ids (v0.46.35) — resolve the
-        // counterparty slugs within the loops' home sources first (same
-        // composite-key discipline as deepLinksFor), then fold back to slugs.
-        const srcIds = [...new Set([...byKey.values()].map((g) => g.source_id))];
+        // counterparty slugs within the counterparty pages' sources first
+        // (same composite-key discipline as deepLinksFor), then fold back to slugs.
+        const srcIds = [...new Set([...byKey.values()].map((g) => g.counterparty_source_id))];
         const rows = await ctx.engine.executeRaw<{ id: number; slug: string }>(
           `SELECT id, slug FROM pages
            WHERE source_id = ANY(string_to_array($2, E'\\n'))
@@ -527,11 +533,13 @@ const open_loops: Operation = {
       for (const g of groups) {
         if (!g.counterparty_slug) continue;
         try {
-          // The card resolves in the LOOP's source (where the person page +
-          // alias rows live), never the caller's scope — an unqualified
-          // `gbrain waiting` would otherwise look in 'default' and silently
-          // never attach context (same bug class as deepLinksFor's fix).
-          const card = await buildEntityCard(ctx.engine, g.source_id, g.counterparty_slug, { remote: false });
+          // The card resolves in the COUNTERPARTY PAGE's source (where the
+          // person page + alias rows live), never the caller's scope — an
+          // unqualified `gbrain waiting` would otherwise look in 'default'
+          // and silently never attach context (same bug class as
+          // deepLinksFor's fix); since #5504 that source can differ from the
+          // loop's.
+          const card = await buildEntityCard(ctx.engine, g.counterparty_source_id, g.counterparty_slug, { remote: false });
           if (card.found) g.context = card.card;
         } catch { /* context is best-effort */ }
       }

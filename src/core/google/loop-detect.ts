@@ -42,7 +42,10 @@ import {
   type LoopEvidence,
   type SuppressionSet,
 } from '../loops/loops-store.ts';
+import { resolveCounterparty, type ResolvedCounterparty } from './counterparty.ts';
 import { isCalendarSystemMail, isNoiseSender } from './google-render.ts';
+import { hasBulkCategory } from './gmail-categories.ts';
+import { isExcludedByLabels, NO_EXCLUSION, pageLabelIds, type LoopsExclusionPolicy } from './loops-exclusion.ts';
 import type { GmailMessageMeta, GmailThreadData } from './types.ts';
 
 export const INBOUND_GRACE_HOURS = 24;
@@ -192,6 +195,13 @@ export function detectThreadLoop(
     // ── Last word is theirs: do I owe a reply? ──
     // List mail never owes a reply.
     if (last.listUnsubscribe) return { open: [], close };
+    // #5103: bulk by Gmail's own classification (promotions, social, forums)
+    // owes no reply either, unless the owner wrote a substantive message in
+    // the thread — the same rule the extraction lane applies. CATEGORY_UPDATES
+    // is not bulk here: invoices and document requests live there.
+    if (hasBulkCategory(messages.flatMap((m) => m.labelIds)) && !substantive.some((m) => isMine(m, myAddresses))) {
+      return { open: [], close };
+    }
     // CC-only (or bcc/list delivery with no To: match) does not owe a reply.
     const inTo = last.to.some((a) => myAddresses.has(a));
     if (!inTo) return { open: [], close };
@@ -272,7 +282,8 @@ export function __clearSuppressionCacheForTests(engine?: BrainEngine): void {
 /**
  * Apply the verdict: close thread loops that no longer hold, upsert the ones
  * that do (dedup key 'thread:<threadId>:<loop_type>' — reopen on conflict).
- * Counterparty slug resolution is alias-exact within the same source.
+ * Counterparty resolution: own source first, then identity-only across
+ * sources (google/counterparty.ts, #5504).
  */
 export async function applyThreadLoopVerdict(
   engine: BrainEngine,
@@ -281,13 +292,15 @@ export async function applyThreadLoopVerdict(
   myAddresses: Set<string>,
   pageSlug: string | null,
   now: Date = new Date(),
+  exclusion: LoopsExclusionPolicy = NO_EXCLUSION,
 ): Promise<ThreadLoopVerdict> {
   const suppressions = await suppressionsFor(engine, sourceId);
   // One verdict, two lanes: `close` is the turn-flip set (suppression- and
   // grace-independent — only a genuine reply closes, and only the answered
   // type); `open` is suppression-filtered. A held loop (grace window,
   // CC-only nudge, muted sender) is neither opened nor closed.
-  const verdict = detectThreadLoop(thread, myAddresses, now, suppressions);
+  const verdict = withLabelExclusion(detectThreadLoop(thread, myAddresses, now, suppressions), exclusion,
+    thread.messages.flatMap((m) => m.labelIds));
 
   const desired = new Set(verdict.open.map((s) => s.loopType));
   const toClose = verdict.close.filter((t) => !desired.has(t));
@@ -300,9 +313,22 @@ export async function applyThreadLoopVerdict(
 }
 
 /**
+ * #5445: the label exclusion applied to a verdict. An excluded thread opens
+ * nothing and holds nothing; an unresolved policy withholds the same way
+ * (fail closed) until a sweep resolves it. Closes are never touched: the
+ * exclusion withholds opens, it does not fabricate replies.
+ */
+export function withLabelExclusion(verdict: ThreadLoopVerdict, exclusion: LoopsExclusionPolicy, labelIds: Iterable<string>): ThreadLoopVerdict {
+  if (!isExcludedByLabels(exclusion, labelIds) && exclusion.unresolved.length === 0) return verdict;
+  return { open: [], close: verdict.close };
+}
+
+/**
  * #5868: opens a grace-held loop whose deadline passed on an unchanged
- * thread, from the spec its last detection produced. Suppressions are
- * re-read so a mute added during the hold still withholds the open.
+ * thread, from the spec its last detection produced. Suppressions and the
+ * label exclusion are re-read so a mute or a label added during the hold
+ * still withholds the open (`'excluded'`); an unresolved exclusion keeps the
+ * hold for the next sweep (`'deferred'`).
  */
 export async function openDueGraceHold(
   engine: BrainEngine,
@@ -310,11 +336,17 @@ export async function openDueGraceHold(
   threadId: string,
   spec: ThreadLoopSpec,
   pageSlug: string | null,
-): Promise<boolean> {
+  exclusion: LoopsExclusionPolicy = NO_EXCLUSION,
+): Promise<'opened' | 'suppressed' | 'excluded' | 'deferred'> {
   const suppressions = await suppressionsFor(engine, sourceId);
-  if (suppressions.threads.has(threadId) || suppressions.senders.has(spec.counterpartyEmail)) return false;
+  if (suppressions.threads.has(threadId) || suppressions.senders.has(spec.counterpartyEmail)) return 'suppressed';
+  if (exclusion.ids.size > 0 || exclusion.unresolved.length > 0) {
+    const page = pageSlug ? await engine.getPage(pageSlug, { sourceId }) : null;
+    if (isExcludedByLabels(exclusion, pageLabelIds(page?.frontmatter as Record<string, unknown> | undefined))) return 'excluded';
+    if (exclusion.unresolved.length > 0) return 'deferred';
+  }
   await upsertThreadLoop(engine, sourceId, threadId, spec, pageSlug);
-  return true;
+  return 'opened';
 }
 
 async function upsertThreadLoop(
@@ -324,13 +356,12 @@ async function upsertThreadLoop(
   spec: ThreadLoopSpec,
   pageSlug: string | null,
 ): Promise<void> {
-  let counterpartySlug: string | null = null;
+  // Own source first, then across sources by identity only (#5504); a
+  // slugify fallback would fabricate a person that doesn't exist, so an
+  // unresolved counterparty stays NULL.
+  let counterparty: ResolvedCounterparty | null = null;
   try {
-    const { resolveEntitySlugWithSource } = await import('../entities/resolve.ts');
-    const resolved = await resolveEntitySlugWithSource(engine, sourceId, spec.counterpartyEmail);
-    // Only alias-exact/high-confidence resolutions count — a slugify
-    // fallback would fabricate a person that doesn't exist.
-    if (resolved && resolved.source !== 'fallback_slugify') counterpartySlug = resolved.slug;
+    counterparty = await resolveCounterparty(engine, sourceId, { email: spec.counterpartyEmail });
   } catch {
     /* resolution is best-effort */
   }
@@ -338,7 +369,8 @@ async function upsertThreadLoop(
     sourceId,
     dedupKey: `thread:${threadId}:${spec.loopType}`,
     loopType: spec.loopType,
-    counterpartySlug,
+    counterpartySlug: counterparty?.slug ?? null,
+    counterpartySourceId: counterparty?.sourceId ?? null,
     counterpartyEmail: spec.counterpartyEmail,
     summary: spec.summary,
     evidence: spec.evidence.map((e) => ({ ...e, ...(pageSlug ? { page_slug: pageSlug } : {}) })),

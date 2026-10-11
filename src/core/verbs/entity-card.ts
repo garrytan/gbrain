@@ -470,7 +470,11 @@ async function assembleCard(
   const openThreads: EntityOpenThread[] = [];
   const loopFactIds = new Set<number>();
   try {
-    // Zero-LLM, indexed lookup — stays inside the p99<100ms budget.
+    // Zero-LLM, indexed lookup — stays inside the p99<100ms budget. A loop
+    // belongs to this card when its counterparty page is THIS (source, slug):
+    // a Gmail-source loop whose person page lives in `default` shows on the
+    // default card, a pre-v235 row (NULL counterparty source) on its own
+    // source's card (#5504).
     const loopRows = await engine.executeRaw<{
       id: number;
       loop_type: string;
@@ -481,7 +485,8 @@ async function assembleCard(
     }>(
       `SELECT id, loop_type, summary, due_at, last_activity_at, fact_id
        FROM open_loops
-       WHERE status = 'open' AND counterparty_slug = $1 AND source_id = $2
+       WHERE status = 'open' AND counterparty_slug = $1
+         AND COALESCE(counterparty_source_id, source_id) = $2
        ORDER BY last_activity_at DESC
        LIMIT ${OPEN_THREADS_CAP}`,
       [pageSlug, sourceId],

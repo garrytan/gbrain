@@ -12,6 +12,7 @@
 import { describe, expect, test } from 'bun:test';
 
 import { parseGoogleSourceConfig } from '../src/core/google/google-source.ts';
+import { CALENDAR_HORIZON_DAYS, CalendarSyncWindow } from '../src/core/google/calendar-window.ts';
 
 const DIR = '/tmp/gbrain-test-google-dir';
 const base = { kind: 'google', g_account: 'A@Example.com', g_services: 'calendar' };
@@ -53,5 +54,25 @@ describe('parseGoogleSourceConfig — calendar selection', () => {
     expect(cfg.historyDays).toBe(30);
     expect(cfg.dir).toBe(DIR);
     expect(cfg.access).toBe('vault');
+  });
+});
+
+describe('parseGoogleSourceConfig — g_future_days (#5442)', () => {
+  test('is absent by default (existing sources keep their connector identity) and the window then reaches 60 days ahead', () => {
+    const cfg = parseGoogleSourceConfig({ ...base }, DIR);
+    expect(cfg.futureDays).toBeUndefined();
+    expect(new CalendarSyncWindow(0, 1, cfg.futureDays ?? CALENDAR_HORIZON_DAYS).ceilMs).toBe(60 * 86_400_000);
+  });
+
+  test('accepts 1..3650 whole days and floors fractions', () => {
+    expect(parseGoogleSourceConfig({ ...base, g_future_days: 1 }, DIR).futureDays).toBe(1);
+    expect(parseGoogleSourceConfig({ ...base, g_future_days: 180.9 }, DIR).futureDays).toBe(180);
+    expect(parseGoogleSourceConfig({ ...base, g_future_days: 3650 }, DIR).futureDays).toBe(3650);
+  });
+
+  test('ignores zero, negative, too large, NaN or non-numeric values (the default horizon applies)', () => {
+    for (const bad of [0, -5, 5000, Number.NaN, '90', null, undefined, {}]) {
+      expect(parseGoogleSourceConfig({ ...base, g_future_days: bad }, DIR).futureDays).toBeUndefined();
+    }
   });
 });

@@ -99,6 +99,30 @@ Repeat `gbrain google connect --account work@yourco.com` per account; each
 account becomes its own source (`gbrain sources add gmail-work --kind google
 --account work@yourco.com`) with independent sync cursors and locks.
 
+## Contacts next to your own person pages
+
+A Google source renders each contact as a near-empty person page under
+`people/<slug>` by default, the same directory a brain repo uses for its own
+hand-written profiles. On a multi-source brain that collision has two
+costs: mentions in the Gmail source bind to the contact stub instead of the
+real profile, and `gbrain doctor` lists the stubs under `junk_entity_hubs`.
+Two remedies, independent of each other:
+
+- **Keep contacts out of `people/`.** Add the source with
+  `--contacts-dir contacts` (stored as the source's `g_contacts_dir`; any
+  relative directory of lower-case segments). Contact pages are found by
+  their `google_contact_id`, not by directory, so a source whose directory
+  changes moves every contact on its next sweep: the new page lands first,
+  then the page under the old directory is retired. The default stays
+  `people` for every existing source.
+- **Let the stub yield.** With `gbrain config set link_resolution.cross_source
+  true`, a mention in the Gmail source of a name that has a real page in
+  another source binds to that page instead of the connector's stub (one
+  canonical page, or the one sharing the stub's slug; a tie keeps the stub).
+  The next mention pass (`gbrain extract --stale`, or autopilot) re-binds
+  pages it reaches; `gbrain doctor --only junk_entity_hubs` names the
+  canonical twin of each stub and the next step.
+
 ## Secondary calendars
 
 The calendar sweep reads ONE calendar per source (so each keeps its own
@@ -130,7 +154,9 @@ the brain until you remove them — they are not reconciled automatically.
 ## Calendar window
 
 Calendar pages cover events from `--history-days` ago up to 60 days from
-now, and each sweep applies that range on its own. That matters for
+now (`gbrain sources add … --future-days <n>`, stored as the source's
+`g_future_days`, 1..3650, moves that horizon per source), and each sweep
+applies that range on its own. That matters for
 incremental syncs: after any edit to a recurring series, Google sends back
 the series' instances for years before and after, and only those inside the
 range are kept. Because the 60-day edge moves forward daily, the sweep also
@@ -141,12 +167,14 @@ the range keep their pages.
 
 `gbrain sync --source <id> --full` re-lists the whole window and removes the
 pages of events that start inside it but are no longer listed (cancelled or
-deleted since). It never removes a page whose event starts before the window,
-so shrinking `--history-days` keeps your history. More than 200 removals in
-one run are refused and the run is reported partial; if that many are
-genuinely gone, run it once with `GBRAIN_ALLOW_MASS_RECONCILE=1`. Pages a
-source wrote beyond the horizon before the window existed are not removed
-automatically.
+deleted since), and the pages this source wrote for events that start at or
+past the horizon (instances a series edit imported years ahead before the
+window existed, or under a wider `g_future_days`). It never removes a page
+whose event starts before the window, so shrinking `--history-days` keeps
+your history, and it never touches a calendar page you wrote by hand. More
+than 200 removals in one run are refused, nothing is removed, and the run is
+reported partial; if that many are genuinely gone, run it once with
+`GBRAIN_ALLOW_MASS_RECONCILE=1`.
 
 **Say to your agent:** *"re-sync my calendar from scratch"* (your agent runs
 `gbrain sync --source <id> --full`).
@@ -202,7 +230,11 @@ calendar pages."*
   On a managed brain the first sweep also runs a one-time catch-up over email
   threads whose newest message is from the last 30 days, so threads synced
   before extraction was queued are analyzed once; it finishes over later
-  sweeps when the enqueue ceiling binds.
+  sweeps when the enqueue ceiling binds. Threads under a label you listed in
+  `g_loops_exclude_labels` (or the brain-wide `loops.extraction_exclude_labels`)
+  are never queued and open no deterministic loop; an unknown label name
+  fails closed with `excluded_label_unresolved` until you fix it. See
+  [open loops](open-loops.md#which-threads-reach-the-extractor).
 - **Quiet threads.** A thread still inside its waiting window (24 h for
   inbound, 72 h for your own question) is re-checked when the window ends,
   even if no new mail arrives, and opens its loop then. See
@@ -369,7 +401,9 @@ upstream failures rather than triggering a full re-list.
   bundle (a loud per-credential warning when a Testing-mode consent screen
   would travel with it — those tokens die within 7 days on the target).
 - LLM spend: commitment extraction sends recent email text (last 30 days,
-  capped per sweep) to your configured chat provider. Kill switch:
+  capped per sweep) to your configured chat provider, under a daily cap of
+  $2.00 (`loops.extraction_max_usd_per_day`; see
+  [open loops](open-loops.md#which-threads-reach-the-extractor)). Kill switch:
   `gbrain config set loops.extraction_enabled false`. The deterministic
   unanswered-thread detector is free and always on.
 - Atom extraction from email and calendar pages is on by default: page text

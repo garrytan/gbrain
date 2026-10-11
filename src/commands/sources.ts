@@ -55,6 +55,7 @@ import {
 } from '../core/sources-ops.ts';
 import { isValidRepoName } from '../core/github-source.ts';
 import { ALL_GOOGLE_SERVICES, DEFAULT_CALENDAR_ID } from '../core/google/types.ts';
+import { defaultGoogleAddTuning, parseGoogleAddFlag } from './sources-google-flags.ts';
 import {
   resolveSourceWithTier,
   SOURCE_TIER_NAMES,
@@ -145,7 +146,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
         '[--repos owner/name,...] [--dir <path>] ' +
         '[--app-id <n> --app-pem <path>] [--app-install <n>]\n' +
         '       google kind: --account <email> [--services gmail,calendar,contacts] ' +
-        '[--history-days <n>] [--calendar-id <id>] [--dir <path>]   (connect first: gbrain google connect)\n' +
+        '[--history-days <n>] [--future-days <n>] [--loops-exclude-labels <a,b>] [--contacts-dir <dir>] [--calendar-id <id>] [--dir <path>]   (connect first: gbrain google connect)\n' +
         '                    [--access vault|command|env] [--token-command "<cmd>"] [--token-env <VAR>]   (non-vault Google access: gog/gcloud/gateway)',
     );
     process.exit(2);
@@ -175,8 +176,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   let gTokenCommand: string | undefined;
   let gTokenEnv: string | undefined;
   let gServices: string[] = ['gmail', 'calendar', 'contacts'];
-  let gHistoryDays = 90;
-  let gCalendarId: string = DEFAULT_CALENDAR_ID;
+  const gTuning = defaultGoogleAddTuning();
 
   for (let i = 1; i < args.length; i++) {
     const a = args[i];
@@ -220,24 +220,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
         .filter(Boolean);
       continue;
     }
-    if (a === '--history-days') {
-      const v = Number(args[++i]);
-      if (!Number.isInteger(v) || v <= 0) {
-        console.error('--history-days must be a positive integer.');
-        process.exit(2);
-      }
-      gHistoryDays = v;
-      continue;
-    }
-    if (a === '--calendar-id') {
-      const v = (args[++i] ?? '').trim();
-      if (!v) {
-        console.error('--calendar-id needs a value (see: gbrain google calendars).');
-        process.exit(2);
-      }
-      gCalendarId = v;
-      continue;
-    }
+    if (parseGoogleAddFlag(a, args[i + 1], gTuning)) { i++; continue; }
     if (a === '--scope') {
       const scope = args[++i];
       if (scope !== 'auto' && scope !== 'repos') {
@@ -329,7 +312,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
         // one calendar per source is how secondary calendars are ingested.
         const existingCal =
           typeof c.g_calendar_id === 'string' && c.g_calendar_id.trim() ? c.g_calendar_id.trim() : DEFAULT_CALENDAR_ID;
-        if (existingCal !== gCalendarId) overlap = overlap.filter((s) => s !== 'calendar');
+        if (existingCal !== gTuning.calendarId) overlap = overlap.filter((s) => s !== 'calendar');
         if (overlap.length === 0) return false;
         overlapNote = overlap.join(', ');
         return true;
@@ -434,8 +417,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
           google: {
             account: gAccount!,
             services: gServices,
-            historyDays: gHistoryDays,
-            calendarId: gCalendarId,
+            ...gTuning,
             dir: ghDir ?? defaultCloneDir(`${id}-google`),
             access: (gAccess ?? 'vault') as 'vault' | 'command' | 'env',
             tokenCommand: gTokenCommand,

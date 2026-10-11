@@ -4,9 +4,10 @@
  * 1. The "Run with --fix" hint only prints when at least one finding is
  *    actually fixable (LintResult.total_fixable), so an all-unfixable report
  *    can't send the operator on a no-op --fix run.
- * 2. missing-created is FIXABLE when the page's own frontmatter carries a
- *    capture timestamp (captured_at / ingested_at) — fixContent promotes it
- *    to created.
+ * 2. (superseded by #5433) missing-created used to be FIXABLE when the
+ *    page's own frontmatter carried a capture timestamp. Ingest time is not
+ *    creation time, so the promotion is out of fixContent; the rule now
+ *    accepts any parseable temporal key and is never fixable.
  * 3. placeholder-date skips lines inside fenced code blocks: a page
  *    DOCUMENTING date formats (```\ncreated: YYYY-MM-DD\n```) is not a page
  *    with an unfilled placeholder.
@@ -23,6 +24,8 @@ import {
   runLintCore,
   runLint,
 } from '../src/commands/lint.ts';
+import { serializePageToMarkdown } from '../src/core/markdown.ts';
+import type { Page } from '../src/core/types.ts';
 
 const SANITY_OFF = { disabled: true } as const;
 
@@ -119,61 +122,64 @@ describe('#6257 empty-section ignores headings inside code fences', () => {
   });
 });
 
-describe('#3958 missing-created is fixable via capture-timestamp promotion', () => {
-  test('captured_at present -> missing-created is fixable', () => {
-    const content = '---\ntitle: T\ntype: note\ncaptured_at: 2026-01-05T10:00:00Z\n---\n\n# T\n\nBody.\n';
-    const issues = lintContent(content, 'test.md', { contentSanity: SANITY_OFF });
-    const mc = issues.find(i => i.rule === 'missing-created');
-    expect(mc).toBeDefined();
-    expect(mc!.fixable).toBe(true);
+describe('#5433 missing-created accepts any temporal key and is never fixable', () => {
+  const rule = (content: string) =>
+    lintContent(content, 'test.md', { contentSanity: SANITY_OFF }).filter(i => i.rule === 'missing-created');
+
+  test.each([
+    ['created', 'created: 2026-01-05'],
+    ['event_date', 'event_date: 2026-01-05'],
+    ['date', 'date: 2026-01-05'],
+    ['published', 'published: "2026-01-05"'],
+    ['captured_at', 'captured_at: 2026-01-05T10:00:00Z'],
+    ['ingested_at', "ingested_at: '2026-01-05T10:00:00.000Z'"],
+  ])('%s alone satisfies the rule', (_key, line) => {
+    expect(rule(`---\ntitle: T\ntype: note\n${line}\n---\n\n# T\n\nBody.\n`)).toEqual([]);
   });
 
-  test('no capture field -> missing-created stays unfixable', () => {
-    const content = '---\ntitle: T\ntype: note\n---\n\n# T\n\nBody.\n';
-    const issues = lintContent(content, 'test.md', { contentSanity: SANITY_OFF });
-    const mc = issues.find(i => i.rule === 'missing-created');
-    expect(mc).toBeDefined();
-    expect(mc!.fixable).toBe(false);
+  test('no temporal key -> missing-created, unfixable', () => {
+    const hits = rule('---\ntitle: T\ntype: note\n---\n\n# T\n\nBody.\n');
+    expect(hits).toHaveLength(1);
+    expect(hits[0].fixable).toBe(false);
+    expect(hits[0].message).toContain('event_date');
   });
 
-  test('promoteCreatedFromCapture copies captured_at verbatim', () => {
-    const content = '---\ntitle: T\ncaptured_at: 2026-01-05T10:00:00Z\n---\n\nBody.\n';
-    const out = promoteCreatedFromCapture(content);
-    expect(out).toContain('created: 2026-01-05T10:00:00Z');
-    // Inserted inside the frontmatter block, directly after captured_at.
-    expect(out.indexOf('created:')).toBeGreaterThan(out.indexOf('captured_at:'));
-    expect(out.indexOf('created:')).toBeLessThan(out.indexOf('---', 3) + 4);
+  test('an unparseable value does not count (placeholder, garbage)', () => {
+    expect(rule('---\ntitle: T\ntype: note\ncreated: YYYY-MM-DD\n---\n\n# T\n')).toHaveLength(1);
+    expect(rule('---\ntitle: T\ntype: note\ncreated: soonish\ncaptured_at: 2026-02-30\n---\n\n# T\n')).toHaveLength(1);
   });
 
-  test('promoteCreatedFromCapture falls back to ingested_at', () => {
-    const content = '---\ntitle: T\ningested_at: "2026-02-01"\n---\n\nBody.\n';
-    const out = promoteCreatedFromCapture(content);
-    expect(out).toContain('created: "2026-02-01"');
+  test('a page the native serializer emits (ingested_at only) is clean and fixContent leaves it byte-identical', () => {
+    const page = {
+      slug: 'notes/example', title: 'Example', type: 'note', compiled_truth: '# Example\n\nBody.', timeline: '',
+      frontmatter: { ingested_at: '2026-01-05T10:00:00.000Z' },
+    } as unknown as Page;
+    const content = serializePageToMarkdown(page, []);
+    expect(content).not.toContain('created:');
+    const issues = lintContent(content, 'notes/example.md', { contentSanity: SANITY_OFF });
+    expect(issues.filter(i => i.rule === 'missing-created')).toEqual([]);
+    expect(issues.some(i => i.fixable)).toBe(false);
+    expect(fixContent(content)).toBe(content);
+    expect(fixContent(fixContent(content))).toBe(content);
   });
 
-  test('promoteCreatedFromCapture prefers captured_at over ingested_at', () => {
+  test('fixContent no longer promotes a capture timestamp (fence unwrap still works)', () => {
+    const wrapped = '```markdown\n---\ntitle: T\ntype: note\ncaptured_at: 2026-01-05\n---\n\n# T\n\nBody.\n```';
+    const fixed = fixContent(wrapped);
+    expect(fixed.startsWith('---')).toBe(true);
+    expect(fixed).not.toContain('created:');
+    const after = lintContent(fixed, 'test.md', { contentSanity: SANITY_OFF });
+    expect(after.filter(i => i.rule === 'missing-created')).toHaveLength(0);
+    expect(after.filter(i => i.rule === 'code-fence-wrap')).toHaveLength(0);
+  });
+
+  test('promoteCreatedFromCapture is still exported for explicit callers (deprecated)', () => {
     const content = '---\ntitle: T\ningested_at: 2026-02-01\ncaptured_at: 2026-01-05\n---\n\nBody.\n';
     const out = promoteCreatedFromCapture(content);
     expect(out).toContain('created: 2026-01-05');
     expect(out).not.toContain('created: 2026-02-01');
-  });
-
-  test('promoteCreatedFromCapture is a no-op when created exists / no frontmatter', () => {
     const withCreated = '---\ntitle: T\ncreated: 2025-12-31\ncaptured_at: 2026-01-05\n---\n\nBody.\n';
     expect(promoteCreatedFromCapture(withCreated)).toBe(withCreated);
-    const noFm = '# Just a heading\n\ncaptured_at: 2026-01-05\n';
-    expect(promoteCreatedFromCapture(noFm)).toBe(noFm);
-  });
-
-  test('fixContent heals missing-created end-to-end (incl. fence-wrapped pages)', () => {
-    const wrapped =
-      '```markdown\n---\ntitle: T\ntype: note\ncaptured_at: 2026-01-05\n---\n\n# T\n\nBody.\n```';
-    const fixed = fixContent(wrapped);
-    expect(fixed.startsWith('---')).toBe(true);
-    expect(fixed).toContain('created: 2026-01-05');
-    const after = lintContent(fixed, 'test.md', { contentSanity: SANITY_OFF });
-    expect(after.filter(i => i.rule === 'missing-created')).toHaveLength(0);
-    expect(after.filter(i => i.rule === 'code-fence-wrap')).toHaveLength(0);
   });
 });
 
@@ -188,26 +194,43 @@ describe('#3958 total_fixable + the --fix hint gate', () => {
 
   test('runLintCore reports total_fixable separately from total_issues', async () => {
     // One unfixable issue (placeholder-date in the body) + one fixable page
-    // (missing-created promotable from captured_at).
+    // (an LLM preamble; #5433 took missing-created out of the fixable set).
     writeFileSync(
       join(dir, 'unfixable.md'),
       '---\ntitle: A\ntype: note\ncreated: 2026-01-05\n---\n\n- 2026-XX-XX | pending\n',
     );
     writeFileSync(
       join(dir, 'fixable.md'),
-      '---\ntitle: B\ntype: note\ncaptured_at: 2026-01-05\n---\n\n# B\n\nBody.\n',
+      '---\ntitle: B\ntype: note\ncaptured_at: 2026-01-05\n---\n\nOf course. Here is the page.\n\n# B\n\nBody.\n',
     );
     const result = await runLintCore({ target: dir, contentSanity: SANITY_OFF as never });
     expect(result.total_issues).toBe(2);
     expect(result.total_fixable).toBe(1);
   });
 
-  test('runLintCore --fix writes the promoted created field', async () => {
+  test('runLintCore --fix strips the preamble and never writes created', async () => {
     const page = join(dir, 'fixable.md');
-    writeFileSync(page, '---\ntitle: B\ntype: note\ncaptured_at: 2026-01-05\n---\n\n# B\n\nBody.\n');
+    writeFileSync(page, '---\ntitle: B\ntype: note\ncaptured_at: 2026-01-05\n---\n\nOf course. Here is the page.\n\n# B\n\nBody.\n');
     const result = await runLintCore({ target: dir, fix: true, contentSanity: SANITY_OFF as never });
     expect(result.total_fixed).toBe(1);
-    expect(readFileSync(page, 'utf-8')).toContain('created: 2026-01-05');
+    const after = readFileSync(page, 'utf-8');
+    expect(after).not.toContain('Of course');
+    expect(after).not.toContain('created:');
+  });
+
+  test('#5433 repeated --fix runs leave a native (ingested_at-only) page byte-identical', async () => {
+    const page = join(dir, 'native.md');
+    const content = serializePageToMarkdown({
+      slug: 'native', title: 'Native', type: 'note', compiled_truth: '# Native\n\nBody.', timeline: '',
+      frontmatter: { ingested_at: '2026-01-05T10:00:00.000Z' },
+    } as unknown as Page, ['alpha']);
+    writeFileSync(page, content);
+    for (let i = 0; i < 3; i++) {
+      const result = await runLintCore({ target: dir, fix: true, contentSanity: SANITY_OFF as never });
+      expect(result.total_fixed).toBe(0);
+      expect(result.total_fixable).toBe(0);
+      expect(readFileSync(page, 'utf-8')).toBe(content);
+    }
   });
 
   test('hint prints only when something is fixable', async () => {
@@ -228,7 +251,7 @@ describe('#3958 total_fixable + the --fix hint gate', () => {
     // Add a fixable page: the hint appears.
     writeFileSync(
       join(dir, 'fixable.md'),
-      '---\ntitle: B\ntype: note\ncaptured_at: 2026-01-05\n---\n\n# B\n\nBody.\n',
+      '---\ntitle: B\ntype: note\ncaptured_at: 2026-01-05\n---\n\nOf course. Here is the page.\n\n# B\n\nBody.\n',
     );
     const logged2: string[] = [];
     console.log = (...a: unknown[]) => { logged2.push(a.join(' ')); };

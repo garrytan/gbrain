@@ -115,6 +115,8 @@ interface FakeGoogle {
   contactsFullLists: number;
   calls: string[];
   threadFetches: number;
+  /** #5445: the account's label catalog (`users/me/labels`); `'fail'` answers the list with HTTP 500. */
+  labels: Array<{ id: string; name: string; type: string }> | 'fail';
 }
 
 function emptyFx(): FakeGoogle {
@@ -136,6 +138,7 @@ function emptyFx(): FakeGoogle {
     contactsFullLists: 0,
     calls: [],
     threadFetches: 0,
+    labels: [],
   };
 }
 
@@ -174,6 +177,11 @@ function buildFetch(fx: FakeGoogle): FetchImpl {
         messages: page.map((m) => ({ id: m.id, threadId: m.threadId })),
         ...(next ? { nextPageToken: next } : {}),
       });
+    }
+
+    if (u.pathname.endsWith('/users/me/labels')) {
+      if (fx.labels === 'fail') return json({ error: { code: 500, message: 'backend error' } }, 500);
+      return json({ labels: fx.labels });
     }
 
     if (u.pathname.endsWith('/users/me/history')) {
@@ -857,6 +865,40 @@ describe('syncToken 410 recovery', () => {
     }
   });
 
+  test('contacts (#4845): g_contacts_dir moves contact pages; a page the contact owned under the old dir is retired by contact id', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gsrc-ppldir-'));
+    const fx = emptyFx();
+    const vault = makeVault();
+    fx.contacts = [{
+      resourceName: 'people/c000000001',
+      names: [{ displayName: 'Alice Example', metadata: { primary: true } }],
+      emailAddresses: [{ value: 'alice@example.com' }],
+    }];
+    const slugs = async () => (await engine.executeRaw<{ slug: string }>(
+      `SELECT slug FROM pages WHERE source_id = 'gsrc' AND deleted_at IS NULL AND type = 'person' ORDER BY slug`)).map((r) => r.slug);
+    try {
+      await insertGoogleSource(dir);
+      await withHome(async () => {
+        await sweep(dir, fx, vault, {}, 'contacts');
+        expect(await slugs()).toEqual(['people/alice-example']);
+        // The same source now renders contacts under contacts/: the old page goes, the new one lands, one page per contact.
+        const moved = await sweep(dir, fx, vault, { full: true }, 'contacts', { cfg: { g_contacts_dir: 'contacts' } });
+        expect(moved.added).toBe(1);
+        expect(moved.deleted).toBe(1);
+        expect(await slugs()).toEqual(['contacts/alice-example']);
+        expect(existsSync(join(dir, 'people/alice-example.md'))).toBe(false);
+        expect(existsSync(join(dir, 'contacts/alice-example.md'))).toBe(true);
+        // A deletion tombstone (resourceName only) still finds the page under the new dir by contact id.
+        fx.contactsDelta = [{ resourceName: 'people/c000000001', metadata: { deleted: true } }];
+        const gone = await sweep(dir, fx, vault, {}, 'contacts', { cfg: { g_contacts_dir: 'contacts' } });
+        expect(gone.deleted).toBe(1);
+        expect(await slugs()).toEqual([]);
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test('contacts: HTTP 400 expiry recovers without restarting Gmail or losing the contact', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'gsrc-ppl400-'));
     const fx = emptyFx();
@@ -1227,10 +1269,55 @@ describe('calendar window (#5442)', () => {
       const result = await sweep(dir, fx, vault, { full: true }, 'calendar');
 
       expect(result.status).not.toBe('partial');
-      expect(result.deleted).toBe(2);
+      // P4.2 (#5442, contract change): a sweep page past the horizon is now reconciled too,
+      // so `far_evt` goes with the two unlisted in-window pages; history and hand-written stay.
+      expect(result.deleted).toBe(3);
       expect([...(await calendarPages()).keys()].sort()).toEqual(
-        ['calendar/seeded/hand-written', 'far_evt', 'history_evt', 'still_listed'].sort(),
+        ['calendar/seeded/hand-written', 'history_evt', 'still_listed'].sort(),
       );
+    });
+  });
+
+  test('--full removes sweep pages that start at or past the horizon and keeps pages inside it (#5442)', async () => {
+    await withCalendarSource(async ({ dir, fx, vault }) => {
+      fx.calendarEvents = [meeting('soon', 30), meeting('inside_59', 59)];
+      expect((await sweep(dir, fx, vault, {}, 'calendar')).added).toBe(2);
+      await seedMeetingPage('calendar/seeded/overflow-400', 'overflow_400', 400);
+      await seedMeetingPage('calendar/seeded/overflow-at-ceiling', 'overflow_60', 60);
+      await seedMeetingPage('calendar/seeded/hand-far', null, 400);
+
+      const result = await sweep(dir, fx, vault, { full: true }, 'calendar');
+
+      expect(result.status).not.toBe('partial');
+      expect(result.deleted).toBe(2);
+      expect([...(await calendarPages()).keys()].sort()).toEqual(['calendar/seeded/hand-far', 'inside_59', 'soon'].sort());
+    });
+  });
+
+  test('--full with g_future_days widens the horizon: pages inside the wider window stay (#5442)', async () => {
+    await withCalendarSource(async ({ dir, fx, vault }) => {
+      fx.calendarEvents = [meeting('soon', 30), meeting('day_120', 120)];
+      expect((await sweep(dir, fx, vault, {}, 'calendar', { cfg: { g_future_days: 180 } })).added).toBe(2);
+      await seedMeetingPage('calendar/seeded/day-400', 'day_400', 400);
+
+      const result = await sweep(dir, fx, vault, { full: true }, 'calendar', { cfg: { g_future_days: 180 } });
+
+      expect(result.deleted).toBe(1);
+      expect([...(await calendarPages()).keys()].sort()).toEqual(['day_120', 'soon']);
+      const listed = calendarQueries(fx).find((q) => q.has('timeMax'))!;
+      expect(near(Date.parse(listed.get('timeMax')!), NOW_MS + 180 * DAY)).toBe(true);
+    });
+  });
+
+  test('--full refuses more than 200 past-horizon deletions through the mass-delete guard and reports partial (#5442)', async () => {
+    await withCalendarSource(async ({ dir, fx, vault }) => {
+      for (let i = 0; i < 201; i++) await seedMeetingPage(`calendar/seeded/future-${i}`, `future_${i}`, 365 + i);
+
+      const { result: refused, err } = await capturedStderr(() => sweep(dir, fx, vault, { full: true }, 'calendar'));
+      expect(refused.status).toBe('partial');
+      expect(refused.deleted).toBe(0);
+      expect(err).toContain('mass-delete guard refused 201 deletes for source gsrc');
+      expect((await calendarPages()).size).toBe(201);
     });
   });
 
@@ -1320,6 +1407,97 @@ describe('loops_extract enqueue completeness', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   }, 120_000);
+
+  describe('label exclusion (#5445)', () => {
+    const seedThreads = (fx: FakeGoogle) => {
+      fx.labels = [{ id: 'INBOX', name: 'INBOX', type: 'system' }, { id: 'Label_7', name: 'Newsletters', type: 'user' }];
+      fx.messages.push(
+        gmsg('18ff55000000a201', '17ee55000000a101', hoursAgoMs(1), {
+          headers: { From: 'Peer Example <peer@example.com>', To: 'a@example.com', Subject: 'Excluded topic' },
+          body: 'Could you look at the attached draft?', labelIds: ['INBOX', 'Label_7'],
+        }),
+        gmsg('18ff55000000a202', '17ee55000000a102', hoursAgoMs(2), {
+          headers: { From: 'Peer Example <peer@example.com>', To: 'a@example.com', Subject: 'Plain topic' },
+          body: 'Could you confirm the plan?', labelIds: ['INBOX'],
+        }),
+      );
+    };
+    const jobCount = async () => Number((await engine.executeRaw<{ n: string }>(`SELECT count(*)::text AS n FROM minion_jobs WHERE name = 'loops_extract'`))[0].n);
+    /** The per-reason counts the sweep logs (`loops_extract eligibility: a=1 b=2`). */
+    const eligibilityCounts = (err: string): Record<string, number> => {
+      const line = /loops_extract eligibility: ([^\n]+)/.exec(err)?.[1] ?? '';
+      return Object.fromEntries(line.trim().split(/\s+/).filter(Boolean).map((kv) => { const [k, v] = kv.split('='); return [k, Number(v)]; }));
+    };
+
+    test('a name resolves once per sweep: one labels call, the labelled thread is excluded_label and not queued, the plain one is queued', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'gsrc-excl-'));
+      const fx = emptyFx();
+      const vault = makeVault();
+      seedThreads(fx);
+      try {
+        await insertGoogleSource(dir);
+        await withHome(async () => {
+          const { result: res, err } = await capturedStderr(() => sweep(dir, fx, vault, {}, 'gmail', { cfg: { g_loops_exclude_labels: 'newsletters' } }));
+          expect(res.added).toBe(2);
+          expect(fx.calls.filter((c) => c.includes('/users/me/labels'))).toHaveLength(1);
+          expect(eligibilityCounts(err)).toEqual({ excluded_label: 1, human_correspondence: 1 });
+          expect(res.loops_enqueue).toMatchObject({ enqueued: 1, skipped_reason: null });
+          expect(await jobCount()).toBe(1);
+          expect(err).not.toContain('excluded_label_unresolved');
+          const stored = await engine.executeRaw<{ s: { ids: string[]; unresolved: string[] } }>(
+            `SELECT completed_keys->0 AS s FROM op_checkpoints WHERE op = 'loops-exclusion'`);
+          expect(stored[0]?.s).toMatchObject({ ids: ['Label_7'], unresolved: [] });
+        });
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }, 120_000);
+
+    test('an unknown name fails closed: every thread counts excluded_label_unresolved, nothing is queued, stderr names the label', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'gsrc-excl-unres-'));
+      const fx = emptyFx();
+      const vault = makeVault();
+      seedThreads(fx);
+      try {
+        await insertGoogleSource(dir);
+        await withHome(async () => {
+          const { result: res, err } = await capturedStderr(() => sweep(dir, fx, vault, {}, 'gmail', { cfg: { g_loops_exclude_labels: 'Newsletters, Vendor-Noise' } }));
+          expect(res.added).toBe(2);
+          expect(eligibilityCounts(err)).toEqual({ excluded_label: 1, excluded_label_unresolved: 1 });
+          expect(res.loops_enqueue).toMatchObject({ enqueued: 0, skipped_reason: 'excluded_label_unresolved' });
+          expect(await jobCount()).toBe(0);
+          expect(err).toContain('"Vendor-Noise" is not a label of a@example.com');
+          expect(err).toContain('excluded_label_unresolved');
+        });
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }, 120_000);
+
+    test('a failed label list resolves ids only: names stay unresolved this sweep and the brain-wide key is the fallback', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'gsrc-excl-fail-'));
+      const fx = emptyFx();
+      const vault = makeVault();
+      seedThreads(fx);
+      fx.labels = 'fail';
+      try {
+        await insertGoogleSource(dir);
+        await engine.setConfig('loops.extraction_exclude_labels', 'Label_7');
+        await withHome(async () => {
+          const { result: byId, err: errById } = await capturedStderr(() => sweep(dir, fx, vault));
+          expect(eligibilityCounts(errById)).toEqual({ excluded_label: 1, human_correspondence: 1 });
+          expect(byId.loops_enqueue).toMatchObject({ enqueued: 1 });
+          await engine.setConfig('loops.extraction_exclude_labels', 'Newsletters');
+          const { result: byName, err } = await capturedStderr(() => sweep(dir, fx, vault, { full: true }));
+          expect(byName.loops_enqueue).toMatchObject({ enqueued: 0, skipped_reason: 'excluded_label_unresolved' });
+          expect(err).toContain("could not read the account's labels");
+        });
+      } finally {
+        await engine.setConfig('loops.extraction_exclude_labels', '');
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }, 120_000);
+  });
 
   test(`>${LOOPS_EXTRACT_MAX_PER_SWEEP} eligible threads → EVERY one is queued exactly once`, async () => {
     const dir = mkdtempSync(join(tmpdir(), 'gsrc-cap-'));
@@ -1630,4 +1808,59 @@ describe('loops_extract enqueue completeness', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   }, 120_000);
+});
+
+// ── Sweep progress (#5349) ──────────────────────────────────────────────────
+
+/** Forward-progress notes recorded while `fn` runs (what the progress-aware sync deadline extends on). */
+async function countForwardProgress<T>(fn: () => Promise<T>): Promise<{ result: T; notes: number }> {
+  const { onForwardProgress } = await import('../src/core/forward-progress.ts');
+  let notes = 0;
+  const off = onForwardProgress(() => { notes++; });
+  try {
+    return { result: await fn(), notes };
+  } finally {
+    off();
+  }
+}
+
+function fxContact(n: number): unknown {
+  return {
+    resourceName: `people/c00000000${n}`,
+    names: [{ displayName: `Contact Example ${n}`, metadata: { primary: true } }],
+    emailAddresses: [{ value: `contact${n}@example.com` }],
+  };
+}
+
+describe('sweep progress (#5349)', () => {
+  test('a contacts sweep notes forward progress once per imported contact, so the progress-aware deadline extends', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gsrc-pplprog-'));
+    const fx = emptyFx();
+    const vault = makeVault();
+    fx.contacts = [fxContact(1), fxContact(2), fxContact(3)];
+    try {
+      await insertGoogleSource(dir);
+      await withHome(async () => {
+        const { result, notes } = await countForwardProgress(() => sweep(dir, fx, vault, {}, 'contacts'));
+        expect(result.added).toBe(3);
+        expect(notes).toBeGreaterThanOrEqual(3);
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('a calendar sweep notes forward progress once per listed event, and a list with nothing to import notes none', async () => {
+    await withCalendarSource(async ({ dir, fx, vault }) => {
+      fx.calendarEvents = [1, 2, 3, 4].map((n) => meeting(`evt0000000000000${n}`, n));
+      const first = await countForwardProgress(() => sweep(dir, fx, vault, {}, 'calendar'));
+      expect(first.result.added).toBe(4);
+      expect(first.notes).toBeGreaterThanOrEqual(4);
+      // Heartbeats are not progress: an empty delta must not extend the deadline.
+      fx.calendarDelta = [];
+      const second = await countForwardProgress(() => sweep(dir, fx, vault, {}, 'calendar'));
+      expect(second.result.status).toBe('up_to_date');
+      expect(second.notes).toBe(0);
+    });
+  });
 });

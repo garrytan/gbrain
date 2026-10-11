@@ -782,129 +782,135 @@ async function runRoundtrip(
 
   await sweepProbeLeftovers(engine, ws, sourceId);
 
-  // 1. Write both probe pages through the REAL op handler [G1].
-  let writeThroughDetail = '';
+  // #6001: the probe section runs under one try/finally so the fixed-slug
+  // probes are removed on every exit, including the early returns below.
+  // `checks` is the same array the early returns hand back, so a cleanup
+  // warning pushed in `finally` still reaches the caller.
   try {
-    await putPage.handler(ctx, { slug: VERIFY_PROBE_ENTITY_SLUG, content: PROBE_ENTITY_CONTENT });
-    const res = (await putPage.handler(ctx, { slug: VERIFY_PROBE_SLUG, content: PROBE_CONTENT })) as {
-      write_through?: { written: boolean; path?: string; skipped?: string; error?: string };
-    };
-    const wt = res.write_through;
-    const expectedFile = join(ws, 'brain', `${VERIFY_PROBE_SLUG}.md`);
-    if (wt?.written && wt.path && existsSync(wt.path)) {
-      writeThroughDetail = `file materialized at ${wt.path}`;
-      checks.push({ id: 'roundtrip', ok: true, detail: `put_page landed in DB and ${writeThroughDetail}` });
-    } else if (existsSync(expectedFile)) {
-      checks.push({ id: 'roundtrip', ok: true, detail: `put_page landed in DB and file materialized at ${expectedFile}` });
-    } else if (wt?.skipped === 'disabled_by_config') {
-      // DB-only by operator choice (`sync.write_through=false`), not a broken
-      // install: the DB write landed, so WARN and keep the remaining
-      // roundtrip-family checks — sweep/graph/search/magic-moment all run off
-      // the DB row and still prove the memory loop.
-      checks.push({
-        id: 'roundtrip',
-        ok: true,
-        warn: true,
-        detail:
-          `put_page landed in DB; no file under brain/ because sync.write_through is disabled by config — ` +
-          `agent writes stay DB-only (run \`gbrain config set sync.write_through true\` to materialize repo files)`,
-      });
-    } else {
-      // [G1] A green verify with an empty repo is impossible: name the
-      // write-through problem explicitly.
-      const why = wt?.skipped ?? wt?.error ?? 'write-through reported nothing';
-      checks.push({
-        id: 'roundtrip',
-        ok: false,
-        detail:
-          `put_page wrote the DB but NO file appeared under brain/ (write-through: ${why}). ` +
-          `The workspace source must be registered with its brain/ dir as local_path ` +
-          `(gbrain sources add ${sourceId} --path ${join(ws, 'brain')}) or agent writes never reach the repo.`,
-      });
+    // 1. Write both probe pages through the REAL op handler [G1].
+    let writeThroughDetail = '';
+    try {
+      await putPage.handler(ctx, { slug: VERIFY_PROBE_ENTITY_SLUG, content: PROBE_ENTITY_CONTENT });
+      const res = (await putPage.handler(ctx, { slug: VERIFY_PROBE_SLUG, content: PROBE_CONTENT })) as {
+        write_through?: { written: boolean; path?: string; skipped?: string; error?: string };
+      };
+      const wt = res.write_through;
+      const expectedFile = join(ws, 'brain', `${VERIFY_PROBE_SLUG}.md`);
+      if (wt?.written && wt.path && existsSync(wt.path)) {
+        writeThroughDetail = `file materialized at ${wt.path}`;
+        checks.push({ id: 'roundtrip', ok: true, detail: `put_page landed in DB and ${writeThroughDetail}` });
+      } else if (existsSync(expectedFile)) {
+        checks.push({ id: 'roundtrip', ok: true, detail: `put_page landed in DB and file materialized at ${expectedFile}` });
+      } else if (wt?.skipped === 'disabled_by_config') {
+        // DB-only by operator choice (`sync.write_through=false`), not a broken
+        // install: the DB write landed, so WARN and keep the remaining
+        // roundtrip-family checks — sweep/graph/search/magic-moment all run off
+        // the DB row and still prove the memory loop.
+        checks.push({
+          id: 'roundtrip',
+          ok: true,
+          warn: true,
+          detail:
+            `put_page landed in DB; no file under brain/ because sync.write_through is disabled by config — ` +
+            `agent writes stay DB-only (run \`gbrain config set sync.write_through true\` to materialize repo files)`,
+        });
+      } else {
+        // [G1] A green verify with an empty repo is impossible: name the
+        // write-through problem explicitly.
+        const why = wt?.skipped ?? wt?.error ?? 'write-through reported nothing';
+        checks.push({
+          id: 'roundtrip',
+          ok: false,
+          detail:
+            `put_page wrote the DB but NO file appeared under brain/ (write-through: ${why}). ` +
+            `The workspace source must be registered with its brain/ dir as local_path ` +
+            `(gbrain sources add ${sourceId} --path ${join(ws, 'brain')}) or agent writes never reach the repo.`,
+        });
+        return { checks };
+      }
+    } catch (e) {
+      checks.push({ id: 'roundtrip', ok: false, detail: putPageFailureDetail(e, ctx.writeWaitMs) });
       return { checks };
     }
-  } catch (e) {
-    checks.push({ id: 'roundtrip', ok: false, detail: putPageFailureDetail(e, ctx.writeWaitMs) });
-    return { checks };
-  }
 
-  // 2. Sweep — the `gbrain sweep --once` equivalent, run in-process because
-  // verify's caller holds the engine [CX2-5].
-  const caps = opts.capabilities ?? detectCapabilities();
-  try {
-    const report = await runMaintenanceSweep(engine, {
-      sourceId,
-      budgetMs: opts.sweepBudgetMs ?? 20_000,
-      capabilities: caps,
-      log: opts.log,
-    });
-    opts.log?.(`[verify] sweep: facts=${report.factsReconciled} links=${report.linksExtracted} timeline=${report.timelineExtracted}`);
-  } catch (e) {
-    checks.push({ id: 'graph_floor', ok: false, detail: `maintenance sweep failed: ${(e as Error).message}` });
-    return { checks };
-  }
-
-  // 3. Graph floor: ≥1 extracted edge, answered through the link tables.
-  try {
-    const links = await engine.getLinks(VERIFY_PROBE_SLUG, { sourceId });
-    const edge = links.find((l) => l.to_slug === VERIFY_PROBE_ENTITY_SLUG);
-    const backlinks = await engine.getBacklinks(VERIFY_PROBE_ENTITY_SLUG, { sourceId });
-    const back = backlinks.find((l) => l.from_slug === VERIFY_PROBE_SLUG);
-    if (edge && back) {
-      checks.push({ id: 'graph_floor', ok: true, detail: `entity link extracted and the edge-only query answers (probe → entity, ${links.length} outbound / ${backlinks.length} inbound)` });
-    } else {
-      checks.push({ id: 'graph_floor', ok: false, detail: `expected probe→entity edge missing after sweep (outbound: ${links.length}, inbound: ${backlinks.length}) — link extraction is not compounding the graph` });
+    // 2. Sweep — the `gbrain sweep --once` equivalent, run in-process because
+    // verify's caller holds the engine [CX2-5].
+    const caps = opts.capabilities ?? detectCapabilities();
+    try {
+      const report = await runMaintenanceSweep(engine, {
+        sourceId,
+        budgetMs: opts.sweepBudgetMs ?? 20_000,
+        capabilities: caps,
+        log: opts.log,
+      });
+      opts.log?.(`[verify] sweep: facts=${report.factsReconciled} links=${report.linksExtracted} timeline=${report.timelineExtracted}`);
+    } catch (e) {
+      checks.push({ id: 'graph_floor', ok: false, detail: `maintenance sweep failed: ${(e as Error).message}` });
+      return { checks };
     }
-  } catch (e) {
-    checks.push({ id: 'graph_floor', ok: false, detail: `edge query failed: ${(e as Error).message}` });
-  }
 
-  // 4. get_page + search recall.
-  try {
-    await getPage.handler(ctx, { slug: VERIFY_PROBE_SLUG });
-  } catch (e) {
-    checks.push({ id: 'roundtrip', ok: false, detail: `get_page read-back failed: ${(e as Error).message}` });
-  }
-  try {
-    const result = await queryOp.handler(ctx, {
-      query: 'bootstrap verify probe lighthouse',
-      limit: 10,
-      expand: false,
-    });
-    const found = JSON.stringify(result).includes(VERIFY_PROBE_SLUG);
-    if (!found) {
-      checks.push({ id: 'roundtrip', ok: false, detail: `search did not return the probe page (${caps.search} search) — retrieval round-trip broken` });
+    // 3. Graph floor: ≥1 extracted edge, answered through the link tables.
+    try {
+      const links = await engine.getLinks(VERIFY_PROBE_SLUG, { sourceId });
+      const edge = links.find((l) => l.to_slug === VERIFY_PROBE_ENTITY_SLUG);
+      const backlinks = await engine.getBacklinks(VERIFY_PROBE_ENTITY_SLUG, { sourceId });
+      const back = backlinks.find((l) => l.from_slug === VERIFY_PROBE_SLUG);
+      if (edge && back) {
+        checks.push({ id: 'graph_floor', ok: true, detail: `entity link extracted and the edge-only query answers (probe → entity, ${links.length} outbound / ${backlinks.length} inbound)` });
+      } else {
+        checks.push({ id: 'graph_floor', ok: false, detail: `expected probe→entity edge missing after sweep (outbound: ${links.length}, inbound: ${backlinks.length}) — link extraction is not compounding the graph` });
+      }
+    } catch (e) {
+      checks.push({ id: 'graph_floor', ok: false, detail: `edge query failed: ${(e as Error).message}` });
     }
-  } catch (e) {
-    checks.push({ id: 'roundtrip', ok: false, detail: `search failed: ${(e as Error).message}` });
-  }
 
-  // 5. Magic moment [CX-P0.5]: the fence fact reconciled by the ZERO-LLM
-  // sweep pass, read back at visibility='world' (what the harness can read).
-  try {
-    const rows = await engine.executeRaw<{ fact: string }>(
-      `SELECT fact FROM facts WHERE source_id = $1 AND visibility = 'world' AND fact LIKE $2 LIMIT 1`,
-      [sourceId, `%${VERIFY_MAGIC_TOKEN}%`],
-    );
-    if (rows.length > 0) {
-      checks.push({ id: 'magic_moment', ok: true, detail: `fence-written fact recalled at visibility=world (keyless path: ${caps.mode === 'keyless' ? 'yes' : 'keyed install, same zero-LLM pass'})` });
-    } else {
-      checks.push({ id: 'magic_moment', ok: false, detail: 'the ## Facts fence fact never reached the facts index — keyless memory (agent-authored fences) is broken; check the sweep fence pass' });
+    // 4. get_page + search recall.
+    try {
+      await getPage.handler(ctx, { slug: VERIFY_PROBE_SLUG });
+    } catch (e) {
+      checks.push({ id: 'roundtrip', ok: false, detail: `get_page read-back failed: ${(e as Error).message}` });
     }
-  } catch (e) {
-    checks.push({ id: 'magic_moment', ok: false, detail: `facts read-back failed: ${(e as Error).message}` });
-  }
+    try {
+      const result = await queryOp.handler(ctx, {
+        query: 'bootstrap verify probe lighthouse',
+        limit: 10,
+        expand: false,
+      });
+      const found = JSON.stringify(result).includes(VERIFY_PROBE_SLUG);
+      if (!found) {
+        checks.push({ id: 'roundtrip', ok: false, detail: `search did not return the probe page (${caps.search} search) — retrieval round-trip broken` });
+      }
+    } catch (e) {
+      checks.push({ id: 'roundtrip', ok: false, detail: `search failed: ${(e as Error).message}` });
+    }
 
-  // 6. Delete the probes [G13] — failure is a WARNING, never a verify fail.
-  // HARD delete via the engine primitive (same as sweepProbeLeftovers): the
-  // probe is not user content and verify is a trusted local caller. The
-  // delete_page OP is a v0.26.5 SOFT delete (sets deleted_at, row stays in
-  // pages until the 72h purge) — using it here left two probe tombstones in
-  // the user's brain after every verify run, visible to include_deleted
-  // readers and pinned as residue by the Postgres e2e cleanup assertion.
-  const deleteWarnings = await removeProbes(engine, ws, sourceId);
-  if (deleteWarnings.length > 0) {
-    checks.push({ id: 'probe_cleanup', ok: false, warn: true, detail: `probe deletion incomplete: ${deleteWarnings.join('; ')}` });
+    // 5. Magic moment [CX-P0.5]: the fence fact reconciled by the ZERO-LLM
+    // sweep pass, read back at visibility='world' (what the harness can read).
+    try {
+      const rows = await engine.executeRaw<{ fact: string }>(
+        `SELECT fact FROM facts WHERE source_id = $1 AND visibility = 'world' AND fact LIKE $2 LIMIT 1`,
+        [sourceId, `%${VERIFY_MAGIC_TOKEN}%`],
+      );
+      if (rows.length > 0) {
+        checks.push({ id: 'magic_moment', ok: true, detail: `fence-written fact recalled at visibility=world (keyless path: ${caps.mode === 'keyless' ? 'yes' : 'keyed install, same zero-LLM pass'})` });
+      } else {
+        checks.push({ id: 'magic_moment', ok: false, detail: 'the ## Facts fence fact never reached the facts index — keyless memory (agent-authored fences) is broken; check the sweep fence pass' });
+      }
+    } catch (e) {
+      checks.push({ id: 'magic_moment', ok: false, detail: `facts read-back failed: ${(e as Error).message}` });
+    }
+  } finally {
+    // 6. Delete the probes [G13] — failure is a WARNING, never a verify fail.
+    // HARD delete via the engine primitive (same as sweepProbeLeftovers): the
+    // probe is not user content and verify is a trusted local caller. The
+    // delete_page OP is a v0.26.5 SOFT delete (sets deleted_at, row stays in
+    // pages until the 72h purge) — using it here left two probe tombstones in
+    // the user's brain after every verify run, visible to include_deleted
+    // readers and pinned as residue by the Postgres e2e cleanup assertion.
+    const deleteWarnings = await removeProbes(engine, ws, sourceId);
+    if (deleteWarnings.length > 0) {
+      checks.push({ id: 'probe_cleanup', ok: false, warn: true, detail: `probe deletion incomplete: ${deleteWarnings.join('; ')}` });
+    }
   }
 
   return { checks };

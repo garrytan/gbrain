@@ -9,7 +9,7 @@
  * calls for. The sweep-level behavior is in test/google-source-reconcile.test.ts.
  */
 import { describe, expect, test } from 'bun:test';
-import { CALENDAR_HORIZON_DAYS, CalendarSyncWindow, planCalendarPage, unlistedCalendarPages } from '../src/core/google/calendar-window.ts';
+import { CALENDAR_HORIZON_DAYS, CalendarSyncWindow, planCalendarPage, staleCalendarPages, unlistedCalendarPages } from '../src/core/google/calendar-window.ts';
 
 const DAY = 86_400_000;
 const NOW = Date.UTC(2026, 9, 6, 12, 0, 0);
@@ -88,5 +88,34 @@ describe('unlistedCalendarPages', () => {
       { event_id: 'undated', start_iso: null },
     ];
     expect(unlistedCalendarPages(pages, new Set(['listed']), win).map((p) => p.event_id)).toEqual(['dropped']);
+  });
+});
+
+describe('future horizon (#5442)', () => {
+  test('startsAfter is true from the ceiling on, and never for an unparseable start', () => {
+    expect(win.startsAfter(iso(win.ceilMs))).toBe(true);
+    expect(win.startsAfter(iso(win.ceilMs + DAY))).toBe(true);
+    expect(win.startsAfter(iso(win.ceilMs - 1))).toBe(false);
+    expect(win.startsAfter(null)).toBe(false);
+    expect(win.startsAfter('not a date')).toBe(false);
+  });
+
+  test('futureDays moves the ceiling; the default stays CALENDAR_HORIZON_DAYS', () => {
+    expect(new CalendarSyncWindow(NOW, 30, 180).ceilMs).toBe(NOW + 180 * DAY);
+    expect(new CalendarSyncWindow(NOW, 30).ceilMs).toBe(NOW + CALENDAR_HORIZON_DAYS * DAY);
+  });
+
+  test('staleCalendarPages: unlisted inside the window, or any sweep page past the ceiling; never history or hand-written pages', () => {
+    const page = (event_id: string | null, startMs: number) => ({ event_id, start_iso: iso(startMs) });
+    const pages = [
+      page('listed', NOW + DAY),
+      page('dropped', NOW + 2 * DAY),
+      page('aged', win.floorMs - DAY),
+      page('far', win.ceilMs + DAY),
+      page('at_ceiling', win.ceilMs),
+      page(null, win.ceilMs + 3 * DAY),
+      { event_id: 'undated', start_iso: null },
+    ];
+    expect(staleCalendarPages(pages, new Set(['listed', 'far']), win).map((p) => p.event_id).sort()).toEqual(['at_ceiling', 'dropped', 'far']);
   });
 });

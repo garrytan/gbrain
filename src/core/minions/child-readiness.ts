@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn } from '../spawn.ts';
 import type { BrainEngine } from '../engine.ts';
 import { VERSION } from '../../version.ts';
 import { isLocalConfigurationError } from './configuration-error.ts';

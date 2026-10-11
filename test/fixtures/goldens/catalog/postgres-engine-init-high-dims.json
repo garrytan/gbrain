@@ -1113,6 +1113,7 @@
       "op_checkpoints_sync_hold_page_idx": "CREATE INDEX op_checkpoints_sync_hold_page_idx ON public.op_checkpoints USING btree ((((completed_keys -> 0) ->> 'page_id'::text))) WHERE (op = 'sync-hold'::text)",
       "op_checkpoints_updated_at_idx": "CREATE INDEX op_checkpoints_updated_at_idx ON public.op_checkpoints USING btree (updated_at)",
       "open_loops_counterparty_idx": "CREATE INDEX open_loops_counterparty_idx ON public.open_loops USING btree (source_id, counterparty_slug) WHERE (status = 'open'::text)",
+      "open_loops_counterparty_source_idx": "CREATE INDEX open_loops_counterparty_source_idx ON public.open_loops USING btree (counterparty_source_id, counterparty_slug) WHERE ((status = 'open'::text) AND (counterparty_source_id IS NOT NULL))",
       "open_loops_dedup": "CREATE UNIQUE INDEX open_loops_dedup ON public.open_loops USING btree (source_id, dedup_key)",
       "open_loops_pkey": "CREATE UNIQUE INDEX open_loops_pkey ON public.open_loops USING btree (id)",
       "open_loops_status_idx": "CREATE INDEX open_loops_status_idx ON public.open_loops USING btree (source_id, status, last_activity_at DESC)",
@@ -2486,7 +2487,8 @@
           "18 closed_at timestamp with time zone/timestamptz NULL",
           "19 closed_by text/text NULL",
           "20 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
-          "21 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+          "21 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "22 counterparty_source_id text/text NULL"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },

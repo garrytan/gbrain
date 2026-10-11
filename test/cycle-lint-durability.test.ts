@@ -14,7 +14,8 @@ afterEach(() => {
 
 /**
  * A committed git repo carrying the gbrain durability post-commit hook and
- * one page whose only lint issue is fixable (ingested_at without created).
+ * one page whose only lint issue is fixable (a leading LLM preamble; #5433
+ * made `ingested_at` count as temporal provenance, so it is not a finding).
  */
 function hardenedRepoWithNote(opts: { hook?: boolean } = {}): { root: string; page: string } {
   const root = mkdtempSync(join(tmpdir(), 'gbrain-cycle-lint-durability-'));
@@ -22,7 +23,7 @@ function hardenedRepoWithNote(opts: { hook?: boolean } = {}): { root: string; pa
   const page = join(root, 'note.md');
   writeFileSync(
     page,
-    `---\ntype: note\ntitle: Durable\nstatus: active\ningested_at: '2026-08-30T12:00:00Z'\n---\n\nBody.\n`,
+    `---\ntype: note\ntitle: Durable\nstatus: active\ningested_at: '2026-08-30T12:00:00Z'\n---\n\nOf course. Here is the page.\n\nBody.\n`,
   );
   execFileSync('git', ['init', '-q'], { cwd: root });
   execFileSync('git', ['config', 'user.name', 'Test'], { cwd: root });

@@ -61,6 +61,7 @@ test/e2e/fence-chunk-overlay-postgres.test.ts
 test/e2e/fence-chunk-trust-read-postgres.test.ts
 test/e2e/trust-cross-session-parity.test.ts
 test/e2e/single-write-group-parity-postgres.test.ts
+test/e2e/db-lock-token-predicate-postgres.test.ts
 test/e2e/fts-cjk-boundary-postgres.test.ts
 test/e2e/oauth-client-registered-via-postgres.test.ts
 test/e2e/oauth-owner-consent-source-postgres.test.ts

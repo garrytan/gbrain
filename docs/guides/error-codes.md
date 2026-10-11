@@ -1652,6 +1652,18 @@ More: [docs/guides/repair.md#legacy-jobs-active](../../docs/guides/repair.md#leg
 |---|---|---|---|---|---|---|
 | Another process holds the lock this command needs. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 1 | yes |
 
+### loops_extraction_skipped
+
+<a id="loops_extraction_skipped"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A Google sweep or the managed catch-up queued no paid loop extraction; the sync summary's `skipped_reason` says why. Nothing failed and the email pages still imported. | Extraction is gated before any model call: a kill switch, a missing chat provider, the day's spend cap (`loops.extraction_max_usd_per_day`, default $2.00; `spend_cap_zero` means the user set it to 0), or an exclusion label (`g_loops_exclude_labels` / `loops.extraction_exclude_labels`) that did not resolve against the account's labels, which fails closed until a sweep resolves it. | Read the reason. `daily_spend_cap` clears at the next UTC day or when the user raises `loops.extraction_max_usd_per_day`; `excluded_label_unresolved` names the label token to fix in `gbrain sources status <id>` or `gbrain config get loops.extraction_exclude_labels`; the threads are extracted on their next touch or by `gbrain sync --source <id> --full`. Run: gbrain sync status --source '{source_id}' --json | agent | `gbrain config get loops.extraction_max_usd_per_day` | 1 | no |
+
+Reasons: `no_candidates`, `extraction_disabled`, `chat_unavailable`, `enqueue_failed`, `daily_spend_cap`, `spend_cap_zero`, `excluded_label`, `excluded_label_unresolved`.
+
+More: [docs/guides/open-loops.md#two-detectors](../../docs/guides/open-loops.md#two-detectors)
+
 ### maintenance_backpressure
 
 <a id="maintenance_backpressure"></a>

@@ -22,6 +22,7 @@ import { readdirSync, statSync, lstatSync, existsSync } from 'fs';
 import { join, relative, dirname } from 'path';
 import { isAborted } from '../core/abort-check.ts';
 import { parseMarkdown, type ParseValidationCode } from '../core/markdown.ts';
+import { parseDateLoose } from '../core/effective-date.ts';
 import {
   assessContentSanity,
   type OperatorLiteral,
@@ -123,6 +124,13 @@ function findLeadingPreamble(content: string): { start: number; end: number } | 
 }
 
 // ── Rules ──────────────────────────────────────────────────────────
+
+/**
+ * #5433: frontmatter keys that count as temporal provenance for the
+ * `missing-created` rule. `created` first for the legacy name; the rest are
+ * what effective-date resolution and the native serializer actually write.
+ */
+const TEMPORAL_KEYS = ['created', 'event_date', 'date', 'published', 'captured_at', 'ingested_at'] as const;
 
 /**
  * Per-call options for `lintContent`. Tests pass content-sanity opts
@@ -254,17 +262,17 @@ export function lintContent(content: string, filePath: string, opts: LintContent
           fixable: false,
         });
       }
-      if (!fm.match(/^created:/m)) {
-        // #3958: when the page's own frontmatter carries a capture timestamp
-        // (captured_at / ingested_at), `--fix` can promote it to `created` —
-        // mark the finding fixable so the operator knows --fix will heal it.
-        const promotable = /^(?:captured_at|ingested_at):/m.test(fm);
+      // #5433: the native serializer never writes `created` and effective-date
+      // resolution reads event_date / date / published, so any parseable
+      // temporal key is provenance enough. The rule name stays for consumers;
+      // it is never fixable (ingest time is not creation time, see #3958).
+      // A block YAML could not read is already a frontmatter-yaml-parse finding.
+      const yamlUnreadable = parsed.errors?.some(e => e.code === 'YAML_PARSE') ?? false;
+      if (!yamlUnreadable && !TEMPORAL_KEYS.some(key => parseDateLoose(parsed.frontmatter[key]) !== null)) {
         issues.push({
           file: filePath, line: 1, rule: 'missing-created',
-          message: promotable
-            ? 'Frontmatter missing required field: created (promotable from captured_at/ingested_at)'
-            : 'Frontmatter missing required field: created',
-          fixable: promotable,
+          message: `Frontmatter has no parseable date under any of: ${TEMPORAL_KEYS.join(', ')}`,
+          fixable: false,
         });
       }
     }
@@ -388,11 +396,16 @@ export function lintContent(content: string, filePath: string, opts: LintContent
 }
 
 /**
- * #3958: promote `captured_at:` (preferred) or `ingested_at:` to `created:`
- * when the frontmatter has no `created:` of its own. The value is copied
- * verbatim (quoting preserved) and inserted directly below the source line.
- * No-op when there is no frontmatter, `created:` already exists, or neither
- * capture field is present. Pure + exported for tests.
+ * @deprecated #5433: no longer part of `fixContent`. Ingest time is when a
+ * file entered the brain, not when its content was created, and the cycle's
+ * lint phase ran this on every native page, diverging the file from the DB
+ * row that serialized it. Kept for callers who promote explicitly.
+ *
+ * Promotes `captured_at:` (preferred) or `ingested_at:` to `created:` when
+ * the frontmatter has no `created:` of its own. The value is copied verbatim
+ * (quoting preserved) and inserted directly below the source line. No-op
+ * when there is no frontmatter, `created:` already exists, or neither
+ * capture field is present.
  */
 export function promoteCreatedFromCapture(content: string): string {
   if (!content.startsWith('---')) return content;
@@ -417,11 +430,6 @@ export function fixContent(content: string): string {
   // Fix wrapping code fences
   fixed = fixed.replace(/^```(?:markdown|md)\s*\n/, '');
   fixed = fixed.replace(/\n```\s*$/, '');
-
-  // #3958: missing-created is fixable when the page's own frontmatter
-  // carries a capture timestamp. Runs after the fence unwrap so a wrapped
-  // page's frontmatter is visible to the promotion.
-  fixed = promoteCreatedFromCapture(fixed);
 
   // Clean up excessive blank lines left by fixes
   fixed = fixed.replace(/\n{3,}/g, '\n\n');

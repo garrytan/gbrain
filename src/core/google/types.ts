@@ -11,6 +11,8 @@ export type GoogleService = 'gmail' | 'calendar' | 'contacts';
 export const ALL_GOOGLE_SERVICES: readonly GoogleService[] = ['gmail', 'calendar', 'contacts'];
 
 /** The account's primary calendar — the Calendar API's own alias, and the default a google source sweeps. */
+/** Where a Google source renders its contact pages unless `g_contacts_dir` says otherwise. */
+export const DEFAULT_CONTACTS_DIR = 'people';
 export const DEFAULT_CALENDAR_ID = 'primary';
 
 export interface GoogleSourceConfig {
@@ -20,10 +22,33 @@ export interface GoogleSourceConfig {
   services: GoogleService[];
   /** Backfill/reconcile window in days (default 90). */
   historyDays: number;
+  /**
+   * How far ahead calendar pages are kept, in days (`g_future_days`, 1..3650).
+   * Present only when the source sets it, so an unset knob leaves every
+   * existing source's connector identity unchanged; the sweep falls back to
+   * CALENDAR_HORIZON_DAYS.
+   */
+  futureDays?: number;
+  /**
+   * Gmail label names or ids whose threads the open-loop engine leaves alone
+   * (`g_loops_exclude_labels`, comma-separated; #5445). Present only when the
+   * source sets it; the brain-wide `loops.extraction_exclude_labels` is the
+   * fallback. Not part of the connector identity: it changes what is
+   * extracted, not which pages exist.
+   */
+  loopsExcludeLabels?: string[];
   /** Calendar swept by this source (default DEFAULT_CALENDAR_ID). One calendar per
    *  source so each keeps its own sync token — point a second source at a
    *  secondary calendar id to ingest it too. */
   calendarId: string;
+  /**
+   * Directory (relative to `dir`) the contact pages render under
+   * (`g_contacts_dir`, default DEFAULT_CONTACTS_DIR = `people`; #4845). A brain
+   * that maintains its own `people/` pages points its Google source at
+   * `contacts` so the two namespaces never collide. Contact pages are found
+   * by `google_contact_id`, not by directory, so changing it moves them.
+   */
+  contactsDir: string;
   /** Managed dir where pages are materialized. */
   dir: string;
   /**

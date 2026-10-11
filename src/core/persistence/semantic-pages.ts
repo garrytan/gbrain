@@ -56,7 +56,9 @@ export async function prepareSemanticPageMutation(engine: BrainEngine, row: Writ
     const prepared = await preparePageMutation(engine, row, config, {
       expectedRevision: snapshot.revision, tags, content: serializePageToMarkdown(snapshot.page, tags),
     });
-    return { ...prepared, apply: async tx => ({ ...await prepared.apply(tx), status: 'ok', tag }) };
+    // #5251: a tag change leaves every chunk's text as it was, so the republication queues no
+    // embedding effect; the stale sweep still picks up any chunk the publish left without a vector.
+    return { ...prepared, deferEmbedding: true, apply: async tx => ({ ...await prepared.apply(tx), status: 'ok', tag }) };
   }
   if (row.operation !== 'add_timeline_entry') {
     throw opError('writer_coordinator_required', 'This semantic writer has no registered preparation handler.',

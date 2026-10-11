@@ -21,6 +21,8 @@ import {
   type ThreadLoopVerdict,
 } from '../src/core/google/loop-detect.ts';
 import type { SuppressionSet } from '../src/core/loops/loops-store.ts';
+import { BULK_CATEGORY_LABELS } from '../src/core/google/gmail-categories.ts';
+import { BULK_CATEGORY_LABELS as EXTRACT_LANE_BULK_CATEGORY_LABELS } from '../src/core/google/loops-extract.ts';
 import type { GmailMessageMeta, GmailThreadData } from '../src/core/google/types.ts';
 
 // Frozen clock — every age below is relative to this instant, so the corpus
@@ -48,6 +50,8 @@ interface MsgSpec {
   autoSubmitted?: boolean;
   /** Explicit internalDateMs override (0 = the all-zero-date case). */
   dateMs?: number;
+  /** Extra Gmail label ids (categories) beside SENT/INBOX. */
+  labels?: string[];
 }
 
 function msg(spec: MsgSpec): GmailMessageMeta {
@@ -66,7 +70,7 @@ function msg(spec: MsgSpec): GmailMessageMeta {
     internalDateMs,
     calendarMethod: spec.calendarMethod ?? null,
     ...(spec.autoSubmitted !== undefined ? { autoSubmitted: spec.autoSubmitted } : {}),
-    labelIds: spec.sent ? ['SENT'] : ['INBOX'],
+    labelIds: [spec.sent ? 'SENT' : 'INBOX', ...(spec.labels ?? [])],
     listUnsubscribe: spec.listUnsub ?? false,
     bodyText: spec.body ?? 'Can you review the plan?',
   };
@@ -862,5 +866,62 @@ describe('google calendar system mail', () => {
       }),
     ]);
     expect(v.open.map((o) => o.loopType)).toEqual(['unanswered_inbound']);
+  });
+});
+
+describe('#5103: Google system senders and bulk categories in the deterministic lane', () => {
+  const detect = (messages: GmailMessageMeta[]): ThreadLoopVerdict => detectThreadLoop(thread(messages), MY, NOW);
+
+  test('both lanes read one bulk-category constant', () => {
+    expect(EXTRACT_LANE_BULK_CATEGORY_LABELS).toBe(BULK_CATEGORY_LABELS);
+    expect([...BULK_CATEGORY_LABELS]).toEqual(['CATEGORY_PROMOTIONS', 'CATEGORY_SOCIAL', 'CATEGORY_FORUMS']);
+  });
+
+  test('a Meet notes digest from gemini-notes@google.com opens no inbound loop', () => {
+    const v = detect([msg({ from: 'gemini-notes@google.com', to: ['me@example.com'], ageHours: 48, subject: 'Notes: weekly sync', body: 'Here are the notes. Any corrections?' })]);
+    expect(v.open).toEqual([]);
+  });
+
+  test('a lookalike address is matched by equality only, so it still opens a loop', () => {
+    const v = detect([msg({ from: 'gemini-notes@google.com.evil.example', to: ['me@example.com'], ageHours: 48 })]);
+    expect(v.open.map((o) => o.loopType)).toEqual(['unanswered_inbound']);
+  });
+
+  for (const label of BULK_CATEGORY_LABELS) {
+    test(`${label} inbound the owner never joined → no loop`, () => {
+      const v = detect([msg({ from: 'deals@shop-example.test', to: ['me@example.com'], ageHours: 48, labels: [label] })]);
+      expect(v.open).toEqual([]);
+    });
+  }
+
+  test('a PROMOTIONS thread the owner wrote a substantive message in still opens the reply-owed loop', () => {
+    const v = detect([
+      msg({ from: 'deals@shop-example.test', to: ['me@example.com'], ageHours: 200, labels: ['CATEGORY_PROMOTIONS'], body: 'Spring sale is on.' }),
+      msg({ from: 'me@example.com', to: ['deals@shop-example.test'], ageHours: 150, sent: true, labels: ['CATEGORY_PROMOTIONS'], body: 'Is the blue model still available in size 10?' }),
+      msg({ from: 'deals@shop-example.test', to: ['me@example.com'], ageHours: 48, labels: ['CATEGORY_PROMOTIONS'], body: 'Yes, could you confirm your shipping address?' }),
+    ]);
+    expect(v.open.map((o) => [o.loopType, o.counterpartyEmail])).toEqual([['unanswered_inbound', 'deals@shop-example.test']]);
+  });
+
+  test('CATEGORY_UPDATES without an owner reply still opens (invoices and document requests live there)', () => {
+    const v = detect([msg({ from: 'billing@vendor-example.test', to: ['me@example.com'], ageHours: 48, labels: ['CATEGORY_UPDATES'], body: 'Could you approve the attached invoice?' })]);
+    expect(v.open.map((o) => o.loopType)).toEqual(['unanswered_inbound']);
+  });
+
+  test('a bulk category never fabricates a close: my reply still closes, and their reply still closes my outbound loop', () => {
+    const v = detect([
+      msg({ from: 'deals@shop-example.test', to: ['me@example.com'], ageHours: 100, labels: ['CATEGORY_PROMOTIONS'] }),
+      msg({ from: 'me@example.com', to: ['deals@shop-example.test'], ageHours: 2, sent: true, labels: ['CATEGORY_PROMOTIONS'], body: 'Done, thanks for the details.' }),
+    ]);
+    expect(v.close).toEqual(['unanswered_inbound']);
+    expect(v.open).toEqual([]);
+  });
+
+  test('a mixed thread: the system digest is ignored and the human message to me opens the loop', () => {
+    const v = detect([
+      msg({ from: 'gemini-notes@google.com', to: ['me@example.com'], ageHours: 60, subject: 'Notes: planning' }),
+      msg({ from: 'bob@example.com', to: ['me@example.com'], ageHours: 48, subject: 'Re: planning', body: 'Can you send the budget sheet?' }),
+    ]);
+    expect(v.open.map((o) => [o.loopType, o.counterpartyEmail])).toEqual([['unanswered_inbound', 'bob@example.com']]);
   });
 });

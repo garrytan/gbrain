@@ -88,6 +88,13 @@ export interface GazetteerEntry {
   caseTokens?: string[];
   /** Spelling being matched (the alias, not the display title, for aliases). */
   matchText?: string;
+  /**
+   * #6158: the page is a connector's own contact rendering (`google_contact_id`
+   * frontmatter), a near-empty stub of a person who may have a canonical page
+   * elsewhere. Under the cross-source opt-in a mention in the stub's source
+   * binds to that canonical twin instead (see findMentionedEntities).
+   */
+  connector_stub?: true;
 }
 
 /**
@@ -479,13 +486,15 @@ export async function buildGazetteer(
   }
   const allTypes = [...new Set([...typesBySource.values()].flatMap(set => [...set]))];
   const linkable = (sourceId: string | null, type: string | null) => !!type && (typesBySource.get(sourceId ?? 'default')?.has(type) ?? false);
-  const rows = (await engine.executeRaw<{ slug: string; source_id: string | null; title: string | null; type: string | null }>(
-    `SELECT slug, source_id, title, type
+  const rows = (await engine.executeRaw<{ slug: string; source_id: string | null; title: string | null; type: string | null; connector_stub: boolean }>(
+    `SELECT slug, source_id, title, type, (frontmatter ->> 'google_contact_id') IS NOT NULL AS connector_stub
      FROM pages
      WHERE type = ANY($1::text[])
        AND deleted_at IS NULL`,
     [allTypes],
   )).filter(r => linkable(r.source_id, r.type));
+  const stubPages = new Set(rows.filter(r => r.connector_stub).map(r => `${r.source_id ?? 'default'}\0${r.slug}`));
+  const stubFlag = (src: string, slug: string) => stubPages.has(`${src}\0${slug}`) ? { connector_stub: true as const } : {};
 
   const ignoreSet = new Set<string>(DEFAULT_IGNORE_LIST);
   const userIgnore = new Set(policy.ignore.map(n => tokenizeTitle(n).join(' ')).filter(Boolean));
@@ -535,7 +544,7 @@ export async function buildGazetteer(
     // below.
     if (tokens.length === 1 && row.type === 'person' && isGenericEntityToken(tokens[0]!)) { drop({ ...base, reason: 'generic_token' }); continue; }
     noteFirstWord(src, tokens);
-    add({ slug: row.slug, source_id: src, title: row.title, tokens, origin: 'title', matchText: row.title });
+    add({ slug: row.slug, source_id: src, title: row.title, tokens, origin: 'title', matchText: row.title, ...stubFlag(src, row.slug) });
   }
 
   // ── Alias entries ────────────────────────────────────────────────────────
@@ -625,7 +634,7 @@ export async function buildGazetteer(
     if (tokens.length === 1 && isGenericEntityToken(tokens[0]!)) { drop({ ...base, reason: 'generic_token' }); continue; }
     const caseTokens = a.case_sensitive && a.alias_text ? caseTokensOf(a.alias_text) : undefined;
     const entry: GazetteerEntry = { slug: a.slug, source_id: src, title: a.title, tokens, origin, matchText: alias,
-      ...(caseTokens && caseTokens.length === tokens.length ? { caseTokens } : {}) };
+      ...(caseTokens && caseTokens.length === tokens.length ? { caseTokens } : {}), ...stubFlag(src, a.slug) };
     noteFirstWord(src, tokens);
     aliasEntries.push({ entry, base });
   }
@@ -781,16 +790,25 @@ export function findMentionedEntities(
     // Same-name twin in the scanning page's own source wins over a foreign
     // one: bucket order is length-only, so `matched` may be the cross-source
     // twin even when an own-source entry with identical tokens exists.
+    const sameName = (e: GazetteerEntry, want: GazetteerEntry) =>
+      e.tokens.length === want.tokens.length
+        && e.tokens.every((t, k) => t === want.tokens[k])
+        && caseMatches(e, i)
+        && hasHangulMatchBoundary(stripped, tokens, i, e);
     if (matched.source_id !== opts.fromSourceId) {
-      const want = matched.tokens;
-      const own = bucket.find(
-        e => e.source_id === opts.fromSourceId
-          && e.tokens.length === want.length
-          && e.tokens.every((t, k) => t === want[k])
-          && caseMatches(e, i)
-          && hasHangulMatchBoundary(stripped, tokens, i, e),
-      );
+      const want = matched;
+      const own = bucket.find(e => e.source_id === opts.fromSourceId && sameName(e, want));
       if (own) matched = own;
+    }
+    // #6158: under the cross-source opt-in, a connector's contact stub (own
+    // source or not) yields to the canonical same-name page in another
+    // source: the one such page, or the one that shares its slug. Several
+    // candidates and no slug match keep the stub (an honest tie).
+    if (opts.allowCrossSource && matched.connector_stub) {
+      const stub = matched;
+      const canonical = bucket.filter(e => !e.connector_stub && e.source_id !== stub.source_id && sameName(e, stub));
+      const pick = canonical.length === 1 ? canonical[0] : canonical.find(e => e.slug === stub.slug);
+      if (pick && canonical.filter(e => e.slug === pick.slug).length === 1) matched = pick;
     }
     if (ignored.size > 0 && ignored.has(matched.tokens.join(' '))) {
       i += matchedTokens;

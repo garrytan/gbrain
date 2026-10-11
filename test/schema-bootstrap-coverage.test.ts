@@ -903,6 +903,11 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   // the schema blob carries a comment, no CREATE TABLE column and no index
   // reads it, so there is no forward reference for the bootstrap to trip on.
   'content_chunks.embedding_pending_since',
+  // #5504 (wave 14 P4.1) open_loops.counterparty_source_id (migration
+  // open_loops_counterparty_source): same posture as embedding_pending_since,
+  // migration-only so fresh and upgraded brains share column ordinals; the
+  // partial index is built by the migration handler, never by the blob.
+  'open_loops.counterparty_source_id',
   // #6202 oauth_clients.registered_via (migration oauth_client_registered_via):
   // migration-only like min_trust, so fresh and upgraded catalogs keep the same
   // column order; no blob statement or index reads it, and the DCR insert falls

@@ -36,12 +36,13 @@
  *   DEEPGRAM_API_KEY       (STT)
  *   ANTHROPIC_API_KEY      (LLM)
  *   CARTESIA_API_KEY       (TTS, primary) OR OPENAI_API_KEY (TTS fallback)
+ *   CARTESIA_MODEL_ID      (optional: Cartesia TTS model; default 'sonic-3.6')
  *   DIY_VAD_PRESET         (optional: quiet|normal|noisy|very_noisy; default 'normal')
  *
  * Latency budget (typical):
  *   STT (Deepgram nova-2 streaming):  ~300ms end-of-utterance
  *   LLM (Claude Sonnet 4.6 streaming): ~400ms time-to-first-sentence
- *   TTS (Cartesia sonic):              ~150ms time-to-first-audio
+ *   TTS (Cartesia sonic-3.6):          ~150ms time-to-first-audio
  *   Total time-to-first-audio:         ~850ms (vs OpenAI Realtime ~600ms)
  */
 
@@ -260,8 +261,13 @@ class ClaudeStreamAdapter extends EventEmitter {
 
 // ── TTS: Cartesia primary, OpenAI TTS fallback ──────────────────────
 
+// Cartesia retired `sonic-english` on 2026-06-01 (requests to it return an
+// error, #5905); `sonic-3.6` is the current generation. Override per call
+// with `modelId`, or set CARTESIA_MODEL_ID for createPipeline().
+export const CARTESIA_DEFAULT_MODEL_ID = 'sonic-3.6';
+
 class CartesiaTtsAdapter extends EventEmitter {
-  constructor({ apiKey, modelId = 'sonic-english', voiceId = '794f9389-aac1-45b6-b726-9d9369183238' /* "professional" default */, outputFormat = { container: 'raw', encoding: 'pcm_s16le', sample_rate: 16000 } }) {
+  constructor({ apiKey, modelId = CARTESIA_DEFAULT_MODEL_ID, voiceId = '794f9389-aac1-45b6-b726-9d9369183238' /* "professional" default */, outputFormat = { container: 'raw', encoding: 'pcm_s16le', sample_rate: 16000 } }) {
     super();
     this.apiKey = apiKey;
     this.modelId = modelId;
@@ -378,7 +384,7 @@ export function createPipeline({ personaPrompt, sttProvider = 'deepgram', llmPro
 
   if (ttsProviderChosen === 'cartesia') {
     if (!process.env.CARTESIA_API_KEY) throw new Error('CARTESIA_API_KEY required for Cartesia TTS');
-    tts = new CartesiaTtsAdapter({ apiKey: process.env.CARTESIA_API_KEY });
+    tts = new CartesiaTtsAdapter({ apiKey: process.env.CARTESIA_API_KEY, ...(process.env.CARTESIA_MODEL_ID ? { modelId: process.env.CARTESIA_MODEL_ID } : {}) });
   } else if (ttsProviderChosen === 'openai') {
     if (!process.env.OPENAI_API_KEY) throw new Error('OPENAI_API_KEY required for OpenAI TTS fallback');
     tts = new OpenAiTtsAdapter({ apiKey: process.env.OPENAI_API_KEY });

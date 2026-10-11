@@ -26,7 +26,7 @@ import { join } from 'node:path';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { PersistenceConsumer } from '../../src/core/persistence/consumer.ts';
 import { WaiterOnlyConsumer } from '../../src/core/persistence/consumer-election.ts';
-import { consumerIdentity, listHostConsumers, resetConsumerIdentityForTest, startConsumerHeartbeat } from '../../src/core/persistence/consumer-heartbeat.ts';
+import { consumerIdentity, listHostConsumers, resetConsumerIdentityForTest, startConsumerHeartbeat, type ListedConsumer } from '../../src/core/persistence/consumer-heartbeat.ts';
 import { claimOwner, setClaimOwnerForTest } from '../../src/core/persistence/claim-phase.ts';
 import { localHostIdentity } from '../../src/core/persistence/identity.ts';
 import { claimWorktree } from '../../src/core/persistence/ownership.ts';
@@ -162,14 +162,21 @@ describe.skipIf(!hasDatabase())('two consumers on one host (Postgres, #6317)', (
     await engine.executeRaw('DELETE FROM persistence_consumers');
     const make = () => new PersistenceConsumer(engine, { engine: 'postgres' }, preparePersistedMutation, { hostId, pollMs: 1_000_000, onError: () => {} });
     // "Both probe before either has written a row" is the precondition, not a race to win: each starter's first read
-    // waits until the other's first read has started, so neither sees the row the other's start-up writes.
+    // returns only once the other's first read has returned too. Holding the issue alone was not enough: the starter
+    // whose SELECT came back first started its heartbeat, whose first renewal writes its `full` row, and on a loaded
+    // host the other starter's already-issued SELECT could still execute after that write and see a live owner.
+    const firstReads: Promise<ListedConsumer[]>[] = [];
     const bothRead = Promise.withResolvers<void>();
-    let firstReads = 0;
     const readTogether = () => {
       let first = true;
       return async (signal: AbortSignal) => {
-        if (first) { first = false; if (++firstReads === 2) bothRead.resolve(); await bothRead.promise; }
-        return listHostConsumers(engine, hostId, { signal });
+        if (!first) return listHostConsumers(engine, hostId, { signal });
+        first = false;
+        const mine = listHostConsumers(engine, hostId, { signal });
+        if (firstReads.push(mine) === 2) bothRead.resolve();
+        await bothRead.promise;
+        await Promise.all(firstReads);
+        return mine;
       };
     };
     const a = new WaiterOnlyConsumer(engine, { engine: 'postgres' }, make, { kind: 'jobs', hostId, readConsumers: readTogether(), pollMs: 1_000_000, idleMaxMs: 1_000_000, heartbeatEveryMs: 1_000_000, log: () => {} });
