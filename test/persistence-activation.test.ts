@@ -88,8 +88,8 @@ test('activation fsyncs source and selected datastore refusal records before bec
   // #5514: a second activation says why it changed nothing and where the missing owner process is.
   const again = await activatePersistence(engine, { confirmQuiesced: true });
   expect(again).toMatchObject({ enabled: true, activated: false, reason: 'already_enabled' });
-  expect(again.next_action).toContain('gbrain serve');
-  expect(again.next_action).toContain('writer status --probe');
+  expect(again.why).toContain('gbrain serve');
+  expect(again.fix?.argv).toEqual(['gbrain', 'sources', 'writer', 'status', '--probe', '--json']);
   expect(await activatePersistence(engine, { confirmQuiesced: true, expectedState: (await reviewedWriterIntent(engine, "writer_activate")).expected_state })).toMatchObject({ enabled: true, activated: false, reason: "already_enabled" });
   const later = join(home, 'later-canonical'); mkdirSync(later);
   await claimWorktree(engine, `${sourceId}-later`, later);

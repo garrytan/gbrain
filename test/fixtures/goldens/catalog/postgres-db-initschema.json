@@ -181,6 +181,7 @@
       "persistence_effects.persistence_effects_request_id_fkey": "f FOREIGN KEY (request_id) REFERENCES persistence_requests(id)",
       "persistence_effects.persistence_effects_request_id_kind_key": "u UNIQUE (request_id, kind)",
       "persistence_effects.persistence_effects_state_check": "c CHECK ((state = ANY (ARRAY['queued'::text, 'running'::text, 'committed'::text, 'failed'::text])))",
+      "persistence_host_bindings.persistence_host_bindings_git_durability_check": "c CHECK ((git_durability = ANY (ARRAY['enabled'::text, 'disabled'::text])))",
       "persistence_host_bindings.persistence_host_bindings_pkey": "p PRIMARY KEY (worktree_id, host_id)",
       "persistence_host_bindings.persistence_host_bindings_worktree_id_fkey": "f FOREIGN KEY (worktree_id) REFERENCES persistence_worktrees(id)",
       "persistence_local_writers.persistence_local_writers_credential_hash_key": "u UNIQUE (credential_hash)",
@@ -2035,7 +2036,8 @@
           "1 worktree_id uuid/uuid NOT NULL",
           "2 host_id uuid/uuid NOT NULL",
           "3 local_path text/text NOT NULL",
-          "4 coordination_path text/text NOT NULL"
+          "4 coordination_path text/text NOT NULL",
+          "5 git_durability text/text NULL"
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },

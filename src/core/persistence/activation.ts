@@ -33,12 +33,14 @@ export interface ActivationReport {
   git_durability?: Array<{ source_id: string; state: 'on' | 'off' | 'unknown'; enable_command: string | null }>;
   /** #5514: `activated: false` with `enabled: true` says why, so a no-op is not read as a silent failure. */
   reason?: 'already_enabled';
-  next_action?: string;
+  why?: string;
+  fix?: Action;
 }
 /** #5514: the brain was managed before the command ran; activation changes nothing and cannot start an owner process. */
-const ALREADY_ENABLED = { reason: 'already_enabled', next_action: 'Managed persistence was already enabled before this command, so nothing changed. '
+const ALREADY_ENABLED = { reason: 'already_enabled', why: 'Managed persistence was already enabled before this command, so nothing changed. '
   + 'If writes are accepted but never published (writer status shows ingress not_running or a null heartbeat), no owner process is running: '
-  + 'start the owner process (`gbrain serve`, or the autopilot) on the owner host, then check `gbrain sources writer status --probe --json`.' } as const;
+  + 'start the owner process (`gbrain serve`, or the autopilot) on the owner host, then check writer status again.',
+  fix: readFix('Shows the owner process, its ingress and heartbeat, read-only.', { argv: ['gbrain', 'sources', 'writer', 'status', '--probe', '--json'] }) } as const;
 const gitDurabilityListing = (bindings: WorktreeBinding[]): NonNullable<ActivationReport['git_durability']> => bindings.map(binding => {
   const state = gitDurabilityState(binding);
   return { source_id: binding.source_id, state, enable_command: state === 'on' ? null : `gbrain sources writer git-durability ${binding.source_id} --enable --dry-run` };

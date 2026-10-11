@@ -233,8 +233,12 @@ export async function runGitDurabilityAdministration(engine: BrainEngine, params
   report.catch_up = { planned: plan.length, paths: plan.slice(0, 50).map(effect => effect.relative_path) };
   if (input.dryRun) {
     const state = await writerAdminState(engine);
-    return { ...report, queued_catch_up: 0, next_action: before === target && !token ? 'The setting is already as requested; nothing to apply.'
-      : `Review this preview, then apply with: gbrain sources writer git-durability ${input.sourceId}${input.enable ? ' --enable' : input.disable ? ' --disable' : ''}${input.patFile ? ` --pat-file ${input.patFile}` : ''} --admin-intent writer_git_durability --expected-state ${state}` };
+    if (before === target && !token) return { ...report, queued_catch_up: 0, why: 'The setting is already as requested; nothing to apply.' };
+    return { ...report, queued_catch_up: 0, why: 'Review this preview, then run the apply command; it records the setting on this host\'s binding and re-queues the listed effects.',
+      fix: { argv: ['gbrain', 'sources', 'writer', 'git-durability', input.sourceId, ...(input.enable ? ['--enable'] : input.disable ? ['--disable'] : []),
+        ...(input.patFile ? ['--pat-file', input.patFile] : []), '--admin-intent', 'writer_git_durability', '--expected-state', state],
+        consent: token ? ['credentials'] : [], actor: 'agent', requires_exclusive: false, why: 'Applies the previewed Git durability change on the owner host.',
+        verify: { argv: ['gbrain', 'sources', 'writer', 'status', input.sourceId, '--json'] } } };
   }
   const expectedState = await requireWriterAdminIntent(engine, 'writer_git_durability', params);
   const queued = await engine.transaction(async tx => {
@@ -246,8 +250,8 @@ export async function runGitDurabilityAdministration(engine: BrainEngine, params
       `Source ${input.sourceId}'s host binding was removed by another topology change, so nothing was recorded. Inspect writer status before trying again.`, { fix: statusFix(input.sourceId) });
     return target === 'enabled' ? await requeueGitDurabilityCatchUp(tx, binding, plan.map(effect => effect.id)) : [];
   });
-  return { ...report, applied: true, queued_catch_up: queued.length,
-    next_action: target === 'enabled' ? `Page writes to ${input.sourceId} now commit (and push to ${checkout?.remote ?? 'no tracking remote: commits stay local'}) through the persistence owner's Git effect; ${queued.length} earlier skipped effect(s) were re-queued. Check with gbrain sources writer status ${input.sourceId} --json.`
+  return { ...report, applied: true, queued_catch_up: queued.length, fix: statusFix(input.sourceId),
+    why: target === 'enabled' ? `Page writes to ${input.sourceId} now commit (and push to ${checkout?.remote ?? 'no tracking remote: commits stay local'}) through the persistence owner's Git effect; ${queued.length} earlier skipped effect(s) were re-queued.`
       : target === 'disabled' ? `Git effects for ${input.sourceId} now complete as skipped (durability_not_enabled) even where a legacy hook exists; database writes are unaffected. Re-enable with --enable; the skipped effects are caught up then.`
         : `The push credential was re-wired; ${report.parked_pushes ? (report.parked_pushes as { queued: number }).queued : 0} parked push(es) got one more attempt.` };
 }

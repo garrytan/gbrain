@@ -1054,6 +1054,18 @@ async function runRepo(ws: string, rest: string[], home: string, runner: ExecRun
   });
 }
 
+/** `hooks --adopt` (#4082): record an operator-managed Codex project connection as the wire evidence; writes no harness config. */
+async function runAdoptHooks(ws: string, rest: string[], home: string): Promise<number> {
+  const harnessFlag = flagValue(rest, '--harness');
+  const harness = isHarness(harnessFlag) ? harnessFlag : harnessFlag ? null : detectHarness();
+  if (!harness) { console.error('--adopt needs the harness — pass --harness codex'); return 2; }
+  if (readManifest(ws).state !== 'initialized') { console.error('not an initialized agent workspace — run `gbrain bootstrap render` first'); return 1; }
+  const { adoptConnection } = await import('../core/bootstrap/adopt-connection.ts');
+  const adopted = adoptConnection(ws, home, harness, flagValue(rest, '--name') ?? undefined);
+  for (const line of adopted.lines) (adopted.code === 0 ? console.log : console.error)(line);
+  return adopted.code;
+}
+
 async function runHooks(
   ws: string,
   rest: string[],
@@ -1101,12 +1113,6 @@ async function runHooks(
     return 1;
   }
   const sourceId = state.manifest.source_id;
-  if (rest.includes('--adopt')) {
-    const { adoptConnection } = await import('../core/bootstrap/adopt-connection.ts');
-    const adopted = adoptConnection(ws, home, harness, flagValue(rest, '--name') ?? undefined);
-    for (const line of adopted.lines) (adopted.code === 0 ? console.log : console.error)(line);
-    return adopted.code;
-  }
 
   // WP8: the interview's declared audience becomes the machine-local
   // brain.audience declaration (file mirror; the classifier and the harness
@@ -2093,7 +2099,7 @@ export async function runBootstrap(args: string[], opts: RunBootstrapOpts = {}):
         code = await runRepo(ws, rest, home, runner);
         break;
       case 'hooks':
-        code = await runHooks(ws, rest, home, runner, opts.probeSpawn);
+        code = rest.includes('--adopt') ? await runAdoptHooks(ws, rest, home) : await runHooks(ws, rest, home, runner, opts.probeSpawn);
         break;
       case 'verify':
         code = await runVerify(ws, rest, home);

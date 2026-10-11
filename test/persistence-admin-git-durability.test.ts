@@ -195,7 +195,7 @@ describe('[R7ii] writer git-durability verb', () => {
     const preview = await runPersistenceAdministration(engine, 'writer_git_durability', { source_id: sourceId, enable: true, dry_run: true });
     expect(preview).toMatchObject({ dry_run: true, git_durability: { before: null, after: 'enabled' }, current_policy: { durable: false, source: 'no_hook' },
       branch: 'main', tracking_remote: 'origin', push_probe: { ok: true }, catch_up: { planned: 2 }, queued_catch_up: 0 });
-    expect(String(preview.next_action)).toContain('--admin-intent writer_git_durability --expected-state ');
+    expect((preview.fix as { argv: string[] }).argv.join(' ')).toContain('--admin-intent writer_git_durability --expected-state ');
     expect((await getWorktreeBinding(engine, sourceId, localHostId()))!.git_durability).toBeNull();
     expect((await planGitDurabilityCatchUp(engine, (await getWorktreeBinding(engine, sourceId, localHostId()))!)).map(effect => effect.relative_path).sort()).toEqual(['alpha.md', 'beta.md']);
 
@@ -224,7 +224,7 @@ describe('[R7ii] writer git-durability verb', () => {
     expect(await gitAsync(root, 'ls-tree', '--name-only', 'origin/main')).toContain('beta.md');
     // Enabling again plans nothing: the caught-up effects are no longer skipped.
     const again = await runPersistenceAdministration(engine, 'writer_git_durability', { source_id: sourceId, enable: true, dry_run: true });
-    expect(again).toMatchObject({ catch_up: { planned: 0 }, next_action: expect.stringContaining('already as requested') });
+    expect(again).toMatchObject({ catch_up: { planned: 0 }, why: expect.stringContaining('already as requested') });
   }), 120_000);
 
   test('--disable wins over a legacy hook: the next Git effect completes as skipped; --pat-file refuses a readable token file first', () => isolated(async home => {
