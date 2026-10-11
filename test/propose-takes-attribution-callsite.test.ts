@@ -1,9 +1,7 @@
 // #5425 [UC4] (wave 14 PR3 row P3.9): the one call from `propose-takes.ts`
 // into `propose-takes-attribution.ts`, behind `dream.attribution_checks`.
-// The call site is a stack hunk on a wave 13 hot file
-// (`~/.capy/work/w14/pr3/stack-hunks/propose-takes.ts.p3.9.patch`, behind
-// #6446); flip `test.todo` to `test` when it lands. The helper itself is
-// pinned by test/propose-takes-attribution.test.ts.
+// The call site landed in `propose-takes.ts` after #6446 merged. The helper
+// itself is pinned by test/propose-takes-attribution.test.ts.
 //
 // Protects: with the switch on, a person-holder proposal whose numbers only
 // assistant turns of the page state is stored with holder `brain`; with the
@@ -44,7 +42,7 @@ describe('propose_takes calls the mechanical holder check (#5425 [UC4], P3.9)', 
     expect(await storedHolders()).toEqual(['people/alice-example']);
   });
 
-  test.todo('P3.9: switch on: an assistant-only person attribution is stored as brain', async () => {
+  test('P3.9: switch on: an assistant-only person attribution is stored as brain', async () => {
     await engine.setConfig(ATTRIBUTION_CHECKS_KEY, 'true');
     expect(await storedHolders()).toEqual(['brain']);
   });

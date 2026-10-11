@@ -6,7 +6,7 @@
 //
 // The stamp is one additive line in `src/core/cycle/extract-atoms.ts`, a wave
 // 13 hot file: the hunk lives in `~/.capy/work/w14/pr3/stack-hunks/` and
-// stacks behind wave 13 PR3 (#6446). Flip `test.todo` to `test` when it lands.
+// landed with wave 13 PR3 (#6446) on master.
 //
 // Protects: the written atom's frontmatter. Fails when: the write site drops
 // the flag. Why not existing coverage: no test reads `dream_generated` off an
@@ -43,7 +43,7 @@ const SOURCE = ['Meeting notes, 12 March.', 'The budget is a ceiling and not a t
   .join('\n').padEnd(600, ' .');
 
 describe('extract_atoms stamps its atoms dream_generated (#5211, P3.8)', () => {
-  test.todo('P3.8: a written atom carries dream_generated: true next to extracted_by', async () => {
+  test('P3.8: a written atom carries dream_generated: true next to extracted_by', async () => {
     await runPhaseExtractAtoms(engine, {
       sourceId: 'default',
       _transcripts: [{ filePath: '/tmp/dg1.txt', content: SOURCE, contentHash: 'c3'.repeat(8) }],

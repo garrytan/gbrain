@@ -3,9 +3,7 @@
 // (`dream_generated`, `extracted_by: extract_atoms…`, `synthesized_by:
 // synthesize_concepts…`); the remaining gap is a legacy `type = 'atom'` page
 // that carries neither stamp. The one-line `type IS DISTINCT FROM 'atom'` arm
-// is a stack hunk on `src/core/cycle/propose-takes.ts` (wave 13 hot file) in
-// `~/.capy/work/w14/pr3/stack-hunks/`. Flip `test.todo` to `test` when both
-// #6446 and the hunk land.
+// in `src/core/cycle/propose-takes.ts` closes it (landed after #6446 merged).
 //
 // Protects: the candidate list of `listCandidatePages`. Fails when: an atom,
 // a page stamped `dream_generated` or an unstamped legacy atom reaches the
@@ -36,7 +34,7 @@ const put = (slug: string, type: string, frontmatter: Record<string, unknown>) =
 });
 
 describe('propose_takes candidate filter excludes atoms and dream output (#5211, P3.8)', () => {
-  test.todo('P3.8: a stamped atom, a legacy unstamped atom and a dream_generated page are not candidates; a note is', async () => {
+  test('P3.8: a stamped atom, a legacy unstamped atom and a dream_generated page are not candidates; a note is', async () => {
     await put('wiki/essays/thesis', 'analysis', {});
     await put('atoms/stamped-claim', 'atom', { dream_generated: true, extracted_by: 'extract_atoms-v0.41.2.1' });
     await put('atoms/legacy-claim', 'atom', {});
