@@ -53,6 +53,11 @@ describe('serializePageToMarkdown stamps a slug the path cannot derive', () => {
     expect(md).toContain('slug: people/jane-doe');
     expect(md).not.toContain('Jane Doe');
   });
+  test('a render without a slug (a managed import of a new file builds its page from the parsed file) is left alone, never stamped undefined', () => {
+    const md = serializePageToMarkdown({ ...page('x/a--b'), slug: undefined as unknown as string }, []);
+    expect(md).not.toContain('slug');
+    expect(parseMarkdown(md, 'x/a--b.md').title).toBe('Double');
+  });
 });
 
 const backends = testBackends();

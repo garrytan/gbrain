@@ -6,6 +6,11 @@
  * dedupe (#967), same `entityName` (the display name, not the slug) and
  * `sourceTitle`. The golden was captured from master's implementation on
  * the shared fixture; a regression reorders, drops or renames a gap.
+ *
+ * Both walkers visit files in readdir order, which the filesystem decides
+ * (ext4 on the builder, a different order on the CI VMs), so the comparison
+ * groups gaps by source page with a stable sort and pins the order within
+ * each page (the ref order in its body), which is the order the walker owns.
  */
 import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -18,6 +23,10 @@ const GOLDEN = new URL('./fixtures/backlinks-parity/gaps.golden.json', import.me
 const roots: string[] = [];
 afterEach(() => { while (roots.length) rmSync(roots.pop()!, { recursive: true, force: true }); });
 
+type Gap = { sourcePage: string; targetPage: string; entityName: string; sourceTitle: string };
+const byPage = (gaps: Gap[]) => JSON.stringify([...gaps].sort((a, b) => a.sourcePage.localeCompare(b.sourcePage)), null, 2) + '\n';
+const golden = () => byPage(JSON.parse(readFileSync(GOLDEN, 'utf-8')) as Gap[]);
+
 function fixture(): string {
   const root = mkdtempSync(join(tmpdir(), 'gbrain-backlinks-parity-'));
   roots.push(root);
@@ -26,14 +35,14 @@ function fixture(): string {
 }
 
 describe('findBacklinkGaps parity with the pre-streaming walker', () => {
-  test('the sync walker matches the golden byte for byte', () => {
+  test('the sync walker matches the golden, page by page', () => {
     const gaps = findBacklinkGaps(fixture());
-    expect(JSON.stringify(gaps, null, 2) + '\n').toBe(readFileSync(GOLDEN, 'utf-8'));
+    expect(byPage(gaps)).toBe(golden());
   });
 
   test('the async walker returns the same list', async () => {
     const gaps = await findBacklinkGapsAsync(fixture());
-    expect(JSON.stringify(gaps, null, 2) + '\n').toBe(readFileSync(GOLDEN, 'utf-8'));
+    expect(byPage(gaps)).toBe(golden());
   });
 
   test('the golden has the shapes the fixture was built to pin', () => {

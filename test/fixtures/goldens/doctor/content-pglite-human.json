@@ -152,6 +152,7 @@
       "  [OK] code_chunk_metadata: All code-page chunks carry symbol metadata",
       "  [OK] undeclared_db_only_pages: Every DB page is file-backed or under a declared/default db_only path (derive-phase defaults: life/events/ atoms/ concepts/ extracts/ dream-cycle-summaries/).",
       "  [OK] db_only_collector_collision: No configured collectors declare output paths",
+      "  [OK] tracked_ownership_marker: 1 Git checkout(s) track no ownership marker (markers on disk stay untracked and are denied on push).",
       "  [OK] decide_health: System One is off (every decide slot is off; nothing is sent).",
       "  [OK] unlinked_facts: No active facts yet; nothing to link.",
       "  [OK] edge_validity: relationships: none yet; read policy on; contradiction mode propose (default)",

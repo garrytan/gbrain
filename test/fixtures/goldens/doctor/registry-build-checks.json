@@ -654,6 +654,10 @@
         "name": "git_convergence"
       },
       {
+        "category": "brain",
+        "name": "tracked_ownership_marker"
+      },
+      {
         "category": "ops",
         "name": "decide_health"
       },

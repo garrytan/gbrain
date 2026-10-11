@@ -138,6 +138,8 @@ export function patchConfig(h: DoctorHome, patch: (cfg: Record<string, unknown>)
 
 const UUID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
 const VOLATILE_KEYS = /(^|_)(ms|pid|elapsed|duration|uptime)$|_ms$|^elapsed/i;
+/** Calendar-day buckets (fence-integrity `by_day[].day`) name the run's date, which no capture can pin. */
+const CALENDAR_DAY_KEYS = /^day$/;
 
 export function normalizeDoctorText(text: string, roots: Record<string, string>, extra: Array<[RegExp | string, string]> = []): string {
   let out = scrubPaths(text, roots);
@@ -179,7 +181,7 @@ export function doctorJsonNormalizer(extra: Array<[RegExp | string, string]> = [
     return {
       args: run.args.map(fn),
       exit_code: run.exitCode,
-      report: run.json === null ? null : mapStrings(scrubKeys(run.json, VOLATILE_KEYS), fn),
+      report: run.json === null ? null : mapStrings(scrubKeys(scrubKeys(run.json, VOLATILE_KEYS), CALENDAR_DAY_KEYS, '<date>'), fn),
       stdout: run.json === null ? fn(run.stdout).split('\n').filter(Boolean) : '<json>',
       stderr: fn(run.stderr).split('\n').filter(Boolean),
     };

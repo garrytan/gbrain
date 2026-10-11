@@ -1265,7 +1265,8 @@ export function serializePageToMarkdown(
  * digest-neutral: `parseMarkdown` drops `frontmatter.slug`, so canonical
  * fields compare equal with or without it.
  */
-export function slugStampedFrontmatter(slug: string, frontmatter: Record<string, unknown>): Record<string, unknown> {
+export function slugStampedFrontmatter(slug: string | undefined, frontmatter: Record<string, unknown>): Record<string, unknown> {
+  if (typeof slug !== 'string' || slug === '') return frontmatter;
   const declared = frontmatter.slug;
   if (slugifyPath(slug + '.md') !== slug || (declared !== undefined && declared !== slug)) return { ...frontmatter, slug };
   return frontmatter;
