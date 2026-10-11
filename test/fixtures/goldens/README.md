@@ -114,3 +114,11 @@ reproduce byte for byte. Each file is written by `test/helpers/golden.ts` as
   PGLite brain (`brain.tar.gz` + `MANIFEST.json`, rebuilt only on master with
   `bun scripts/build-pglite-upgrade-fixture.ts`), its post-boot catalog, and the
   objects a repeat boot recreates.
+- `doctor/hot-checks-{pglite,postgres}-json.json` (`test/doctor-hot-checks-golden.test.ts`,
+  `test/e2e/doctor-hot-checks-golden.test.ts`): full `doctor --json` on the hot-check
+  fixture. The fence trend's calendar day is pinned, never dropped: PGLite runs every
+  CLI process on one clock that starts on the capture day (`makeDoctorHome({ clock })`,
+  `test/helpers/fixed-clock-preload.ts`); Postgres, whose server stamps its own times,
+  stores `fence_integrity.details.trend[].by_day[].day` as `<sync-day>` only after
+  `stampSyncDay` checks it equals the day the fixture's sync stamped (one of the days
+  read around the sync). Regenerating writes the marker again.

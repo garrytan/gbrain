@@ -669,11 +669,12 @@ First matching row wins.
 
 | # | Condition | `next` |
 |---|---|---|
-| 1 | no runnable step (no `argv`, no callable `mcp`, and not an MCP-only fix on the CLI) | `report`: relay `message`; run `gbrain doctor --json` where you can |
-| 2 | `actor = provider` | `wait`: retry after the stated delay with the same request identity |
-| 3 | `actor` is `user` or `host_admin`, or the fix is CLI-only and you are on MCP, or MCP-only and you are on the CLI | `tell_user_to_run` |
-| 4 | `consent` is non-empty and not covered by a matching preapproval (`destructive` never is) | `ask_user` |
-| 5 | otherwise | `run` |
+| 1 | the stored fix asks the user (a refusal whose every way out is the user's decision, such as `owner_unavailable` with `detail: unbound_source`) | `ask_user` |
+| 2 | no runnable step (no `argv`, no callable `mcp`, and not an MCP-only fix on the CLI) | `report`: relay `message`; run `gbrain doctor --json` where you can |
+| 3 | `actor = provider` | `wait`: retry after the stated delay with the same request identity |
+| 4 | `actor` is `user` or `host_admin`, or the fix is CLI-only and you are on MCP, or MCP-only and you are on the CLI | `tell_user_to_run` |
+| 5 | `consent` is non-empty and not covered by a matching preapproval (`destructive` never is) | `ask_user` |
+| 6 | otherwise | `run` |
 
 A CLI-only fix rendered for an MCP caller gets actor `user` on stdio and
 `host_admin` on HTTP, and `next: tell_user_to_run`. The mirror case: an
@@ -1001,6 +1002,20 @@ exactly one JSON document to stdout (or NDJSON lines for `eval export`,
 stderr. If such a command exits non-zero without writing its document, gbrain
 writes a fallback: `{error: "command_failed", code, message, suggestion,
 exit_code, contract_version: 1}`.
+
+## A write refused `owner_unavailable` with `detail: unbound_source`
+
+On a Postgres brain in classic mode the files in a source's checkout are the
+truth, and gbrain only reads them. Do not retry, and do not claim the source or
+activate managed mode to get one write through: both change the whole brain and
+claiming blocks classic sync. If you can run commands on the brain host, write
+`<checkout>/<slug>.md`, commit it, run `gbrain sync --source <id>`, then read the
+page back. If you are connected remotely, tell the user: "Your brain is in
+classic mode, so I can't save pages directly. Save it as `<slug>.md` in the
+`<id>` folder, commit it, and run `gbrain sync --source <id>`." Offer
+`persistence.unbound_write database_only` or managed mode only as the user's
+choice, with what each costs
+([unbound sources](https://github.com/garrytan/gbrain/blob/master/docs/guides/write-refusals.md#unbound-sources-on-postgres)).
 
 ## Marker grammar
 

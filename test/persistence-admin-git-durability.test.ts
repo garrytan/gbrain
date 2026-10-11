@@ -30,7 +30,7 @@ import { publishMutation } from '../src/core/persistence/coordinator.ts';
 import { runPersistenceEffects } from '../src/core/persistence/effects.ts';
 import { serializePageToMarkdown } from '../src/core/markdown.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
-import { v232 } from '../src/core/schema-migrations/v232-persistence-git-durability.ts';
+import { v234 } from '../src/core/schema-migrations/v234-persistence-git-durability.ts';
 import { PERSISTENCE_GIT_DURABILITY_COLUMN_SQL, PERSISTENCE_SCHEMA_STATEMENTS } from '../src/core/persistence/schema.ts';
 import { gitAsync } from './helpers/git-publication.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -127,14 +127,14 @@ describe('[R7i] git durability policy is tri-state and fail-closed', () => {
     expect(gitDurabilityState(null)).toBe('unknown');
   });
 
-  test('the column is created by CREATE TABLE on a fresh brain and by v232 on an existing one, never by the replayed schema blob', async () => {
+  test('the column is created by CREATE TABLE on a fresh brain and by v234 on an existing one, never by the replayed schema blob', async () => {
     const [column] = await engine.executeRaw<{ data_type: string; is_nullable: string }>(
       "SELECT data_type,is_nullable FROM information_schema.columns WHERE table_name='persistence_host_bindings' AND column_name='git_durability'");
     expect(column).toEqual({ data_type: 'text', is_nullable: 'YES' });
-    expect(v232.sql).toBe(PERSISTENCE_GIT_DURABILITY_COLUMN_SQL);
-    expect(v232.sqlFor?.postgres).toContain("lock_timeout = '2s'");
-    expect(v232.idempotent).toBe(true);
-    expect(await v232.verify!(engine)).toBe(true);
+    expect(v234.sql).toBe(PERSISTENCE_GIT_DURABILITY_COLUMN_SQL);
+    expect(v234.sqlFor?.postgres).toContain("lock_timeout = '2s'");
+    expect(v234.idempotent).toBe(true);
+    expect(await v234.verify!(engine)).toBe(true);
     expect(PERSISTENCE_SCHEMA_STATEMENTS.some(statement => statement.includes('ADD COLUMN IF NOT EXISTS git_durability'))).toBe(false);
     await expect(engine.executeRaw("UPDATE persistence_host_bindings SET git_durability='maybe' WHERE false")).resolves.toBeDefined();
     const [{ ok }] = await engine.executeRaw<{ ok: boolean }>(

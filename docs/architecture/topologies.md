@@ -615,6 +615,9 @@ runbook above.
    binary writes there. That first command removes the markers and registry
    records of the retired epoch; a marker from an unknown or newer epoch (for
    example after restoring an older backup) is kept and reported.
+   On Postgres every filesystem source is now unbound: page writes refuse
+   `unbound_source`, and the write path is the file, a commit and
+   `gbrain sync` ([unbound sources](../guides/write-refusals.md#unbound-sources-on-postgres)).
 
 `min_writer_version` is not implemented: while the brain is managed, the database
 writer guard is the enforcement, and after deactivation that guard is inert.

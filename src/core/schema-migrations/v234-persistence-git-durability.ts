@@ -12,8 +12,8 @@ import { PERSISTENCE_GIT_DURABILITY_COLUMN_SQL } from '../persistence/schema.ts'
 // busy writer makes the migration fail fast and retry instead of queueing
 // behind it; PGLite has no concurrent writers and PgBouncer transaction mode
 // sees SET LOCAL inside the migration's own transaction.
-export const v232: Migration = {
-  version: 232,
+export const v234: Migration = {
+  version: 234,
   name: 'persistence_git_durability',
   idempotent: true,
   sql: PERSISTENCE_GIT_DURABILITY_COLUMN_SQL,

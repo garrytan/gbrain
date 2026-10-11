@@ -195,7 +195,7 @@ export const PERSISTENCE_SCHEMA_STATEMENTS = [
 ] as const;
 
 /**
- * #5182: the per-host Git-durability opt-in column, added by v232 on an
+ * #5182: the per-host Git-durability opt-in column, added by v234 on an
  * existing brain. Deliberately NOT part of the schema statement list: a fresh
  * install gets the column from CREATE TABLE above, and replaying an ALTER on
  * every init would take an ACCESS EXCLUSIVE lock on the bindings table each
