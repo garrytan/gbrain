@@ -161,6 +161,22 @@
       "chunks": [
         "Dry saved seeds fully, label each packet with the plant variety and collection year, then place packets in an airtight jar in a cool dark cupboard. Discard any packet that smells musty or shows condensation."
       ]
+    },
+    {
+      "id": "blue-lane-maintenance",
+      "title": "Blue Lane Maintenance",
+      "language": "en",
+      "chunks": [
+        "Inspect the marked assembly at the start of shift. Record the measured clearance in the service log and notify the coordinator if it falls outside the allowed range."
+      ]
+    },
+    {
+      "id": "green-lane-maintenance",
+      "title": "Green Lane Maintenance",
+      "language": "en",
+      "chunks": [
+        "Inspect the marked assembly at the start of shift. Record the measured clearance in the service log and notify the coordinator if it falls outside the allowed range."
+      ]
     }
   ],
   "queries": [
@@ -241,6 +257,18 @@
       "text": "Which notes say to label stored supplies with a date?",
       "language": "en",
       "relevant": ["trail-water-cache", "seed-storage"]
+    },
+    {
+      "id": "q-blue-lane-title",
+      "text": "What does the Blue Lane Maintenance note say about the clearance measurement?",
+      "language": "en",
+      "relevant": ["blue-lane-maintenance"]
+    },
+    {
+      "id": "q-green-lane-title",
+      "text": "What does the Green Lane Maintenance note say about the clearance measurement?",
+      "language": "en",
+      "relevant": ["green-lane-maintenance"]
     }
   ]
 }

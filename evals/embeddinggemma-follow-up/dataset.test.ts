@@ -9,7 +9,7 @@ const dataset: {
 } = JSON.parse(readFileSync(new URL('./dataset.json', import.meta.url), 'utf8'));
 
 describe('EmbeddingGemma follow-up corpus', () => {
-  test('has the frozen schema, unique content, and valid relevance labels', () => {
+  test('has the frozen schema, unique IDs, and valid relevance labels', () => {
     expect(Object.keys(dataset).sort()).toEqual(['documents', 'license', 'queries', 'version']);
     expect(dataset.version).toBe(1);
     expect(dataset.license).toBe('CC0-1.0');
@@ -21,8 +21,6 @@ describe('EmbeddingGemma follow-up corpus', () => {
     expect(new Set(documentIds).size).toBe(documentIds.length);
     expect(new Set(queryIds).size).toBe(queryIds.length);
 
-    const chunks = dataset.documents.flatMap((document) => document.chunks);
-    expect(new Set(chunks).size).toBe(chunks.length);
     for (const document of dataset.documents) {
       expect(Object.keys(document).sort()).toEqual(['chunks', 'id', 'language', 'title']);
       expect(document.id.trim()).not.toBe('');
@@ -76,5 +74,19 @@ describe('EmbeddingGemma follow-up corpus', () => {
     expect(ambiguous?.relevant).toEqual(['trail-water-cache', 'seed-storage']);
     const spanishRecovery = dataset.queries.find((query) => query.id === 'q-spanish-cuenta');
     expect(spanishRecovery?.relevant).toEqual(['account-keys-es', 'passkey-recovery']);
+
+    const blueLane = byId.get('blue-lane-maintenance');
+    const greenLane = byId.get('green-lane-maintenance');
+    const blueLaneQuery = dataset.queries.find((query) => query.id === 'q-blue-lane-title');
+    const greenLaneQuery = dataset.queries.find((query) => query.id === 'q-green-lane-title');
+    expect(blueLane?.chunks).toEqual(greenLane?.chunks);
+    expect(blueLaneQuery?.text).toContain(blueLane?.title);
+    expect(blueLaneQuery?.text).not.toContain(greenLane?.title);
+    expect(greenLaneQuery?.text).toContain(greenLane?.title);
+    expect(greenLaneQuery?.text).not.toContain(blueLane?.title);
+    expect(blueLane?.chunks.join(' ').toLowerCase()).not.toContain('blue');
+    expect(greenLane?.chunks.join(' ').toLowerCase()).not.toContain('green');
+    expect(blueLaneQuery?.relevant).toEqual(['blue-lane-maintenance']);
+    expect(greenLaneQuery?.relevant).toEqual(['green-lane-maintenance']);
   });
 });
