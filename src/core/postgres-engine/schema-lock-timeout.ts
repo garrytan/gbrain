@@ -56,6 +56,7 @@ export function resolveSchemaLockTimeoutMs(opts: Pick<SchemaLockTimeoutOpts, 'ti
 }
 
 /** Sessions blocking `pid`, identifiers only (no query text). */
+// engine-sql-ok: pg_stat_activity / pg_blocking_pids diagnostics on a Postgres-only lock wait, no storage-domain SQL
 export const BLOCKING_SESSIONS_SQL = `SELECT pid, application_name, state, wait_event_type,
     EXTRACT(EPOCH FROM now() - xact_start)::int AS transaction_age_seconds
   FROM pg_stat_activity WHERE pid = ANY(pg_blocking_pids($1::int)) ORDER BY pid`;
@@ -77,6 +78,7 @@ function describe(sessions: BlockingSession[]): string {
 }
 
 /** The typed refusal for SQLSTATE 55P03 under the schema bound. */
+// engine-sql-ok: the suggestion text quotes an operator's pg_stat_activity query; nothing here runs SQL
 export function schemaLockBlockedError(input: { step: string; timeoutMs: number; sessions: BlockingSession[] | null; sampledDuringWait: boolean }): OperationError {
   const { step, timeoutMs, sessions } = input;
   const holders = sessions === null ? 'The blocking sessions could not be sampled.'
@@ -109,6 +111,7 @@ export function schemaDiagnosticConnection(url: string | undefined): SchemaLockT
  * with the blockers sampled from the diagnostic connection while the wait
  * was active; every other error propagates unchanged.
  */
+// engine-sql-ok: lock_timeout GUC control around a caller's DDL (SHOW / SET), no storage-domain SQL
 export async function withSchemaLockTimeout<T>(conn: Queryable, run: () => Promise<T>, opts: SchemaLockTimeoutOpts): Promise<T> {
   const timeoutMs = resolveSchemaLockTimeoutMs(opts);
   const previous = String(((await conn.unsafe('SHOW lock_timeout')) as Array<{ lock_timeout: string }>)[0]?.lock_timeout ?? '0');
