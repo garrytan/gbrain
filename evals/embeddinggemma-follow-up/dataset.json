@@ -222,7 +222,7 @@
       "id": "q-spanish-cuenta",
       "text": "Perdí el móvil: ¿cómo recupero el acceso con una credencial alternativa?",
       "language": "es",
-      "relevant": ["account-keys-es"]
+      "relevant": ["account-keys-es", "passkey-recovery"]
     },
     {
       "id": "q-chinese-wifi",
