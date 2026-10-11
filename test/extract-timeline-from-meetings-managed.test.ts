@@ -4,7 +4,7 @@
  * one coordinated maintenance request per entity page, re-gated at the meeting's stored tier at apply time, exactly as
  * an unmanaged run gates them. Synthetic content only.
  */
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { extractTimelineFromMeetings } from '../src/core/extract-timeline-from-meetings.ts';
@@ -32,17 +32,21 @@ const flags = async (engine: BrainEngine) => Number((await engine.executeRaw<{ n
 const requests = async (engine: BrainEngine) => Number((await engine.executeRaw<{ n: number | string }>(
   "SELECT count(*) AS n FROM persistence_requests WHERE intent->>'kind'='managed_maintenance_meeting_timeline'"))[0]!.n);
 
+/** The same run on an unmanaged brain: the managed rows must match it. */
+let unmanaged: { rows: Awaited<ReturnType<typeof rows>>; flags: number; result: Awaited<ReturnType<typeof extractTimelineFromMeetings>> };
+let plain: PGLiteEngine;
+beforeAll(async () => {
+  plain = new PGLiteEngine();
+  await plain.connect({}); await plain.initSchema();
+  await seed(plain);
+  const result = await extractTimelineFromMeetings(plain);
+  unmanaged = { rows: await rows(plain), flags: await flags(plain), result };
+}, 120_000);
+afterAll(async () => { await plain.disconnect(); });
+
 for (const databaseUrl of [undefined, ...(process.env.DATABASE_URL ? [process.env.DATABASE_URL] : [])])
 describe(`extract timeline --from-meetings on a managed brain (#6273, ${databaseUrl ? 'postgres' : 'pglite'})`, () => {
   test('rows publish through the coordinator, gated like an unmanaged run; a rerun admits nothing; the job completes', async () => {
-    const plain = new PGLiteEngine();
-    await plain.connect({}); await plain.initSchema();
-    let unmanaged: { rows: Awaited<ReturnType<typeof rows>>; flags: number; result: Awaited<ReturnType<typeof extractTimelineFromMeetings>> };
-    try {
-      await seed(plain);
-      const result = await extractTimelineFromMeetings(plain);
-      unmanaged = { rows: await rows(plain), flags: await flags(plain), result };
-    } finally { await plain.disconnect(); }
     expect(unmanaged.result.batch_errors).toBe(0);
     expect(unmanaged.rows.length).toBeGreaterThan(0);
     // The hostile meeting at the lowest tier is gated: the parity below compares a gate that acted.
