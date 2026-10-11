@@ -52,6 +52,8 @@ export const SMOKE_QUERY_CHUNK_UNITS = 512;
 const SMOKE_QUERY_MAX_TOKENS = (SMOKE_QUERY_TITLE_UNITS + 1 + SMOKE_QUERY_CHUNK_UNITS) * 3;
 /** embedStaleFacts' default batch size. */
 const FACT_BATCH = 100;
+/** embedStaleTakes' default batch size. */
+const TAKE_BATCH = 100;
 const SCAN_PAGE = 2000;
 
 interface ChunkRow { page_id: number; chunk_index: number; chunk_text: string; chunk_source: string | null; title: string | null; contextual_retrieval_mode: CRMode | null; stale: boolean }
@@ -159,6 +161,8 @@ export async function planMigrationWorstCase(engine: BrainEngine, plan: Embeddin
   await eachStalePage(engine, plan, sizes, add);
   await eachReprojectedPage(engine, sizes, texts => ceilingsOf(texts).reduce((sum, n) => sum + n, 0), add);
   await eachStaleFactBatch(engine, plan, add);
+  const staleTakes = await engine.listStaleTakes({ model: plan.to_model, dims: plan.to_dims });
+  for (let i = 0; i < staleTakes.length; i += TAKE_BATCH) add(staleTakes.slice(i, i + TAKE_BATCH).map(row => row.claim));
   const embedTokens = ceilings.reduce((sum, n) => sum + n, 0);
   const rerankTokens = opts.rerankerModel ? rerankRequestMaxInputTokens(RERANKER_PROBE.query, RERANKER_PROBE.documents) : 0;
   const overrides = await loadPricingOverrides(engine);
