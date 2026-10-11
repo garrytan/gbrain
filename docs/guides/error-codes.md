@@ -2452,6 +2452,36 @@ Reasons: `rename_source_changed`.
 |---|---|---|---|---|---|---|
 | The exact authorized revision is unavailable. | A capability this request needs is not configured or not reachable on this brain. | A required capability is not available on this brain. Run `gbrain doctor --json` to see what is missing. | agent | `gbrain doctor --json` | 1 | no |
 
+### schema_lock_blocked
+
+<a id="schema_lock_blocked"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A schema step (the schema.sql replay in init/upgrade, or one migration) waited its lock_timeout for a table lock another session holds and stopped instead of hanging. | Every ALTER TABLE in the replay takes an ACCESS EXCLUSIVE lock even as a no-op, so one open transaction in another client (idle in transaction, a stuck job) blocked gbrain init and upgrade forever with no output. The wait is now bounded (GBRAIN_SCHEMA_LOCK_TIMEOUT_SECONDS, default 60) and the refusal names the blocking sessions by pid, application and state, sampled while the wait was active; query text is never shown. The cancelled step changed nothing. | Let the named session finish or, with the user's agreement, end it on the database host with SELECT pg_terminate_backend(<pid>), then rerun the same gbrain command; init retries a few times on its own with a short backoff. Run: gbrain doctor --json | agent | `gbrain doctor --json` | 1 | yes |
+
+More: [docs/ENGINES.md#schema-lock-blocked](../../docs/ENGINES.md#schema-lock-blocked)
+
+### schema_pack_emit_mismatch
+
+<a id="schema_pack_emit_mismatch"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A pack mutation refused to write because the YAML it emitted did not read back as the manifest it holds; the pack file on disk is unchanged. | The write boundary parses its own output and compares it to the manifest as normalized structures, so an emitter/parser asymmetry can no longer corrupt a pack silently. | Re-run the mutation on the current release; if it refuses again, run `gbrain schema validate <pack>` and report the named key with `gbrain doctor --json`. Run: gbrain schema active --json | agent | `gbrain doctor --json` | 1 | no |
+
+More: [docs/architecture/schema-packs.md#oversized-pack](../../docs/architecture/schema-packs.md#oversized-pack)
+
+### schema_pack_too_large
+
+<a id="schema_pack_too_large"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The schema pack file is larger than the load bound, so it was not read; a pack this large is almost always a quoted scalar (a link-type regex) whose backslashes an older release doubled on every mutation. | Loading a pack of that size took every CLI process to tens of GB of memory. The original text cannot be recovered automatically: after N doublings only the author knows the intended regex, so the fix is a hand edit of the grown lines. | Open the pack file named in the message, restore the grown quoted lines (usually `inference.regex` under `link_types`) to their intended text, save, and re-run. `GBRAIN_SCHEMA_PACK_MAX_BYTES` raises the bound for one command when a pack is legitimately large. Run: gbrain schema active --json | user | `gbrain doctor --json` | 1 | no |
+
+More: [docs/architecture/schema-packs.md#oversized-pack](../../docs/architecture/schema-packs.md#oversized-pack)
+
 ### scope_denied
 
 <a id="scope_denied"></a>

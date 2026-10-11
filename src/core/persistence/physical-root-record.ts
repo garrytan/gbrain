@@ -1,14 +1,47 @@
 import { randomUUID } from 'node:crypto';
-import { closeSync, constants, existsSync, fstatSync, fsyncSync, lstatSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
-import { dirname, isAbsolute, join, relative, sep } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { appendFileSync, closeSync, constants, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { OperationError } from '../ops/contract.ts';
+import { gitChildEnv } from '../git-env.ts';
 import { flushDirectory } from '../fs-durable.ts';
 import { digest, sha256 } from './digest.ts';
 import { canonicalFilesystemPath } from './root-registry.ts';
-import { PHYSICAL_ROOT_MARKER } from './root-metadata.ts';
+import { OWNERSHIP_MARKER_GLOBS, PHYSICAL_ROOT_MARKER } from './root-metadata.ts';
 
-export { PHYSICAL_ROOT_MARKER, isPhysicalRootMetadata } from './root-metadata.ts';
+export { OWNERSHIP_MARKER_GLOBS, PHYSICAL_ROOT_MARKER, isPhysicalRootMetadata } from './root-metadata.ts';
 const RESERVATION_PREFIX = '.gbrain-owner-';
+/**
+ * Appends the marker globs to the exclude file of every Git checkout holding
+ * `directories` (resolved with `git rev-parse --git-path`, so a linked
+ * worktree writes its shared file). Idempotent; a repository-local file, never
+ * committed; a missing trailing newline is repaired first. Best effort: an
+ * unreadable checkout or a read-only git dir leaves the stamp in place and the
+ * push deny list as the backstop.
+ */
+export function excludeOwnershipMarkers(directories: readonly string[]): void {
+  const written = new Set<string>();
+  for (const directory of directories) {
+    let exclude: string;
+    try {
+      if (!statSync(directory).isDirectory()) continue;
+      const path = execFileSync('git', ['-C', directory, 'rev-parse', '--git-path', 'info/exclude'],
+        { stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, env: gitChildEnv() }).toString().trim();
+      if (!path) continue;
+      exclude = resolve(directory, path);
+    } catch { continue; }
+    if (written.has(exclude)) continue;
+    written.add(exclude);
+    try {
+      mkdirSync(dirname(exclude), { recursive: true });
+      const body = existsSync(exclude) ? readFileSync(exclude, 'utf8') : '';
+      const present = new Set(body.split('\n').map(line => line.trim()));
+      const missing = OWNERSHIP_MARKER_GLOBS.filter(glob => !present.has(glob));
+      if (!missing.length) continue;
+      appendFileSync(exclude, `${body.length && !body.endsWith('\n') ? '\n' : ''}${missing.join('\n')}\n`);
+    } catch { /* best effort; the push deny list refuses a tracked marker */ }
+  }
+}
 export interface PhysicalRootReservation {
   version: 1; token: string; brainId: string; worktreeId: string; hostId: string;
   root: string; coordinationPath: string; initialDevice: string | null; initialInode: string | null; initialBirth: string | null;
@@ -47,7 +80,13 @@ function createPrivate(path: string, value: unknown): boolean {
   return true;
 }
 export function readPhysicalRootReservation(path: string): PhysicalRootReservation | null {
-  const root = canonicalFilesystemPath(path);
+  return readReservationRecord(canonicalFilesystemPath(path));
+}
+/** #5914: the reservation written for `recorded` as it was recorded, even when that path now resolves elsewhere through a symlink. */
+export function readRecordedPhysicalRootReservation(recorded: string): PhysicalRootReservation | null {
+  return readReservationRecord(recorded);
+}
+function readReservationRecord(root: string): PhysicalRootReservation | null {
   const value = readPrivate(physicalRootReservationPath(root)) as PhysicalRootReservation | null;
   if (value === null) return null;
   if (value.version !== 1 || ![value.token,value.brainId,value.worktreeId,value.hostId].every(uuid)
@@ -109,6 +148,7 @@ export function writePhysicalRootStamp(directory: string, reservation: PhysicalR
     root: reservation.root, device: info.dev.toString(), inode: info.ino.toString(), birth: info.birthtimeNs.toString() };
   createPrivate(join(directory, PHYSICAL_ROOT_MARKER), stamp);
   assertPhysicalRootStamp(directory, reservation);
+  excludeOwnershipMarkers([directory, reservation.root, dirname(reservation.root)]);
 }
 /** directory may be a verified staging directory; its stamp always names the final root. */
 export function assertPhysicalRootStamp(directory: string, reservation: PhysicalRootReservation): void {
@@ -147,6 +187,25 @@ function replacePrivate(path: string, value: unknown): void {
     renameSync(temporary, path); created = false; flushDirectory(dirname(path));
   } finally { if (created) try { unlinkSync(temporary); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; } }
 }
+/**
+ * #5914: compare-and-swap of the outside-root reservation for a deliberate
+ * relocation (recreated directory, moved checkout). The caller holds the
+ * outside-root native lock and verified database ownership. A reservation
+ * already equal to `next` is a no-op; one that matches neither `expected` nor
+ * `next` was changed by someone else and refuses with detail `stale_record`.
+ */
+export function replacePhysicalRootReservation(root: string, expected: PhysicalRootReservation, next: PhysicalRootReservation): void {
+  if (next.root !== root || expected.root !== root || next.token !== expected.token || next.worktreeId !== expected.worktreeId || next.brainId !== expected.brainId) throw physicalRootError();
+  const current = readPhysicalRootReservation(root);
+  if (current && digest(current) === digest(next)) return;
+  if (!current || digest(current) !== digest(expected)) {
+    const error = physicalRootError('The ownership reservation changed since this relocation was prepared; prepare it again from a fresh writer status.');
+    error.detail = 'stale_record';
+    throw error;
+  }
+  replacePrivate(physicalRootReservationPath(root), next);
+  if (digest(readPhysicalRootReservation(root)) !== digest(next)) throw physicalRootError('The re-stamped ownership reservation contains unexpected bytes.');
+}
 /** Caller holds the outside-root native lock and verified database ownership; only the device fields change. */
 export function restampPhysicalRootDevice(root: string, reservation: PhysicalRootReservation, stamp: PhysicalRootStamp, change: { from: string; to: string }): void {
   if (reservation.initialDevice === change.from) replacePrivate(physicalRootReservationPath(root), { ...reservation, initialDevice: change.to });
@@ -172,6 +231,59 @@ export function adoptTransferredRootStamp(directory: string, reservation: Physic
     renameSync(temporary, path); flushDirectory(directory);
   } finally { if (created) try { unlinkSync(temporary); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; } }
   assertPhysicalRootStamp(directory, reservation);
+  excludeOwnershipMarkers([directory, reservation.root, dirname(reservation.root)]);
+}
+/**
+ * #5914: the identity check a release that publishes nothing needs. The
+ * outside-root reservation must name this worktree (and coordination path),
+ * and a stamp, when one is readable, must carry the reservation's token; the
+ * inode and birth time of a recreated directory are not compared. Callers
+ * hold the native lock.
+ */
+export function assertPhysicalRootReservation(path: string, identity: { worktreeId: string; coordinationPath?: string | null }): void {
+  try {
+    const reservation = readPhysicalRootReservation(path);
+    if (!reservation || reservation.worktreeId !== identity.worktreeId || identity.coordinationPath && reservation.coordinationPath !== identity.coordinationPath) throw physicalRootError();
+    const stamp = existsSync(path) ? readPhysicalRootStamp(path) : null;
+    if (stamp && (stamp.token !== reservation.token || stamp.worktreeId !== reservation.worktreeId || stamp.brainId !== reservation.brainId)) throw physicalRootError();
+  } catch (error) { if (error instanceof OperationError) throw error; throw physicalRootError(); }
+}
+/**
+ * #5914 (P1.3c): the recorded root now resolves through a symlink to `target`.
+ * Verifies the moved checkout is this same worktree (reservation under the old
+ * name and stamp inside the real directory agree on token, brainId and
+ * worktreeId; the stamp names the old root) and returns both records.
+ */
+export function inspectRelocatedPhysicalRoot(recorded: string, target: string, identity: { worktreeId: string; coordinationPath?: string | null }):
+  { reservation: PhysicalRootReservation; stamp: PhysicalRootStamp } {
+  try {
+    if (recorded === target || realpathSync(recorded) !== target || realpathSync(target) !== target) throw physicalRootError();
+    const reservation = readRecordedPhysicalRootReservation(recorded), stamp = readPhysicalRootStamp(target);
+    if (!reservation || !stamp || reservation.worktreeId !== identity.worktreeId || identity.coordinationPath && reservation.coordinationPath !== identity.coordinationPath
+      || stamp.token !== reservation.token || stamp.worktreeId !== reservation.worktreeId || stamp.brainId !== reservation.brainId || stamp.root !== recorded) throw physicalRootError();
+    return { reservation, stamp };
+  } catch (error) { if (error instanceof OperationError) throw error; throw physicalRootError(); }
+}
+/**
+ * #5914 (P1.3c): moves the ownership records of a verified relocation to the
+ * real directory: the reservation is written under the new `sha256(root)`
+ * name, the stamp is rewritten to name the new root from the live directory,
+ * then the old reservation is removed. Caller holds the native lock and the
+ * topology transaction; `inspectRelocatedPhysicalRoot` ran first.
+ */
+export function relocatePhysicalRoot(recorded: string, target: string, records: { reservation: PhysicalRootReservation; stamp: PhysicalRootStamp }): PhysicalRootReservation {
+  const info = statSync(target, { bigint: true });
+  const reservation: PhysicalRootReservation = { ...records.reservation, root: target,
+    initialDevice: info.dev.toString(), initialInode: info.ino.toString(), initialBirth: info.birthtimeNs.toString() };
+  const existing = readPhysicalRootReservation(target);
+  if (existing && digest(existing) !== digest(reservation)) throw physicalRootError('Another reservation already names the relocated directory.');
+  if (!existing && !createPrivate(physicalRootReservationPath(target), reservation)) throw physicalRootError();
+  replacePrivate(join(target, PHYSICAL_ROOT_MARKER), { ...records.stamp, root: target, device: info.dev.toString(), inode: info.ino.toString(), birth: info.birthtimeNs.toString() });
+  assertPhysicalRootStamp(target, reservation);
+  try { unlinkSync(physicalRootReservationPath(recorded)); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+  flushDirectory(dirname(physicalRootReservationPath(recorded)));
+  excludeOwnershipMarkers([target, dirname(target)]);
+  return reservation;
 }
 export function assertPhysicalRoot(path: string, identity: { worktreeId: string; coordinationPath?: string | null }): void {
   try {

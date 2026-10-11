@@ -18,6 +18,7 @@ import { reservedTransactions, type ReservedTransactions } from './postgres-engi
 import { traceSqlOptions } from './sql-trace.ts';
 import { hasPostgresCancellationCapability, postgresCancellationUnavailable, reserveWithCancellation } from './postgres-engine/cancellation.ts';
 import { runBoundedStatement } from './postgres-engine/bounded-statement.ts';
+import { schemaDiagnosticConnection, withSchemaLockTimeout } from './postgres-engine/schema-lock-timeout.ts';
 export { hasPostgresCancellationCapability } from './postgres-engine/cancellation.ts';
 import type {
   BrainEngine,
@@ -571,7 +572,7 @@ export class PostgresEngine implements BrainEngine {
         // transaction pooler. Codex P1 finding from v0.36 dreamy-thompson wave.
         await this.applyForwardReferenceBootstrap(conn);
 
-        await conn.unsafe(sqlText);
+        await withSchemaLockTimeout(conn, () => conn.unsafe(sqlText), { step: 'replay', diagnostic: schemaDiagnosticConnection(this._savedConfig?.database_url) }); // #5227: bounded wait, typed schema_lock_blocked
 
         // Run any pending migrations automatically
         const { applied } = await (await import('./migrate.ts')).runMigrations(this); // engine-dynamic-import-ok: initSchema only, keeps the ~220 migration modules off every connect

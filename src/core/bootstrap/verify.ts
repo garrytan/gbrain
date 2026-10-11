@@ -51,6 +51,7 @@ import {
   PUSH_DENY_GLOBS, SECRET_SCAN_REFUSAL_DOCS, verifyRemotePrivacy, readPushStatuses, summarizePushStatuses,
 } from '../workspace-push.ts';
 import { shellQuote } from '../mcp-registration.ts';
+import { OWNERSHIP_MARKER_GLOBS } from '../persistence/root-metadata.ts';
 import { FACTS_DEFAULT_VISIBILITY_KEY } from '../facts/visibility.ts';
 import { byteFloors } from './render.ts';
 import { CLAUDE_HOOK_EVENTS, claudeUserSettingsPath } from './host-specs.ts';
@@ -384,13 +385,25 @@ function checkSecretScan(ws: string): VerifyCheck {
   }
 }
 
-function checkDenyGlobs(ws: string): VerifyCheck {
+const OWNERSHIP_DENY_GLOBS: readonly string[] = [...OWNERSHIP_MARKER_GLOBS, '.gbrain-bootstrap.lock/**'];
+
+export function checkDenyGlobs(ws: string): VerifyCheck {
   const id = 'deny_globs';
   try {
     const { files, via } = trackedWorkspaceFiles(ws);
     const matches = files.filter((f) => PUSH_DENY_GLOBS.some((g) => matchesGlob(g, f)));
     if (via === 'git' && matches.length > 0) {
-      return { id, ok: false, detail: `deny-glob matches among candidate files: ${matches.slice(0, 10).join(', ')} — remove from the index (git rm --cached) before any push` };
+      // #5186: an ownership marker or bootstrap lock that is merely on disk (a root
+      // stamped before the exclude rule, a concurrent run's lock) is not a finding:
+      // `sources push` excludes it. One in the INDEX is, with `git rm --cached` as the fix.
+      const indexed = new Set(execFileSync('git', ['-C', ws, 'ls-files', '--cached', '-z'], {
+        stdio: ['ignore', 'pipe', 'ignore'], timeout: 15_000, maxBuffer: 16 * 1024 * 1024, env: gitChildEnv(),
+      }).toString().split('\0').filter((f) => f.length > 0));
+      const findings = matches.filter((f) => indexed.has(f) || !OWNERSHIP_DENY_GLOBS.some((g) => matchesGlob(g, f)));
+      if (findings.length > 0) {
+        return { id, ok: false, detail: `deny-glob matches among candidate files: ${findings.slice(0, 10).join(', ')} — remove from the index (git rm --cached) before any push` };
+      }
+      return { id, ok: true, detail: `no tracked files match the push deny list; ${matches.length} untracked ownership marker/lock file(s) stay out of every push (${matches.slice(0, 5).join(', ')})` };
     }
     return { id, ok: true, detail: via === 'git' ? 'no tracked files match the push deny list' : 'not a git repo yet — deny-glob backstop applies at push time' };
   } catch (e) {

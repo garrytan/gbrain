@@ -1766,49 +1766,28 @@ CREATE TRIGGER minion_job_notify AFTER INSERT OR UPDATE OF status ON minion_jobs
 DO $$
 DECLARE
   has_bypass BOOLEAN;
+  target TEXT;
 BEGIN
   -- #1385: recognize superuser + inherited-role BYPASSRLS, not just the role's
   -- own rolbypassrls (alias `pr` avoids any plpgsql record-variable collision).
   SELECT EXISTS (SELECT 1 FROM pg_roles pr WHERE pg_has_role(current_user, pr.oid, 'USAGE') AND (pr.rolbypassrls OR pr.rolsuper)) INTO has_bypass;
   IF has_bypass THEN
-    ALTER TABLE pages ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE content_chunks ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE links ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE wanted_links ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE tags ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE raw_data ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE timeline_entries ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE page_versions ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE ingest_log ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE config ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE files ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE minion_jobs ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE sources ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE file_migration_ledger ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE access_tokens ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE mcp_request_log ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE minion_inbox ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE minion_attachments ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE subagent_messages ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE subagent_tool_executions ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE subagent_rate_leases ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE gbrain_cycle_locks ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE dream_verdicts ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE eval_candidates ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE eval_capture_failures ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE eval_takes_quality_runs ENABLE ROW LEVEL SECURITY;
-    -- v0.32.6 contradiction probe tables
-    ALTER TABLE eval_contradictions_cache ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE eval_contradictions_runs ENABLE ROW LEVEL SECURITY;
-    -- v0.36.1.0 Hindsight calibration wave tables
-    ALTER TABLE calibration_profiles ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE take_proposals ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE take_grade_cache ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE take_nudge_log ENABLE ROW LEVEL SECURITY;
-    -- v0.26 OAuth 2.1 tables
-    ALTER TABLE oauth_clients ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE oauth_tokens ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE oauth_codes ENABLE ROW LEVEL SECURITY;
+    -- #5227 (W14 P1.6): conditional enables. ALTER TABLE ... ENABLE ROW LEVEL SECURITY takes an
+    -- ACCESS EXCLUSIVE lock even when RLS is already on, so re-running this block on a live brain
+    -- queued behind every open transaction; a table whose relrowsecurity is already set is skipped.
+    FOREACH target IN ARRAY ARRAY[
+      'pages','content_chunks','links','wanted_links','tags','raw_data','timeline_entries',
+      'page_versions','ingest_log','config','files','minion_jobs','sources','file_migration_ledger',
+      'access_tokens','mcp_request_log','minion_inbox','minion_attachments','subagent_messages',
+      'subagent_tool_executions','subagent_rate_leases','gbrain_cycle_locks','dream_verdicts',
+      'eval_candidates','eval_capture_failures','eval_takes_quality_runs','eval_contradictions_cache',
+      'eval_contradictions_runs','calibration_profiles','take_proposals','take_grade_cache',
+      'take_nudge_log','oauth_clients','oauth_tokens','oauth_codes'] LOOP
+      IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                     WHERE n.nspname = current_schema() AND c.relname = target AND c.relrowsecurity) THEN
+        EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', target);
+      END IF;
+    END LOOP;
     RAISE NOTICE 'RLS enabled on all tables (role % has BYPASSRLS)', current_user;
   ELSE
     RAISE WARNING 'Skipping RLS: role % does not have BYPASSRLS privilege. Run as postgres role to enable.', current_user;

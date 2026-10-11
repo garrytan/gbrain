@@ -10,6 +10,8 @@
  * fail past 24 hours. Uncommitted changes warn once the oldest changed file is
  * older than 6 hours, never fail (they may be deliberate work in progress).
  * Being behind is reported, not judged: sync pulls.
+ *
+ * The same entry emits `tracked_ownership_marker` (#5186) for the same roots.
  */
 import { execFileSync } from 'node:child_process';
 import { statSync } from 'node:fs';
@@ -18,7 +20,9 @@ import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
 import { parseSourceConfig } from '../../../core/sources-load.ts';
 import { isConnectorSourceKind } from '../../../core/persistence/connector-identity.ts';
+import { isPhysicalRootMetadata } from '../../../core/persistence/root-metadata.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
+import { doctorVerify } from '../check-fix.ts';
 
 export const GIT_CONVERGENCE_WARN_MS = 6 * 3_600_000;
 export const GIT_CONVERGENCE_FAIL_MS = 24 * 3_600_000;
@@ -59,7 +63,8 @@ function probe(root: string, sourceIds: string[], now: number): RootReport | { r
     oldest_dirty_at: Number.isFinite(oldestDirty) ? new Date(oldestDirty).toISOString() : null, status };
 }
 
-export async function gitConvergenceCheck(engine: BrainEngine, now = Date.now()): Promise<Check | null> {
+/** Every non-archived filesystem source root plus `sync.repo_path`, with the source ids that name each root. */
+async function sourceRoots(engine: BrainEngine): Promise<Map<string, string[]>> {
   const sources = await engine.executeRaw<{ id: string; local_path: string | null; config: unknown }>(
     'SELECT id, local_path, config FROM sources WHERE archived IS NOT TRUE AND local_path IS NOT NULL ORDER BY id');
   const roots = new Map<string, string[]>();
@@ -69,6 +74,11 @@ export async function gitConvergenceCheck(engine: BrainEngine, now = Date.now())
   }
   const repoPath = await engine.getConfig('sync.repo_path').catch(() => null);
   if (repoPath && !roots.has(repoPath)) roots.set(repoPath, []);
+  return roots;
+}
+
+export async function gitConvergenceCheck(engine: BrainEngine, now = Date.now()): Promise<Check | null> {
+  const roots = await sourceRoots(engine);
   if (!roots.size) return null;
   const byTop = new Map<string, RootReport | { root: string; source_ids: string[]; skipped: string }>();
   for (const [root, ids] of [...roots].slice(0, MAX_ROOTS)) {
@@ -93,16 +103,57 @@ export async function gitConvergenceCheck(engine: BrainEngine, now = Date.now())
     message: `Git checkouts have not converged with their upstream: ${lines.join(' | ')}. Commit and push them (gbrain sources push --path <root> for a bootstrap workspace, or git push in the checkout); this compares with the last fetched upstream and does not fetch.` };
 }
 
+/**
+ * #5186: `tracked_ownership_marker`, whether a source checkout has an ownership
+ * marker (`.gbrain-owner.json`, the reservation beside the root, a staged stamp)
+ * in its Git index. Stamping excludes the markers and `sources push` denies
+ * them, but neither un-tracks a file already committed, so the fix is
+ * `git rm --cached` run by the user. Markers that are merely on disk are fine.
+ */
+export async function trackedOwnershipMarkerCheck(engine: BrainEngine): Promise<Check | null> {
+  const roots = await sourceRoots(engine);
+  if (!roots.size) return null;
+  const tracked: Array<{ root: string; source_ids: string[]; paths: string[] }> = [];
+  let checkouts = 0;
+  const seen = new Set<string>();
+  for (const [root, ids] of [...roots].slice(0, MAX_ROOTS)) {
+    const top = git(root, ['rev-parse', '--show-toplevel'])?.trim();
+    if (!top || seen.has(top)) continue;
+    seen.add(top);
+    checkouts++;
+    const paths = (git(top, ['ls-files', '-z', '--cached']) ?? '').split('\0').filter(path => path && isPhysicalRootMetadata(path.slice(path.lastIndexOf('/') + 1)));
+    if (paths.length) tracked.push({ root: top, source_ids: ids, paths });
+  }
+  const details = { checkouts, tracked, ...(roots.size > MAX_ROOTS ? { not_probed: roots.size - MAX_ROOTS } : {}) };
+  if (!tracked.length) {
+    return { name: 'tracked_ownership_marker', status: 'ok', details,
+      message: `${checkouts} Git checkout(s) track no ownership marker (markers on disk stay untracked and are denied on push).` };
+  }
+  const first = tracked[0]!;
+  return { name: 'tracked_ownership_marker', status: 'warn', details,
+    message: `Ownership marker file(s) are tracked by Git: ${tracked.map(t => `${t.root}: ${t.paths.join(', ')}`).join(' | ')}. `
+      + 'They hold this machine\'s claim on the checkout and are not content; gbrain sources push refuses them, and an ignore rule cannot un-track a file already in the index.',
+    fix: { argv: ['git', '-C', first.root, 'rm', '--cached', ...first.paths], consent: [], actor: 'user', requires_exclusive: false,
+      why: 'Removes the marker from the Git index and the next commit while leaving the file on disk, where gbrain still reads it.',
+      user_message: `${first.root} tracks ownership marker file(s) (${first.paths.join(', ')}). Please run the command shown, commit, and push; `
+        + `the files stay on disk.${tracked.length > 1 ? ` ${tracked.length - 1} other checkout(s) need the same, see details.tracked.` : ''}`,
+      verify: doctorVerify('tracked_ownership_marker') } };
+}
+
 async function runGitConvergence(ctx: DoctorContext): Promise<Check[]> {
   const checks: Check[] = [];
+  const engine = connectedEngine(ctx);
   ctx.progress.heartbeat('git_convergence');
-  const check = await gitConvergenceCheck(connectedEngine(ctx));
+  const check = await gitConvergenceCheck(engine);
   if (check) checks.push(check);
+  ctx.progress.heartbeat('tracked_ownership_marker');
+  const markers = await trackedOwnershipMarkerCheck(engine);
+  if (markers) checks.push(markers);
   return checks;
 }
 
 export const gitConvergenceEntry: DoctorEntry = {
   name: 'git_convergence',
-  emits: ['git_convergence'],
+  emits: ['git_convergence', 'tracked_ownership_marker'],
   run: runGitConvergence,
 };

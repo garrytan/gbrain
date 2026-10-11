@@ -1,4 +1,5 @@
 import { assertManagedFilesystemWrite, managedFilesystemRootFor } from './persistence/filesystem-guard.ts';
+import { OWNERSHIP_MARKER_GLOBS } from './persistence/root-metadata.ts';
 import { OperationError } from './ops/contract.ts';
 /**
  * workspace-push.ts — the `gbrain sources push` core: scan-gated
@@ -160,9 +161,13 @@ export interface WorkspacePushOpts {
   holdLockMs?: number;
 }
 
-/** Deny-glob backstop list [G6]. Matched with secret-scan's glob dialect. */
+/**
+ * Deny-glob backstop list [G6]. Matched with secret-scan's glob dialect.
+ * #5186: ownership markers (`OWNERSHIP_MARKER_GLOBS`) and the bootstrap lock
+ * are denied like credentials; the ownership token never reaches a remote.
+ */
 export const PUSH_DENY_GLOBS: readonly string[] = [
-  '*.pglite', '.env*', '*.pem', '*.key', '.gbrain/**',
+  '*.pglite', '.env*', '*.pem', '*.key', '.gbrain/**', ...OWNERSHIP_MARKER_GLOBS, '.gbrain-bootstrap.lock/**',
 ];
 
 /** Files larger than this are neither scanned nor considered text candidates. */

@@ -1241,7 +1241,7 @@ export function serializePageToMarkdown(
   opts: SerializePageOpts = {},
 ): string {
   const frontmatter: Record<string, unknown> = {
-    ...((page.frontmatter ?? {}) as Record<string, unknown>),
+    ...slugStampedFrontmatter(page.slug, (page.frontmatter ?? {}) as Record<string, unknown>),
     ...(opts.frontmatterOverrides ?? {}),
   };
   return serializeMarkdown(
@@ -1254,6 +1254,22 @@ export function serializePageToMarkdown(
       tags,
     },
   );
+}
+
+/**
+ * #5966 (W14 P1.7): the one slug rule every render follows. A slug the file
+ * path cannot derive (a doubled hyphen, which `slugifyPath` collapses to one) is
+ * stamped as `slug:` so every path-derived reader (sync, reconcile, repair)
+ * finds the page again; a `frontmatter.slug` naming another identity is
+ * replaced by the page slug (the export rule, #3772). The stamp is
+ * digest-neutral: `parseMarkdown` drops `frontmatter.slug`, so canonical
+ * fields compare equal with or without it.
+ */
+export function slugStampedFrontmatter(slug: string | undefined, frontmatter: Record<string, unknown>): Record<string, unknown> {
+  if (typeof slug !== 'string' || slug === '') return frontmatter;
+  const declared = frontmatter.slug;
+  if (slugifyPath(slug + '.md') !== slug || (declared !== undefined && declared !== slug)) return { ...frontmatter, slug };
+  return frontmatter;
 }
 
 /**

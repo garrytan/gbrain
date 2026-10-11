@@ -23,6 +23,8 @@ import { LEGACY_EMBEDDING_CONFIG } from '../helpers/legacy-embedding-config.ts';
 import { configureGateway } from '../../src/core/ai/gateway.ts';
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
 import { cliDiagnostic, fixtureDiagnostic } from '../helpers/fixture-diagnostics.ts';
+import { runMigrationSQL } from '../../src/core/migrate.ts';
+import { v024 } from '../../src/core/schema-migrations/v024-rls-backfill-missing-tables.ts';
 
 // Skip all E2E tests if no database is configured
 const skip = !hasDatabase();
@@ -50,6 +52,30 @@ afterAll(() => {
   else process.env.HOME = _origHome;
   try { if (_tmpHome) rmSync(_tmpHome, { recursive: true, force: true }); } catch { /* best-effort */ }
 });
+
+/**
+ * #5227 (W14 P1.6): spawn `gbrain init` with a budget. When the child is still
+ * running at half the budget, dump pg_stat_activity (pid, state, wait event,
+ * transaction age, application; never query text) to stderr, so a hang behind
+ * a lock shows its blocker instead of a bare exit 143. Returns the spawnSync
+ * shape the call sites already read.
+ */
+async function spawnInit(input: { cmd: string[]; cwd: string; env: Record<string, string | undefined>; timeout: number }): Promise<{ exitCode: number; stdout: Uint8Array; stderr: Uint8Array }> {
+  const child = Bun.spawn({ cmd: input.cmd, cwd: input.cwd, env: input.env as Record<string, string>, stdout: 'pipe', stderr: 'pipe' });
+  let done = false;
+  const probe = setTimeout(async () => {
+    if (done) return;
+    try {
+      const rows = await getConn().unsafe(`SELECT pid, state, wait_event_type, application_name, EXTRACT(EPOCH FROM now() - xact_start)::int AS xact_age_s,
+        pg_blocking_pids(pid) AS blocked_by FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() ORDER BY pid`);
+      process.stderr.write(`[spawnInit] child still running at half its ${input.timeout}ms budget; pg_stat_activity:\n${JSON.stringify(rows, null, 1)}\n`);
+    } catch (error) { process.stderr.write(`[spawnInit] pg_stat_activity probe failed: ${error instanceof Error ? error.message : String(error)}\n`); }
+  }, Math.floor(input.timeout / 2));
+  const kill = setTimeout(() => { if (!done) child.kill(); }, input.timeout);
+  const [stdout, stderr, exitCode] = await Promise.all([new Response(child.stdout).arrayBuffer(), new Response(child.stderr).arrayBuffer(), child.exited]);
+  done = true; clearTimeout(probe); clearTimeout(kill);
+  return { exitCode: exitCode ?? -1, stdout: new Uint8Array(stdout), stderr: new Uint8Array(stderr) };
+}
 
 function makeCtx(
   opts: { remote?: boolean; storage?: { backend: 'local'; localPath: string } } = {},
@@ -848,14 +874,14 @@ describeE2E('E2E: Setup Journey', () => {
   const cliCwd = join(import.meta.dir, '../..');
   const cliEnv = () => ({ ...process.env, DATABASE_URL: process.env.DATABASE_URL! });
 
-  test('gbrain init --non-interactive connects and initializes', () => {
+  test('gbrain init --non-interactive connects and initializes', async () => {
     // v0.37.10.0: pass --embedding-model explicitly. Tier-1 CI runs without
     // any embedding-provider env var, and the v0.37 fail-loud-no-key gate
     // (D3) would otherwise exit 1 here. The provider is offline-resolved
     // (preflight validates dim against recipe; no HTTP call), so this works
     // without a real API key. After this init writes config, subsequent
     // inits in the file honor persisted config per D5 (no flag needed).
-    const result = Bun.spawnSync({
+    const result = await spawnInit({
       cmd: ['bun', 'run', 'src/cli.ts', 'init', '--non-interactive', '--url', process.env.DATABASE_URL!,
             '--embedding-model', LEGACY_EMBEDDING_CONFIG.embedding_model,
             '--embedding-dimensions', String(LEGACY_EMBEDDING_CONFIG.embedding_dimensions)],
@@ -920,11 +946,11 @@ describeE2E('E2E: Setup Journey', () => {
 describeE2E('E2E: Init Edge Cases', () => {
   afterAll(teardownDB);
 
-  test('init --non-interactive without URL fails gracefully', () => {
+  test('init --non-interactive without URL fails gracefully', async () => {
     const env = { ...process.env };
     delete env.DATABASE_URL;
     delete env.GBRAIN_DATABASE_URL;
-    const result = Bun.spawnSync({
+    const result = await spawnInit({
       cmd: ['bun', 'run', 'src/cli.ts', 'init', '--non-interactive'],
       cwd: join(import.meta.dir, '../..'),
       env,
@@ -1120,7 +1146,7 @@ describeE2E('E2E: RLS Verification', () => {
     const conn = getConn();
     const tbl = `gbrain_rls_plain_pg_${suffix}`;
     try {
-      Bun.spawnSync({
+      await spawnInit({
         cmd: ['bun', 'run', 'src/cli.ts', 'init', '--non-interactive', '--url', process.env.DATABASE_URL!],
         cwd: cliCwd, env: cliEnv(), timeout: 15_000,
       });
@@ -1151,7 +1177,7 @@ describeE2E('E2E: RLS Verification', () => {
       // (e.g. while debugging) and creates a public table without RLS.
       // doctor's existing rls check must still flag it. The new
       // rls_event_trigger check warns separately about the missing trigger.
-      Bun.spawnSync({
+      await spawnInit({
         cmd: ['bun', 'run', 'src/cli.ts', 'init', '--non-interactive', '--url', process.env.DATABASE_URL!],
         cwd: cliCwd, env: cliEnv(), timeout: 15_000,
       });
@@ -1194,7 +1220,7 @@ describeE2E('E2E: RLS Verification', () => {
       await conn.unsafe(`ALTER TABLE public.${tbl} DISABLE ROW LEVEL SECURITY`);
       await conn.unsafe(`COMMENT ON TABLE public.${tbl} IS 'GBRAIN:RLS_EXEMPT reason=e2e test fixture, anon-readable ok'`);
 
-      Bun.spawnSync({
+      await spawnInit({
         cmd: ['bun', 'run', 'src/cli.ts', 'init', '--non-interactive', '--url', process.env.DATABASE_URL!],
         cwd: cliCwd, env: cliEnv(), timeout: 15_000,
       });
@@ -1222,7 +1248,7 @@ describeE2E('E2E: RLS Verification', () => {
       // Missing the `reason=<...>` segment — prefix alone is not enough.
       await conn.unsafe(`COMMENT ON TABLE public.${tbl} IS 'GBRAIN:RLS_EXEMPT'`);
 
-      Bun.spawnSync({
+      await spawnInit({
         cmd: ['bun', 'run', 'src/cli.ts', 'init', '--non-interactive', '--url', process.env.DATABASE_URL!],
         cwd: cliCwd, env: cliEnv(), timeout: 15_000,
       });
@@ -1249,7 +1275,7 @@ describeE2E('E2E: RLS Verification', () => {
       await conn.unsafe(`ALTER TABLE public.${tbl} DISABLE ROW LEVEL SECURITY`);
       await conn.unsafe(`COMMENT ON TABLE public.${tbl} IS 'Regular docs comment, not an exemption'`);
 
-      Bun.spawnSync({
+      await spawnInit({
         cmd: ['bun', 'run', 'src/cli.ts', 'init', '--non-interactive', '--url', process.env.DATABASE_URL!],
         cwd: cliCwd, env: cliEnv(), timeout: 15_000,
       });
@@ -1280,50 +1306,25 @@ describeE2E('E2E: RLS Verification', () => {
   // same failure forever.
   test('v24 self-heals when budget_ledger + budget_reservations are missing', async () => {
     const conn = getConn();
-    let priorVersion: string | null = null;
     try {
-      // Capture current version so we can restore after the test.
-      const verRows = await conn.unsafe(`SELECT value FROM config WHERE key = 'version'`);
-      priorVersion = (verRows[0] as any)?.value ?? null;
-
       // Simulate an operator who dropped the budget_* tables for any reason
       // (cleanup, migration from an older gbrain, etc).
       await conn.unsafe(`DROP TABLE IF EXISTS public.budget_ledger CASCADE`);
       await conn.unsafe(`DROP TABLE IF EXISTS public.budget_reservations CASCADE`);
 
-      // Roll the version back to 23 so v24 re-runs on the next initSchema.
-      // UPSERT so this works whether the key exists or not.
-      await conn.unsafe(`
-        INSERT INTO config (key, value) VALUES ('version', '23')
-        ON CONFLICT (key) DO UPDATE SET value = '23'
-      `);
+      // #5227 (W14 P1.6): call the migration handler directly instead of
+      // spawning `gbrain init`. The spawn replayed schema.sql plus every
+      // pending migration on a 30 s budget and timed out whenever another
+      // test's open transaction held a table lock, which is the bug the
+      // lock_timeout work fixes; it also proved nothing about v24 that the
+      // handler call does not. runMigrationSQL is the exact path initSchema
+      // takes for a transaction-wrapped migration. With the guard, v24
+      // applies cleanly; without it, this rejects with 42P01.
+      await runMigrationSQL(getEngine(), v024, v024.sql);
 
-      // Re-trigger initSchema via the CLI. With the guard, this should
-      // apply v24 cleanly and advance version to 24. Without the guard,
-      // this would error out with 42P01 and leave version at 23.
-      const result = Bun.spawnSync({
-        cmd: ['bun', 'run', 'src/cli.ts', 'init', '--non-interactive', '--url', process.env.DATABASE_URL!],
-        cwd: cliCwd, env: cliEnv(), timeout: 30_000,
-      });
-      const stdout = new TextDecoder().decode(result.stdout);
-      const stderr = new TextDecoder().decode(result.stderr);
-
-      // Must succeed — no 42P01, no transaction rollback.
-      expect(result.exitCode).toBe(0);
-      expect(stderr + stdout).not.toMatch(/42P01|does not exist.*budget/i);
-
-      // Version must have advanced PAST 24. Since v0.18.1, v25-v29 (v0.19.0
-      // + v0.21.0 Cathedral II) and v30 (OAuth) have shipped. init runs every
-      // pending migration, so after rolling back to 23 the version advances
-      // to LATEST_VERSION. The test's intent is to prove v24 didn't crash on
-      // missing budget_* tables — assert version >= 24.
-      const afterRows = await conn.unsafe(`SELECT value FROM config WHERE key = 'version'`);
-      const finalVersion = parseInt((afterRows[0] as any).value, 10);
-      expect(finalVersion).toBeGreaterThanOrEqual(24);
-
-      // The tables stayed dropped (v12 didn't re-run because current=23 > 12
-      // was already true before this test ran). That's intentional — we're
-      // proving v24 doesn't require those tables to exist.
+      // The tables stayed dropped: v24 skipped them instead of failing, and
+      // nothing else re-created them. That's intentional — we're proving
+      // v24 doesn't require those tables to exist.
       const tblRows = await conn.unsafe(`
         SELECT tablename FROM pg_tables
         WHERE schemaname = 'public'
@@ -1364,14 +1365,6 @@ describeE2E('E2E: RLS Verification', () => {
       // RLS" assertion earlier in this block stays green if re-run.
       await conn.unsafe(`ALTER TABLE budget_ledger ENABLE ROW LEVEL SECURITY`);
       await conn.unsafe(`ALTER TABLE budget_reservations ENABLE ROW LEVEL SECURITY`);
-      // Restore version so we don't leave the DB at a weird state for
-      // subsequent test blocks.
-      if (priorVersion !== null) {
-        await conn.unsafe(
-          `UPDATE config SET value = $1 WHERE key = 'version'`,
-          [priorVersion],
-        );
-      }
     }
   }, 60_000);
 });
@@ -1421,12 +1414,12 @@ describeE2E('E2E: Doctor Command', () => {
     GBRAIN_HOME: gbrainHome,
   });
 
-  test('gbrain doctor exits 0 on healthy DB', () => {
+  test('gbrain doctor exits 0 on healthy DB', async () => {
     // Init first so config exists for CLI. Pin --embedding-model explicitly
     // so the spawned doctor doesn't pick a different default (e.g. Voyage-1024d
     // when VOYAGE_API_KEY is in env) that mismatches the fixture's
     // 1536d schema. Mirrors the same pattern in 'Setup Journey'.
-    const init = Bun.spawnSync({
+    const init = await spawnInit({
       cmd: ['bun', 'run', 'src/cli.ts', 'init', '--non-interactive',
             '--url', doctorUrl,
             '--embedding-model', LEGACY_EMBEDDING_CONFIG.embedding_model,
@@ -1487,8 +1480,8 @@ describeE2E('E2E: Parallel Import', () => {
   const cliCwd = join(import.meta.dir, '../..');
   const cliEnv = () => ({ ...process.env, DATABASE_URL: process.env.DATABASE_URL!, GBRAIN_DATABASE_URL: process.env.DATABASE_URL! });
 
-  function initCli() {
-    Bun.spawnSync({
+  async function initCli() {
+    await spawnInit({
       cmd: ['bun', 'run', 'src/cli.ts', 'init', '--non-interactive', '--url', process.env.DATABASE_URL!],
       cwd: cliCwd, env: cliEnv(), timeout: 15_000,
     });
@@ -1501,7 +1494,7 @@ describeE2E('E2E: Parallel Import', () => {
 
   test('sequential baseline: import all fixtures', async () => {
     await setupDB();
-    initCli();
+    await initCli();
     const result = Bun.spawnSync({
       cmd: ['bun', 'run', 'src/cli.ts', 'import', '--no-embed', FIXTURES_PATH],
       cwd: cliCwd,
@@ -1523,7 +1516,7 @@ describeE2E('E2E: Parallel Import', () => {
 
   test('parallel import with --workers 2 matches sequential page count', async () => {
     await setupDB();
-    initCli();
+    await initCli();
     const result = Bun.spawnSync({
       cmd: ['bun', 'run', 'src/cli.ts', 'import', '--no-embed', '--workers', '2', FIXTURES_PATH],
       cwd: cliCwd,
@@ -1568,7 +1561,7 @@ describeE2E('E2E: Parallel Import', () => {
 
   test('parallel import with --workers 4 also works', async () => {
     await setupDB();
-    initCli();
+    await initCli();
     const result = Bun.spawnSync({
       cmd: ['bun', 'run', 'src/cli.ts', 'import', '--no-embed', '--workers', '4', FIXTURES_PATH],
       cwd: cliCwd,

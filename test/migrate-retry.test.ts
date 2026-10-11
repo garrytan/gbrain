@@ -96,6 +96,29 @@ describe('runInitSchemaWithRetry', () => {
     expect(logs[0]).toContain('statement_timeout');
   });
 
+  test('#5227: a schema_lock_blocked refusal (or raw 55P03) retries with the short lock backoff, bounded', async () => {
+    let initCalls = 0;
+    const sleeps: number[] = [];
+    const logs: string[] = [];
+    const blocked = Object.assign(new Error('Schema replay waited 1s for a table lock another session holds'), { code: 'schema_lock_blocked' });
+    // Blocker released after attempt 1: success on attempt 2.
+    const result = await runInitSchemaWithRetry(fakeEngine, {
+      maxAttempts: 5, backoffMs: 15_000, lockBackoffMs: 250, log: line => logs.push(line),
+      _hooks: { sleep: async ms => { sleeps.push(ms); }, initSchema: async () => { initCalls++; if (initCalls < 2) throw blocked; } },
+    });
+    expect(result.attempts).toBe(2);
+    expect(sleeps).toEqual([250]);
+    expect(logs[0]).toContain('schema_lock_blocked');
+    // Never released: a bounded failure with the typed error, not a hang.
+    let calls = 0; const waits: number[] = [];
+    await expect(runInitSchemaWithRetry(fakeEngine, {
+      maxAttempts: 3, backoffMs: 15_000, lockBackoffMs: 250, log: () => {},
+      _hooks: { sleep: async ms => { waits.push(ms); }, initSchema: async () => { calls++; throw { code: '55P03', message: 'canceling statement due to lock timeout' }; } },
+    })).rejects.toMatchObject({ code: '55P03' });
+    expect(calls).toBe(3);
+    expect(waits).toEqual([250, 250]);
+  });
+
   test('does not double-wrap an exhausted migration retry envelope', async () => {
     const exhausted = new MigrationRetryExhausted(
       16,

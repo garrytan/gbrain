@@ -1,11 +1,10 @@
 import { existsSync } from 'node:fs';
 import type { BrainEngine } from '../core/engine.ts';
-import { serializeMarkdown } from '../core/markdown.ts';
+import { serializeMarkdown, slugStampedFrontmatter } from '../core/markdown.ts';
 import { scannerSlugRootMode } from '../core/write-through.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import { loadStorageConfig, isDbOnly } from '../core/storage-config.ts';
-import { slugifyPath } from '../core/sync.ts';
 import { resolveSourceId } from '../core/source-resolver.ts';
 import { ALL_SOURCES, assertValidSourceId } from '../core/source-id.ts';
 import { resolveRestoreTarget, restoreFilePath } from '../core/restore-target.ts';
@@ -95,11 +94,8 @@ a fresh directory. See docs/storage-tiering.md#safe-export.`);
             if (Number(key.bytes) > EXPORT_PAYLOAD_LIMIT) throw new Error('Export page payload limit exceeded. No destination output was published.');
             const snapshot = await readExportPage(tx, key, withdrawals);
             const page = snapshot.page;
-            const fmSlug = page.frontmatter?.slug;
-            const needsSlugStamp = slugifyPath(page.slug + '.md') !== page.slug;
-            const frontmatter = (needsSlugStamp || fmSlug !== undefined) && fmSlug !== page.slug
-              ? { ...(page.frontmatter ?? {}), slug: page.slug } : page.frontmatter;
-            staged.add(page.slug + '.md', 'file', serializeMarkdown(frontmatter, page.compiled_truth, page.timeline,
+            // #5966: the slug stamp rule lives in slugStampedFrontmatter (markdown.ts), shared with every render.
+            staged.add(page.slug + '.md', 'file', serializeMarkdown(slugStampedFrontmatter(page.slug, page.frontmatter ?? {}), page.compiled_truth, page.timeline,
               { type: page.type, title: page.title, tags: snapshot.tags }));
             const raw = Number(key.raw_count) ? await tx.getRawData(page.slug, undefined, { sourceId: page.source_id, includeDeleted: true }) : [];
             if (raw.length) {

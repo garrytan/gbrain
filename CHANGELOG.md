@@ -10,6 +10,52 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**Fix wave 14, part 1: the big-brain memory blowups stop, a renamed page keeps its history, and `gbrain init` tells you who is blocking it instead of hanging.**
+
+Eleven reports from large brains, managed checkouts and the schema tooling. Each one was reproduced on the current tree with a test that failed first, and the fix was written in our own code; one contributor diagnosis is credited below.
+
+### What you see
+
+| Where | What changed |
+|---|---|
+| `gbrain backlinks` and the autopilot backlinks phase | The gap scan streams the brain in passes and keeps only slugs, titles and candidate targets per page, so memory tracks the largest file, not the brain (384 MiB of markdown: +88 MB RSS, was +1.47 GB). The walk yields every 64 files, so the heartbeat and the RSS watchdog run again (#6438). |
+| `gbrain schema` mutations on a YAML pack | Quoted scalars decode on the way back in, so a link-type regex no longer doubles its backslashes on every alias change. The writer re-reads its own output and refuses `schema_pack_emit_mismatch` with the file untouched; a pack over 8 MiB refuses `schema_pack_too_large` before it is read; doctor warns on a mutable pack over 1 MiB with the hand-repair runbook (#6432). |
+| A recreated or symlinked canonical root | `transfer prepare/accept --self-transfer --confirm-relocated-root` waives only the inode and birth comparison, and only when the outside-root reservation and every other identity field agree. The pre-activation release stops asserting physical identity, `deactivate --dry-run` lists `physical_root` exactly when its real run would refuse, and `sources set-path` converges a checkout reached through a symlink (#5914). |
+| Ownership markers in a Git checkout | Stamping a root appends the marker patterns to `<gitdir>/info/exclude`; the push deny list and the bootstrap `.gitignore` carry them plus `.gbrain-bootstrap.lock/**`; doctor warns `tracked_ownership_marker` with the `git rm --cached` fix (#5186). |
+| A root `AGENTS.md` or `CLAUDE.md` | Sync and import treat them as scaffolding, like `README.md`, instead of pages (#5186). |
+| `gbrain skillpack reference` | `--dry-run=true`, a typo or an unknown flag exits 2 before any write instead of running the real apply (#5491). |
+| Renaming a file onto an occupied slug | The unique violation is classified instead of swallowed. A tombstone at the destination is merged in one transaction (re-keyed `<slug>~purged-<id>`, history kept) and the page moves with its id and a repaired `source_path`. When the destination is a live page the existing add-and-soft-delete fallback still runs, but it now carries the old row's versions, timeline, edges, aliases and fact withdrawals onto the surviving row first, deduplicated on the links key. Any other error fails the file without advancing the checkpoint (#5431). |
+| `sources archive / remove / purge` | A retire no longer hashes the whole checkout when every binding already carries a verified digest; the dry run reports `manifest_required` either way (#5200). |
+| Chat transcript pages with a `timezone` | Time-only timestamps are read in the page's declared zone and stored as UTC; an unknown zone is reported as `invalid_timezone` (#5430). |
+| Pages whose slug the file path cannot derive (`notes/a--b`) | Export and managed writes stamp `slug:` into the frontmatter; `gbrain repair frontmatter` adds it to legacy files as a safe candidate; the reconcile audit classifies such pages `slug_rule_mismatch` (#5966). |
+| `gbrain init` / `upgrade` on Postgres | The schema replay and each migration wait at most `GBRAIN_SCHEMA_LOCK_TIMEOUT_SECONDS` (default 60) for a table lock, then stop with `schema_lock_blocked` naming the blocking sessions by pid, application and state (never their query text) and the `pg_terminate_backend` exit; init retries with a short backoff. The row-level-security block skips tables already covered, so a re-run takes no exclusive lock on them (#5227). |
+
+### Things to watch
+
+- **Chat timestamps move.** A conversation page that declares `timezone:` now has its time-only timestamps converted to UTC (`09:15` in `America/Los_Angeles` is stored as `16:15Z`, was `09:15Z`). Pages imported earlier keep their stored values until re-ingested.
+- **Export output gains a line.** A page whose slug the path cannot derive is exported with `slug:` in its frontmatter; byte-for-byte comparisons of such exports change once.
+- **A live-destination rename is not held.** Holding it would break the pinned fallback-reconcile contract (#3056, #3479, #3583); the fallback keeps running and now carries the page's identity. The hold design is parked, not shipped.
+- **`init` and `upgrade` can now fail where they used to wait.** A blocked step exits with `schema_lock_blocked` after the bound; rerun after the named session ends. Set `GBRAIN_SCHEMA_LOCK_TIMEOUT_SECONDS` higher for a maintenance window where waiting is wanted.
+- **Shipped migration text is unchanged.** Only the `src/schema.sql` base RLS block became conditional; the TS schema fragments that double as migration text (`v184`–`v187`, `v204`, `v212`, `v213`, `v227`, the shared-skills and purge fragments) keep their bytes, so their replays at init still take ACCESS EXCLUSIVE on their tables, now under the bounded `lock_timeout` with the blocker named.
+- **Not fixed here:** the `transaction: false` handler migrations and the post-migration `verifySchema` run outside the lock bound (they issue their own statements); the recorded flake in the v24 RLS test stays open while that test now calls the migration handler directly.
+
+### Itemized changes
+
+- `findBacklinkGaps` is a three-pass stream (`findBacklinkGapsAsync` yields every 64 files); `runBacklinksCore` returns the gap list so the CLI walks once (#6438).
+- Schema-pack loader decodes the JSON escape subset in double-quoted scalars and `''` in single-quoted ones; `writePackManifest` parses its own output before the atomic write (`schema_pack_emit_mismatch`); `loadPackFromFile` refuses `schema_pack_too_large` from the descriptor size (`GBRAIN_SCHEMA_PACK_MAX_BYTES`); doctor `schema_pack_active` warns on an oversized mutable pack (#6432).
+- `--confirm-relocated-root` on self-transfer prepare/accept, persisted on the prepared record and re-stamped through compare-and-swap (`stale_record` detail on a foreign change); `releasePreActivationClaims` locks by reservation worktree id and token; deactivate previews match their real operations; `sources set-path` accepts `realpath(old) === new` with matching token (#5914).
+- Ownership markers excluded in `<gitdir>/info/exclude`, `PUSH_DENY_GLOBS` and the bootstrap template; doctor `tracked_ownership_marker` rides the git-convergence entry (#5186). Root `AGENTS.md` / `CLAUDE.md` join `SYNC_ROOT_SKIP_FILES` via `isSyncMetafile` (#5186).
+- `skillpack reference` registered in `STRICT_SELF_HELP_SUBCOMMANDS`; help splits the per-skill and `--all` grammars (#5491).
+- `renamePageOntoSlug` runs the rename and the `source_path` repair in one maintenance transaction and classifies SQLSTATE 23505; `carryRenameIdentity` runs `recordRenameAlias`, `moveSlugBindings` and `movePageIdReferences` in one transaction before the stale row is soft-deleted (#5431).
+- Source retire hashes a checkout only when a binding lacks a verified digest; `canonical_stamp` is refreshed in place; the worktree-manifest refusal no longer talks about a transfer (#5200).
+- `localToUtcIso` / `isValidTimeZone` in the conversation parser; `DateContext.invalid_timezone` (#5430).
+- `slugStampedFrontmatter` in markdown serialization and export; `slugStampCandidate` safe repair; reconcile-audit verdict `slug_rule_mismatch` (#5966).
+- Schema-pack loader reads a pack bundled into a compiled binary (`/$bunfs/...`) whole and bounds it on the bytes read, since the virtual filesystem has no descriptors (#6432). A managed import of a new file renders its page with the request slug, so the #5966 stamp never sees a slug-less page.
+- `postgres-engine/schema-lock-timeout.ts`: session-level `lock_timeout` on the reserved DDL backend restored on release, `SET LOCAL` inside transaction-wrapped migrations, `pg_blocking_pids()` sampling on a one-backend diagnostic connection, `schema_lock_blocked` registry row; conditional `ENABLE ROW LEVEL SECURITY` in `schema.sql` and eight fragment schemas; `init-schema-retry` retries SQLSTATE 55P03; the v24 RLS E2E test calls `runMigrationSQL` directly and the remaining `init` spawns dump `pg_stat_activity` at half their budget (#5227).
+
+Contributed by @andreineacsu (#5517 diagnosis of #5491).
 ## [0.60.164.0] - 2026-10-11
 
 **`query` now answers with the facts you corrected, and gbrain can keep a question answered for you.**
