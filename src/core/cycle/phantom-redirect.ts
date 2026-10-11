@@ -52,6 +52,7 @@ import {
   type ParsedFact,
 } from '../facts-fence.ts';
 import { locateOutsideCode } from '../fence-scan.ts';
+import { assertFenceRewritable } from '../fence-shared.ts';
 import { parseMarkdown, splitBody, serializeMarkdown } from '../markdown.ts';
 import { tryAcquireDbLock, syncLockId, type DbLockHandle } from '../db-lock.ts';
 import { isAborted } from '../abort-check.ts';
@@ -243,6 +244,8 @@ function appendPhantomFenceRowsToCanonical(
  * The canonical body with the phantom's rows appended (null when every row
  * dedups onto an existing canonical row) and the phantom -> canonical row
  * number map. Shared by the file writer above and the managed redirect.
+ * Throws `FenceRewriteRefusal` when the canonical fence does not parse
+ * cleanly; the pass records the phantom as `drift` and moves nothing.
  */
 export function mergePhantomFenceRows(
   body: string,
@@ -250,7 +253,10 @@ export function mergePhantomFenceRows(
   dbMaxRowNum: number,
 ): { body: string | null; renumber: Map<number, number> } {
   const renumber = new Map<number, number>();
-  const { facts: existingFacts } = parseFactsFence(body);
+  const parsed = parseFactsFence(body);
+  // Re-rendering a canonical fence the parser skipped rows of would delete them.
+  assertFenceRewritable('facts', parsed);
+  const existingFacts = parsed.facts;
 
   // Dedup key combines claim + valid_from. We deliberately do NOT include
   // valid_until or status in the key so that a "fact about Alice" already
@@ -523,6 +529,18 @@ export async function tryRedirectPhantom(
       phantom_slug: page.slug,
       outcome: 'drift',
       source_id: sourceId,
+    });
+    return { outcome: 'drift', canonical };
+  }
+
+  // Only parsed rows move and the phantom is then deleted, so a phantom fence
+  // the parser skipped rows of would lose them: leave it for a person.
+  if (parseFactsFence(page.compiled_truth ?? '').warnings.length > 0) {
+    logPhantomEvent({
+      phantom_slug: page.slug,
+      outcome: 'drift',
+      source_id: sourceId,
+      reason: 'phantom facts fence does not parse cleanly',
     });
     return { outcome: 'drift', canonical };
   }

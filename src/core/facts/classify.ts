@@ -119,6 +119,7 @@ export async function classifyAgainstCandidates(
         },
       ],
       maxTokens: 200,
+      thinking: 'off',
       abortSignal: opts.abortSignal,
     });
   } catch (err) {

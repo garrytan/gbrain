@@ -96,7 +96,7 @@ const ROWS: readonly Row[] = [
   ['minion_lease_pressure_log', 'out_of_scope', 'no_memory_text', 'lease_key queue_name job_name model provider'],
   ['minion_self_fix_log', 'out_of_scope', 'no_memory_text', 'classifier_bucket policy_applied outcome'],
   ['needs_rederive', 'out_of_scope', 'text_free_ledger', 'derived_table derived_id source_id reason'],
-  ['oauth_clients', 'out_of_scope', 'secret_material', 'client_id client_secret_hash client_name redirect_uris grant_types scope token_endpoint_auth_method source_id federated_read bound_tools bound_source_id bound_brain_id bound_slug_prefixes surface surface_set_by allowed_operations delegated_slug_prefixes delegated_namespace grant_profile grant_repair_reasons source_grant takes_holders min_trust'],
+  ['oauth_clients', 'out_of_scope', 'secret_material', 'client_id client_secret_hash client_name redirect_uris grant_types scope token_endpoint_auth_method source_id federated_read bound_tools bound_source_id bound_brain_id bound_slug_prefixes surface surface_set_by allowed_operations delegated_slug_prefixes delegated_namespace grant_profile grant_repair_reasons source_grant takes_holders min_trust registered_via'],
   ['oauth_codes', 'out_of_scope', 'secret_material', 'code_hash client_id scopes code_challenge code_challenge_method redirect_uri state resource'],
   ['oauth_grant_audit', 'out_of_scope', 'no_memory_text', 'client_id actor action before_grant after_grant'],
   ['oauth_tokens', 'out_of_scope', 'secret_material', 'token_hash token_type client_id scopes resource'],

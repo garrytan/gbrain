@@ -3862,11 +3862,12 @@ First matching row wins.
 
 | # | Condition | `next` |
 |---|---|---|
-| 1 | no runnable step (no `argv`, no callable `mcp`, and not an MCP-only fix on the CLI) | `report`: relay `message`; run `gbrain doctor --json` where you can |
-| 2 | `actor = provider` | `wait`: retry after the stated delay with the same request identity |
-| 3 | `actor` is `user` or `host_admin`, or the fix is CLI-only and you are on MCP, or MCP-only and you are on the CLI | `tell_user_to_run` |
-| 4 | `consent` is non-empty and not covered by a matching preapproval (`destructive` never is) | `ask_user` |
-| 5 | otherwise | `run` |
+| 1 | the stored fix asks the user (a refusal whose every way out is the user's decision, such as `owner_unavailable` with `detail: unbound_source`) | `ask_user` |
+| 2 | no runnable step (no `argv`, no callable `mcp`, and not an MCP-only fix on the CLI) | `report`: relay `message`; run `gbrain doctor --json` where you can |
+| 3 | `actor = provider` | `wait`: retry after the stated delay with the same request identity |
+| 4 | `actor` is `user` or `host_admin`, or the fix is CLI-only and you are on MCP, or MCP-only and you are on the CLI | `tell_user_to_run` |
+| 5 | `consent` is non-empty and not covered by a matching preapproval (`destructive` never is) | `ask_user` |
+| 6 | otherwise | `run` |
 
 A CLI-only fix rendered for an MCP caller gets actor `user` on stdio and
 `host_admin` on HTTP, and `next: tell_user_to_run`. The mirror case: an
@@ -4194,6 +4195,20 @@ exactly one JSON document to stdout (or NDJSON lines for `eval export`,
 stderr. If such a command exits non-zero without writing its document, gbrain
 writes a fallback: `{error: "command_failed", code, message, suggestion,
 exit_code, contract_version: 1}`.
+
+## A write refused `owner_unavailable` with `detail: unbound_source`
+
+On a Postgres brain in classic mode the files in a source's checkout are the
+truth, and gbrain only reads them. Do not retry, and do not claim the source or
+activate managed mode to get one write through: both change the whole brain and
+claiming blocks classic sync. If you can run commands on the brain host, write
+`<checkout>/<slug>.md`, commit it, run `gbrain sync --source <id>`, then read the
+page back. If you are connected remotely, tell the user: "Your brain is in
+classic mode, so I can't save pages directly. Save it as `<slug>.md` in the
+`<id>` folder, commit it, and run `gbrain sync --source <id>`." Offer
+`persistence.unbound_write database_only` or managed mode only as the user's
+choice, with what each costs
+([unbound sources](../guides/write-refusals.md#unbound-sources-on-postgres)).
 
 ## Marker grammar
 
@@ -4532,6 +4547,7 @@ off until the user opts in, and paid enrichment is a separate choice.
 | Post-restart health + auto-fix, "did the container restart break anything", smoke test | `skills/smoke-test/SKILL.md` |
 | `GBRAIN_DB_ACCESS`, "gbrain database error", "gbrain connection refused", "brain database is down", "cannot reach the brain database", "fix gbrain database access", "repair gbrain postgres" | `skills/db-repair/SKILL.md` |
 | Doctor `timeline_history` / `derived_visibility` / unsealed pages, "repair timeline history", "fix atom visibility", "re-seal withheld pages" | Preview with `gbrain repair`, apply one kind with `gbrain repair <kind> --apply` on the brain host after the user agrees. See `docs/guides/repair.md` |
+| A page write refused `owner_unavailable` with `detail: unbound_source` (classic Postgres) | Write the file, commit, `gbrain sync --source <id>` (remote: relay to the user); never claim or activate to get one write through. See `skills/conventions/agent-operator-protocol.md` |
 | A write or sync refused with `file_database_drift`, `ambiguous_source_path`, `physical_root_device_changed`, `cursor_processing_options_conflict`, `take_row_collision`, `invalid_source_uri`, `queue_capacity`, or doctor `parked_effects` | Relay the error's `suggestion` command; see `docs/guides/write-refusals.md` before running it |
 | A gbrain command or MCP tool returned an error, exited 3 (`confirmation_required`), 10 or 11, or printed `[AGENT]` / a notice block; "what does this error code mean" | Follow the agent operator protocol, `docs/protocol/AGENT_OPERATOR_v1.md` (read `code`, follow `fix.next`); look a code up offline with `gbrain errors <code>` |
 | Cross-modal review, second opinion | `skills/cross-modal-review/SKILL.md` |
@@ -9830,6 +9846,7 @@ Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/tro
 | [Doctor warns `host_identity_mismatch`, or maintenance jobs report `owner_unavailable` / `host_mismatch` for weeks](#host-identity-mismatch) | set `GBRAIN_HOME` on that process's supervisor to the value the check prints (the owner's home; config appends `.gbrain` itself) and restart it; never edit or delete a `host.json` | brain host, after the user agrees | `persistent_install` when it rewrites a service definition | `gbrain doctor --only host_identity_mismatch --json` |
 | [`fence_repair` or chronicle refused `owner_unavailable`, reason `host_mismatch`](#owner-unavailable) | `gbrain sources writer status --source <id> --json` on the brain host (the owner host id); run the step there, or give the worker and the shell one `GBRAIN_HOME`. Never copy or regenerate `host.json`. Do not retry from the same host | brain host | none | `gbrain sources writer status --source <id> --json` shows this host's id as the owner |
 | [`owner_unavailable`, reason `transfer_in_progress` or `clone_in_progress`](#owner-unavailable) | wait 30 s and retry the same step; the worktree is draining for a writer transfer or recovering from a topology clone | agent | none | `gbrain sources writer status --source <id> --json` shows state `active` |
+| [A page write refused `owner_unavailable`, detail `unbound_source`, on a classic Postgres brain](write-refusals.md#unbound-sources-on-postgres) | don't retry; write the page as `<slug>.md` in the source's checkout, commit it, and run `gbrain sync --source <id>` (a remote agent gives those steps to the user); database-only pages or managed mode are the user's choice | agent, after the user agrees (remote: user) | none | `gbrain get <slug> --source <id>` |
 | [`owner_unavailable`, reason `binding_missing`, `incarnation_changed`, `local_path_missing` or `coordination_path_missing`](#owner-unavailable) | `gbrain sources writer status --source <id> --json`; the registration is missing or outdated and re-binding or re-registering the checkout is the host administrator's decision | brain host | none | the same status read shows an active binding for this host |
 | [`gbrain repair fences` skipped a file `sync_in_progress` while a sync runs](repair.md#fence-repair-during-a-sync) | nothing: a write in flight or the running sync's frozen manifest still names that file; every other candidate repairs now and the next run picks this one up (`gbrain sync --source <id> --no-pull` finishes the sync) | agent | none | `gbrain doctor --only fence_integrity --json` |
 | [A Google or GitHub item is held (`connector_held_items`)](#held-connector-items) | `gbrain sources status <id>`, fix the cause, then `gbrain sources retry-held <id>` and `gbrain sync --source <id>` | agent, after the user agrees | `egress` (fetches from the provider again) | `gbrain doctor --only connector_held_items --json` |
@@ -10175,6 +10192,13 @@ at the deadline).
    Unset both to return to the default.
 3. Confirm with `gbrain doctor`: `global_maintenance_timeouts` is `ok` after the
    next job finishes within its deadline.
+
+Doctor also warns when the last three dream `patterns` or `synthesize`
+subagent children died at their own subagent timeout, even though each
+maintenance job completed (the phase records a partial result). Raise that
+child's timeout with `gbrain config set dream.<phase>.subagent_timeout_ms <ms>`;
+`gbrain dream --phase <phase>` reruns it and spends model tokens, so ask the
+user first. The warning clears once that phase's next child completes.
 ## auto_chronicle has no effect
 
 **Say to your agent:** *"Why aren't my meetings showing up as timeline events?"*

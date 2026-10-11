@@ -223,3 +223,34 @@ describe('the drain window on the real phase', () => {
     expect(await engine.executeRaw(`SELECT id FROM gbrain_cycle_locks`)).toEqual([]);
   }, 30_000);
 });
+
+describe('#6425: budget stop', () => {
+  it('a batch that budget-skipped items stops with budget, spent and cap, after one batch', async () => {
+    let batches = 0;
+    let counts = 0;
+    const result = await runExtractAtomsDrain({
+      withLock: (work) => work(new AbortController().signal),
+      runBatch: async () => { batches++; return { extracted: 0, skipped: 0, budgetSkipped: 2, budget: { spentUsd: 0.31, capUsd: 0.3 } }; },
+      countRemaining: async () => { counts++; return 5; },
+      now: Date.now,
+    }, { windowMs: 60_000, maxBatches: 10 });
+    expect(batches).toBe(1);
+    expect(result.stopped).toBe('budget');
+    expect(result.status).toBe('ok');
+    expect(result.spent_usd).toBe(0.31);
+    expect(result.budget_usd).toBe(0.3);
+    expect(result.remaining).toBe(5);
+    expect(counts).toBe(2);
+  });
+
+  it('a drained final recount still reports drained over a budget stop', async () => {
+    let remaining = 1;
+    const result = await runExtractAtomsDrain({
+      withLock: (work) => work(new AbortController().signal),
+      runBatch: async () => { remaining = 0; return { extracted: 1, skipped: 0, budgetSkipped: 1, budget: { spentUsd: 0.3, capUsd: 0.3 } }; },
+      countRemaining: async () => remaining,
+      now: Date.now,
+    }, { windowMs: 60_000, maxBatches: 10 });
+    expect(result.stopped).toBe('drained');
+  });
+});

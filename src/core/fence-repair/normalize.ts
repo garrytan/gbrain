@@ -23,7 +23,7 @@ import { structuralPass } from './structure.ts';
 import type { FenceCtx, FenceFix, FenceIssue, FencePage, FenceSection, StoredRowMap } from './types.ts';
 
 /** Rule-set version; bump when a rule widens. It is part of the hold `fence_version` (`FENCE_VERSION`), so older holds are re-screened. */
-export const FENCE_RULES_VERSION = 3;
+export const FENCE_RULES_VERSION = 4;
 
 export interface NormalizeResult<T extends FencePage> {
   page: T;

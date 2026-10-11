@@ -36,9 +36,9 @@ describe('a correct repair passes', () => {
     expect(check(BEFORE, page(facts(ROW1_FIXED, ROW2)), PRIVATE, 'deterministic')).toEqual({ ok: true });
   });
 
-  test('a page that compiles validates against itself, even under a header with an unmapped column name', () => {
+  test('#6385: a header with an unmapped column name no longer compiles, so the page does not validate against itself (gate a)', () => {
     const odd = page(facts(ROW2).replace('| notability |', '| salience |'));
-    expect(check(odd, odd)).toEqual({ ok: true });
+    expect(check(odd, odd)).toMatchObject({ ok: false, gate: 'a', reason: 'still_invalid' });
   });
 
   test('a close_fence repair passes', () => {

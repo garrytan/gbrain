@@ -68,6 +68,7 @@ test/ci-local-empty-mounts.test.ts	(file-level)	2	readFileSync
 test/claude-cli-recipe.test.ts	claude-cli LanguageModel — CLI too old for the provider flags	2	readFileSync
 test/claude-cli-recipe.test.ts	claude-cli LanguageModel — abort + error envelopes	13	readFileSync
 test/claude-cli-recipe.test.ts	claude-cli LanguageModel — context isolation	2	readFileSync
+test/claude-cli-recipe.test.ts	claude-cli LanguageModel — output cap (#6424)	2	readFileSync
 test/claude-cli-recipe.test.ts	claude-cli LanguageModel — text-only round trip	4	readFileSync
 test/claude-cli-recipe.test.ts	claude-cli LanguageModel — tool use	17	readFileSync
 test/claude-cli-recipe.test.ts	claude-cli recipe registration	2	readFileSync
@@ -187,6 +188,7 @@ test/fix-wave-structural.test.ts	v0.42.20.0 — background-work registry drains 
 test/fix-wave-structural.test.ts	v0.42.20.0 — search-cache drained via the background-work registry	1	source-surface-helper
 test/fix-wave-structural.test.ts	v0.42.43.0 #2095 — volunteer-events sink + cycle purge wiring (structural pins)	2	readFileSync,source-surface-helper
 test/frontmatter-install-hook.test.ts	frontmatter install-hook (B13)	25	readFileSync
+test/fts-cjk-boundary.test.ts	one copy of the DDL	2	readFileSync
 test/gbrain-owned-page-types.test.ts	#5881 gbrain-owned page types are declared by gbrain-base-v2	3	readFileSync
 test/get-page-federated-scope.test.ts	#2555 get_chunks federated scope	5	source-surface-helper
 test/get-page-federated-scope.test.ts	#4275 alias hop scope: archived sources, include_deleted, fuzzy precedence, grant precedence	5	source-surface-helper

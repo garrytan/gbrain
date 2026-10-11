@@ -11,7 +11,7 @@ import { assertPageRevision, PageRevisionConflictError, type PageSnapshot } from
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { digest } from '../persistence/digest.ts';
 import { quoteIdentifier, resolveWriteColumnFromConfigRows, vectorCastSuffix } from '../search/embedding-column.ts';
-import { getFtsLanguage } from '../fts-language.ts';
+import { getFtsLanguage, pageSearchVectorSql } from '../fts-language.ts';
 import { getEmbeddingModel } from '../ai/gateway.ts';
 import { refreshProjectionStatistics } from '../search/projection-statistics.ts';
 import { belowSafeChunkFence } from '../search/safe-chunks.ts';
@@ -27,8 +27,7 @@ export async function sealPageTextProjection(engine: BrainEngine, slug: string, 
   const current = guarded ?? await engine.readPageSnapshot(slug, { sourceId });
   if (!current) return;
   await engine.executeRaw(`UPDATE pages SET text_projection_revision=knowledge_revision,
-    search_vector=setweight(to_tsvector('${getFtsLanguage()}',COALESCE(title,'')),'A') ||
-      setweight(to_tsvector('${getFtsLanguage()}',$3::text),'C')
+    search_vector=${pageSearchVectorSql('title', '$3')}
     WHERE source_id=$1 AND slug=$2 AND knowledge_revision=$4::uuid`,
   [sourceId, slug, sanitizeRemoteBody(current.page.timeline), current.revision]);
 }
@@ -43,8 +42,7 @@ export async function sealImportedPage(engine: BrainEngine, slug: string, source
   chunkerSeal: number, pageId?: number): Promise<void> {
   const rows = await engine.executeRaw<{ id: number }>(`UPDATE pages SET chunker_version=$5,
     text_projection_revision=CASE WHEN knowledge_revision=$4::uuid THEN knowledge_revision ELSE text_projection_revision END,
-    search_vector=CASE WHEN knowledge_revision=$4::uuid THEN setweight(to_tsvector('${getFtsLanguage()}',COALESCE(title,'')),'A') ||
-      setweight(to_tsvector('${getFtsLanguage()}',$3::text),'C') ELSE search_vector END
+    search_vector=CASE WHEN knowledge_revision=$4::uuid THEN ${pageSearchVectorSql('title', '$3')} ELSE search_vector END
     WHERE source_id=$1 AND slug=$2 RETURNING id`,
   [sourceId, slug, live ? sanitizeRemoteBody(live.page.timeline) : '', live?.revision ?? null, chunkerSeal]);
   if (rows.length === 0) throw new Error(`Page not found: ${slug} (source=${sourceId})`);

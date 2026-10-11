@@ -42,7 +42,7 @@ export interface SearchTitlesStatement {
  * `'acm':*A`). Lexemes are single-quoted with `''` escapes in that form.
  */
 const WEIGHT_A_QUERY = (ftsLang: string): string =>
-  `regexp_replace(websearch_to_tsquery('${ftsLang}', $1)::text, '(''(?:[^'']|'''')*'')(?::(\\*))?', '\\1:\\2A', 'g')::tsquery`;
+  `regexp_replace(websearch_to_tsquery('${ftsLang}', gbrain_fts_input($1))::text, '(''(?:[^'']|'''')*'')(?::(\\*))?', '\\1:\\2A', 'g')::tsquery`;
 
 export function buildSearchTitlesStatement(query: string, opts: SearchOpts | undefined, dialect: SearchTitlesDialect): SearchTitlesStatement {
   const limit = clampSearchLimit(opts?.limit, 20, searchLimitCap());
@@ -57,7 +57,7 @@ export function buildSearchTitlesStatement(query: string, opts: SearchOpts | und
   // FTS config name (e.g. 'english', 'pt_br'). Validated by getFtsLanguage()
   // — safe to interpolate into raw SQL.
   const ftsLang = getFtsLanguage();
-  const tsq = `websearch_to_tsquery('${ftsLang}', $1)`;
+  const tsq = `websearch_to_tsquery('${ftsLang}', gbrain_fts_input($1))`;
   const matchSql = safeChunks ? `p.search_vector @@ ${WEIGHT_A_QUERY(ftsLang)}` : `p.search_vector @@ ${tsq}`;
   const rankSql = safeChunks ? `ts_rank_cd(ts_filter(p.search_vector, '{a}'), ${tsq})` : `ts_rank_cd(p.search_vector, ${tsq})`;
 

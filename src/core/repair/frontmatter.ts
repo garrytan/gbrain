@@ -399,7 +399,8 @@ export const frontmatterRepair: RepairHandler = {
         throw opError('invalid_params', 'gbrain repair frontmatter --apply writes only the set a preview printed.',
           `Preview first: ${shellQuote(preview)} — show the user the per-file diffs, then run the apply command it prints (with --yes --expect <preview-hash>).`);
       }
-      const approved = await loadApprovedSet<ApprovedSetItem>(engine, { command: 'frontmatter', hash: opts.expect, previewCommand: shellQuote(preview) });
+      const approved = await loadApprovedSet<ApprovedSetItem>(engine, { command: 'frontmatter', hash: opts.expect, previewCommand: shellQuote(preview),
+        emptyHash: async () => previewHash({ kind: 'frontmatter-v1', brain_id: scope.brain_id, sources: (await engine.executeRaw<{ id: string; incarnation: string }>('SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids])), selection, items: [] }) });
       if (approved.items.some(entry => !sameSelection(entry.selection, selection))) throw previewChangedError(opts.expect, shellQuote(preview));
       for (const sourceId of new Set(approved.items.map(entry => entry.source_id))) {
         const named = await unfinishedSyncPath(engine, sourceId, new Set(approved.items.filter(entry => entry.source_id === sourceId).flatMap(entry => [entry.path, entry.source_path])));

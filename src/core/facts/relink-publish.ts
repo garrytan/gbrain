@@ -34,6 +34,7 @@ import { decideSingleFact } from './single-prepare.ts';
 import { isFactWithdrawn } from './withdrawal.ts';
 import { appendContextNote } from './subject-infer.ts';
 import { normalizeTargetFences } from '../fence-repair/import-step.ts';
+import { refuseUnparsedRewrite } from '../fence-repair/refusal.ts';
 import { pageFencesNormalized } from '../fence-repair/report.ts';
 
 export const RELINK_OPERATION = 'relink_facts';
@@ -186,7 +187,9 @@ export async function prepareRelinkMutation(engine: BrainEngine, row: WriteReque
       const v = link.value;
       const rowNum = next++;
       rowNums.set(link.id, rowNum);
-      body = upsertFactRow(body, fenceRow(v, rowNum, appendContextNote(v.context as string | null, byId.get(link.id)!.note))).body;
+      // #6385 R12: a fence that does not parse cleanly refuses typed (`fence_malformed` below) instead of losing rows.
+      body = refuseUnparsedRewrite({ compiled_truth: body, timeline }, row.slug, row.source_id,
+        () => upsertFactRow(body, fenceRow(v, rowNum, appendContextNote(v.context as string | null, byId.get(link.id)!.note))).body);
     }
   }
   const page = links.length ? await (await import('../persistence/page-prepare.ts')).preparePageMutation(engine, { ...row, intent: {
