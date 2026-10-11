@@ -388,7 +388,12 @@ A self-registered client goes through three gates:
 2. **Owner approval on `/authorize`.** Every authorization-code connection
    redirects to the admin dashboard, where you see the client, its redirect
    URI, and the requested scopes, and approve or deny. No code is minted
-   until you approve. Consent never widens the registered scope.
+   until you approve. Consent never widens the registered scope. For a newly
+   self-registered client you also choose the source it reads and writes
+   (it registers on `default`); the choice is recorded in the grant audit
+   (`action: consent`), and the first approval ends the choice, so later
+   requests show the source read-only. A `client_credentials` client never
+   gets this choice and stays on `default`.
 3. **Per-request clamp.** Issued codes and tokens are re-intersected with the
    client's current registered scope, so a later `rescope-client` takes effect
    on the next request.

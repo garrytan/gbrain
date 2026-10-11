@@ -300,6 +300,7 @@ test/reconcile-owner-journey.serial.test.ts	global-state	global-state: R3: const
 test/reindex-code-max-cost.serial.test.ts	global-state	global-state: configureGateway changes the process-wide AI gateway
 test/reindex-code-model-source.serial.test.ts	R1	R1: mutates process.env (GBRAIN_NO_CODE_MODEL_NUDGE)
 test/reindex-code-nudge.serial.test.ts	R1	R1: mutates process.env (GBRAIN_NO_CODE_MODEL_NUDGE)
+test/reindex-search-vector-pages.serial.test.ts	R1	R1: mutates process.env (bracket or computed key)
 test/reindex-search-vector.serial.test.ts	R1	R1: mutates process.env (bracket or computed key)
 test/reindex-trace-transparency.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll; R4: PGLiteEngine without an afterAll disconnect
 test/remediation-run-extras.serial.test.ts	R2	R2: mock.module(../src/core/minions/queue.ts, ../src/core/minions/wait-for-completion.ts) replaces modules for every file in the process

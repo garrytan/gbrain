@@ -16,7 +16,7 @@ import { codexAdapter, mapCodexLine } from '../src/core/transcripts/codex.ts';
 import { parseCodexHookTranscript } from '../src/core/transcripts/codex-hook-lane.ts';
 import { claudeCodeAdapter } from '../src/core/transcripts/claude-code.ts';
 import type { FileDiagnostics, ParsedSession } from '../src/core/transcripts/types.ts';
-import { readHeartbeatTail, runHook } from '../src/commands/hook.ts';
+import { hookStatusPath, readHeartbeatTail, runHook } from '../src/commands/hook.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { runTranscriptsIngest } from '../src/core/transcripts/ingest.ts';
@@ -224,5 +224,43 @@ describe('E-N4: assistant turns with no user turn are flagged, never silent', ()
       expect(ok.driftFiles).toBe(0);
       expect(ok.cleanScan).toBe(true);
     });
+  });
+});
+
+describe('#6399: a header-only rollout (Codex opened and closed with no prompt)', () => {
+  const bigHeader = JSON.stringify({
+    timestamp: '2026-10-01T09:00:00.000Z',
+    type: 'session_meta',
+    payload: { id: 'r-empty', session_id: 'r-empty', timestamp: '2026-10-01T09:00:00.000Z', cwd: '/repo', cli_version: '0.159.3', base_instructions: { text: 'x'.repeat(19_000) } },
+  });
+  async function sessionEnd(id: string, lines: string[]) {
+    const codexHome = join(tmp, 'codex');
+    process.env.CODEX_HOME = codexHome;
+    const day = join(codexHome, 'sessions', '2026', '10', '01');
+    mkdirSync(day, { recursive: true });
+    const rollout = join(day, `rollout-2026-10-01T09-00-00-${id}.jsonl`);
+    writeFileSync(rollout, lines.join('\n') + '\n');
+    expect(await runHook(['session-end'], { harness: 'codex', stdin: JSON.stringify({ session_id: id, transcript_path: rollout, cwd: join(tmp, 'ws') }) })).toBe(0);
+    return (await readHeartbeatTail(1))[0]!;
+  }
+
+  test('parser: only session headers → recognizedOnly; a header plus an unknown record or a torn line → not', () => {
+    expect(parseCodexHookTranscript(writeRollout('h.jsonl', [bigHeader])).recognizedOnly).toBe(true);
+    expect(parseCodexHookTranscript(writeRollout('hu.jsonl', [bigHeader, JSON.stringify({ type: 'brand_new_record', payload: {} })])).recognizedOnly).toBe(false);
+    expect(parseCodexHookTranscript(writeRollout('ht.jsonl', [bigHeader, '{"type":"event_msg","payl'])).recognizedOnly).toBe(false);
+    expect(parseCodexHookTranscript(FIXTURE_0154).recognizedOnly).toBe(false);
+  });
+
+  test('session-end: header-only ends ok/empty_session with no status alert and no corpus file', async () => {
+    const hb = await sessionEnd('r-empty', [bigHeader]);
+    expect(hb).toMatchObject({ event: 'session-end', outcome: 'ok', reason: 'empty_session', turns: 0 });
+    expect(hb.bytes).toBeGreaterThan(19_000);
+    expect(existsSync(await hookStatusPath())).toBe(false);
+    expect(existsSync(join(tmp, '.gbrain', 'transcripts', 'corpus', 'r-empty.txt'))).toBe(false);
+  });
+
+  test('session-end: a header plus an unknown record stays parser_drift', async () => {
+    const hb = await sessionEnd('r-drift', [bigHeader.replace(/r-empty/g, 'r-drift'), JSON.stringify({ type: 'brand_new_record', payload: { text: 'hi' } })]);
+    expect(hb).toMatchObject({ event: 'session-end', outcome: 'error', reason: 'parser_drift' });
   });
 });

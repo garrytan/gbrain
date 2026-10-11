@@ -16,7 +16,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { defineNormalizer, expectGolden, expectNormalizerStable } from './helpers/golden.ts';
 import { doctorJsonNormalizer, makeDoctorHome, networkAttempts, runGbrain, type DoctorHome, type GbrainRun } from './helpers/doctor-json-golden.ts';
-import { buildHotCheckFixture, editHotCheckFixture, pgliteSql } from './helpers/doctor-hot-checks-fixture.ts';
+import { buildHotCheckFixture, editHotCheckFixture, HOT_CHECK_CLOCK, pgliteSql } from './helpers/doctor-hot-checks-fixture.ts';
 
 const DOCTOR = doctorJsonNormalizer();
 const homes: DoctorHome[] = [];
@@ -28,7 +28,7 @@ type Captures = { first: GbrainRun; second: GbrainRun };
 const BOTH = defineNormalizer<Captures>(DOCTOR.name, (c) => ({ first: DOCTOR.apply(c.first), second: DOCTOR.apply(c.second) }));
 
 async function capture(): Promise<Captures> {
-  const h = makeDoctorHome('doctor-hot-checks');
+  const h = makeDoctorHome('doctor-hot-checks', { clock: HOT_CHECK_CLOCK });
   homes.push(h);
   const init = await runGbrain(h, ['init', '--pglite', '--no-embedding']);
   if (init.exitCode !== 0) throw new Error(`gbrain init failed (${init.exitCode}): ${init.stderr}`);

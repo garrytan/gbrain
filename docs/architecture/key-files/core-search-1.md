@@ -43,6 +43,11 @@ Current behavior and load-bearing invariants; history belongs in Git and CHANGEL
   regardless of which deadline path wins. Provider failures before that deadline
   retain their classification. The timeout budget and keyword fallback are unchanged;
   pinned by `test/search/query-embed-deadline.test.ts` and the real transport matrix.
+  The shared query-embed deadline (`lazyQueryEmbedDeadline`, threaded to the
+  vector arm as the `_queryEmbedDeadline` getter) starts at the first embed
+  request, so lexical work and expansion before the vector arm don't spend it;
+  the cache-lookup and vector-arm embeds still share one budget
+  (`test/search/query-embed-deadline-start.test.ts`).
 
 - `src/core/search/image-loader.ts` — `loadImageInput(input, opts)` accepts a local path, `data:` URI, or `http(s)://` URL. Magic-byte sniff for PNG/JPEG/WebP. Hard size cap (default 10 MB, configurable via `search.image_query.max_bytes`). URLs route through `fetchWithSSRFGuard` so DNS rebinding + redirect chains are defeated; shared guarded transport pins validated DNS answers and streams decoded bodies with a 2 MiB remote cap (10 MiB local cap). `ImageLoadError` with discriminated `code` (INVALID_FORMAT / OVERSIZED / INVALID_URL / FETCH_FAILED / TIMEOUT / SSRF_BLOCKED / NOT_FOUND).
 
