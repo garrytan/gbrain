@@ -219,6 +219,7 @@ export function renderRepairResult(result: RepairResult, opts: { diff: boolean }
   for (const c of result.capacity) lines.push(`  capacity ${c.scope} ${c.resource}: ${c.used} of ${c.limit} (stops at ${c.stop_at})`);
   if (result.resumed_from) lines.push(`  resuming after item ${result.resumed_from.phase}:${result.resumed_from.id}`);
   if (result.mode === 'apply') lines.push(`  applied ${result.applied}, skipped ${result.skipped}${result.complete ? ', complete' : ''}`);
+  if (result.mode === 'apply' && (result.outcomes?.failed ?? 0) > 0) lines.push(`  failed ${result.outcomes!.failed}`);
   if (result.mode === 'apply' && result.repaired !== undefined) {
     const left = Object.entries(result.remaining ?? {}).map(([k, v]) => `${k}=${v}`).join(', ');
     lines.push(`  repaired ${result.repaired}; ${left ? `still waiting: ${left}` : 'nothing left in this selection'}`);
@@ -237,6 +238,11 @@ export function renderRepairResult(result: RepairResult, opts: { diff: boolean }
   }
   if (result.mode === 'dry_run' && result.affected) lines.push(`  apply: ${result.apply_command}`);
   return lines.join('\n');
+}
+
+/** Completed scans can still contain failed items and must report a nonzero verdict. */
+export function repairExitVerdict(results: ReadonlyArray<Pick<RepairResult, 'stopped' | 'outcomes'>>): 0 | 1 {
+  return results.some(result => result.stopped || (result.outcomes?.failed ?? 0) > 0) ? 1 : 0;
 }
 
 export async function runRepairCommand(engine: BrainEngine, args: string[]): Promise<void> {
@@ -302,5 +308,5 @@ export async function runRepairCommand(engine: BrainEngine, args: string[]): Pro
     }
     if (explicitKindsNotRun.length) console.log(`Explicit-only kinds (not run without their name; preview each): ${explicitKindsNotRun.map(n => n.preview_command).join('; ')}`);
   }
-  if (results.some(r => r.stopped)) setCliExitVerdict(1);
+  if (repairExitVerdict(results)) setCliExitVerdict(1);
 }
