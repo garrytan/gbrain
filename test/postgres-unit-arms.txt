@@ -116,6 +116,7 @@ test/shared-skills-retention-capacity.test.ts
 test/shared-skills-source-opt-out.test.ts
 test/shared-skills-writer-boundary.test.ts
 test/source-retire-missing-checkout.test.ts
+test/source-row-diagnostics.test.ts
 test/stats-health-source-scope.test.ts
 test/sync-drain-claims.test.ts
 test/sync-drain-write-capacity.test.ts

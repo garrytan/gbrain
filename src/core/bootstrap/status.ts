@@ -49,6 +49,7 @@ import {
   GBRAIN_HOOK_MARKER_KEY,
   GBRAIN_HOOK_MARKER_VALUE,
 } from './host-specs.ts';
+import { gitChildEnv } from '../git-env.ts';
 
 // ---------------------------------------------------------------------------
 // The phase list [D5] — single TS source of truth
@@ -100,6 +101,7 @@ interface PhaseSpec {
 export function gitOriginUrl(ws: string): string | null {
   try {
     const out = execFileSync('git', ['-C', ws, 'remote', 'get-url', 'origin'], {
+      env: gitChildEnv(),
       stdio: ['ignore', 'pipe', 'ignore'],
       timeout: 5_000,
     })

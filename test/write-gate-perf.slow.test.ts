@@ -90,13 +90,14 @@ async function referenceWork(text: string): Promise<void> {
 }
 
 type Stats = { p50: number; p95: number; max: number };
+type Round = { gate: Stats; reference: Stats; samples: { gate: number[]; reference: number[] } };
 const stats = (times: number[]): Stats => {
   const sorted = [...times].sort((x, y) => x - y);
   return { p50: sorted[Math.floor(sorted.length / 2)]!, p95: sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * 0.95) - 1)]!, max: sorted[sorted.length - 1]! };
 };
 
 /** Gate samples and reference samples alternate, so whatever load the machine is under hits both alike. */
-async function measureInterleaved(text: string, runs: number, warmup: number): Promise<{ gate: Stats; reference: Stats }> {
+async function measureInterleaved(text: string, runs: number, warmup: number): Promise<Round> {
   const gate: number[] = [];
   const reference: number[] = [];
   for (let i = 0; i < warmup + runs; i++) {
@@ -108,7 +109,17 @@ async function measureInterleaved(text: string, runs: number, warmup: number): P
     await referenceWork(text);
     if (i >= warmup) { gate.push(gateMs); reference.push(performance.now() - start); }
   }
-  return { gate: stats(gate), reference: stats(reference) };
+  return { gate: stats(gate), reference: stats(reference), samples: { gate, reference } };
+}
+
+/** #6430: a failed absolute check carries every round's raw samples, so the next occurrence shows where the slow samples fell. */
+function withRoundSamples(rounds: Round[], check: () => void): void {
+  try { check(); } catch (error) {
+    const raw = rounds.map((r, i) => `round ${i + 1} gate [${r.samples.gate.map(x => x.toFixed(2)).join(', ')}]\n`
+      + `round ${i + 1} reference [${r.samples.reference.map(x => x.toFixed(2)).join(', ')}]`).join('\n');
+    if (error instanceof Error) error.message += `\n[write-gate perf] raw samples (ms, in measurement order):\n${raw}`;
+    throw error;
+  }
 }
 
 async function measure(text: string, runs: number, warmup: number): Promise<{ p50: number; p95: number; max: number }> {
@@ -134,7 +145,7 @@ afterAll(async () => { await engine.disconnect(); });
 describe('write gate p95 (assessment + receipt insert)', () => {
   test(`300 KB typical page: p95 within ${BUDGET_MS} ms`, async () => {
     const text = typicalCorpus(300_000);
-    const rounds: Array<{ gate: Stats; reference: Stats }> = [];
+    const rounds: Round[] = [];
     for (let i = 0; i < 3; i++) {
       const r = await measureInterleaved(text, 60, 10);
       rounds.push(r);
@@ -146,11 +157,25 @@ describe('write gate p95 (assessment + receipt insert)', () => {
     expect({ p95_ratio: ratio(x => x.p95) }).toEqual({ p95_ratio: Math.min(ratio(x => x.p95), RATIO_LIMIT) });
     expect({ p50_ratio: ratio(x => x.p50) }).toEqual({ p50_ratio: Math.min(ratio(x => x.p50), RATIO_LIMIT) });
     const quiet = rounds.filter(r => r.reference.p95 <= QUIET_REFERENCE_P95_MS * QUIET_TOLERANCE);
-    if (quiet.length) expect(Math.min(...quiet.map(r => r.gate.p95))).toBeLessThan(BUDGET_MS);
+    if (quiet.length) withRoundSamples(rounds, () => expect(Math.min(...quiet.map(r => r.gate.p95))).toBeLessThan(BUDGET_MS));
     else console.log(`[write-gate perf] absolute ${BUDGET_MS} ms check skipped for load: reference p95 above ${(QUIET_REFERENCE_P95_MS * QUIET_TOLERANCE).toFixed(2)} ms in every round`);
     const [{ verdict }] = await engine.executeRaw<{ verdict: string }>('SELECT verdict FROM write_gate_receipts');
     expect(verdict).toBe('flag'); // the shipped default (write_gate.external_mode=flag since the paid eval); quarantine costs the same assessment and receipt
   }, 120_000);
+
+  test('#6430: a failed absolute check reports every round\'s raw gate and reference samples', () => {
+    const round = (gate: number[], reference: number[]): Round => ({ gate: stats(gate), reference: stats(reference), samples: { gate, reference } });
+    const rounds = [round([3.1, 5.05], [1.9, 2.25]), round([3.2, 3.78], [2.0, 2.95])];
+    let message = '';
+    try { withRoundSamples(rounds, () => expect(5.05).toBeLessThan(BUDGET_MS)); } catch (error) { message = (error as Error).message; }
+    expect(message).toContain('round 1 gate [3.10, 5.05]');
+    expect(message).toContain('round 1 reference [1.90, 2.25]');
+    expect(message).toContain('round 2 gate [3.20, 3.78]');
+    expect(message).toContain('round 2 reference [2.00, 2.95]');
+    let passed = true;
+    try { withRoundSamples(rounds, () => expect(3.78).toBeLessThan(BUDGET_MS)); } catch { passed = false; }
+    expect(passed).toBe(true);
+  });
 
   test('300 KB of agent-instruction-dense docs (worst realistic prose) is reported', async () => {
     const docs = walk(join(ROOT, 'docs'), '.md').map(f => readFileSync(f, 'utf8')).join('\n\n').slice(0, 300_000);

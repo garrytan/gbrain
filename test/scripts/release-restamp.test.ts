@@ -391,6 +391,22 @@ describe('release:restamp end to end', () => {
     expect(r.out).toContain('PR title: v0.1.2.0 feat(sync): faster widgets');
   }, 120_000);
 
+  test('an [Unreleased] branch entry is stamped to the target version; --dry-run runs the same rebuild', () => {
+    const fx = fixture();
+    const { preamble, sections } = splitChangelog(read(fx.work, 'CHANGELOG.md'));
+    put(fx.work, { 'CHANGELOG.md': [preamble, '## [Unreleased]\n\nWidgets now sync twice as fast.\n', ...sections.map((s) => s.text)].join('\n'), 'src/widgets.ts': 'export const W = 1;\n' });
+    commit(fx.work, 'feat: widgets');
+    landOnMaster(fx, '0.1.1.0', null);
+    const dry = restamp(fx.work, ['--dry-run']);
+    expect({ code: dry.code, planned: dry.out.includes('"## [Unreleased]" -> "## [0.1.2.0] - 2026-10-05"') }).toEqual({ code: 0, planned: true });
+    const r = restamp(fx.work);
+    expect(r.code).toBe(0);
+    const text = read(fx.work, 'CHANGELOG.md');
+    expect(text).not.toContain('[Unreleased]');
+    expect(splitChangelog(text).sections.map((s) => s.header)).toEqual(['## [0.1.2.0] - 2026-10-05', '## [0.1.1.0] - 2026-10-04', '## [0.1.0.0] - 2026-01-01']);
+    expect(text).toContain('## [0.1.2.0] - 2026-10-05\n\nWidgets now sync twice as fast.');
+  }, 120_000);
+
   test('--no-commit leaves the restamp edits staged on top of the merge commit', () => {
     const fx = fixture();
     branchWork(fx, '0.1.1.0', {});
@@ -465,6 +481,14 @@ describe('release:restamp helpers', () => {
     const once = rebuildChangelog(merged, entry, '0.1.1.0', '0.1.2.0', '2026-10-05');
     expect(rebuildChangelog(once, entry, '0.1.1.0', '0.1.2.0', '2026-10-05')).toBe(once);
     expect(once).toBe(changelog(release('0.1.2.0', '2026-10-05', 'Branch v0.1.2.0 notes.'), release('0.1.1.0', '2026-10-04', 'Master.'), release('0.1.0.0', '2026-01-01', 'First.')));
+  });
+
+  test('CHANGELOG rebuild stamps an [Unreleased] entry without rewriting version mentions in its body', () => {
+    const entry = { header: '## [Unreleased]', text: '## [Unreleased]\n\nFollows v0.1.1.0.\n' };
+    const merged = changelog('## [Unreleased]\n\nFollows v0.1.1.0.\n', release('0.1.1.0', '2026-10-04', 'Master.'));
+    const once = rebuildChangelog(merged, entry, 'Unreleased', '0.1.2.0', '2026-10-05');
+    expect(once).toBe(changelog(release('0.1.2.0', '2026-10-05', 'Follows v0.1.1.0.'), release('0.1.1.0', '2026-10-04', 'Master.')));
+    expect(rebuildChangelog(once, entry, 'Unreleased', '0.1.2.0', '2026-10-05')).toBe(once);
   });
 
   test('every required row of the CLAUDE.md "Version locations" table is restamped', () => {

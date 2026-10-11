@@ -140,6 +140,7 @@ test/embed-backfill-cli-admission.serial.test.ts	global-state	global-state: R3: 
 test/embed-exit-code-3037.serial.test.ts	global-state	global-state: binds local servers/ports
 test/embed-input-type-wire.serial.test.ts	global-state	global-state: configureGateway changes the process-wide AI gateway
 test/embed-lock-skipped.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)
+test/embed-max-usd-metered.serial.test.ts	global-state	global-state: configureGateway and __setEmbedTransportForTests change the process-wide AI gateway; replaces globalThis.fetch for the Voyage multimodal stub
 test/embed-null-signature-warning-5527.serial.test.ts	global-state	global-state: process-wide test seams __setEmbedTransportForTests; configureGateway changes the process-wide AI gateway; spyOn console.error
 test/embed-oversize-heal-drain.serial.test.ts	R2	R2: mock.module(../src/core/embedding.ts) replaces modules for every file in the process
 test/embed-partial-failure-3037.serial.test.ts	R2	R2: mock.module(../src/core/embedding.ts) replaces modules for every file in the process
