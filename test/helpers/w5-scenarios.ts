@@ -234,10 +234,10 @@ export async function managedStaleSweepManyPages(databaseUrl?: string) {
     await disposePersistenceConsumer(engine);
     let open = 0, most = 0;
     const transaction = engine.transaction;
-    engine.transaction = (async function (this: BrainEngine, fn: Parameters<BrainEngine['transaction']>[0]) {
-      if (this !== engine) return transaction.call(this, fn);
+    engine.transaction = (async function (this: BrainEngine, fn: Parameters<BrainEngine['transaction']>[0], opts?: Parameters<BrainEngine['transaction']>[1]) {
+      if (this !== engine) return transaction.call(this, fn, opts);
       open++; most = Math.max(most, open);
-      try { return await transaction.call(this, fn); } finally { open--; }
+      try { return await transaction.call(this, fn, opts); } finally { open--; }
     }) as BrainEngine['transaction'];
     try {
       const { extractManagedStaleLinks, MANAGED_LINK_EXTRACTION_WIDTH } = await import('../../src/core/persistence/links-maintenance.ts');
