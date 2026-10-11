@@ -4,6 +4,7 @@ import { loadSyncFailures, unacknowledgedSyncFailures, decideSyncFailureSeverity
 import { formatManagedSyncFailure, managedSyncRetryCommand, readManagedSyncFailures } from '../../../core/persistence/sync-failures.ts';
 import { resolveHoursEnv } from '../../../core/env-number.ts';
 import { makeRemediationStep } from '../../../core/remediation-step.ts';
+import { classifyManagedSyncOrphans } from '../../../core/persistence/managed-sync-orphans.ts';
 
 export async function checkSyncFailures(engine: BrainEngine | null, opts: { sourceIds?: string[]; remote?: boolean } = {}): Promise<Check | null> {
   // #5452: sync refuses an archived source, so its failures cannot be cleared and are not a live health signal.
@@ -31,10 +32,17 @@ export async function checkSyncFailures(engine: BrainEngine | null, opts: { sour
       oldest_failure: unresolvedLegacy.map(row => row.ts).sort()[0] },
     severity: severity.status === 'fail' ? 'high' : 'medium', est_seconds: 30, est_usd_cost: 0,
     rationale: `Retry ${severity.unresolved} unresolved sync failure(s)` })];
-  const retries = [...new Set(managed.map(row => managedSyncRetryCommand(row)))];
+  // #5459: a failure nothing current can resume or clear is named as an orphan with its repair, not as a retry that never clears.
+  const orphans = engine && managed.length ? (await classifyManagedSyncOrphans(engine, opts.sourceIds ?? null).catch(() => ({ orphans: [] }))).orphans : [];
+  const orphanKeys = new Set(orphans.map(orphan => orphan.cursor_key));
+  const resumable = managed.filter(row => !orphanKeys.has(row.cursor_key));
+  const retries = [...new Set(resumable.map(row => managedSyncRetryCommand(row)))];
+  const orphanNote = orphans.length ? ` ${orphans.length} of these (${orphans.map(orphan => `${orphan.source_id}:${orphan.cursor_key.slice(0, 12)} ${orphan.reason}`).join(', ')}) cannot be resumed or cleared by any sync: `
+    + `preview gbrain repair managed-sync-orphans${new Set(orphans.map(orphan => orphan.source_id)).size === 1 ? ` --source ${orphans[0]!.source_id}` : ''} and apply with the hash it prints (docs/guides/repair.md#managed-sync-orphans).` : '';
   const recovery = requiresManagedRetry
-    ? `Fix the cause, then run ${retries.length ? retries.join(' ; ') : 'gbrain sync --no-pull --retry-failed with the same source and options'}. Completed full runs do not resolve a different unfinished cursor.`
+    ? `${resumable.length || !orphans.length ? `Fix the cause, then run ${retries.length ? retries.join(' ; ') : 'gbrain sync --no-pull --retry-failed with the same source and options'}. Completed full runs do not resolve a different unfinished cursor.` : ''}${orphanNote}`.trim()
     : "Fix the file(s) and re-run 'gbrain sync', or use 'gbrain sync --skip-failed' to acknowledge legacy file failures.";
   return { name: 'sync_failures', status: severity.status, message: `${summary} ${details.join('; ')} ${recovery}`,
-    remediation, remediation_status: remediation ? 'remediable' : 'blocked', ...(engine ? {} : { message: `${summary} Durable sync state is unavailable without a database connection; the local ledger is only a compatibility mirror.` }) };
+    remediation, remediation_status: remediation ? 'remediable' : 'blocked', ...(orphans.length ? { details: { orphans } } : {}),
+    ...(engine ? {} : { message: `${summary} Durable sync state is unavailable without a database connection; the local ledger is only a compatibility mirror.` }) };
 }

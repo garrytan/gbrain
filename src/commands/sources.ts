@@ -71,6 +71,7 @@ import { sqlQueryForEngine } from '../core/sql-query.ts';
 import { preflightOauthClientColumns } from './auth.ts';
 import { deleteSourceRow } from '../core/source-delete.ts';
 import { USAGE_EXIT_CODE } from '../core/exit-codes.ts';
+import { isSyncStrategy } from '../core/sync.ts';
 
 // ── Validation ──────────────────────────────────────────────
 
@@ -103,6 +104,7 @@ interface SourceListEntry {
   local_path: string | null;
   federated: boolean;
   mirror_read_only: boolean;
+  strategy: 'markdown' | 'code' | 'auto' | null;
   page_count: number;
   last_sync_at: string | null;
 }
@@ -728,6 +730,7 @@ async function runList(engine: BrainEngine, args: string[]): Promise<void> {
       local_path: r.local_path,
       federated: isFederated(r.config),
       mirror_read_only: parseConfig(r.config).mirror_read_only === true,
+      strategy: isSyncStrategy(parseConfig(r.config).strategy) ? parseConfig(r.config).strategy as 'markdown' | 'code' | 'auto' : null,
       page_count: pageCount,
       last_sync_at: r.last_sync_at ? new Date(r.last_sync_at).toISOString() : null,
     });
@@ -1897,6 +1900,7 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
     case 'federate':   return runFederate(engine, rest, true);
     case 'unfederate': return runFederate(engine, rest, false);
     case 'mirror-readonly': case 'mirror-writable': return (await import('./sources-mirror.ts')).runMirrorMode(engine, rest, sub === 'mirror-readonly');
+    case 'set-strategy': return (await import('./sources-strategy.ts')).runSetStrategy(engine, rest);
     case 'refresh':    return (await import('./sources-refresh.ts')).runSourcesRefresh(engine, rest);
     case 'archive':    return runArchive(engine, rest);
     case 'restore':    return runRestore(engine, rest);
@@ -1989,6 +1993,7 @@ Subcommands:
   unfederate <id>                   Isolate source from default search.
   mirror-readonly <id>              Read-only mirror (#5409): managed writes never touch its checkout.
   mirror-writable <id>              Undo mirror-readonly.
+  set-strategy <id> <markdown|code|auto>  Persist the sync strategy every sync of the source uses (PR #5955).
   refresh <id> [--dry-run] [--wait-drain <s>] [--fetch-timeout-ms <ms>] [--resume|--abandon] [--json]
                                     Managed brains: drain writes to the source's worktree, fast-forward
                                     it to its upstream (git merge --ff-only) and sync every source bound

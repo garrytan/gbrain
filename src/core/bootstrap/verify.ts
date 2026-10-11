@@ -28,6 +28,7 @@
  */
 
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
+import { managedFilesystemRootFor } from '../persistence/filesystem-guard.ts';
 import { submitPageMutation } from '../persistence/page-mutations.ts';
 import { withCoordinatedWrite } from '../persistence/context.ts';
 import { pendingReceiptOf, pollCommand, resolveCliWriteWaitMs, WRITE_WAIT_ENV } from '../persistence/write-wait.ts';
@@ -1024,13 +1025,24 @@ async function checkHooksSmoke(engine: BrainEngine, ws: string, sourceId: string
   }
 }
 
-function checkPushProbe(ws: string): VerifyCheck {
+export function checkPushProbe(ws: string): VerifyCheck {
   const id = 'push_probe';
   try {
     // Read through the shared per-root reader [D8/D13] — a v0.45.8+ push
     // writes push-status-<roothash>.json, not the legacy single file, so the
     // old direct read reported "no push recorded" on every fresh install.
     const entries = readPushStatuses();
+    const origin = gitOriginUrl(ws);
+    // #5606: where a push is expected (an origin or a recorded push), a managed
+    // canonical worktree is pushed by the persistence owner's Git effect;
+    // sources push is refused there, so never recommend it. A local-only
+    // managed workspace stays local-only below.
+    const managed = (entries.length > 0 || origin) ? managedFilesystemRootFor(ws) : null;
+    if (managed) {
+      const source = managed.sourceId ?? '<source>';
+      return { id, ok: true, detail: `managed canonical worktree${managed.sourceId ? ` (source ${managed.sourceId})` : ''} — page writes are committed and pushed by the persistence owner's Git effect, not by sources push; `
+        + `check \`gbrain sources writer status ${source} --json\` (git_durability) and enable with \`gbrain sources writer git-durability ${source} --enable --dry-run\` if it is off` };
+    }
     if (entries.length > 0) {
       const { failing } = summarizePushStatuses(entries);
       if (failing.length > 0) {
@@ -1041,7 +1053,6 @@ function checkPushProbe(ws: string): VerifyCheck {
       const ok = entries.find((e) => e.ok === true);
       return { id, ok: true, detail: `last workspace push succeeded (${ok?.ts ?? 'unknown time'})` };
     }
-    const origin = gitOriginUrl(ws);
     if (origin) return { id, ok: true, warn: true, detail: 'origin exists but no push recorded yet — run `gbrain sources push` once to prove the persistence path' };
     return { id, ok: true, detail: 'local-only mode — no push expected' };
   } catch (e) {

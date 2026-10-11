@@ -254,6 +254,7 @@
       "persistence_graduation.persistence_graduation_singleton_check": "c CHECK ((singleton = 1))",
       "persistence_graduation.persistence_graduation_state_check": "c CHECK ((state = ANY (ARRAY['quiesced'::text, 'cutover'::text, 'rolled_back'::text, 'copying'::text, 'verifying'::text, 'verified'::text, 'authoritative'::text, 'verify_failed'::text, 'rollback_fenced'::text, 'rollback_approved'::text, 'source_restoring'::text, 'abandoned'::text])))",
       "persistence_graduation.persistence_graduation_trigger_bypass_check": "c CHECK (((trigger_bypass IS NULL) OR (trigger_bypass = ANY (ARRAY['session_replication_role'::text, 'disable_trigger'::text]))))",
+      "persistence_host_bindings.persistence_host_bindings_git_durability_check": "c CHECK ((git_durability = ANY (ARRAY['enabled'::text, 'disabled'::text])))",
       "persistence_host_bindings.persistence_host_bindings_pkey": "p PRIMARY KEY (worktree_id, host_id)",
       "persistence_host_bindings.persistence_host_bindings_worktree_id_fkey": "f FOREIGN KEY (worktree_id) REFERENCES persistence_worktrees(id)",
       "persistence_local_writers.persistence_local_writers_credential_hash_key": "u UNIQUE (credential_hash)",
@@ -2725,7 +2726,8 @@
           "1 worktree_id uuid/uuid NOT NULL",
           "2 host_id uuid/uuid NOT NULL",
           "3 local_path text/text NOT NULL",
-          "4 coordination_path text/text NOT NULL"
+          "4 coordination_path text/text NOT NULL",
+          "5 git_durability text/text NULL"
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },
