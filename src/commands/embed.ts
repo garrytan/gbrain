@@ -1,3 +1,4 @@
+import { jsonRequested } from '../core/cli-force-exit.ts';
 import { prepareProseChunks } from '../core/markdown-chunks.ts';
 import type { FenceChunkOverlay } from '../core/eligibility/fence-overlay.ts';
 import { prepareEmbeddingProjections, countArchivedEmbeddingWork, reportBlockedProjections } from '../core/embedding-readiness.ts';
@@ -881,7 +882,7 @@ export async function runEmbed(engine: BrainEngine, args: string[], selectedConf
   consent: { authorization: Authorization | null } | null = null): Promise<EmbedResult | EmbedFactsResult | StaleImageSweepResult | undefined> {
   if (args.includes('--facts')) {
     const result = await embedStaleFacts(engine, parseFactEmbedArgs(args), selectedConfig);
-    console.log(JSON.stringify(result, null, 2));
+    if (!jsonRequested(args)) console.log(JSON.stringify(result, null, 2));
     return result;
   }
   // Keyless clean refusal — see isKeylessStaleRefusal. Checked BEFORE the

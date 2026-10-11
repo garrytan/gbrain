@@ -30,6 +30,7 @@
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { submitPageMutation } from '../persistence/page-mutations.ts';
 import { withCoordinatedWrite } from '../persistence/context.ts';
+import { pendingReceiptOf, pollCommand, resolveCliWriteWaitMs, WRITE_WAIT_ENV } from '../persistence/write-wait.ts';
 import { maintenanceAttribution } from '../persistence/attribution.ts';
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
@@ -134,16 +135,26 @@ function findOp(name: string): Operation {
   return op;
 }
 
-function localCtx(engine: BrainEngine, sourceId: string, log?: (l: string) => void): OperationContext {
+export function localCtx(engine: BrainEngine, sourceId: string, log?: (l: string) => void): OperationContext {
   const sink = log ?? (() => {});
+  const config = (loadConfigFileOnly() ?? { engine: 'pglite' }) as GBrainConfig;
   return {
     engine,
-    config: (loadConfigFileOnly() ?? { engine: 'pglite' }) as GBrainConfig,
+    config,
     logger: { info: sink, warn: sink, error: sink },
     dryRun: false,
     remote: false,
     sourceId,
+    writeWaitMs: resolveCliWriteWaitMs({ config }),
   };
+}
+
+/** The roundtrip detail for a failed probe write: an admitted, still-pending write names its request and the next step. */
+export function putPageFailureDetail(error: unknown, waitMs: number | undefined): string {
+  const receipt = pendingReceiptOf(error);
+  if (!receipt) return `put_page failed: ${(error as Error).message}`;
+  return `put_page was admitted but is still pending after ${Math.round((waitMs ?? 0) / 1000)}s (request ${receipt.request_id}); `
+    + `check it with \`${pollCommand(receipt.request_id)}\`, or raise ${WRITE_WAIT_ENV} and rerun gbrain bootstrap verify`;
 }
 
 // ---------------------------------------------------------------------------
@@ -812,7 +823,7 @@ async function runRoundtrip(
       return { checks };
     }
   } catch (e) {
-    checks.push({ id: 'roundtrip', ok: false, detail: `put_page failed: ${(e as Error).message}` });
+    checks.push({ id: 'roundtrip', ok: false, detail: putPageFailureDetail(e, ctx.writeWaitMs) });
     return { checks };
   }
 

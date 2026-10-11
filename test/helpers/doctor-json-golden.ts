@@ -31,6 +31,7 @@ import { MIGRATIONS } from '../../src/core/schema-migrations/registry.generated.
 const REPO_ROOT = join(import.meta.dir, '..', '..');
 const CLI = join(REPO_ROOT, 'src', 'cli.ts');
 const PRELOAD = join(import.meta.dir, 'no-network-preload.ts');
+const CLOCK_PRELOAD = join(import.meta.dir, 'fixed-clock-preload.ts');
 const PACKAGE_VERSION = (JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf-8')) as { version: string }).version;
 const REGISTRY_LATEST = Math.max(...MIGRATIONS.map((m) => m.version));
 const SCHEMA_LATEST = /\b(Version |latest: |latest is |latest known version \()(\d+)\b/g;
@@ -40,10 +41,13 @@ export interface DoctorHome {
   work: string;
   skillsDir: string;
   netLog: string;
+  /** Milliseconds every CLI process of this home adds to the real clock (fixed-clock-preload.ts); unset runs on the real clock. */
+  clockOffsetMs?: number;
   cleanup: () => void;
 }
 
-export function makeDoctorHome(prefix: string): DoctorHome {
+/** `opts.clock`: an ISO instant; the home's CLI processes share one clock that reads it now and moves forward from it. */
+export function makeDoctorHome(prefix: string, opts: { clock?: string } = {}): DoctorHome {
   const home = mkdtempSync(join(tmpdir(), `gbrain-${prefix}-`));
   const work = join(home, 'work');
   const skillsDir = join(home, 'skills');
@@ -65,6 +69,7 @@ export function makeDoctorHome(prefix: string): DoctorHome {
     work,
     skillsDir,
     netLog: join(home, 'net.log'),
+    ...(opts.clock ? { clockOffsetMs: Date.parse(opts.clock) - Date.now() } : {}),
     cleanup: () => rmSync(home, { recursive: true, force: true }),
   };
 }
@@ -98,11 +103,13 @@ export async function runGbrain(h: DoctorHome, args: string[], env: Record<strin
     NO_COLOR: '1',
     PATH: [join(h.home, 'bin'), '/usr/bin', '/bin'].join(delimiter),
   });
+  delete childEnv.GBRAIN_TEST_CLOCK_OFFSET_MS;
+  if (h.clockOffsetMs !== undefined) childEnv.GBRAIN_TEST_CLOCK_OFFSET_MS = String(h.clockOffsetMs);
   for (const [k, v] of Object.entries(env)) {
     if (v === undefined) delete childEnv[k];
     else childEnv[k] = v;
   }
-  const proc = Bun.spawn([process.execPath, '--no-env-file', '--preload', PRELOAD, CLI, ...args], {
+  const proc = Bun.spawn([process.execPath, '--no-env-file', '--preload', PRELOAD, '--preload', CLOCK_PRELOAD, CLI, ...args], {
     cwd: h.work,
     env: childEnv,
     stdin: 'ignore',
@@ -143,8 +150,6 @@ export function normalizeDoctorText(text: string, roots: Record<string, string>,
   let out = scrubPaths(text, roots);
   for (const [pattern, label] of extra) out = typeof pattern === 'string' ? out.split(pattern).join(label) : out.replace(pattern, label);
   out = scrubTimestamps(out).replace(UUID, '<uuid>');
-  // Bare UTC day buckets (`by_day[].day`) of events the fixture records at capture time.
-  for (const [ago, label] of [[0, '<today>'], [1, '<yesterday>']] as const) out = out.split(new Date(Date.now() - ago * 86_400_000).toISOString().slice(0, 10)).join(label);
   out = out.replace(/\(most recent caller: at [^()]*\([^()]*\)\)/g, '(most recent caller: <frame>)');
   out = out.split(PACKAGE_VERSION).join('<version>');
   out = out.replace(SCHEMA_LATEST, (match, prefix: string, n: string) => (Number(n) === REGISTRY_LATEST ? `${prefix}<latest>` : match));

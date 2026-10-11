@@ -99,6 +99,8 @@ const PLAIN: Record<string, string> = {
 };
 
 const FIXED_DATE = '2024-01-01T00:00:00Z';
+/** The fixture's clock (fixed-clock-preload.ts): its sync writes the fence trend on this day and doctor reads the trend window from it. The day the goldens were captured. */
+export const HOT_CHECK_CLOCK = '2026-10-10T12:00:00Z';
 
 function writeAll(dir: string, files: Record<string, string>): void {
   for (const [rel, body] of Object.entries(files)) {
@@ -122,7 +124,7 @@ async function gbrain(h: DoctorHome, args: string[]): Promise<GbrainRun> {
  * Builds the fixture on an initialized brain (`init` already ran) and returns
  * nothing; doctor runs next.
  */
-export async function buildHotCheckFixture(h: DoctorHome, sql: Sql): Promise<void> {
+export async function buildHotCheckFixture(h: DoctorHome, sql: Sql): Promise<{ syncDays: [string, string] }> {
   const src = join(h.home, 'notes-src');
   writeAll(src, IMPORTED);
   git(src, 'init', '-q', '-b', 'main');
@@ -141,7 +143,10 @@ export async function buildHotCheckFixture(h: DoctorHome, sql: Sql): Promise<voi
   writeAll(src, ON_DISK);
   git(src, 'add', '-A');
   git(src, 'commit', '-q', '-m', 'broken files');
+  const utcDay = () => new Date().toISOString().slice(0, 10);
+  const before = utcDay();
   await runGbrain(h, ['sync', '--source', 'notes', '--no-pull', '--no-embed']);
+  const syncDays: [string, string] = [before, utcDay()];
   // After the sync (a full catch-up re-imports changed pages): database-only timeline rows, one materializable and one that cannot round-trip (comment markup).
   const insert = `INSERT INTO timeline_entries(page_id,date,source,summary,detail)
     SELECT id, $2::date, $3, $4, '' FROM pages WHERE slug = $1 AND source_id = 'notes'`;
@@ -155,6 +160,33 @@ export async function buildHotCheckFixture(h: DoctorHome, sql: Sql): Promise<voi
     ['ANALYZE', []],
   ]);
   writeAll(src, { ...UNTRACKED, 'fences/untracked.md': `${fm('Untracked Fence')}\n## Facts\n\n${DETERMINISTIC_FENCE}` });
+  return { syncDays };
+}
+
+/** The golden's symbol for the UTC day the fixture's sync stamped on its fence trend row. */
+export const SYNC_DAY = '<sync-day>';
+
+/**
+ * The Postgres hot-check golden runs on the real clock (the server stamps
+ * `last_sync_at` with its own `now()`, which no test clock can shift), so the
+ * fence trend's `by_day[].day` is the day the fixture synced. This replaces
+ * exactly that field, and only after checking it: `stamped` is the day read
+ * back from the trend row, it must be one of the days read just before and
+ * after the sync (two only when the sync crossed midnight UTC), and every
+ * `fence_integrity.details.trend[].by_day[].day` must equal it. Any other
+ * field, date-like or not, is left for the golden to compare.
+ */
+export function stampSyncDay(report: unknown, stamped: string, syncDays: readonly [string, string]): unknown {
+  if (!syncDays.includes(stamped)) throw new Error(`fence trend day ${stamped} is neither the day before (${syncDays[0]}) nor after (${syncDays[1]}) the fixture sync`);
+  const copy = structuredClone(report) as { checks?: Array<{ name: string; details?: { trend?: Array<{ by_day?: Array<{ day: string }> }> } }> };
+  for (const check of copy.checks ?? []) {
+    if (check.name !== 'fence_integrity') continue;
+    for (const trend of check.details?.trend ?? []) for (const entry of trend.by_day ?? []) {
+      if (entry.day !== stamped) throw new Error(`fence_integrity trend day ${entry.day} is not the day the fixture sync stamped (${stamped})`);
+      entry.day = SYNC_DAY;
+    }
+  }
+  return copy;
 }
 
 /**

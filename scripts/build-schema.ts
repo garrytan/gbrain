@@ -28,6 +28,7 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { SOURCE_INGESTION_RECEIPTS_SCHEMA_SQL } from '../src/core/company-brain/receipt-schema.ts';
+import { FTS_INPUT_FUNCTION_SQL } from '../src/core/fts-language.ts';
 import { FACT_WITHDRAWAL_SCHEMA_STATEMENTS } from '../src/core/facts/withdrawal-schema.ts';
 import { GRANT_AUDIT_SCHEMA_SQL } from '../src/core/grants/schema.ts';
 import { LEASE_TOKEN_SCHEMA_SQL } from '../src/core/lease-schema.ts';
@@ -73,6 +74,7 @@ export interface Fragment {
 const persistenceSql = (statements: readonly string[]) => `${statements.join(';\n')};`;
 
 export const FRAGMENTS: readonly Fragment[] = [
+  { source: 'src/core/fts-language.ts', expr: 'FTS_INPUT_FUNCTION_SQL', postgres: FTS_INPUT_FUNCTION_SQL, pglite: FTS_INPUT_FUNCTION_SQL },
   { source: 'src/core/grants/schema.ts', expr: 'GRANT_AUDIT_SCHEMA_SQL', postgres: GRANT_AUDIT_SCHEMA_SQL, pglite: GRANT_AUDIT_SCHEMA_SQL },
   {
     source: 'src/core/facts/withdrawal-schema.ts',
