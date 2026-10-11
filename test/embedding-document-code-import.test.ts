@@ -30,6 +30,7 @@ type RequestBody = { input: string[]; model: string };
 let engine: PGLiteEngine;
 let server: ReturnType<typeof Bun.serve>;
 let requests: RequestBody[] = [];
+let responseGate: { entered: ReturnType<typeof deferred>; release: ReturnType<typeof deferred> } | null = null;
 const backends = testBackends();
 let pg: Awaited<ReturnType<typeof isolatedPersistencePostgres>> | undefined;
 
@@ -94,6 +95,12 @@ beforeAll(async () => {
   server = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(req) {
     const body = await req.json() as RequestBody;
     requests.push(body);
+    const gate = responseGate;
+    if (gate) {
+      responseGate = null;
+      gate.entered.resolve();
+      await gate.release.promise;
+    }
     return Response.json({ object: 'list', model: body.model,
       data: body.input.map((_, index) => ({ object: 'embedding', index,
         embedding: [1, ...Array(DIMS - 1).fill(0)] })),
@@ -198,7 +205,7 @@ describe('code EmbeddingGemma import formatting and reuse', () => {
     expect(renamed.map(row => row.embedding_input_hash)).not.toEqual(shifted.map(row => row.embedding_input_hash));
   });
 
-  test.skipIf(!backends.includes('postgres'))('vector and proof reads stay paired while a canonical re-embed waits on the page lock', async () => {
+  test.skipIf(!backends.includes('postgres'))('does not reuse a vector replaced after its proof was read', async () => {
     const database = pg!.engine;
     const sourceId = 'code-proof-race';
     await database.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [sourceId]);
@@ -207,32 +214,29 @@ describe('code EmbeddingGemma import formatting and reuse', () => {
     await database.setConfig('embedding_disabled', 'false');
     configureGateway({ embedding_model: MODEL, embedding_dimensions: DIMS, env: {},
       base_urls: { ollama: `http://127.0.0.1:${server.port}/v1` } });
-    const oldPath = 'src/race.ts';
-    const oldTitle = `${oldPath} (typescript)`;
-    const first = await importCodeFile(database, oldPath, source(), { sourceId });
+    const path = 'src/race.ts';
+    const title = `${path} (typescript)`;
+    const first = await importCodeFile(database, path, source(), { sourceId });
     const slug = first.slug;
-    const nextPath = 'Src/race.ts';
-    const nextTitle = `${nextPath} (typescript)`;
     const seed = await database.getChunks(slug, { sourceId, includeEmbedding: true, requireSafeChunks: true });
     const target = await embeddingWriteTarget(database);
-    const context = embeddingInputContext(target, nextTitle, null, seed);
+    const context = embeddingInputContext(target, title, null, seed);
+    const selected = seed.find(chunk => chunk.chunk_text.includes('function alpha'))!;
     const page = (await database.executeRaw<{ id: number }>(
       'SELECT id FROM pages WHERE source_id=$1 AND slug=$2', [sourceId, slug]))[0]!;
+    const originalVector = (await database.executeRaw<{ embedding: string }>(
+      'SELECT embedding::text AS embedding FROM content_chunks WHERE page_id=$1 AND chunk_index=$2',
+      [page.id, selected.chunk_index]))[0]!.embedding;
     const encodedSentinel = `[${[0.25, ...Array(DIMS - 1).fill(0)].join(',')}]`;
+    expect(encodedSentinel).not.toBe(originalVector);
     const enter = deferred();
     const release = deferred();
-    let readPaused = false;
     let pageShareLocked = false;
     let readerPid = 0;
     let writerPid = 0;
-
-    const pauseAfterVectorRead = async (rows: Awaited<ReturnType<BrainEngine['getChunks']>>, slugRead: string) => {
-      if (readPaused || slugRead !== slug) return rows;
-      readPaused = true;
-      enter.resolve();
-      await bounded(release.promise, 'paired proof reader release');
-      return rows;
-    };
+    const responseEntered = deferred();
+    const responseRelease = deferred();
+    responseGate = { entered: responseEntered, release: responseRelease };
 
     const interleaved = Object.create(database) as BrainEngine;
     interleaved.transaction = <T>(run: (tx: BrainEngine) => Promise<T>) => database.transaction(tx => {
@@ -244,35 +248,29 @@ describe('code EmbeddingGemma import formatting and reuse', () => {
           pageShareLocked = true;
           readerPid = (await executeRaw<{ pid: number }>('SELECT pg_backend_pid() AS pid'))[0]!.pid;
         }
+        if (sql.includes('SELECT c.chunk_index, c.embedding_input_hash') && params?.[0] === sourceId) {
+          enter.resolve();
+          await bounded(release.promise, 'proof reader release');
+        }
         return rows;
-      };
-      const getChunks = tx.getChunks.bind(tx);
-      wrapped.getChunks = async (...args: Parameters<BrainEngine['getChunks']>) => {
-        const rows = await getChunks(...args);
-        return pauseAfterVectorRead(rows, args[0]);
       };
       return run(wrapped);
     });
-    interleaved.getChunks = async (...args: Parameters<BrainEngine['getChunks']>) =>
-      pauseAfterVectorRead(await database.getChunks(...args), args[0]);
 
-    const importing = importCodeFile(interleaved, nextPath, source(), { sourceId });
+    const importing = importCodeFile(interleaved, path, source(7), { sourceId });
     void importing.catch(() => {});
     let writer: Promise<void> | undefined;
     try {
-      await bounded(enter.promise, 'vector read barrier');
+      await bounded(enter.promise, 'proof read barrier');
       requests = [];
       writer = database.transaction(async tx => {
         await tx.executeRaw('SELECT set_config(\'application_name\',$1,true)', ['code-proof-writer']);
         const [{ pid }] = await tx.executeRaw<{ pid: number }>('SELECT pg_backend_pid() AS pid');
         writerPid = pid;
         await tx.executeRaw('SELECT id FROM pages WHERE id=$1 FOR UPDATE', [page.id]);
-        for (const chunk of seed) {
-          await tx.executeRaw(
-            `UPDATE content_chunks SET embedding=$1::vector, embedding_input_hash=$2
-              WHERE page_id=$3 AND chunk_index=$4`,
-            [encodedSentinel, embeddingInputHash(context, 'none', chunk), page.id, chunk.chunk_index]);
-        }
+        await tx.executeRaw(
+          `UPDATE content_chunks SET embedding=$1::vector, embedding_input_hash=NULL
+            WHERE page_id=$2 AND chunk_index=$3`, [encodedSentinel, page.id, selected.chunk_index]);
       });
       void writer.catch(() => {});
       if (pageShareLocked) await bounded((async () => {
@@ -289,18 +287,27 @@ describe('code EmbeddingGemma import formatting and reuse', () => {
       })(), 'canonical writer lock receipt');
       else await bounded(writer, 'unprotected writer interleaving');
       release.resolve();
-      await bounded(importing, 'title-aware import');
+      await bounded(responseEntered.promise, 'changed-chunk embedding request');
       await bounded(writer, 'canonical proof/vector writer');
+      responseRelease.resolve();
+      await bounded(importing, 'title-aware import');
     } finally {
       release.resolve();
+      responseRelease.resolve();
+      responseGate = null;
       await Promise.allSettled([...(writer ? [writer] : []), importing]);
     }
 
-    expect(readPaused).toBe(true);
-    expect(pageShareLocked).toBe(true);
+    expect(capturedInputs()).toHaveLength(1);
     const finalChunks = await database.getChunks(slug, { sourceId, includeEmbedding: true, requireSafeChunks: true });
-    expect(capturedInputs()).toEqual(finalChunks.map(chunk => formatted(nextTitle, chunk.chunk_text)));
-    expect(capturedInputs().every(input => !input.startsWith(`title: ${oldTitle}`))).toBe(true);
+    expect(capturedInputs()).toEqual([formatted(title, finalChunks.find(chunk => chunk.chunk_text.includes('function beta'))!.chunk_text)]);
+    const final = (await database.executeRaw<{ embedding: string; embedding_input_hash: string | null }>(
+      `SELECT c.embedding::text AS embedding, c.embedding_input_hash FROM content_chunks c
+        WHERE c.page_id=$1 AND c.chunk_index=$2`, [page.id, selected.chunk_index]))[0]!;
+    expect(final.embedding).toBe(originalVector);
+    expect(final.embedding).not.toBe(encodedSentinel);
+    expect(final.embedding_input_hash).toBe(embeddingInputHash(context, 'none', selected));
+    expect(pageShareLocked).toBe(true);
   }, 60_000);
 
   test('null and legacy v1 proofs never authorize formatted-vector reuse', async () => {
