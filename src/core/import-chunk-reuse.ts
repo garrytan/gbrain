@@ -72,15 +72,27 @@ export async function reuseStoredChunkVectors(
   { slug, sourceId, title, corpusGeneration, tier, prepared, keepUnembedded = false }: { slug: string; sourceId: string; title: string; corpusGeneration: string | null; tier: 'title' | 'none'; prepared: boolean; keepUnembedded?: boolean },
 ): Promise<Map<number, number | null>> {
   const reused = new Map<number, number | null>();
+  const read = async (db: BrainEngine, guardPage = false, knownTarget?: Awaited<ReturnType<typeof embeddingWriteTarget>>) => {
+    if (guardPage && !(await db.executeRaw(
+      'SELECT id FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL FOR SHARE', [sourceId, slug])).length) return null;
+    const target = knownTarget ?? await embeddingWriteTarget(db);
+    const rows = await db.executeRaw<{ chunk_index: number; embedding_input_hash: string | null; contextual_retrieval_mode: string | null; text_only: boolean; unembedded: boolean }>(
+      `SELECT c.chunk_index, c.embedding_input_hash, p.contextual_retrieval_mode,
+          c.embedding_image IS NULL AND c.embedding_multimodal IS NULL AND c.embedded_text_hash = md5(c.chunk_text) AS text_only,
+          c.embedding IS NULL AND c.embedding_image IS NULL AND c.embedding_multimodal IS NULL
+            AND c.embedding_input_hash IS NULL AND c.embedded_text_hash IS NULL AS unembedded
+        FROM content_chunks c JOIN pages p ON p.id = c.page_id
+        WHERE p.source_id = $1 AND p.slug = $2`, [sourceId, slug]);
+    const all = rows.length ? await db.getChunks(slug, { sourceId, includeEmbedding: true, requireSafeChunks: true }) : [];
+    return { target, rows, all };
+  };
   const target = await embeddingWriteTarget(exec);
-  const provenance = embeddingInputContext(target, title, corpusGeneration, into);
-  const rows = await exec.executeRaw<{ chunk_index: number; embedding_input_hash: string | null; contextual_retrieval_mode: string | null; text_only: boolean; unembedded: boolean }>(
-    `SELECT c.chunk_index, c.embedding_input_hash, p.contextual_retrieval_mode,
-        c.embedding_image IS NULL AND c.embedding_multimodal IS NULL AND c.embedded_text_hash = md5(c.chunk_text) AS text_only,
-        c.embedding IS NULL AND c.embedding_image IS NULL AND c.embedding_multimodal IS NULL
-          AND c.embedding_input_hash IS NULL AND c.embedded_text_hash IS NULL AS unembedded
-      FROM content_chunks c JOIN pages p ON p.id = c.page_id
-      WHERE p.source_id = $1 AND p.slug = $2`, [sourceId, slug]);
+  const snapshot = requiresEmbeddingInputProof(target.provenanceModel) && !keepUnembedded
+    ? await exec.transaction(tx => read(tx, true))
+    : await read(exec, false, target);
+  if (!snapshot) return reused;
+  const { target: currentTarget, rows, all } = snapshot;
+  const provenance = embeddingInputContext(currentTarget, title, corpusGeneration, into);
   if (rows.length === 0) return reused;
   // A page stored under per-chunk synopsis re-embeds every chunk on its next
   // prepared edit: its vectors carry synopses this import does not recompute.
@@ -89,7 +101,6 @@ export async function reuseStoredChunkVectors(
   const textOnly = new Set(rows.filter(row => row.text_only).map(row => Number(row.chunk_index)));
   // Reuse is keyed on chunk source + text, so a stored chunk's current-input
   // hash is the hash its matching new chunk would record.
-  const all = await exec.getChunks(slug, { sourceId, includeEmbedding: true, requireSafeChunks: true });
   const stored = all.filter(chunk => canReuseMarkdownVector(recorded.get(chunk.chunk_index), rows[0]!.contextual_retrieval_mode, tier, provenance, chunk));
   const identity = (chunk: ChunkInput | Chunk) => JSON.stringify([chunk.chunk_index, chunk.chunk_text, chunk.chunk_source,
     chunk.language ?? null, chunk.symbol_name ?? null, chunk.symbol_type ?? null, chunk.start_line ?? null, chunk.end_line ?? null,
