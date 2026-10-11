@@ -1762,49 +1762,28 @@ CREATE TRIGGER minion_job_notify AFTER INSERT OR UPDATE OF status ON minion_jobs
 DO \$\$
 DECLARE
   has_bypass BOOLEAN;
+  target TEXT;
 BEGIN
   -- #1385: recognize superuser + inherited-role BYPASSRLS, not just the role's
   -- own rolbypassrls (alias \`pr\` avoids any plpgsql record-variable collision).
   SELECT EXISTS (SELECT 1 FROM pg_roles pr WHERE pg_has_role(current_user, pr.oid, 'USAGE') AND (pr.rolbypassrls OR pr.rolsuper)) INTO has_bypass;
   IF has_bypass THEN
-    ALTER TABLE pages ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE content_chunks ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE links ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE wanted_links ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE tags ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE raw_data ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE timeline_entries ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE page_versions ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE ingest_log ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE config ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE files ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE minion_jobs ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE sources ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE file_migration_ledger ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE access_tokens ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE mcp_request_log ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE minion_inbox ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE minion_attachments ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE subagent_messages ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE subagent_tool_executions ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE subagent_rate_leases ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE gbrain_cycle_locks ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE dream_verdicts ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE eval_candidates ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE eval_capture_failures ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE eval_takes_quality_runs ENABLE ROW LEVEL SECURITY;
-    -- v0.32.6 contradiction probe tables
-    ALTER TABLE eval_contradictions_cache ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE eval_contradictions_runs ENABLE ROW LEVEL SECURITY;
-    -- v0.36.1.0 Hindsight calibration wave tables
-    ALTER TABLE calibration_profiles ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE take_proposals ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE take_grade_cache ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE take_nudge_log ENABLE ROW LEVEL SECURITY;
-    -- v0.26 OAuth 2.1 tables
-    ALTER TABLE oauth_clients ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE oauth_tokens ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE oauth_codes ENABLE ROW LEVEL SECURITY;
+    -- #5227 (W14 P1.6): conditional enables. ALTER TABLE ... ENABLE ROW LEVEL SECURITY takes an
+    -- ACCESS EXCLUSIVE lock even when RLS is already on, so re-running this block on a live brain
+    -- queued behind every open transaction; a table whose relrowsecurity is already set is skipped.
+    FOREACH target IN ARRAY ARRAY[
+      'pages','content_chunks','links','wanted_links','tags','raw_data','timeline_entries',
+      'page_versions','ingest_log','config','files','minion_jobs','sources','file_migration_ledger',
+      'access_tokens','mcp_request_log','minion_inbox','minion_attachments','subagent_messages',
+      'subagent_tool_executions','subagent_rate_leases','gbrain_cycle_locks','dream_verdicts',
+      'eval_candidates','eval_capture_failures','eval_takes_quality_runs','eval_contradictions_cache',
+      'eval_contradictions_runs','calibration_profiles','take_proposals','take_grade_cache',
+      'take_nudge_log','oauth_clients','oauth_tokens','oauth_codes'] LOOP
+      IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                     WHERE n.nspname = current_schema() AND c.relname = target AND c.relrowsecurity) THEN
+        EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', target);
+      END IF;
+    END LOOP;
     RAISE NOTICE 'RLS enabled on all tables (role % has BYPASSRLS)', current_user;
   ELSE
     RAISE WARNING 'Skipping RLS: role % does not have BYPASSRLS privilege. Run as postgres role to enable.', current_user;
@@ -2511,7 +2490,10 @@ BEGIN
     FOREACH target IN ARRAY ARRAY['shared_skill_state','shared_skill_policies','shared_skill_packs',
       'shared_skill_policy_audit','shared_skill_heads','shared_skill_revisions','shared_skill_revision_leases',
       'shared_skill_members','shared_skill_delivery_batches','persistence_writer_protocols'] LOOP
-      EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY',target);
+      IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                     WHERE n.nspname = current_schema() AND c.relname = target AND c.relrowsecurity) THEN
+        EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY',target);
+      END IF;
     END LOOP;
   END IF;
 END \$\$;
@@ -2576,17 +2558,17 @@ CREATE TABLE IF NOT EXISTS decide_state (
 );
 DO \$rls\$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
-    ALTER TABLE decision_receipts ENABLE ROW LEVEL SECURITY;
+    IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = current_schema() AND c.relname = 'decision_receipts' AND c.relrowsecurity) THEN ALTER TABLE decision_receipts ENABLE ROW LEVEL SECURITY; END IF;
   END IF;
 END \$rls\$;
 DO \$rls\$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
-    ALTER TABLE decide_spend ENABLE ROW LEVEL SECURITY;
+    IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = current_schema() AND c.relname = 'decide_spend' AND c.relrowsecurity) THEN ALTER TABLE decide_spend ENABLE ROW LEVEL SECURITY; END IF;
   END IF;
 END \$rls\$;
 DO \$rls\$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
-    ALTER TABLE decide_state ENABLE ROW LEVEL SECURITY;
+    IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = current_schema() AND c.relname = 'decide_state' AND c.relrowsecurity) THEN ALTER TABLE decide_state ENABLE ROW LEVEL SECURITY; END IF;
   END IF;
 END \$rls\$;
 
@@ -2620,7 +2602,7 @@ CREATE TABLE IF NOT EXISTS decide_calibrations (
 CREATE INDEX IF NOT EXISTS decide_calibrations_lookup_idx ON decide_calibrations (slot, provider, model_resolved, created_at DESC);
 DO \$rls\$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
-    ALTER TABLE decide_calibrations ENABLE ROW LEVEL SECURITY;
+    IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = current_schema() AND c.relname = 'decide_calibrations' AND c.relrowsecurity) THEN ALTER TABLE decide_calibrations ENABLE ROW LEVEL SECURITY; END IF;
   END IF;
 END \$rls\$;
 
@@ -2656,12 +2638,12 @@ CREATE TABLE IF NOT EXISTS decide_sweep_deferred (
 );
 DO \$rls\$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
-    ALTER TABLE decide_proposals ENABLE ROW LEVEL SECURITY;
+    IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = current_schema() AND c.relname = 'decide_proposals' AND c.relrowsecurity) THEN ALTER TABLE decide_proposals ENABLE ROW LEVEL SECURITY; END IF;
   END IF;
 END \$rls\$;
 DO \$rls\$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
-    ALTER TABLE decide_sweep_deferred ENABLE ROW LEVEL SECURITY;
+    IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = current_schema() AND c.relname = 'decide_sweep_deferred' AND c.relrowsecurity) THEN ALTER TABLE decide_sweep_deferred ENABLE ROW LEVEL SECURITY; END IF;
   END IF;
 END \$rls\$;
 
@@ -2699,12 +2681,12 @@ CREATE TABLE IF NOT EXISTS decide_review_proposals (
 CREATE INDEX IF NOT EXISTS decide_review_proposals_status_idx ON decide_review_proposals (status, created_at);
 DO \$rls\$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
-    ALTER TABLE decide_review_queue ENABLE ROW LEVEL SECURITY;
+    IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = current_schema() AND c.relname = 'decide_review_queue' AND c.relrowsecurity) THEN ALTER TABLE decide_review_queue ENABLE ROW LEVEL SECURITY; END IF;
   END IF;
 END \$rls\$;
 DO \$rls\$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
-    ALTER TABLE decide_review_proposals ENABLE ROW LEVEL SECURITY;
+    IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = current_schema() AND c.relname = 'decide_review_proposals' AND c.relrowsecurity) THEN ALTER TABLE decide_review_proposals ENABLE ROW LEVEL SECURITY; END IF;
   END IF;
 END \$rls\$;
 -- END GENERATED from src/core/ai/decide/schema.ts (DECIDE_SCHEMA_SQL)
@@ -2726,7 +2708,7 @@ CREATE TABLE IF NOT EXISTS fact_relink_attempts (
 CREATE INDEX IF NOT EXISTS fact_relink_attempts_outcome_idx ON fact_relink_attempts (source_id, outcome, attempted_at);
 DO \$rls\$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
-    ALTER TABLE fact_relink_attempts ENABLE ROW LEVEL SECURITY;
+    IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = current_schema() AND c.relname = 'fact_relink_attempts' AND c.relrowsecurity) THEN ALTER TABLE fact_relink_attempts ENABLE ROW LEVEL SECURITY; END IF;
   END IF;
 END \$rls\$;
 -- END GENERATED from src/core/facts/relink-schema.ts (FACT_RELINK_SCHEMA_SQL)
@@ -2753,7 +2735,7 @@ CREATE INDEX IF NOT EXISTS link_transitions_relationship_idx ON link_transitions
 CREATE INDEX IF NOT EXISTS link_transitions_origin_idx ON link_transitions (origin_page_id);
 DO \$rls\$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
-    ALTER TABLE link_transitions ENABLE ROW LEVEL SECURITY;
+    IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = current_schema() AND c.relname = 'link_transitions' AND c.relrowsecurity) THEN ALTER TABLE link_transitions ENABLE ROW LEVEL SECURITY; END IF;
   END IF;
 END \$rls\$;
 CREATE TABLE IF NOT EXISTS link_relationships (
@@ -2781,7 +2763,7 @@ CREATE INDEX IF NOT EXISTS link_relationships_to_idx ON link_relationships (to_p
 CREATE INDEX IF NOT EXISTS link_relationships_source_idx ON link_relationships (source_id, status_now);
 DO \$rls\$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
-    ALTER TABLE link_relationships ENABLE ROW LEVEL SECURITY;
+    IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = current_schema() AND c.relname = 'link_relationships' AND c.relrowsecurity) THEN ALTER TABLE link_relationships ENABLE ROW LEVEL SECURITY; END IF;
   END IF;
 END \$rls\$;
 CREATE TABLE IF NOT EXISTS link_edge_proposals (
@@ -2808,7 +2790,7 @@ CREATE TABLE IF NOT EXISTS link_edge_proposals (
 CREATE INDEX IF NOT EXISTS link_edge_proposals_status_idx ON link_edge_proposals (source_id, status, created_at);
 DO \$rls\$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
-    ALTER TABLE link_edge_proposals ENABLE ROW LEVEL SECURITY;
+    IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = current_schema() AND c.relname = 'link_edge_proposals' AND c.relrowsecurity) THEN ALTER TABLE link_edge_proposals ENABLE ROW LEVEL SECURITY; END IF;
   END IF;
 END \$rls\$;
 CREATE SEQUENCE IF NOT EXISTS graph_generation_seq;
@@ -2831,7 +2813,7 @@ CREATE TABLE IF NOT EXISTS core_edit_notices (
 CREATE INDEX IF NOT EXISTS core_edit_notices_pending_idx ON core_edit_notices (source_id, slug, id) WHERE acked_at IS NULL;
 DO \$rls\$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
-    ALTER TABLE core_edit_notices ENABLE ROW LEVEL SECURITY;
+    IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = current_schema() AND c.relname = 'core_edit_notices' AND c.relrowsecurity) THEN ALTER TABLE core_edit_notices ENABLE ROW LEVEL SECURITY; END IF;
   END IF;
 END \$rls\$;
 -- END GENERATED from src/core/core-memory-schema.ts (CORE_EDIT_NOTICES_SCHEMA_SQL)
@@ -2851,7 +2833,7 @@ CREATE TABLE IF NOT EXISTS fact_purges (
 );
 DO \$rls\$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
-    ALTER TABLE fact_purges ENABLE ROW LEVEL SECURITY;
+    IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = current_schema() AND c.relname = 'fact_purges' AND c.relrowsecurity) THEN ALTER TABLE fact_purges ENABLE ROW LEVEL SECURITY; END IF;
   END IF;
 END \$rls\$;
 CREATE TABLE IF NOT EXISTS take_purges (
@@ -2864,7 +2846,7 @@ CREATE TABLE IF NOT EXISTS take_purges (
 );
 DO \$rls\$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
-    ALTER TABLE take_purges ENABLE ROW LEVEL SECURITY;
+    IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = current_schema() AND c.relname = 'take_purges' AND c.relrowsecurity) THEN ALTER TABLE take_purges ENABLE ROW LEVEL SECURITY; END IF;
   END IF;
 END \$rls\$;
 CREATE TABLE IF NOT EXISTS page_purges (
@@ -2877,7 +2859,7 @@ CREATE TABLE IF NOT EXISTS page_purges (
 );
 DO \$rls\$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
-    ALTER TABLE page_purges ENABLE ROW LEVEL SECURITY;
+    IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = current_schema() AND c.relname = 'page_purges' AND c.relrowsecurity) THEN ALTER TABLE page_purges ENABLE ROW LEVEL SECURITY; END IF;
   END IF;
 END \$rls\$;
 CREATE TABLE IF NOT EXISTS derivation_inputs (
@@ -2892,7 +2874,7 @@ CREATE TABLE IF NOT EXISTS derivation_inputs (
 CREATE INDEX IF NOT EXISTS idx_derivation_inputs_input ON derivation_inputs (input_table, input_id);
 DO \$rls\$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
-    ALTER TABLE derivation_inputs ENABLE ROW LEVEL SECURITY;
+    IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = current_schema() AND c.relname = 'derivation_inputs' AND c.relrowsecurity) THEN ALTER TABLE derivation_inputs ENABLE ROW LEVEL SECURITY; END IF;
   END IF;
 END \$rls\$;
 CREATE TABLE IF NOT EXISTS needs_rederive (
@@ -2906,7 +2888,7 @@ CREATE TABLE IF NOT EXISTS needs_rederive (
 );
 DO \$rls\$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
-    ALTER TABLE needs_rederive ENABLE ROW LEVEL SECURITY;
+    IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = current_schema() AND c.relname = 'needs_rederive' AND c.relrowsecurity) THEN ALTER TABLE needs_rederive ENABLE ROW LEVEL SECURITY; END IF;
   END IF;
 END \$rls\$;
 -- END GENERATED from src/core/facts/purge-schema.ts (MEMORY_PURGE_SCHEMA_SQL)
@@ -2961,8 +2943,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS write_gate_holds_dedupe_idx ON write_gate_hold
 CREATE INDEX IF NOT EXISTS write_gate_holds_status_idx ON write_gate_holds (status, source_id, id);
 DO \$rls\$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
-    ALTER TABLE write_gate_receipts ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE write_gate_holds ENABLE ROW LEVEL SECURITY;
+    IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = current_schema() AND c.relname = 'write_gate_receipts' AND c.relrowsecurity) THEN ALTER TABLE write_gate_receipts ENABLE ROW LEVEL SECURITY; END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = current_schema() AND c.relname = 'write_gate_holds' AND c.relrowsecurity) THEN ALTER TABLE write_gate_holds ENABLE ROW LEVEL SECURITY; END IF;
   END IF;
 END \$rls\$;
 -- END GENERATED from src/core/write-gate-schema.ts (WRITE_GATE_SCHEMA_SQL)

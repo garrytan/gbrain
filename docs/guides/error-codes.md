@@ -2384,6 +2384,16 @@ Reasons: `rename_source_changed`.
 |---|---|---|---|---|---|---|
 | The exact authorized revision is unavailable. | A capability this request needs is not configured or not reachable on this brain. | A required capability is not available on this brain. Run `gbrain doctor --json` to see what is missing. | agent | `gbrain doctor --json` | 1 | no |
 
+### schema_lock_blocked
+
+<a id="schema_lock_blocked"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A schema step (the schema.sql replay in init/upgrade, or one migration) waited its lock_timeout for a table lock another session holds and stopped instead of hanging. | Every ALTER TABLE in the replay takes an ACCESS EXCLUSIVE lock even as a no-op, so one open transaction in another client (idle in transaction, a stuck job) blocked gbrain init and upgrade forever with no output. The wait is now bounded (GBRAIN_SCHEMA_LOCK_TIMEOUT_SECONDS, default 60) and the refusal names the blocking sessions by pid, application and state, sampled while the wait was active; query text is never shown. The cancelled step changed nothing. | Let the named session finish or, with the user's agreement, end it on the database host with SELECT pg_terminate_backend(<pid>), then rerun the same gbrain command; init retries a few times on its own with a short backoff. Run: gbrain doctor --json | agent | `gbrain doctor --json` | 1 | yes |
+
+More: [docs/ENGINES.md#schema-lock-blocked](../../docs/ENGINES.md#schema-lock-blocked)
+
 ### schema_pack_emit_mismatch
 
 <a id="schema_pack_emit_mismatch"></a>

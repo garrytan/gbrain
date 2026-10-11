@@ -94,7 +94,7 @@ export const TRUST_GENERATION_SCHEMA_STATEMENTS: readonly string[] = [
 )`,
   `DO $rls$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
-    ALTER TABLE ${TRUST_POLICY_STATE_TABLE} ENABLE ROW LEVEL SECURITY;
+    IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = current_schema() AND c.relname = '${TRUST_POLICY_STATE_TABLE}' AND c.relrowsecurity) THEN ALTER TABLE ${TRUST_POLICY_STATE_TABLE} ENABLE ROW LEVEL SECURITY; END IF;
   END IF;
 END $rls$`,
   `INSERT INTO ${TRUST_POLICY_STATE_TABLE} (id) VALUES (1) ON CONFLICT (id) DO NOTHING`,

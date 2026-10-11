@@ -71,8 +71,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS write_gate_holds_dedupe_idx ON write_gate_hold
 CREATE INDEX IF NOT EXISTS write_gate_holds_status_idx ON write_gate_holds (status, source_id, id);
 DO $rls$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
-    ALTER TABLE write_gate_receipts ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE write_gate_holds ENABLE ROW LEVEL SECURITY;
+    IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = current_schema() AND c.relname = 'write_gate_receipts' AND c.relrowsecurity) THEN ALTER TABLE write_gate_receipts ENABLE ROW LEVEL SECURITY; END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = current_schema() AND c.relname = 'write_gate_holds' AND c.relrowsecurity) THEN ALTER TABLE write_gate_holds ENABLE ROW LEVEL SECURITY; END IF;
   END IF;
 END $rls$;
 `;

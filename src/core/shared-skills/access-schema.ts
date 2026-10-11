@@ -7,7 +7,10 @@ BEGIN
     FOREACH target IN ARRAY ARRAY['shared_skill_state','shared_skill_policies','shared_skill_packs',
       'shared_skill_policy_audit','shared_skill_heads','shared_skill_revisions','shared_skill_revision_leases',
       'shared_skill_members','shared_skill_delivery_batches','persistence_writer_protocols'] LOOP
-      EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY',target);
+      IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                     WHERE n.nspname = current_schema() AND c.relname = target AND c.relrowsecurity) THEN
+        EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY',target);
+      END IF;
     END LOOP;
   END IF;
 END $$;`;

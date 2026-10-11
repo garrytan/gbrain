@@ -12,7 +12,7 @@
 
 const rls = (table: string) => `DO $rls$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
-    ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY;
+    IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = current_schema() AND c.relname = '${table}' AND c.relrowsecurity) THEN ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY; END IF;
   END IF;
 END $rls$;`;
 

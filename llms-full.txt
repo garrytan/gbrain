@@ -5778,6 +5778,33 @@ the operations that preceded them. A pool created with `max: 1` keeps the
 driver's documented single-connection idiom (`BEGIN` as an ordinary query)
 for unreserved statements.
 
+<a id="schema-lock-blocked"></a>**`schema_lock_blocked`** (error, retryable).
+A schema step waited its `lock_timeout` for a table lock another session holds
+and stopped instead of hanging (#5227). `gbrain init` and `upgrade` replay
+`schema.sql` on the reserved DDL backend; every `ALTER TABLE` there takes an
+ACCESS EXCLUSIVE lock even as a no-op, so one open transaction in another
+client (idle in transaction, a stuck job) used to park the whole command in
+`wait_event_type=Lock` with no output. The replay runs under a session-level
+`lock_timeout` on that backend (`GBRAIN_SCHEMA_LOCK_TIMEOUT_SECONDS`, default
+60; the value found before is restored on release, so a pooled backend never
+leaks it), a transaction-wrapped migration binds the same wait with
+`SET LOCAL lock_timeout`, and a `transaction: false` migration sets and
+restores it on its own reserved backend. Handler migrations and the
+post-migration `verifySchema` run outside the bound: they issue their own
+statements (`CREATE INDEX CONCURRENTLY` cannot run in a transaction) and stay
+as they were. While the wait is active a separate one-backend connection
+samples `pg_blocking_pids()` of the waiting backend once, so the refusal names
+the blocking sessions by pid, `application_name`, state and transaction age;
+after the cancel the blocker may already be gone, and the message says when the
+sample came late. Query text is never read or shown. `detail` names the step
+(`replay`, `migration v<N>`). The RLS block skips tables whose
+`relrowsecurity` is already set, so a re-run on a live brain no longer takes
+ACCESS EXCLUSIVE on them. `init` retries a blocked step a few times with a
+short backoff (`init-schema-retry.ts`); a lock that never clears is a bounded
+failure, not a hang. Fix: let the named session finish or, with the user's
+agreement, end it on the database host with `SELECT pg_terminate_backend(<pid>)`,
+then rerun the same command. Test: `test/e2e/init-schema-lock-blocked.test.ts`.
+
 <a id="pg-connection-stuck"></a>**`pg_connection_stuck`** (warn). A pooled
 statement waited past the pool's `statement_timeout` plus a grace with nothing
 coming back from the server, so the vendored driver retired that connection:
@@ -9836,6 +9863,7 @@ Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/tro
 | [A write was refused with a named reason](#write-refused) | the reason's recovery in [write refusal reasons](write-refusals.md) | as the refusal's `fix` | as the refusal's `fix` | the refusal's `verify` |
 | [Managed sync blocked with `checkpoint_validation_timeout`](#checkpoint-validation-timeout) | `gbrain repair request-indexes --apply` when an index is missing or INVALID, then the printed `gbrain sync --source <id> --no-pull --retry-failed …` | brain host | none | `gbrain doctor --only persistence_request_indexes --json` |
 | [Doctor warns `persistence_session_timeouts` (`session_timeouts_not_applied`)](#session-timeouts-not-applied) | `ALTER ROLE <gbrain role> SET statement_timeout = '5min'` on the database, or accept it: preparation reads carry their own bound | brain host | none (a role default; `destructive` only in that it changes a server setting) | `gbrain doctor --only persistence_session_timeouts --json` |
+| `gbrain init` or `gbrain upgrade` stops with `schema_lock_blocked` naming a pid (or, before #5227, sat in `wait_event_type=Lock` with no output) | let the named session finish, or with the user's agreement end it on the database host: `SELECT pg_terminate_backend(<pid>)`; then rerun the same command ([ENGINES.md](../ENGINES.md#schema-lock-blocked)) | brain host, after the user agrees | `destructive` when it ends another session | the rerun completes; `gbrain doctor --json` shows the schema at head |
 | [`queue_capacity`, `persistence_capacity` or `persistence_request_growth`](#write-capacity) | run the printed `gbrain config set persistence.limits.<limit> <value>` | brain host | none | `gbrain doctor --only persistence_capacity,persistence_request_growth --json` |
 | [`dream_paid_loop`, or dream keeps skipping one transcript](#dream-paid-loop) | fix the cause, then `gbrain dream reset-key --list` and `gbrain dream reset-key '<key>'` | agent, after the user agrees | `paid` (the key is retried) | `gbrain doctor --only dream_paid_loop --json` |
 | [Search answers look keyword-only on a large Postgres brain](#hybrid-search-returns-only-keyword-hits) | read doctor's `vector_plan`; run the index command it prints | brain host | none | `gbrain doctor --only vector_plan --json` |

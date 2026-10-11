@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS core_edit_notices (
 CREATE INDEX IF NOT EXISTS core_edit_notices_pending_idx ON core_edit_notices (source_id, slug, id) WHERE acked_at IS NULL;
 DO $rls$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
-    ALTER TABLE core_edit_notices ENABLE ROW LEVEL SECURITY;
+    IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = current_schema() AND c.relname = 'core_edit_notices' AND c.relrowsecurity) THEN ALTER TABLE core_edit_notices ENABLE ROW LEVEL SECURITY; END IF;
   END IF;
 END $rls$;
 `;
