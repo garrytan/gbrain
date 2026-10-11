@@ -6,6 +6,30 @@ import type { ParsedModelId, Recipe, TouchpointKind, ChatTouchpoint, EmbeddingTo
 import { getRecipe, RECIPES } from './recipes/index.ts';
 import { AIConfigError } from './errors.ts';
 import { renderCanonicalMigrationCommands } from './defaults.ts';
+import { splitProviderModelId } from '../model-id.ts';
+
+export interface EmbeddingInputOptions {
+  inputType?: 'query' | 'document';
+  documentTitle?: string;
+}
+
+export function formatEmbeddingInput(
+  text: string,
+  modelId: string | null,
+  opts: EmbeddingInputOptions = {},
+): string {
+  if (!text?.trim()) return text;
+  if (opts.inputType === 'query') return text;
+
+  const { provider, model } = splitProviderModelId(modelId);
+  const recipe = getRecipe(provider?.trim().toLowerCase() ?? '');
+  const canonicalModel = model.trim();
+  return recipe?.touchpoints.embedding?.format_input?.(text, {
+    model: recipe.aliases?.[canonicalModel] ?? canonicalModel,
+    input_type: opts.inputType ?? 'document',
+    document_title: opts.documentTitle,
+  }) ?? text;
+}
 
 /**
  * Split "openai:text-embedding-3-large" or "openai/text-embedding-3-large"
