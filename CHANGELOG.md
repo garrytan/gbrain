@@ -10,6 +10,39 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**Managed sync stops instead of hanging, a database publish that never finishes is cancelled and retried, and managed brains write meeting timelines and extracted entities through the coordinator.**
+
+Fix wave 13 PR2 closes 18 reported gaps in managed sync, persistence and the writers that bypassed the coordinator. A sync that used to wait forever now stops and says why; work that used to fail with an internal error is retried or held with a fix.
+
+### Itemized changes
+
+- A managed sync whose pass never returns (a publish stuck in `publishing`, or a pass behind a transaction-mode pooler that admits nothing) stops `drain_stalled` with `publication_overdue` or `no_admission`, names the step it was in and says what to do next. A sync cancelled after it admitted a page still keeps that page.
+- On Postgres, a publish still running 30 s past `persistence.publication_ceiling_ms` (default 5 minutes) is cancelled: nothing commits and the write is queued again. One that still does not settle makes its owner report `restart_required`. Keep the ceiling at or below `GBRAIN_STATEMENT_TIMEOUT`, or raise both.
+- A source more than 100,000 changes behind catches up in bounded stages instead of refusing forever.
+- On a managed brain, `extract timeline --from-meetings` (and its job) and `extract_entities` write through the coordinator, gated at their source's trust tier. A refused or pending write is reported (the job fails, the command exits 1, `extract_entities` names the entities already written) instead of a raw writer error or a silently missing row. `extract_entities` creates stub pages only for callers allowed to write pages.
+- `gbrain migrate` with the legacy copier keeps every page column and rebuilds text projections before it switches engines; a failed rebuild keeps the old engine active and exits 1.
+- `gbrain extract` skips and counts a page another writer changed mid-run (`skipped_concurrent_write`) instead of aborting the run, and `extract all --source db` marks a page extracted only when both phases finished.
+- Smaller fixes:
+  - Stale recorded sync failures that a later successful sync already settles are cleared, and the brain host can clear one explicitly.
+  - A page cancelled because an earlier page failed is a retryable page fault, not a "needs human" stop.
+  - A process that cannot open the worktree lock leaves its write for the owner and names the OS error.
+  - A facts backstop for a deleted page settles instead of retrying forever.
+  - Purging a deleted page no longer touches a file excluded from sync.
+  - `gbrain sources reconcile` can resolve a page that records no file of its own.
+  - Alias lookups no longer scan every page.
+  - A queued freshness sync skips a source disabled after it was queued.
+  - Graduation's verify step no longer fails its sync-freshness check.
+
+### For contributors
+
+- Flake fix: `managed-sync-pinned-reads` counted Git processes that depended on follower freeze order; pinned `cat-file` slices are now cut by window position (forced probe: 5 processes before, 2 after).
+- Test fault-injection wrappers around `engine.transaction` forward its options.
+- New probes: `test/sync-drain-inpass-stall.test.ts`, `test/sync-drain-no-admission.test.ts`, `test/persistence-publication-deadline.test.ts`, `test/e2e/publication-deadline-group-postgres.test.ts`, `test/sync-staged-catchup.test.ts`, `test/extract-entities-managed.test.ts`, `test/extract-timeline-from-meetings-managed.test.ts`, `test/sync-blobs-pinned-order.test.ts`.
+
+Contributed by @andreineacsu, @harjothkhara, @dovstern, @Masashi-Ono0611, @Margok1987 and @ethanbeard.
+
 ## [0.60.161.0] - 2026-10-11
 
 **`embed --max-usd` is enforced, a fence write no longer wipes a database-only page, and write-gate overrides and Git child processes are hardened.**
