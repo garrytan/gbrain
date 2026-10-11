@@ -1,8 +1,7 @@
 # Key files — per-file index (gbrain repo)
 
 Read a file's entry before editing it. This page routes to bounded subsystem
-references; **do not load every file in the directory**. Entries keep the
-implementation evidence and test references.
+references; **do not load every file in the directory**.
 
 Find a path locally, then read its entry and surrounding contract:
 
@@ -10,7 +9,7 @@ Find a path locally, then read its entry and surrounding contract:
 rg -n -F 'src/core/ops/pages.ts' docs/architecture/key-files/
 ```
 
-Ranges use each entry's first path; grouped entries can document several
+Ranges use each entry's first path; an entry can document several
 files. Search is the fallback when a path crosses subsystems.
 Edit the subsystem entry, not this page, when behavior changes.
 Keep entries current-state: history belongs in `CHANGELOG.md` and Git.
@@ -30,7 +29,7 @@ boundary and link it here rather than raising the cap.
 | [Agent operator contract](key-files/agent-contract.md) | `agent-output.ts`, error registry + docs, notice ledger, `isCallable`, `--json` guard, contract scanner |
 | [Commands (1/6)](key-files/commands-1.md) | `src/commands/agent-logs.ts` through `src/commands/db-repair.ts` |
 | [Commands (2/6)](key-files/commands-2.md) | `src/commands/doctor.ts` and `src/commands/doctor/` |
-| [Commands (2/6, continued)](key-files/commands-2-continued.md) | `doctor/checks/routing-federation.ts`, `dream-retriage.ts` to `embed.ts` |
+| [Commands (2/6, continued)](key-files/commands-2-continued.md) | `doctor/checks/routing-federation.ts`, `git-convergence.ts`, `dream-retriage.ts` to `embed.ts` |
 | [Commands (3/6)](key-files/commands-3.md) | `src/commands/engine-status.ts` through `src/commands/frontmatter-install-hook.ts` |
 | [Commands (4/6)](key-files/commands-4.md) | `src/commands/frontmatter.ts` through `src/commands/pglite-repair.ts` |
 | [Commands (4/6, continued)](key-files/commands-4-continued.md) | `src/commands/protocol.ts` through `src/commands/reindex-search-vector.ts`, `init-mode-picker.ts`, `src/core/embedding-migration-cli.ts` |
