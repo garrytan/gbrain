@@ -101,6 +101,7 @@ describe('startVisibilityPoll (#5061)', () => {
   });
 
   test('Dashboard.tsx polls through the helper with the real document, not a bare setInterval', () => {
+    // test-reads-source-ok[structural]: the Dashboard component cannot mount hermetically here; the helper's behavior is tested above and this pins that the bare setInterval does not creep back (#5061).
     const src = readFileSync('admin/src/pages/Dashboard.tsx', 'utf8');
     expect(src).toMatch(/startVisibilityPoll\(\s*refresh\s*,\s*30000\s*,\s*document\s*\)/);
     expect(src).not.toMatch(/setInterval\(/);
