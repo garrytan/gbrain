@@ -553,10 +553,7 @@ export async function embedStaleForSource(
         const pageRow = prepared.snapshot.page;
         await opts.assertOwned?.();
         if (stopped()) return;
-        const embeddings = await embedFn(wrapChunkTextsForStoredMode(pageRow, stale), {
-          abortSignal: signal,
-          documentTitle: pageRow.title,
-        });
+        const embeddings = await embedFn(wrapChunkTextsForStoredMode(pageRow, stale), { abortSignal: signal, documentTitle: pageRow.title });
         if (stopped()) return;
         const dimensions = signature ? splitEmbeddingSignature(signature).dims
           : prepared.embeddingColumn.name === 'embedding' ? (await readContentChunksEmbeddingDim(engine)).dims : prepared.embeddingColumn.dimensions;
