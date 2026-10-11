@@ -173,8 +173,15 @@ export function registerPinnedQuestionSuite(label: string, getEngine: () => Brai
             .toEqual({ tool, leaked: false });
           if (tool === 'get_page') expect(result.isError).toBe(true);
         }
-        for (const tool of ['questions_list', 'questions_status', 'questions_refresh', 'questions_unpin', 'questions_pin']) {
-          const { result, body } = await mcp(engine, tool, { id: pinned.receipt.id, question: QUESTION }, g);
+        const byId = { id: pinned.receipt.id };
+        for (const [tool, params] of [
+          ['questions_list', {}],
+          ['questions_status', byId],
+          ['questions_refresh', byId],
+          ['questions_unpin', byId],
+          ['questions_pin', { ...byId, question: QUESTION }],
+        ] as Array<[string, Record<string, unknown>]>) {
+          const { result, body } = await mcp(engine, tool, params, g);
           expect({ tool, isError: result.isError, code: body.code }).toEqual({ tool, isError: true, code: 'question_owner_only' });
           expect(JSON.stringify(body)).not.toContain(CANARY);
         }
