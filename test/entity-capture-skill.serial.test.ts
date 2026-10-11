@@ -440,16 +440,25 @@ test('实体回执后中断不冒报完成，恢复只补关系并且不重算�
     text(JSON.stringify({entities:['people/张三'],relations:[]})),
   ]);
   const controller=new AbortController();
-  let interrupted:unknown;
-  try{await runPhaseCaptureEntities(engine,{sourceId:'vault',signal:controller.signal,handler:makeSubagentHandler({engine,client}),yieldDuringPhase:async()=>{
+  const interrupted=await runPhaseCaptureEntities(engine,{sourceId:'vault',signal:controller.signal,handler:makeSubagentHandler({engine,client}),yieldDuringPhase:async()=>{
     const pending=await engine.executeRaw("SELECT id FROM minion_jobs WHERE status='completed' AND result->>'ingest_verified'='true' AND result->>'graph_reconciled'='false'");
     if(pending.length)controller.abort(new Error('验收中断'));
-  }});}catch(error){interrupted=error;}
-  expect(interrupted).toBeInstanceOf(Error);expect((interrupted as Error).message).toContain('验收中断');
+  }});
+  expect(controller.signal.aborted).toBe(true);
+  expect(interrupted.status).toBe('warn');
+  expect(interrupted.details.stop_reason).toBe('aborted');
+  expect(interrupted.summary).toContain('验收中断');
+  expect(interrupted.details.pages_processed).toBe(0);
+  expect(interrupted.details.pages_remaining).toBe(1);
+  expect(interrupted.details.input_tokens).toBe(20);
+  expect(interrupted.details.output_tokens).toBe(10);
+  const [checkpoint]=await engine.executeRaw<{status:string;graph:string}>("SELECT status,result->>'graph_reconciled' graph FROM minion_jobs WHERE result->>'ingest_verified'='true'");
+  expect(checkpoint).toEqual({status:'completed',graph:'false'});
   expect(client.calls).toHaveLength(2);
   const recoveryClient=new FakeMessagesClient([]);
   const recovered=await runPhaseCaptureEntities(engine,{sourceId:'vault',handler:makeSubagentHandler({engine,client:recoveryClient})});
-  expect(recovered.details.pages_processed).toBe(1);expect(recovered.details.input_tokens).toBe(0);expect(recovered.details.entities_written).toBe(0);
+  expect(recovered.status).toBe('ok');
+  expect(recovered.details.pages_processed).toBe(1);expect(recovered.details.input_tokens).toBe(0);expect(recovered.details.output_tokens).toBe(0);expect(recovered.details.entities_written).toBe(0);
   expect(recoveryClient.calls).toHaveLength(0);
   const [job]=await engine.executeRaw<{graph:string}>("SELECT result->>'graph_reconciled' graph FROM minion_jobs WHERE result->>'ingest_verified'='true'");
   expect(job?.graph).toBe('true');

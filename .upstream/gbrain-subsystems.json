@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "reviewed_at": "2026-10-11",
-  "product_version": "1.4.54",
+  "product_version": "1.4.55",
   "subsystem": "entity-relations",
   "status": "release-blocked-pending-package-acceptance",
   "upstream": {
