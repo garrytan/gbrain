@@ -3,7 +3,7 @@ import type { GBrainConfig } from '../config.ts';
 import { OperationError, opError, type OperationContext } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import type { RegistryCode } from '../error-registry.ts';
-import { parseTakesFence, upsertTakeRow, supersedeRow, type ParsedTake, type TakeQuality } from '../takes-fence.ts';
+import { isValidHolder, parseTakesFence, upsertTakeRow, supersedeRow, type ParsedTake, type TakeQuality } from '../takes-fence.ts';
 import { takesPreparation as edit, TakesWriteError } from '../takes-write.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { preparePageMutation } from './page-prepare.ts';
@@ -98,6 +98,8 @@ async function prepare(engine: BrainEngine, row: WriteRequest, config: GBrainCon
   if (row.operation === 'takes_add') {
     if (typeof p.claim !== 'string' || !p.claim.trim() || typeof p.kind !== 'string' || typeof p.holder !== 'string') throw takesRefusal('invalid_params','claim, kind and holder are required.',row,
       'takes_add needs claim, kind and holder as non-empty text.');
+    if (!isValidHolder(p.holder.trim())) throw takesRefusal('invalid_params',`holder "${p.holder}" is not a resolvable holder.`,row,
+      'holder must be world | brain | people/<slug> | companies/<slug> (a legacy bare slug is accepted).');
     edit.assertHolderAllowed(p.holder,holders); requiredHolders.add(p.holder);
     const added = upsertTakeRow(body,{claim:p.claim,kind:p.kind,holder:p.holder,weight:p.weight as number ?? 0.5,
       source:p.source as string | undefined,sinceDate:p.since as string,active:true,rowNum:await nextRow()});
@@ -125,6 +127,8 @@ async function prepare(engine: BrainEngine, row: WriteRequest, config: GBrainCon
       if (typeof p.claim!=='string' || !p.claim.trim()) throw takesRefusal('invalid_params','claim is required.',row,
         'takes_supersede needs the replacement claim as non-empty text.');
       const holder=typeof p.holder==='string'?p.holder:target.holder;
+      if (!isValidHolder(holder.trim())) throw takesRefusal('invalid_params',`holder "${holder}" is not a resolvable holder.`,row,
+        'holder must be world | brain | people/<slug> | companies/<slug> (a legacy bare slug is accepted).');
       edit.assertHolderAllowed(holder,holders); requiredHolders.add(holder);
       const [stored]=await engine.executeRaw<{id:number;trust_tier:string}>('SELECT id,trust_tier FROM takes WHERE page_id=$1 AND row_num=$2',[snapshot.page.id,number]);
       const accepted=p.trust_accept!==undefined && stored ? await ownerAcceptedTake(engine,row,Number(stored.id),snapshot.page.id) : null;
