@@ -38,7 +38,7 @@ identifiers and attribution are available in the pre-removal Git revision
 - **`bootstrap verify` always removes its probe pages (#6001)**, early exits included; the guide says `bootstrap_last_verify` is silent when no snapshot exists.
 - **agent-voice defaults to `sonic-3.6` (#5905)**; `CARTESIA_MODEL_ID` overrides.
 - **Admin Dashboard pauses its 30 s poll while the tab is hidden (#5061)** and refreshes once on return (`admin/src/lib/visibility-poll.ts`; `admin/dist` and `src/admin-embedded.ts` rebuilt).
-- **Superseded push records (#5799 residual).** `isSupersededPushStatus` / `livePushStatuses` in `workspace-push.ts` drop a `writer_coordinator_required` record and any record whose root is a managed worktree now; the `commands/hook.ts` call site is a stack hunk behind wave 13 (`test.todo` marks the hook-level test).
+- **Superseded push records (#5799 residual).** `isSupersededPushStatus` / `livePushStatuses` in `workspace-push.ts` drop a `writer_coordinator_required` record and any record whose root is a managed worktree now; the `gbrain hook user-prompt` FAILING banner and the SessionStart push note read only the live records, so a managed root's stale refusal no longer announces a failing push.
 
 ### Things to watch
 

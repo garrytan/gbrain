@@ -97,6 +97,7 @@ import { readManifest, readReceipt, type InstallReceipt } from '../core/bootstra
 import { githubOwnerRepoString } from '../core/repo-visibility.ts';
 import { detectExecutionEnvironment } from '../core/execution-env.ts';
 import {
+  livePushStatuses,
   readPushStatuses,
   readPushStatusForRoot,
   sanitizePushReason,
@@ -657,7 +658,8 @@ async function pushStatusNote(): Promise<string | null> {
   try {
     // One reader + one aggregation for every status surface [D8]; per-root
     // files [D13] so one workspace's success can't mask another's failure.
-    const entries = readPushStatuses();
+    // #5799: a managed root's records are the fenced legacy push, not this note's subject.
+    const entries = livePushStatuses(readPushStatuses());
     if (entries.length === 0) return null;
     const { failing, stalestTs } = summarizePushStatuses(entries);
     if (failing.length > 0) {
@@ -987,7 +989,8 @@ interface PushAnnounceState {
  */
 function pendingPushFailureBanner(): { text: string; record: () => void } | null {
   try {
-    const failing = readPushStatuses().filter((e) => e.ok === false);
+    // #5799: a refusal recorded on a managed root is not a failing push; the outbox publishes there.
+    const failing = livePushStatuses(readPushStatuses()).filter((e) => e.ok === false);
     if (failing.length === 0) return null;
     const now = Date.now();
     const due = failing.filter((e) => {

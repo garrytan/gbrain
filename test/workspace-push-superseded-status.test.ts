@@ -53,7 +53,6 @@ describe('isSupersededPushStatus (#5799)', () => {
     expect(livePushStatuses([])).toEqual([]);
   });
 
-  // The hook.ts call site (banner + SessionStart note read livePushStatuses) is a stack hunk
-  // behind wave 13 PR3/PR4: ~/.capy/work/w14/pr4/stack-hunks/commands-hook.ts.patch.
-  test.todo('P4.16 hook banner: a stale writer_coordinator_required push-status record on a managed root raises no FAILING notice', () => {});
+  // The hook.ts call site (banner + SessionStart note read livePushStatuses) is pinned
+  // end to end by test/hook-push-banner-superseded.serial.test.ts.
 });
