@@ -132,6 +132,8 @@ export interface GoogleSourceState {
    */
   calendar_horizon_ms?: number | null;
   contacts_sync_token: string | null;
+  /** People sync tokens are bound to the personFields mask of their full list. */
+  contacts_person_fields?: string;
   last_full_at: string | null;
   gmail_attachment_backfill?: {
     version: 1;
@@ -279,6 +281,8 @@ export interface ContactData {
   resourceName: string;
   displayName: string | null;
   emails: string[];
+  /** Google canonicalForm when supplied, otherwise the original trimmed value. */
+  phones?: string[];
   organization: string | null;
   title: string | null;
   deleted: boolean;

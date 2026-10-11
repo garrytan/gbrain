@@ -487,7 +487,32 @@ describe('renderPersonPage', () => {
     expect(md).toContain('[Source: Google Contacts]');
   });
 
-  test('no emails renders null', () => {
+  test('no emails or phones renders null', () => {
     expect(renderPersonPage(contact({ emails: [] }))).toBeNull();
+  });
+
+  test('phone-only contacts retain identifiers in frontmatter and searchable prose', () => {
+    const page = renderPersonPage(contact({ emails: [], phones: ['+12025550100', '555-0101 ext. 2'] }));
+    expect(page?.relPath).toBe('people/alice-example.md');
+    expect(page?.markdown).toContain('phones: \n  - "+12025550100"\n  - "555-0101 ext. 2"');
+    expect(page?.markdown).toContain('Contact: +12025550100, 555-0101 ext. 2.');
+    expect(page?.markdown).toContain('title: "Alice Example"');
+  });
+
+  test('unnamed phone contacts use a stable contact-id slug, not mutable phone digits', () => {
+    const first = contact({ displayName: null, emails: [], phones: ['+12025550100'] });
+    const next = contact({ displayName: null, emails: [], phones: ['+12025550101'] });
+    const slug = personSlugFromContact(first);
+    expect(slug).toMatch(/^people\/contact-[0-9a-f]{8}$/);
+    expect(personSlugFromContact(next)).toBe(slug);
+    expect(renderPersonPage(first)?.markdown).toContain('title: "+12025550100"');
+    expect(personSlugFromContact(contact({ displayName: '李明', emails: [], phones: ['+12025550100'] }))).toBe(slug);
+  });
+
+  test('email-only rendering stays unchanged and phone identifiers are not name aliases', () => {
+    expect(renderPersonPage(contact())?.markdown).not.toContain('phones:');
+    const page = renderPersonPage(contact({ phones: ['+12025550100'] }));
+    expect(page?.markdown).toContain('Contact: alice@example.com, alice.alt@example.com, +12025550100.');
+    expect(page?.markdown).toContain('aliases: \n  - "alice@example.com"\n  - "alice.alt@example.com"\n  - "Alice Example"\nemails:');
   });
 });

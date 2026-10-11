@@ -8,7 +8,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { CALENDAR_HORIZON_DAYS, CalendarSyncWindow, planCalendarPage, staleCalendarPages } from './calendar-window.ts';
-import { CalendarClient, GoogleCursorExpiredError, PeopleClient } from './google-clients.ts';
+import { CalendarClient, CONTACT_PERSON_FIELDS, GoogleCursorExpiredError, PeopleClient } from './google-clients.ts';
 import { calendarRelPath, personSlugFromContact, renderCalendarEventPage, renderPersonPage } from './google-render.ts';
 import { DEFAULT_CALENDAR_ID, type CalendarEventData, type GoogleSourceState } from './types.ts';
 import { deletePageByRelPath, importRendered, type ActivePack, type GoogleSyncDeps, type GoogleSyncSummary } from './sweep-shared.ts';
@@ -26,7 +26,9 @@ export async function sweepContacts(
   let result;
   try {
     result = await people.listConnections({
-      syncToken: deps.opts.full ? null : state.contacts_sync_token,
+      // An old mask's token cannot request new fields, and a delta would miss
+      // unchanged phone-only contacts. Upgrade with a full list, once.
+      syncToken: deps.opts.full || state.contacts_person_fields !== CONTACT_PERSON_FIELDS ? null : state.contacts_sync_token,
       ...(deps.opts.signal ? { signal: deps.opts.signal } : {}),
     });
   } catch (e) {
@@ -98,7 +100,8 @@ export async function sweepContacts(
     deps.tick(`contact ${c.resourceName}`);
   }
   // Cursor commits only after the whole sweep succeeded.
-  if (result.nextSyncToken) state.contacts_sync_token = result.nextSyncToken;
+  state.contacts_sync_token = result.nextSyncToken;
+  state.contacts_person_fields = CONTACT_PERSON_FIELDS;
 }
 
 /** Existing calendar page's source_path for an event id, or null. */

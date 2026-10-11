@@ -1074,6 +1074,60 @@ describe('google-source materialize', () => {
     }
   });
 
+  test('#6324: upgrades a legacy contact cursor, imports phone-only contacts, then updates and retires by id', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gsrc-phones-'));
+    const fx = emptyFx();
+    const vault = makeVault();
+    fx.contacts = [
+      { resourceName: 'people/c000000011', names: [{ displayName: 'Phone Example' }],
+        phoneNumbers: [{ value: '(202) 555-0100', canonicalForm: '+12025550100' }] },
+      { resourceName: 'people/c000000012', phoneNumbers: [{ value: '555-0101 ext. 2' }] },
+    ];
+    try {
+      await insertGoogleSource(dir);
+      await withHome(async () => {
+        await sweep(dir, emptyFx(), vault, {}, 'contacts');
+        const state = readGoogleState(dir);
+        delete state.contacts_person_fields;
+        state.contacts_sync_token = 'legacy-email-mask';
+        writeFileSync(googleStateFile(dir), JSON.stringify(state));
+        const first = await sweep(dir, fx, vault, {}, 'contacts');
+        expect(first.added).toBe(2);
+        const listCalls = () => fx.calls.filter((url) => url.includes('/people/me/connections'));
+        expect(new URL(listCalls()[0], 'https://people.googleapis.com').searchParams.has('syncToken')).toBe(false);
+        const pages = await engine.listPages({ type: 'person', sourceId: 'gsrc' });
+        expect(pages).toHaveLength(2);
+        const named = pages.find((p) => p.slug === 'people/phone-example')!;
+        expect(named.frontmatter.phones).toEqual(['+12025550100']);
+        expect(named.compiled_truth).toContain('+12025550100');
+        const unnamed = pages.find((p) => p.slug !== named.slug)!;
+        expect(unnamed.slug).toMatch(/^people\/contact-[0-9a-f]{8}$/);
+        expect(unnamed.frontmatter.phones).toEqual(['555-0101 ext. 2']);
+        const upgradedState = readGoogleState(dir);
+        expect(upgradedState.contacts_person_fields).toContain('phoneNumbers');
+        expect(upgradedState.contacts_sync_token).not.toBeNull();
+
+        fx.contactsDelta = [
+          { resourceName: 'people/c000000011', names: [{ displayName: 'Renamed Example' }],
+            phoneNumbers: [{ value: '+12025550102' }] },
+          { resourceName: 'people/c000000012', phoneNumbers: [{ value: '555-0103' }] },
+        ];
+        await sweep(dir, fx, vault, {}, 'contacts');
+        expect(new URL(listCalls()[1], 'https://people.googleapis.com').searchParams.get('syncToken')).toBe(upgradedState.contacts_sync_token);
+        expect(await slugsWhere(`slug LIKE 'people/%'`)).toEqual([unnamed.slug, 'people/renamed-example'].sort());
+        expect((await engine.getPage(unnamed.slug, { sourceId: 'gsrc' }))?.frontmatter.phones).toEqual(['555-0103']);
+        expect(existsSync(join(dir, 'people/phone-example.md'))).toBe(false);
+
+        fx.contactsDelta = [{ resourceName: 'people/c000000012', metadata: { deleted: true } }];
+        await sweep(dir, fx, vault, {}, 'contacts');
+        expect(await engine.getPage(unnamed.slug, { sourceId: 'gsrc' })).toBeNull();
+        expect(existsSync(join(dir, `${unnamed.slug}.md`))).toBe(false);
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test('open_loops: an old unanswered inbound opens a loop; the reply closes it as reply_detected', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'gsrc-loops-'));
     const fx = emptyFx();

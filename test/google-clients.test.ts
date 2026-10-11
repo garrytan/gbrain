@@ -991,7 +991,7 @@ describe('PeopleClient', () => {
 
   test('listConnections requests personFields and normalizes contacts', async () => {
     const h = makeHarness((u) => {
-      expect(u.searchParams.get('personFields')).toBe('names,emailAddresses,organizations');
+      expect(u.searchParams.get('personFields')).toBe('names,emailAddresses,organizations,phoneNumbers');
       expect(u.searchParams.get('requestSyncToken')).toBe('true');
       return json({
         connections: [
@@ -1002,6 +1002,12 @@ describe('PeopleClient', () => {
               { displayName: 'Alice Example', metadata: { primary: true } },
             ],
             emailAddresses: [{ value: ' Alice@Example.com ' }, { value: 'not-an-email' }],
+            phoneNumbers: [
+              { value: '(202) 555-0100', canonicalForm: '+12025550100' },
+              { value: '+12025550100' },
+              { value: ' 555-0101 ext. 2 ' },
+              { value: ' ' },
+            ],
             organizations: [{ name: 'Acme Example', title: 'Engineer', metadata: { primary: true } }],
           },
           { resourceName: 'people/c000000002', metadata: { deleted: true } },
@@ -1017,6 +1023,7 @@ describe('PeopleClient', () => {
       resourceName: 'people/c000000001',
       displayName: 'Alice Example', // primary name wins
       emails: ['alice@example.com'], // trimmed, lowercased, non-addresses dropped
+      phones: ['+12025550100', '555-0101 ext. 2'],
       organization: 'Acme Example',
       title: 'Engineer',
       deleted: false,
@@ -1024,6 +1031,7 @@ describe('PeopleClient', () => {
     expect(contacts[1].deleted).toBe(true);
     expect(contacts[1].displayName).toBeNull();
     expect(contacts[1].emails).toEqual([]);
+    expect(contacts[1].phones).toEqual([]);
   });
 
   test('syncToken is forwarded; 410 surfaces GoogleCursorExpiredError', async () => {

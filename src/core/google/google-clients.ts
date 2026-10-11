@@ -590,9 +590,12 @@ interface RawPerson {
   resourceName: string;
   names?: Array<{ displayName?: string; metadata?: { primary?: boolean } }>;
   emailAddresses?: Array<{ value?: string }>;
+  phoneNumbers?: Array<{ value?: string; canonicalForm?: string }>;
   organizations?: Array<{ name?: string; title?: string; metadata?: { primary?: boolean } }>;
   metadata?: { deleted?: boolean };
 }
+
+export const CONTACT_PERSON_FIELDS = 'names,emailAddresses,organizations,phoneNumbers';
 
 export class PeopleClient extends GoogleApiClient {
   /** Incremental with syncToken; full otherwise. 410 → GoogleCursorExpiredError. */
@@ -604,7 +607,7 @@ export class PeopleClient extends GoogleApiClient {
     const raw = await this.drainPages<RawPerson>(
       (t) => {
         const params = new URLSearchParams({
-          personFields: 'names,emailAddresses,organizations',
+          personFields: CONTACT_PERSON_FIELDS,
           pageSize: '200',
           requestSyncToken: 'true',
         });
@@ -631,6 +634,9 @@ export class PeopleClient extends GoogleApiClient {
         emails: (p.emailAddresses ?? [])
           .map((e) => (e.value ?? '').trim().toLowerCase())
           .filter((e) => e.includes('@')),
+        phones: [...new Set((p.phoneNumbers ?? [])
+          .map((phone) => phone.canonicalForm?.trim() || phone.value?.trim() || '')
+          .filter(Boolean))],
         organization: primaryOrg?.name ?? null,
         title: primaryOrg?.title ?? null,
         deleted: p.metadata?.deleted ?? false,
