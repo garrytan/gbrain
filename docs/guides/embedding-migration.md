@@ -422,20 +422,22 @@ and takes. The query prefix remains an explicit per-brain setting: unset stays
 unset, and custom or model-card values keep their existing behavior. There is
 no automatic query instruction added by document formatting.
 
-Only a full refresh of pages, facts and takes replaces legacy raw EmbeddingGemma
-vectors with vectors made from these formatted inputs. Ordinary stale work and
-a same-model migration may preserve valid legacy vectors, so neither proves
-that the document format was refreshed. First select the intended brain using
-the supported global `--brain` option, then check its configured model and
-actual dimensions with `gbrain --brain <brain> migrate embeddings --status
---json`. Confirm that Ollama serves the intended EmbeddingGemma model and that
-the brain's actual width matches the model before proceeding.
+Upgrading leaves valid same-model legacy EmbeddingGemma vectors in place. A
+full refresh is the procedure here that ensures the selected pages, facts and
+takes are all rebuilt with formatted inputs. Ordinary stale work can still
+replace an individual vector already marked stale; a same-model migration may
+preserve valid legacy vectors. Neither ensures complete legacy coverage. Select
+the intended brain with the global `--brain` option, then check its configured
+model and actual dimensions with `gbrain --brain <brain> migrate embeddings
+--status --json`. Confirm that Ollama serves the intended EmbeddingGemma model
+and the brain's actual width matches before proceeding.
 
-Preview each affected source and review the work and estimate:
+Preview each affected source and review the work and available estimate (the
+fact preview reports counts, not a cost estimate):
 
 ```bash
 gbrain --brain <brain> embed --all --source <source> --dry-run
-gbrain --brain <brain> embed --facts --all --source <source> --dry-run
+gbrain --brain <brain> embed --stale --facts --all --source <source> --dry-run
 gbrain --brain <brain> takes embed --all --source-id <source> --dry-run
 ```
 
@@ -451,21 +453,30 @@ embedding writers. Examples for an approved run:
 
 ```bash
 gbrain --brain <brain> embed --all --source <source> --yes --max-usd <cap>
-gbrain --brain <brain> embed --facts --all --source <source> --yes --max-cost-usd <cap>
+gbrain --brain <brain> embed --stale --facts --all --source <source> --yes --max-cost-usd <cap>
 gbrain --brain <brain> takes embed --all --source-id <source> --yes --max-cost-usd <cap>
 ```
 
 Page `--all` interruption is not an efficient resume: rerunning it repeats
 completed pages and can spend again. Facts and takes clear once on the initial
 `--all`; after interruption, resume those companions without `--all`, retaining
-the same brain, source and model. Verify completion and the actual vector width
-with `gbrain migrate embeddings --status --json`. That status does not enumerate
-per-vector formatted-input proofs, and the current CLI has no supported command
-to verify them. CLI completion and width alone cannot prove the refresh format;
-production acceptance needs an agreed proof-verification path. There is no
-automatic migration. Rollback requires the prior binary together with its
-matching database and vector snapshot; restoring the binary alone does not
-restore the previous vectors.
+the same brain, source and model. Fact runs process at most 100 by default, so
+resume without `--all` while stale facts remain. Use these commands after an
+interruption or to continue bounded fact work:
+
+```bash
+gbrain --brain <brain> embed --stale --facts --source <source> --yes --max-cost-usd <cap>
+gbrain --brain <brain> takes embed --source-id <source> --yes --max-cost-usd <cap>
+```
+
+Verify completion and the actual vector width with
+`gbrain --brain <brain> migrate embeddings --status --json`. That status does
+not enumerate per-vector formatted-input proofs, and the current CLI has no
+supported command to verify them. CLI completion and width alone cannot prove
+the refresh format; production acceptance needs an agreed proof-verification
+path. There is no automatic migration. Rollback requires the prior binary
+together with its matching database and vector snapshot; restoring the binary
+alone does not restore the previous vectors.
 
 The frozen public [A/B/C evaluation](https://github.com/xorets/gbrain/tree/0b99ac156ebe43281a98fbe336f8c55963916ade/evals/embeddinggemma-follow-up)
 recorded Top-1 results of C 15/15 versus B 14/15, with no regression on that
