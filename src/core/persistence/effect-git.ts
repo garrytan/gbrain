@@ -6,6 +6,7 @@ import { readFix } from '../ops/op-fix.ts';
 import type { GitCommitNote } from './effect-model.ts';
 import { persistenceHome } from './identity.ts';
 import { nativeFileTarget } from './native-file-target.ts';
+import { gitChildEnv } from '../git-env.ts';
 
 /** An index lock younger than this is contention; an older one is reported as stale. */
 const INDEX_LOCK_GRACE_MS = 10 * 60 * 1000;
@@ -32,7 +33,7 @@ const GIT_ENV = { GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'Never', GIT_GLOB_P
 
 async function run(root: string, hooks: string, args: string[], signal?: AbortSignal) {
   return execFileBounded('git', ['--literal-pathspecs', '-C', root, '-c', `core.hooksPath=${hooks}`, '-c', 'commit.gpgsign=false', ...args], {
-    timeout: 20_000, maxBuffer: 1024 * 1024, signal, env: { ...process.env, ...GIT_ENV },
+    timeout: 20_000, maxBuffer: 1024 * 1024, signal, env: gitChildEnv(GIT_ENV),
   });
 }
 

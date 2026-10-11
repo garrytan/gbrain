@@ -6,6 +6,7 @@
 import { execFileSync } from 'child_process';
 import { parseDurationSeconds } from './sync-concurrency.ts';
 import { resolveStallAbortSecondsFromEnv } from './stall-env.ts';
+import { gitChildEnv } from './git-env.ts';
 
 /**
  * #2828 full-sync reconcile safety-valve thresholds. A reconcile that would
@@ -88,7 +89,7 @@ export function listEverCommittedPaths(repoPath: string): Set<string> | null {
       'git',
       ['-C', repoPath, '-c', 'core.quotepath=off', 'log', '--all', '--no-renames',
         '--diff-filter=A', '--format=', '--name-only'],
-      { encoding: 'utf8', maxBuffer: 512 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] },
+      { env: gitChildEnv(), encoding: 'utf8', maxBuffer: 512 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] },
     );
   } catch {
     return null;

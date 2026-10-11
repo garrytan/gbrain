@@ -8,6 +8,7 @@
  * `git show` per entry.
  */
 import { execFileSync } from 'node:child_process';
+import { gitChildEnv } from '../git-env.ts';
 
 /** The sync read bound (`readSyncFile`): bigger files are held without being read. */
 export const SYNC_READ_BOUND = 10 * 1024 ** 2;
@@ -16,7 +17,7 @@ export interface TreeBlob { oid: string; size: number }
 
 function git(gitRoot: string, args: string[], input?: string, maxBuffer = 32 * 1024 ** 2): Buffer {
   return execFileSync('git', ['-c', 'core.quotepath=false', '--literal-pathspecs', '-C', gitRoot, ...args],
-    { timeout: 60_000, maxBuffer, stdio: ['pipe', 'pipe', 'pipe'], ...(input !== undefined ? { input } : {}) });
+    { env: gitChildEnv(), timeout: 60_000, maxBuffer, stdio: ['pipe', 'pipe', 'pipe'], ...(input !== undefined ? { input } : {}) });
 }
 
 /** Blob id and size of Git paths at a commit, in chunked `ls-tree` calls (never one process per file). */
