@@ -3,6 +3,7 @@ import { embed, getEmbeddingDimensions, getEmbeddingModel } from './ai/gateway.t
 import { withAIInvocationGuard } from './ai/invocation-guard.ts';
 import { BudgetTracker, loadPricingOverrides } from './budget/budget-tracker.ts';
 import { assertEmbeddingEnabled, readFactsEmbeddingDim } from './embedding-dim-check.ts';
+import { embedRequestCeilings } from './ai/embed-batch-plan.ts';
 import type { GBrainConfig } from './config.ts';
 import { redactConnectionInfo } from './audit/redact-connection-info.ts';
 import { redactUrlsInText } from './url-redact.ts';
@@ -132,7 +133,10 @@ export async function embedStaleFacts(engine: BrainEngine, opts: EmbedFactsOpts,
         throw new Error('A fact exceeds the embedding input limit; no batch was sent');
       }
       signal.throwIfAborted();
-      const inputCeiling = batch.reduce((sum, row) => sum + Math.max(1, Buffer.byteLength(row.fact, 'utf8')), 0);
+      const rawInputCeiling = batch.reduce((sum, row) => sum + Math.max(1, Buffer.byteLength(row.fact, 'utf8')), 0);
+      const inputCeiling = Math.max(rawInputCeiling,
+        embedRequestCeilings(batch.map(row => row.fact), model, undefined, { inputType: 'document' })
+          .reduce((sum, ceiling) => sum + ceiling, 0));
       const vectors = await withAIInvocationGuard(async call => {
         signal.throwIfAborted();
         if (call.kind !== 'embedding') throw new Error('Fact backfill permits embedding calls only');
