@@ -98,6 +98,27 @@ test('refresh options reject missing or malformed scope, cap and runtime without
     .toEqual([{ embedding: null }, { embedding: null }]);
 });
 
+test('approved all refresh rejects a trailing runtime flag before invalidating vectors', async () => {
+  await seed();
+  await expect(call(['--all', '--source-id', SOURCE, '--yes', '--max-cost-usd', '1', '--budget-ms'])).rejects.toThrow('--budget-ms requires a value');
+  expect(wire).toEqual([]);
+  expect(await engine.executeRaw('SELECT embedding FROM takes')).toEqual([{ embedding: null }, { embedding: null }]);
+});
+
+test('approved all refresh rejects a trailing batch flag before invalidating vectors', async () => {
+  await seed();
+  await expect(call(['--all', '--source-id', SOURCE, '--yes', '--max-cost-usd', '1', '--batch-size'])).rejects.toThrow('--batch-size requires a value');
+  expect(wire).toEqual([]);
+  expect(await engine.executeRaw('SELECT embedding FROM takes')).toEqual([{ embedding: null }, { embedding: null }]);
+});
+
+test('preview rejects a trailing spend cap instead of dropping it', async () => {
+  await seed();
+  await expect(call(['--all', '--source-id', SOURCE, '--max-cost-usd'])).rejects.toThrow('--max-cost-usd requires a value');
+  expect(wire).toEqual([]);
+  expect(await engine.executeRaw('SELECT embedding FROM takes')).toEqual([{ embedding: null }, { embedding: null }]);
+});
+
 test('approved source refresh resumes stale takes while preserving completed vectors', async () => {
   await seed();
   await seed(['Other source take'], OTHER);

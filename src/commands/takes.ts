@@ -250,17 +250,20 @@ async function cmdRefreshEmbedTakes(engine: BrainEngine, args: string[]): Promis
   if (!sourceId || !isValidSourceId(sourceId)) throw new Error('--source-id requires an explicit valid source id for takes refresh');
 
   const maxCostRaw = value('--max-cost-usd');
+  if (flagPresent(args, '--max-cost-usd') && maxCostRaw === undefined) throw new Error('--max-cost-usd requires a value');
   const maxCostUsd = maxCostRaw === undefined ? undefined : Number(maxCostRaw);
   if (maxCostRaw !== undefined && (!maxCostRaw.trim() || !Number.isFinite(maxCostUsd) || maxCostUsd! < 0)) {
     throw new Error(`Invalid --max-cost-usd "${maxCostRaw}". Expected a finite non-negative number.`);
   }
   const budgetRaw = value('--budget-ms');
+  if (flagPresent(args, '--budget-ms') && budgetRaw === undefined) throw new Error('--budget-ms requires a value');
   const budgetMs = budgetRaw === undefined ? undefined : Number(budgetRaw);
   if (budgetRaw !== undefined && (!budgetRaw.trim() || !Number.isSafeInteger(budgetMs)
     || budgetMs! < 1 || budgetMs! > 3_600_000)) {
     throw new Error(`Invalid --budget-ms "${budgetRaw}". Expected an integer from 1 to 3600000.`);
   }
   const batchSizeRaw = value('--batch-size');
+  if (flagPresent(args, '--batch-size') && batchSizeRaw === undefined) throw new Error('--batch-size requires a value');
   const batchSize = batchSizeRaw === undefined ? undefined : Number(batchSizeRaw);
   if (batchSizeRaw !== undefined && (!Number.isSafeInteger(batchSize) || batchSize! < 1 || batchSize! > 500)) {
     throw new Error(`Invalid --batch-size "${batchSizeRaw}". Expected an integer from 1 to 500.`);
