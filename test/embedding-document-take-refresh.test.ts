@@ -297,6 +297,21 @@ test('gateway dimension changed during a request cannot install or dispatch anot
   expect(wire).toEqual([['title: none | text: gateway width changes']]);
 }));
 
+test('slash-form provider model resolves to the same invocation identity and keeps document wire formatting', () => inHome(async () => {
+  const id = await seed('slash model claim');
+  await engine.setConfig('embedding_model', 'ollama/embeddinggemma');
+  configureGateway({ embedding_model: 'ollama/embeddinggemma', embedding_dimensions: 768,
+    base_urls: { ollama: `http://127.0.0.1:${server.port}/v1` }, env: {} });
+
+  const result = await embedTakesWithConsent(engine, { sourceId, yes: true, maxCostUsd: 1 });
+  expect(result).toMatchObject({ takes: { embedded: 1, failures: 0 }, remaining: 0, stopped: 'complete' });
+  expect(wire).toEqual([['title: none | text: slash model claim']]);
+  expect((await engine.executeRaw<{ embedding_model: string; provenance_unchanged: boolean }>(
+    'SELECT embedding_model,embedded_text_hash=md5(claim) AS provenance_unchanged FROM takes WHERE id=$1::bigint', [id]))[0]).toEqual({
+    embedding_model: 'ollama/embeddinggemma', provenance_unchanged: true,
+  });
+}));
+
 test('formatted request ceiling enforces a zero-call cost cap', () => inHome(async () => {
   await seed('x');
   const refused = await embedTakesWithConsent(engine, { sourceId, yes: true, maxCostUsd: 0 });

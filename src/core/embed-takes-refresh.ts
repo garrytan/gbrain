@@ -1,5 +1,6 @@
 import type { BrainEngine } from './engine.ts';
 import { getEmbeddingDimensions, getEmbeddingModel } from './ai/gateway.ts';
+import { resolveRecipe } from './ai/model-resolver.ts';
 import { withAIInvocationGuard } from './ai/invocation-guard.ts';
 import { BudgetTracker, loadPricingOverrides } from './budget/budget-tracker.ts';
 import { embedStaleTakes, readTakesEmbeddingDim } from './embed-takes.ts';
@@ -102,6 +103,8 @@ export async function embedTakesWithConsent(
   await authorize(engine);
 
   const model = getEmbeddingModel();
+  const resolvedModel = resolveRecipe(model);
+  const invocationModel = `${resolvedModel.recipe.id}:${resolvedModel.parsed.modelId}`;
   const dims = getEmbeddingDimensions();
   const dbModel = await engine.getConfig('embedding_model');
   const dbDims = await engine.getConfig('embedding_dimensions');
@@ -189,7 +192,7 @@ export async function embedTakesWithConsent(
   const takes = await withAIInvocationGuard(async call => {
     signal.throwIfAborted();
     if (call.kind !== 'embedding') throw new Error('Take refresh permits embedding calls only');
-    if (call.model !== model) throw new Error('Embedding gateway model changed during take refresh; rerun the scoped preview');
+    if (call.model !== invocationModel) throw new Error('Embedding gateway model changed during take refresh; rerun the scoped preview');
     if (!Number.isSafeInteger(call.maxInputTokens) || call.maxInputTokens! < 0) throw new Error('Embedding request has no safe input-token ceiling');
     await assertOwned(engine);
     const reservation = tracker.reserve({ modelId: call.model, kind: 'embed', estimatedInputTokens: call.maxInputTokens!, maxOutputTokens: 0 });
