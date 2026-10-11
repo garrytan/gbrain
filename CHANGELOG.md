@@ -10,6 +10,28 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**`recall` can rank saved facts by a question.** Pass `question` and recall returns the facts most relevant to it, each with a `relevance` score, instead of the newest ones. Facts below the match threshold are left out, so an empty list means nothing saved matches.
+
+Calls without `question` behave as before and return the newest facts; every response now says which order it used in `facts_order`. A call that passes only `query` carries a `recall_hint` notice naming `question` and the exact retry call. `gbrain recall --question "<q>"` works from the CLI, locally or against a remote brain. Ranking uses the same read policy as every other recall: the trust floor, quarantine and rederive hiding, remote world-only facts and the private-page filter all apply. Restart a resident `gbrain serve` after upgrading so agents see the new parameter.
+
+## To take advantage of [Unreleased]
+
+`gbrain upgrade` applies the facts index migration (numbered at stamp time; v236 on this branch) automatically. If `gbrain doctor` warns about a partial migration, run `gbrain apply-migrations --yes`, then restart a resident `gbrain serve`.
+
+### Itemized changes
+
+- **`recall` `question`** (`facts/question-recall.ts`, `ops/facts.ts`). Up to 2,000 characters; refused with `supersessions` or `include_expired`, with the corrected call in the error. Works with `entity`, `session_id`, `since`, `grep` and every other fact filter, which apply before ranking. The question is embedded once through the gateway's query-embedding cache, so a `query` of the same text in the same process costs no second provider call. Without an embedding provider, or with embeddings turned off, facts rank by word match and `facts_degraded.reason` says so; facts without an embedding are counted in `facts_degraded.unembedded`, with a `facts_unembedded` notice whose fix previews `gbrain embed --stale --facts` before any paid run.
+- **Admission rule** (`recall.question_admission`). `reserve` (default) keeps a fact at cosine 0.5 or a third of the question's words; `facts_arm` uses the stricter facts-arm rule.
+- **Shared fact scorer** (`search/fact-relevance.ts`). Recall's `question`, the temporal fact reserve and the facts arm now read one candidate pool and one scorer. Word matches are whole-word, and a very long fact's matches count for less. In `query`, facts of an entity the question names come only from that entity page's own source.
+- **`gbrain recall --question`** reads its value as the question; before, it was taken as an entity name.
+- **Fast on large brains.** On a 100k-fact brain a ranked recall takes 51 ms at p95 on Postgres (65 ms for a remote caller, 10 ms with `entity`) and 152 ms on PGLite (139 ms remote, 54 ms with `entity`). The facts index migration (numbered at stamp time; v236 on this branch) adds a keyword index over active facts (built under `GBRAIN_FTS_LANGUAGE`; `gbrain reindex-search-vector` rebuilds it when the language changes) and two small indexes for the unembedded count; the vector, keyword and entity lookups run concurrently, the vector lookup now uses the facts HNSW index, and the keyword lookup is planned per call. Building the indexes reads each fact once (about 2 seconds per 100k facts) and rewrites none.
+- **Embedding model switches keep fact indexes.** A dimension change rebuilds `facts.embedding` and now re-creates the btree indexes that read it instead of dropping them.
+
+### For contributors
+
+- `test/recall-question.test.ts` covers ranking, the parameter contract, the read policy (local, remote and private-sourced facts), the degraded paths, `recall_hint` and the embedding cache on PGLite, and on Postgres through `test/e2e/recall-question-postgres.test.ts`. `test/fact-relevance.test.ts` pins the scorer; `test/recall-question-cli.test.ts` the CLI.
 ## [0.60.164.0] - 2026-10-11
 
 **`query` now answers with the facts you corrected, and gbrain can keep a question answered for you.**

@@ -24,7 +24,8 @@ interface StageGuidance { why: string; fix: StageFix }
 /** Recall-affecting stages: every DEGRADED_STAGES member except the ranking-only ones, plus the verbs' own markers. */
 export type RecallStage =
   | Exclude<DegradedStage, 'reranker_skipped'>
-  | 'keyword_only_no_embedding_provider' | 'deadline' | 'server_budget';
+  | 'keyword_only_no_embedding_provider' | 'deadline' | 'server_budget'
+  | 'no_query_terms' | 'facts_embedding_column_missing';
 
 /**
  * The closed guidance map: what each recall-affecting stage means for the
@@ -55,6 +56,8 @@ export const DEGRADED_STAGE_GUIDANCE: Readonly<Record<RecallStage, StageGuidance
   projection_status_unknown: { why: 'whether recent writes are in the search index could not be checked', fix: 'doctor' },
   deadline: { why: 'the pack hit its time limit and is partial', fix: null },
   server_budget: { why: 'the server ran out of time budget for this pack', fix: null },
+  no_query_terms: { why: 'the question has no searchable words and semantic search did not run, so no saved fact could be ranked against it', fix: 'embeddings' },
+  facts_embedding_column_missing: { why: 'the facts table has no embedding column, so saved facts were ranked by word overlap alone', fix: 'doctor' },
 };
 
 const NOT_ABSENCE = 'Treat a thin or empty result as "not found with a degraded search", never as "the brain has nothing on this".';
@@ -201,6 +204,12 @@ export const QUESTION_EMBED_OPTED_OUT = 'QUESTION_EMBED_SKIPPED_EMBEDDING_DISABL
 export const RECALL_KEYWORD_ONLY_OPTED_OUT = 'keyword_only_embedding_disabled';
 const VECTOR_FALLBACK_WARNINGS: ReadonlySet<string> = new Set(['QUESTION_EMBED_FAILED', QUESTION_EMBED_OPTED_OUT]);
 
+/** recall's `facts_degraded.reason` (question ranking without the cosine arm), when present. */
+function factsDegradedReason(r: Record<string, unknown>): string | undefined {
+  const reason = (r.facts_degraded as { reason?: unknown } | undefined)?.reason;
+  return typeof reason === 'string' ? reason : undefined;
+}
+
 /** Did this call run keyword-only because the brain opted out of embedding (not a missing or failing provider)? */
 export function embeddingOptedOutFor(op: string, result: unknown, meta: Record<string, unknown>): boolean {
   const r = (result && typeof result === 'object' ? result : {}) as Record<string, unknown>;
@@ -208,7 +217,7 @@ export function embeddingOptedOutFor(op: string, result: unknown, meta: Record<s
     const retrieval = meta.retrieval as { degraded?: Array<{ stage?: string; reason?: string }> } | undefined;
     return (retrieval?.degraded ?? []).some(d => d.reason === 'embedding_disabled');
   }
-  if (op === 'recall') return r.search_degraded === RECALL_KEYWORD_ONLY_OPTED_OUT;
+  if (op === 'recall') return r.search_degraded === RECALL_KEYWORD_ONLY_OPTED_OUT || factsDegradedReason(r) === RECALL_KEYWORD_ONLY_OPTED_OUT;
   if (op === 'think') return Array.isArray(r.warnings) && r.warnings.includes(QUESTION_EMBED_OPTED_OUT);
   return false;
 }
@@ -220,7 +229,13 @@ export function recallStagesFor(op: string, result: unknown, meta: Record<string
     const retrieval = meta.retrieval as { degraded?: Array<{ stage?: string; reason?: string }> } | undefined;
     return (retrieval?.degraded ?? []).filter(affectsRecall).map(d => d.stage as string);
   }
-  if (op === 'recall') return typeof r.search_degraded === 'string' ? ['keyword_only_no_embedding_provider'] : [];
+  if (op === 'recall') {
+    const facts = factsDegradedReason(r);
+    return [...new Set([
+      ...(typeof r.search_degraded === 'string' ? ['keyword_only_no_embedding_provider'] : []),
+      ...(facts ? [facts === RECALL_KEYWORD_ONLY_OPTED_OUT ? 'keyword_only_no_embedding_provider' : facts] : []),
+    ])];
+  }
   if (op === 'context_pack') return typeof r.degraded_reason === 'string' ? [r.degraded_reason] : [];
   if (op === 'think') {
     const warned = Array.isArray(r.warnings) && r.warnings.some(w => VECTOR_FALLBACK_WARNINGS.has(String(w)));

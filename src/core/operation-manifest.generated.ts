@@ -4831,7 +4831,11 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "params": {
       "entity": {
         "type": "string",
-        "description": "Entity slug; its facts, newest first."
+        "description": "Entity slug; its facts."
+      },
+      "question": {
+        "type": "string",
+        "description": "Rank facts by relevance to it."
       },
       "query": {
         "type": "string",
@@ -4847,7 +4851,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
           "facts_first",
           "query_first"
         ],
-        "description": "facts_first (default) or query_first."
+        "description": "Default facts_first."
       },
       "source_id": {
         "type": "string",
@@ -4855,7 +4859,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "since": {
         "type": "string",
-        "description": "Since (ISO 8601 or \"8 hours ago\")."
+        "description": "ISO 8601 or \"8 hours ago\"."
       },
       "session_id": {
         "type": "string",
@@ -4867,7 +4871,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "supersessions": {
         "type": "boolean",
-        "description": "Supersession audit log only."
+        "description": "Supersession log only."
       },
       "limit": {
         "type": "number",
@@ -4875,7 +4879,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "grep": {
         "type": "string",
-        "description": "Substring of the fact text."
+        "description": "Text substring."
       },
       "include_pending": {
         "type": "boolean",
@@ -4890,7 +4894,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
           "page",
           "auto"
         ],
-        "description": "results[] evidence unit (see search)."
+        "description": "results[] unit (see search)."
       },
       "return_window": {
         "type": "number",

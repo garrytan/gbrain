@@ -1447,6 +1447,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'models.brainstorm.judge',
   'models.eval.longmemeval', 'models.eval.cross_modal.slot_a', 'models.eval.cross_modal.slot_b', 'models.eval.cross_modal.slot_c', // #5872 D12 probe judge slots
   'facts.extraction_model',
+  'recall.question_admission', // recall `question` admission rule: reserve (default) | facts_arm (facts/question-recall.ts)
   // Brain-wide kill switch for fact extraction, read by
   // src/core/facts/extract.ts:isFactsExtractionEnabled and honored by
   // sweep.ts, operations.ts and transcripts/ingest-facts.ts. That function's
