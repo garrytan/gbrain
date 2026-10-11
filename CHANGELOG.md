@@ -10,6 +10,37 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**Wave 14 PR4: the Google connector, open loops, contacts, calendar, Windows and polish.** Gmail loops now find the person page wherever it lives in the brain, extraction runs under a daily spend cap and your own label exclusions, contacts land next to your people pages, and three Windows reports (parked tests, console windows, backups) get native coverage on CI.
+
+### Google connector and open loops
+
+- **Loops find the person across sources (#5504).** A Gmail source's loop names someone whose page lives in `default:people/<slug>`; resolution now runs in the mail's own source first and then across sources by identity only (the exact email as a page alias, or an `entity_identities` canonical member; names never cross, ties stay unresolved). The loop row records the page's source (`open_loops.counterparty_source_id`, migration `open_loops_counterparty_source`, provisional v233), the `owes_to` / `awaiting_reply_from` edge points there, and the entity card, `gbrain waiting` and `open_loops` read the loop from that page and never from a namesake in another source. The commitment fact stays in the connector source.
+- **Daily spend cap on loop extraction.** `loops.extraction_max_usd_per_day` (default $2.00, per UTC day, brain-wide): every `loops_extract` job a sweep or the managed catch-up queues shares the day's spend group through the job spend envelope; an attempt the cap cannot admit is refused before the provider call and a sweep at the cap queues nothing (`daily_spend_cap`; `spend_cap_zero` when the user set 0).
+- **Your own label exclusions (#5445).** Per-source `g_loops_exclude_labels` (`gbrain sources add … --loops-exclude-labels`) with the brain-wide `loops.extraction_exclude_labels` as the fallback; label names are resolved once per sweep and gate all three eligibility sites, the execution-time check and grace-hold publication, plus the deterministic detector. A name that does not resolve fails closed for new paid extraction (`excluded_label_unresolved`, visible in the sweep counters and retried every sweep). Contributed by @furuchanchan. Supersedes #5524.
+- **Contacts next to your own people (#4845, #6158).** `g_contacts_dir` (default `people`, `--contacts-dir`) decides where a Google contact page renders; an existing page is renamed in place (import the new path, then retire the old one). A connector stub yields to its canonical twin in another source under `link_resolution.cross_source`, and doctor `junk_entity_hubs` names the twin and the exact remedy instead of an open policy question.
+- **Calendar window reconciles on `--full` (#5442).** `g_future_days` (`--future-days`) bounds the forward window and a `--full` sync reconciles events that moved out of it through the mass-delete guard.
+- **Progress ticks per contact and event (#5349)**, and the sweep's shared Gmail category gate (#5103) applies the same bulk-mail rule to Gemini notes and the deterministic detector.
+- `loops_extraction_skipped` in the error registry explains every sweep skip reason (`gbrain errors loops_extraction_skipped`).
+
+### Windows
+
+- **Lease identity is the token (#6028).** `apply-migrations` and every other `gbrain_cycle_locks` lease refresh/release by `(id, holder_pid, acquisition_token)`; the `acquired_at` epoch text, whose session-fragile form made a runner refuse its own lease as `migrations_running` naming its own pid, is diagnostics only.
+- **Two files no longer park `bun test` (#5332).** `endPoolBounded`'s guard timer stays ref'd while the race is pending (an unref'd timer was dropped before the await came back), and the spawned-CLI persistence test races every child against one wall-clock timer that fails with the argv instead of waiting on a pipe. Both files run on the `windows-latest` row.
+- **Backups (#5312).** The archive write → read → cluster-extract round trip runs natively on the `windows-latest` row; the backup guide tells a hand copier to copy the tree, not just the files. The PGLite `dumpDataDir` ENOENT on Windows stays open.
+- **No console windows from detached processes (#4992).** `src/core/spawn.ts` launches subprocesses with `windowsHide: true` by default (an explicit `false` is kept; only `openBrowser` uses it), and the minions supervisor, worker, child runner, readiness probe, isolation, registry and shell handler, the Stop-hook push, `cli/main.ts`, the hook heartbeat, the backup check, `cli-force-exit`, `cli-preflight`, the autopilot lock and commands and `bounded-child-exec` go through it now. `scripts/check-windows-hide.ts` (in `verify`) is a ratchet: a new direct launch fails unless its file is in `NOT_YET_MIGRATED` (89 files today), and a listed file that moves onto the seam must drop its entry. `test/windows-hidden-console.test.ts` proves it natively on the `windows-latest` row (the unhidden control launch must show a window first, or the run fails as `windows_console_gate_unsupported`). Contributed by @rokas-tarasevicius (PR #6105). The remaining sites keep their windows until they migrate.
+
+### Things to watch
+
+- `test/db-lock-fencing.test.ts` and `test/cycle-lock-steal.serial.test.ts` simulate a steal by rotating the acquisition token (what a real successor does) instead of only moving `acquired_at`; a rewrite of `acquired_at` under a live holder is now, deliberately, not a steal.
+- `test/junk-entity-guards.test.ts`'s #6158 pin changed from "open policy question" (`operator_judgement`) to a concrete remedy; `test/google-source-reconcile.test.ts`'s calendar reconcile pin flipped from "events outside the window stay" to "they reconcile on `--full`".
+- `test/migrations-golden.test.ts` carries 232 as a provisional gap until the integrator renumbers the migration at merge-slot time.
+
+### For contributors
+
+- New tests: `test/loops-counterparty-null-entity.test.ts` (+ Postgres arm), `test/loops-exclusion.test.ts`, `test/loops-extract-spend-cap.test.ts`, `test/db-lock-token-predicate.test.ts` (+ Postgres arm, in the PgBouncer matrix), `test/backup-archive-roundtrip-5312.test.ts`, `test/spawn-windows-hide.test.ts`, `test/scripts/windows-hide-guard.test.ts`, `test/windows-hidden-console.test.ts`. The `add_link` per-endpoint source parameters were deferred (the composite-key path is not cleanly scoped yet).
+
 ## [0.60.157.0] - 2026-10-10
 
 **A database-only `validate: false` stamp no longer refuses every write; lost memory writes are counted and replayable.**
