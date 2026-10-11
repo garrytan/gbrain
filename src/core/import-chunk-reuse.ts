@@ -6,8 +6,56 @@
 import type { BrainEngine } from './engine.ts';
 import { embeddingWriteTarget, embeddingInputContext } from './page-state/projections.ts';
 import { canReuseMarkdownVector, planEmbeddingReuse } from './embed-reuse.ts';
+import { embeddingInputHash, requiresEmbeddingInputProof } from './embedding-input-hash.ts';
 import { modeRequiresSynopsis } from './embedding-context.ts';
 import type { Chunk, ChunkInput, CRMode } from './types.ts';
+
+/** Reuses code vectors, pinning title-aware vectors and their proof to one page snapshot. */
+export async function reuseCodeChunkVectors(
+  engine: BrainEngine,
+  slug: string,
+  sourceId: string,
+  title: string,
+  into: ChunkInput[],
+): Promise<number[]> {
+  let stored: Chunk[];
+  let proof: { target: Awaited<ReturnType<typeof embeddingWriteTarget>>; hashes: Map<number, string | null> } | null = null;
+  const target = await embeddingWriteTarget(engine);
+  if (requiresEmbeddingInputProof(target.provenanceModel)) {
+    const snapshot = await engine.transaction(async tx => {
+      const page = await tx.executeRaw<{ id: number }>(
+        'SELECT id FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL FOR SHARE', [sourceId, slug]);
+      if (page.length === 0) return null;
+      const current = await embeddingWriteTarget(tx);
+      const rows = await tx.executeRaw<{ chunk_index: number; embedding_input_hash: string | null }>(
+        `SELECT c.chunk_index, c.embedding_input_hash FROM content_chunks c
+          JOIN pages p ON p.id = c.page_id WHERE p.source_id = $1 AND p.slug = $2`, [sourceId, slug]);
+      const chunks = await tx.getChunks(slug, { sourceId, includeEmbedding: true, requireSafeChunks: true });
+      return { target: current, hashes: new Map(rows.map(row => [Number(row.chunk_index), row.embedding_input_hash])), stored: chunks };
+    });
+    if (!snapshot) return into.map((_, index) => index);
+    stored = snapshot.stored;
+    proof = { target: snapshot.target, hashes: snapshot.hashes };
+  } else {
+    stored = await engine.getChunks(slug, { sourceId, includeEmbedding: true, requireSafeChunks: true });
+  }
+
+  const context = proof ? embeddingInputContext(proof.target, title, null, into) : null;
+  const candidates = proof && context
+    ? stored.filter(chunk => chunk.model === proof.target.provenanceModel
+      && proof.hashes.get(chunk.chunk_index) === embeddingInputHash(context, 'none', chunk))
+    : stored;
+  const { reuse, needsEmbedIndexes } = proof
+    ? planEmbeddingReuse(candidates, into, chunk => chunk.chunk_text)
+    : planEmbeddingReuse(candidates, into);
+  for (const [index, match] of reuse) {
+    into[index]!.embedding = match.embedding as Float32Array;
+    into[index]!.token_count = match.token_count ?? undefined;
+    if (match.model) into[index]!.model = match.model;
+    if (proof) into[index]!.embedding_input_hash = proof.hashes.get((match as Chunk).chunk_index) ?? undefined;
+  }
+  return needsEmbedIndexes;
+}
 
 /**
  * A13 reuse for one page import: copies each stored vector the reuse gate

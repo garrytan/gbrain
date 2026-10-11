@@ -13,8 +13,13 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } fr
 import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import { digest, sha256 } from '../src/core/persistence/digest.ts';
 import { embeddingInputHash } from '../src/core/embedding-input-hash.ts';
+import { embeddingInputContext, embeddingWriteTarget } from '../src/core/page-state/projections.ts';
+import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { importCodeFile } from '../src/core/import-file.ts';
+import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
+import { testBackends } from './helpers/test-backends.ts';
+import { setTimeout as delay } from 'node:timers/promises';
 
 const DIMS = 1536;
 const MODEL = 'ollama:embeddinggemma:latest';
@@ -25,6 +30,25 @@ type RequestBody = { input: string[]; model: string };
 let engine: PGLiteEngine;
 let server: ReturnType<typeof Bun.serve>;
 let requests: RequestBody[] = [];
+const backends = testBackends();
+let pg: Awaited<ReturnType<typeof isolatedPersistencePostgres>> | undefined;
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>(done => { resolve = done; });
+  return { promise, resolve };
+}
+
+async function bounded<T>(work: Promise<T>, label: string, ms = 10_000): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([work, new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`Timed out waiting for ${label}`)), ms);
+    })]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 const source = (betaFactor = 4) => `export function alpha(a: number[], b: number[], c: number[]): number {
   let sum = 0;
@@ -66,6 +90,7 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
+  if (backends.includes('postgres')) pg = await isolatedPersistencePostgres(process.env.DATABASE_URL!);
   server = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(req) {
     const body = await req.json() as RequestBody;
     requests.push(body);
@@ -89,6 +114,7 @@ beforeEach(async () => {
 afterEach(() => resetGateway());
 afterAll(async () => {
   await engine.disconnect();
+  await pg?.close();
   server?.stop(true);
 });
 
@@ -171,6 +197,111 @@ describe('code EmbeddingGemma import formatting and reuse', () => {
     expect(capturedInputs()).toEqual(renamed.map(row => formatted('Src/shift.ts (typescript)', row.chunk_text)));
     expect(renamed.map(row => row.embedding_input_hash)).not.toEqual(shifted.map(row => row.embedding_input_hash));
   });
+
+  test.skipIf(!backends.includes('postgres'))('vector and proof reads stay paired while a canonical re-embed waits on the page lock', async () => {
+    const database = pg!.engine;
+    const sourceId = 'code-proof-race';
+    await database.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [sourceId]);
+    await database.setConfig('embedding_model', MODEL);
+    await database.setConfig('embedding_dimensions', String(DIMS));
+    await database.setConfig('embedding_disabled', 'false');
+    configureGateway({ embedding_model: MODEL, embedding_dimensions: DIMS, env: {},
+      base_urls: { ollama: `http://127.0.0.1:${server.port}/v1` } });
+    const oldPath = 'src/race.ts';
+    const oldTitle = `${oldPath} (typescript)`;
+    const first = await importCodeFile(database, oldPath, source(), { sourceId });
+    const slug = first.slug;
+    const nextPath = 'Src/race.ts';
+    const nextTitle = `${nextPath} (typescript)`;
+    const seed = await database.getChunks(slug, { sourceId, includeEmbedding: true, requireSafeChunks: true });
+    const target = await embeddingWriteTarget(database);
+    const context = embeddingInputContext(target, nextTitle, null, seed);
+    const page = (await database.executeRaw<{ id: number }>(
+      'SELECT id FROM pages WHERE source_id=$1 AND slug=$2', [sourceId, slug]))[0]!;
+    const encodedSentinel = `[${[0.25, ...Array(DIMS - 1).fill(0)].join(',')}]`;
+    const enter = deferred();
+    const release = deferred();
+    let readPaused = false;
+    let pageShareLocked = false;
+    let readerPid = 0;
+    let writerPid = 0;
+
+    const pauseAfterVectorRead = async (rows: Awaited<ReturnType<BrainEngine['getChunks']>>, slugRead: string) => {
+      if (readPaused || slugRead !== slug) return rows;
+      readPaused = true;
+      enter.resolve();
+      await bounded(release.promise, 'paired proof reader release');
+      return rows;
+    };
+
+    const interleaved = Object.create(database) as BrainEngine;
+    interleaved.transaction = <T>(run: (tx: BrainEngine) => Promise<T>) => database.transaction(tx => {
+      const wrapped = Object.create(tx) as BrainEngine;
+      const executeRaw = tx.executeRaw.bind(tx);
+      wrapped.executeRaw = async <R>(sql: string, params?: unknown[]): Promise<R[]> => {
+        const rows = await executeRaw<R>(sql, params);
+        if (sql.includes('FOR SHARE') && sql.includes('FROM pages')) {
+          pageShareLocked = true;
+          readerPid = (await executeRaw<{ pid: number }>('SELECT pg_backend_pid() AS pid'))[0]!.pid;
+        }
+        return rows;
+      };
+      const getChunks = tx.getChunks.bind(tx);
+      wrapped.getChunks = async (...args: Parameters<BrainEngine['getChunks']>) => {
+        const rows = await getChunks(...args);
+        return pauseAfterVectorRead(rows, args[0]);
+      };
+      return run(wrapped);
+    });
+    interleaved.getChunks = async (...args: Parameters<BrainEngine['getChunks']>) =>
+      pauseAfterVectorRead(await database.getChunks(...args), args[0]);
+
+    const importing = importCodeFile(interleaved, nextPath, source(), { sourceId });
+    void importing.catch(() => {});
+    let writer: Promise<void> | undefined;
+    try {
+      await bounded(enter.promise, 'vector read barrier');
+      requests = [];
+      writer = database.transaction(async tx => {
+        await tx.executeRaw('SELECT set_config(\'application_name\',$1,true)', ['code-proof-writer']);
+        const [{ pid }] = await tx.executeRaw<{ pid: number }>('SELECT pg_backend_pid() AS pid');
+        writerPid = pid;
+        await tx.executeRaw('SELECT id FROM pages WHERE id=$1 FOR UPDATE', [page.id]);
+        for (const chunk of seed) {
+          await tx.executeRaw(
+            `UPDATE content_chunks SET embedding=$1::vector, embedding_input_hash=$2
+              WHERE page_id=$3 AND chunk_index=$4`,
+            [encodedSentinel, embeddingInputHash(context, 'none', chunk), page.id, chunk.chunk_index]);
+        }
+      });
+      void writer.catch(() => {});
+      if (pageShareLocked) await bounded((async () => {
+        const deadline = performance.now() + 8_000;
+        while (performance.now() < deadline) {
+          const rows = await database.executeRaw<{ blocked: boolean }>(
+            `SELECT EXISTS(SELECT 1 FROM pg_stat_activity
+               WHERE application_name='code-proof-writer' AND wait_event_type='Lock'
+                 AND $1::int=ANY(pg_blocking_pids(pid))) AS blocked`, [readerPid]);
+          if (rows[0]?.blocked) return;
+          await delay(20);
+        }
+        throw new Error(`Writer ${writerPid} never reported a lock wait`);
+      })(), 'canonical writer lock receipt');
+      else await bounded(writer, 'unprotected writer interleaving');
+      release.resolve();
+      await bounded(importing, 'title-aware import');
+      await bounded(writer, 'canonical proof/vector writer');
+    } finally {
+      release.resolve();
+      await Promise.allSettled([...(writer ? [writer] : []), importing]);
+    }
+
+    expect(readPaused).toBe(true);
+    expect(pageShareLocked).toBe(true);
+    const finalChunks = await database.getChunks(slug, { sourceId, includeEmbedding: true, requireSafeChunks: true });
+    expect(capturedInputs()).toEqual(finalChunks.map(chunk => formatted(nextTitle, chunk.chunk_text)));
+    expect(capturedInputs().every(input => !input.startsWith(`title: ${oldTitle}`))).toBe(true);
+  }, 60_000);
 
   test('null and legacy v1 proofs never authorize formatted-vector reuse', async () => {
     for (const proofKind of ['null', 'v1'] as const) {

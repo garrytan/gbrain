@@ -21,12 +21,10 @@ import { prepareCodeChunks, installCodeChunkEdges, mapCodeEdges } from './code-c
 import { detectCodeLanguage, CHUNKER_VERSION, GRAMMAR_REVISIONS, type SupportedCodeLanguage } from './chunkers/code.ts';
 import { sanitizeRemoteBody } from './remote-body.ts';
 import { installPageEmbeddings, installPageProjection, preparePageProjection, projectionBelowSafeFence, queuePageProjection, readProjectionSnapshot, resealSafeChunks,
-  sealPageTextProjection, stampEmbeddingInputs, embeddingInputContext, embeddingWriteTarget, type ProjectionSnapshot } from './page-state/projections.ts';
+  sealPageTextProjection, stampEmbeddingInputs, type ProjectionSnapshot } from './page-state/projections.ts';
 import { sanitizeText } from './batch-rows.ts';
 import { hasProtectedBody, safeChunksFilter } from './search/safe-chunks.ts';
-import { planEmbeddingReuse } from './embed-reuse.ts';
-import { embeddingInputHash, requiresEmbeddingInputProof } from './embedding-input-hash.ts';
-import { reuseStoredChunkVectors } from './import-chunk-reuse.ts';
+import { reuseCodeChunkVectors, reuseStoredChunkVectors } from './import-chunk-reuse.ts';
 import { extractCodeRefs, imageOfCandidates } from './link-extraction.ts';
 import { embedMultimodal, currentEmbeddingSignature } from './embedding.ts';
 // #3374 — import-path embeds ride the shared retry loop (429 retry-after +
@@ -1267,44 +1265,11 @@ export async function importCodeFile(
   const code = await prepareCodeChunks(parsedPage, relativePath);
   const { chunks, edges: extractedEdges } = code;
 
-  // v0.19.0 E2 — incremental chunking. Embedding calls dominate the cost
-  // of a sync; re-embedding unchanged chunks wastes money without
-  // improving retrieval. Look up existing chunks by slug and, for any
-  // whose body matches a new chunk's, reuse the existing embedding. Only truly
-  // new/changed chunks hit the embedding API. Ordinary models keep matching on
-  // the header-stripped body; a title formatter below instead matches exact
-  // request text and requires proof because both header and title are embedded.
   // `includeEmbedding` is load-bearing: #2544 dropped the vector from the
-  // default column list, which silently made this whole cache a no-op.
-  const existingChunks = existing && !opts.noEmbed
-    ? await engine.getChunks(slug, { sourceId: sourceId ?? 'default', includeEmbedding: true, requireSafeChunks: true })
-    : [];
-  const proofTarget = existingChunks.length > 0 ? await embeddingWriteTarget(engine) : null;
-  const proofContext = proofTarget && requiresEmbeddingInputProof(proofTarget.provenanceModel)
-    ? embeddingInputContext(proofTarget, title, null, chunks)
-    : null;
-  let reuseCandidates = existingChunks;
-  if (proofContext && proofTarget) {
-    const storedProofs = await engine.executeRaw<{ chunk_index: number; embedding_input_hash: string | null }>(
-      `SELECT c.chunk_index, c.embedding_input_hash FROM content_chunks c
-        JOIN pages p ON p.id = c.page_id WHERE p.source_id = $1 AND p.slug = $2`,
-      [sourceId ?? 'default', slug]);
-    const hashes = new Map(storedProofs.map(row => [Number(row.chunk_index), row.embedding_input_hash]));
-    reuseCandidates = existingChunks.filter(chunk => chunk.model === proofTarget.provenanceModel
-      && hashes.get(chunk.chunk_index) === embeddingInputHash(proofContext, 'none', chunk));
-  }
-  const { reuse, needsEmbedIndexes } = proofContext
-    ? planEmbeddingReuse(reuseCandidates, chunks, chunk => chunk.chunk_text)
-    : planEmbeddingReuse(existingChunks, chunks);
-  for (const [i, matched] of reuse) {
-    // Reuse the existing embedding verbatim. No API call, no cost. Carry the
-    // stored model stamp with the vector so provenance survives a model swap.
-    chunks[i]!.embedding = matched.embedding as Float32Array;
-    chunks[i]!.token_count = matched.token_count ?? undefined;
-    if (matched.model) chunks[i]!.model = matched.model;
-    // This hash is recomputed only after the stored formatted-input proof matched.
-    if (proofContext) chunks[i]!.embedding_input_hash = embeddingInputHash(proofContext, 'none', chunks[i]!);
-  }
+  // default column list, which silently made this cache a no-op.
+  const needsEmbedIndexes = existing && !opts.noEmbed
+    ? await reuseCodeChunkVectors(engine, slug, sourceId ?? 'default', title, chunks)
+    : chunks.map((_, index) => index);
 
   // Embed only the new/changed chunks.
   let codeEmbeddingFailed = false;
