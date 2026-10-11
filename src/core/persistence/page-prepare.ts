@@ -269,6 +269,25 @@ async function pageDatabaseOnlyPublication(engine: SqlEngine, row: WriteRequest,
 }
 
 /**
+ * #6368: a tombstone whose file is under sync.exclude does not own that file (sync never reads it again), so its purge is
+ * database-only: the file is neither compared nor removed. `excludedPath` names that file; the apply re-checks it.
+ */
+async function prepareDeleteFileTarget(engine: BrainEngine, row: WriteRequest, snapshot: PageSnapshot, purge: boolean,
+  options: Parameters<typeof prepareFileTarget>[5]): Promise<{ file: PreparedMutation['file']; excludedPath: string | null }> {
+  let excludedPath: string | null = null;
+  const exclude = purge && snapshot.page.deleted_at != null ? await syncExcludePatterns(engine) : [];
+  const file = await prepareFileTarget(engine, row, snapshot, null, undefined, { ...options,
+    ...(exclude.length ? { excludeTombstone: { patterns: exclude, onExcluded: (path: string) => { excludedPath = path; } } } : {}) });
+  return { file, excludedPath };
+}
+
+async function assertStillSyncExcluded(tx: BrainEngine, row: WriteRequest, excludedPath: string): Promise<void> {
+  if (matchesAnyGlob(excludedPath, await syncExcludePatterns(tx))) return;
+  throw pageRefusal('source_changed', 'sync.exclude changed while the purge was prepared.', row,
+    `${excludedPath} was excluded from sync when the purge of ${row.slug} was prepared and is not any more, so nothing was purged. Run the purge again; it re-reads the exclusion.`, pageFix(row.source_id, row.slug));
+}
+
+/**
  * Providers and parsing run before the OS lock and before any publication transaction.
  * `coordinated`: the caller publishes this mutation itself through the coordinator, whose
  * page guard and revision check on `row.slug` cover this import (the put_page apply diet).
@@ -321,17 +340,9 @@ export async function preparePageMutation(unbounded: BrainEngine, row: WriteRequ
     // Tombstones still own their recorded artifact. Purge always attempts its
     // removal before the guarded hard-delete and receipt commit; failure rolls
     // back to the prior row, and replay survives the eventual absence of that row.
-    // #6368: a tombstone whose file is under sync.exclude does not own that file (sync never reads it again), so its
-    // purge is database-only: the file is neither compared nor removed. The exclusion is checked again at publication.
-    let excludedPath: string | null = null;
-    const exclude = purge && snapshot.page.deleted_at != null ? await syncExcludePatterns(engine) : [];
-    const file = await prepareFileTarget(engine, row, snapshot, null, undefined, { allowMissing: purge || options.allowMissingFile, deleting: true, activePack, remote: row.authority.remote,
-      ...(exclude.length ? { excludeTombstone: { patterns: exclude, onExcluded: (path: string) => { excludedPath = path; } } } : {}) });
+    const { file, excludedPath } = await prepareDeleteFileTarget(engine, row, snapshot, purge, { allowMissing: purge || options.allowMissingFile, deleting: true, activePack, remote: row.authority.remote });
     return { observedRevision, noop, file, ...await pageDatabaseOnlyPublication(engine, row, file), ...(excludedPath !== null ? { databaseOnlyReason: 'sync_excluded' as const } : {}), apply: async tx => {
-      if (purge && excludedPath !== null) {
-        if (!matchesAnyGlob(excludedPath, await syncExcludePatterns(tx))) throw pageRefusal('source_changed', 'sync.exclude changed while the purge was prepared.', row,
-          `${excludedPath} was excluded from sync when the purge of ${row.slug} was prepared and is not any more, so nothing was purged. Run the purge again; it re-reads the exclusion.`, pageFix(row.source_id, row.slug));
-      }
+      if (purge && excludedPath !== null) await assertStillSyncExcluded(tx, row, excludedPath);
       if (purge) return purgePageInTransaction(tx, row, snapshot);
       if (!noop) { await tx.createVersion(row.slug, source); await tx.softDeletePage(row.slug, source); }
       return { status: 'soft_deleted', slug: row.slug, source_id: row.source_id, noop,

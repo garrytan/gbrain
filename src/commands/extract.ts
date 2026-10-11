@@ -896,6 +896,34 @@ Inspection:
 Status:
   gbrain extract status [--source-id ID] [--kind X] [--verbose] [--json]`;
 
+/**
+ * `extract links|timeline|all --source db`. v0.42.7 (#1696) + S4 (P2.18): 'all' stamps the watermark for the pages both
+ * phases completed at one revision (zero-link pages included), in a finally, so a throwing phase still keeps what both finished.
+ */
+async function extractFromDB(engine: BrainEngine, result: ExtractResult, subcommand: string, o: { dryRun: boolean; jsonMode: boolean; typeFilter?: string;
+  since?: string; includeFrontmatter: boolean; sourceIdFilter?: string; inferDates: boolean }): Promise<void> {
+  const completed = subcommand === 'all' && !o.dryRun ? { links: new Set<string>(), timeline: new Set<string>() } : null;
+  try {
+    if (subcommand === 'links' || subcommand === 'all') {
+      const r = await extractLinksFromDB(engine, o.dryRun, o.jsonMode, o.typeFilter, o.since, { includeFrontmatter: o.includeFrontmatter, sourceIdFilter: o.sourceIdFilter, completed: completed?.links });
+      result.links_created = r.created;
+      result.pages_processed = r.pages;
+      // #2589: "counted, never silent" reaches the --json summary too — additive fields, only present on the DB links path.
+      result.skipped_missing_target = r.skippedMissingTarget;
+      result.skipped_cross_source = r.skippedCrossSource;
+      if (r.skippedAttendanceIncomplete) result.skipped_attendance_incomplete = r.skippedAttendanceIncomplete;
+      if (r.skippedConcurrentWrite) result.skipped_concurrent_write = r.skippedConcurrentWrite;
+    }
+    if (subcommand === 'timeline' || subcommand === 'all') {
+      const r = await (await import('./extract-timeline-db.ts')).extractTimelineFromDB(engine, { ...o, completed: completed?.timeline });
+      Object.assign(result, { timeline_entries_created: r.created, pages_processed: Math.max(result.pages_processed, r.pages) }, r.refused + r.pending ? { timeline_refused: r.refused + r.pending } : {});
+    }
+  } finally {
+    if (completed) await stampCompletedIntersection(engine, completed.links, completed.timeline);
+  }
+}
+
+
 export async function runExtract(engine: BrainEngine, args: string[], authority?: { remote: boolean }) {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(EXTRACT_HELP);
@@ -1247,28 +1275,7 @@ export async function runExtract(engine: BrainEngine, args: string[], authority?
           if (!byMention) result.pages_processed += r.pages;
         }
       } else {
-        // v0.42.7 (#1696) + S4 (P2.18): 'all' stamps the watermark for the pages both phases completed at one revision
-        // (zero-link pages included), in a finally, so a throwing phase still keeps what both finished.
-        const completed = subcommand === 'all' && !dryRun ? { links: new Set<string>(), timeline: new Set<string>() } : null;
-        try {
-          if (subcommand === 'links' || subcommand === 'all') {
-            const r = await extractLinksFromDB(engine, dryRun, jsonMode, typeFilter, since, { includeFrontmatter, sourceIdFilter, completed: completed?.links });
-            result.links_created = r.created;
-            result.pages_processed = r.pages;
-            // #2589: "counted, never silent" reaches the --json summary too —
-            // additive fields, only present on the DB links path.
-            result.skipped_missing_target = r.skippedMissingTarget;
-            result.skipped_cross_source = r.skippedCrossSource;
-            if (r.skippedAttendanceIncomplete) result.skipped_attendance_incomplete = r.skippedAttendanceIncomplete;
-            if (r.skippedConcurrentWrite) result.skipped_concurrent_write = r.skippedConcurrentWrite;
-          }
-          if (subcommand === 'timeline' || subcommand === 'all') {
-            const r = await (await import('./extract-timeline-db.ts')).extractTimelineFromDB(engine, { dryRun, jsonMode, typeFilter, since, sourceIdFilter, inferDates, completed: completed?.timeline });
-            Object.assign(result, { timeline_entries_created: r.created, pages_processed: Math.max(result.pages_processed, r.pages) }, r.refused + r.pending ? { timeline_refused: r.refused + r.pending } : {});
-          }
-        } finally {
-          if (completed) await stampCompletedIntersection(engine, completed.links, completed.timeline);
-        }
+        await extractFromDB(engine, result, subcommand, { dryRun, jsonMode, typeFilter, since, includeFrontmatter, sourceIdFilter, inferDates });
       }
     } else {
       // #1747: resolve the brain source id and thread it into the fs-walk

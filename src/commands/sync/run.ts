@@ -146,7 +146,8 @@ async function runAcknowledgeManaged(engine: BrainEngine, args: string[]): Promi
   const status = (id: string) => ({ argv: ['gbrain', 'sync', 'status', '--source', id, '--json'], consent: [], actor: 'agent' as const, requires_exclusive: false,
     why: 'Shows the recorded failure, its class and the exact sync that settles it, read-only.' });
   if (!selector || selector.startsWith('--') || !sourceId) throw opError('invalid_params', '--acknowledge-managed needs --source <id> and a request id or path.',
-    'Name the source and the recorded failure, for example gbrain sync --source <id> --acknowledge-managed <request_id|path>; gbrain sync status --source <id> --json lists them.');
+    `Name the source and one recorded failure's request id or path, for example gbrain sync --source ${sourceId ?? 'default'} --acknowledge-managed notes/a.md; gbrain sync status --source ${sourceId ?? 'default'} --json lists them.`,
+    sourceId ? { fix: status(sourceId) } : undefined);
   const { acknowledgeManagedSyncFailures, readManagedSyncImported } = await import('../../core/persistence/sync-failures.ts');
   const imported = await readManagedSyncImported(engine, sourceId);
   if (!imported) throw opError('managed_failure_unsettled', `Source ${sourceId} has no successful managed sync yet, so nothing can be acknowledged.`,
@@ -156,7 +157,7 @@ async function runAcknowledgeManaged(engine: BrainEngine, args: string[]): Promi
   if (result.refused.length || !result.cleared.length) {
     throw opError('managed_failure_unsettled', result.refused.length ? `${result.refused.length} recorded failure(s) for ${selector} are not settled by the imported state.` : `No recorded managed failure of source ${sourceId} matches ${selector}.`,
       result.refused.length ? `Refused: ${result.refused.map(r => `${r.failure.path} (${r.reason})`).join(', ')}. The file still differs from what commit ${imported.target.slice(0, 12)} imported, its run is unfinished, or it is held; nothing was removed for it. Resume or retry that sync instead.`
-        : 'Check the request id or path against gbrain sync status --source <id> --json; nothing was removed.', { fix: status(sourceId) });
+        : `Check the request id or path against gbrain sync status --source ${sourceId} --json; nothing was removed.`, { fix: status(sourceId) });
   }
   if (args.includes('--json')) await writeJsonDocument(JSON.stringify({ source_id: sourceId, imported_commit: imported.target, cleared: result.cleared }));
 }
