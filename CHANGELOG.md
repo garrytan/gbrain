@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.164.0] - 2026-10-11
 
 **Wave 14 PR4: the Google connector, open loops, contacts, calendar, Windows and polish.** Gmail loops now find the person page wherever it lives in the brain, extraction runs under a daily spend cap and your own label exclusions, contacts land next to your people pages, and three Windows reports (parked tests, console windows, backups) get native coverage on CI.
 
