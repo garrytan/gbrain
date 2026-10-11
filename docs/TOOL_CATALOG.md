@@ -4,7 +4,7 @@
 <!-- Regenerate: bun run scripts/generate-tool-catalog.ts -->
 <!-- Freshness-guarded by scripts/check-tool-catalog-fresh.sh (bun run verify). -->
 
-Every non-localOnly operation on the MCP surface: 144 tools across 24 areas. **Starter** marks membership in the ~40-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
+Every non-localOnly operation on the MCP surface: 149 tools across 25 areas. **Starter** marks membership in the ~40-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
 
 ## admin
 
@@ -188,6 +188,16 @@ Every non-localOnly operation on the MCP surface: 144 tools across 24 areas. **S
 | `revert_version` | Restore a page to an earlier version from its history (a new revision; history is kept). | write |  |  |
 | `unpurge_page` | Owner-only (`gbrain pages unpurge <slug>`). | admin |  |  |
 
+## questions
+
+| Tool | Description | Scope | Starter | Gate |
+|---|---|---|---|---|
+| `questions_list` | List pinned questions with freshness, blocked reason and next action, plus fresh/stale/pending counts. | read |  |  |
+| `questions_pin` | Pin a question: gbrain keeps a cited answer current from your notes and flags sentences whose evidence changed. | write |  |  |
+| `questions_refresh` | Refresh a pinned answer now (a paid model call): re-retrieves current evidence and edits the answer, or recomputes with full or after deletions. | write |  |  |
+| `questions_status` | One pinned question: the answer with per-sentence stale flags, evidence watermark, last refresh, blocked reason, next action and verify step. | read |  |  |
+| `questions_unpin` | Unpin a question: refreshes stop and its page is archived (your notes on it are kept). | write |  |  |
+
 ## schema
 
 | Tool | Description | Scope | Starter | Gate |
@@ -208,7 +218,7 @@ Every non-localOnly operation on the MCP surface: 144 tools across 24 areas. **S
 |---|---|---|---|---|
 | `assemble_evidence` | Deliver whole evidence for an ordered list of search hits (each {source_id, slug, chunk_id} from a prior search/query result): the same windows, sections or pages `query` returns with return_unit, packed into token_budget. | read |  |  |
 | `cache_stats` | Semantic query-cache introspection: resolved knobs (enabled, similarity threshold, TTL) plus row counts and total hits. | admin |  |  |
-| `query` | Hybrid search plus multi-query expansion for concept or landscape questions (expansion recovers synonym-phrased matches). | read | yes |  |
+| `query` | Hybrid search plus multi-query expansion for concept/landscape questions (expansion recovers synonym phrasings). | read | yes |  |
 | `rate_answer` | Rate how useful an answer's retrieved evidence was, so this brain ranks better next time (zero LLM calls). | write |  |  |
 | `search` | Cheap hybrid search (vector + keyword), no LLM expansion, top 20: for exact tokens, names, field values. | read | yes |  |
 | `search_by_image` | Image-as-query retrieval. | read |  |  |

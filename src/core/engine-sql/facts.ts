@@ -22,6 +22,7 @@ import { tryParseEmbedding } from '../utils.ts';
 import { AUDIT_ROW_SOURCES } from '../facts/audit-sources.ts';
 import { resolveSupersededByRow, isInt4RowRef, supersessionChainOf, type SupersedeTarget } from '../facts/supersede-resolve.ts';
 import { escapeLikePattern } from '../cjk.ts';
+import { getFtsLanguage } from '../fts-language.ts';
 import type { SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import { sqlFragment, trustedSql } from './fragment.ts';
@@ -531,7 +532,7 @@ export async function findCandidateDuplicates(
     source_id: string,
     entitySlug: string,
     factText: string,
-    opts?: { k?: number; embedding?: Float32Array; embeddingModel?: string | null; attributedTo?: FactAttribution | null },
+    opts?: { k?: number; embedding?: Float32Array; embeddingModel?: string | null; arm?: 'keyword'; attributedTo?: FactAttribution | null },
   ): Promise<FactRow[]> {
     const k = Math.min(Math.max(opts?.k ?? 5, 1), 20);
     const speaker = opts?.attributedTo
@@ -539,6 +540,7 @@ export async function findCandidateDuplicates(
       : sqlFragment``;
     // Validity-lapsed rows are not dedup candidates: a re-stated fact after
     // its valid_until lapses re-inserts fresh (WP5 read-time TTL honesty).
+    if (opts?.arm === 'keyword') return findKeywordCandidates(exec, source_id, entitySlug, factText, k, opts);
     if (opts?.embedding) {
       if (!opts.embeddingModel) return [];
       const lit = toPgVectorLiteral(opts.embedding);
@@ -570,6 +572,46 @@ export async function findCandidateDuplicates(
     `)).rows;
     return rows.map(rowToFact);
   }
+
+/**
+ * The keyword arm of fact supersession candidates (C2, `facts.candidate_fusion
+ * = interleave`): the same entity bucket and active-row filters as the cosine
+ * arm, ranked by `ts_rank_cd` against an OR of the new claim's lexemes, so a
+ * twin whose wording changed only in a number or date still ranks by its
+ * shared terms. With an embedding it keeps the cosine arm's comparability
+ * filters (same model, current text hash, same dimensions), so every row it
+ * returns can be scored by the caller's cosine decision. Per-row tsvector over
+ * one entity's facts: no index is needed at k <= 20.
+ */
+async function findKeywordCandidates(
+  exec: LegacyUnscopedRead, source_id: string, entitySlug: string, factText: string, k: number,
+  opts: { embedding?: Float32Array; embeddingModel?: string | null; attributedTo?: FactAttribution | null },
+): Promise<FactRow[]> {
+  if (opts.embedding && !opts.embeddingModel) return [];
+  const speaker = opts.attributedTo
+    ? sqlFragment`AND (f.attributed_to IS NULL OR f.attributed_to = ${opts.attributedTo})`
+    : sqlFragment``;
+  const lang = getFtsLanguage();
+  const comparable = opts.embedding
+    ? sqlFragment`AND embedding IS NOT NULL AND embedding_model=${opts.embeddingModel} AND embedded_text_hash=md5(fact)
+          AND vector_dims(embedding)=${opts.embedding.length}`
+    : sqlFragment``;
+  const rows = (await exec.run<FactRowSqlShape>(sqlFragment`
+      WITH q AS (SELECT NULLIF(replace(plainto_tsquery(${lang}::regconfig, ${factText})::text, ' & ', ' | '), '')::tsquery AS q)
+      SELECT f.* FROM facts f, q
+      WHERE f.source_id = ${source_id}
+        AND f.entity_slug = ${entitySlug}
+        AND f.expired_at IS NULL
+        AND (f.valid_until IS NULL OR f.valid_until > now())
+        AND f.source != ALL(${AUDIT_ROW_SOURCES}::text[])
+        ${comparable}
+        ${speaker}
+        AND q.q IS NOT NULL AND to_tsvector(${lang}::regconfig, f.fact) @@ q.q
+      ORDER BY ts_rank_cd(to_tsvector(${lang}::regconfig, f.fact), q.q) DESC, f.created_at DESC, f.id DESC
+      LIMIT ${k}
+    `)).rows;
+  return rows.map(rowToFact);
+}
 
 export async function consolidateFact(exec: SqlExecutor, id: number, takeId: number): Promise<void> {
     (await exec.run(sqlFragment`UPDATE facts SET consolidated_at = now(), consolidated_into = ${takeId} WHERE id = ${id}`)).rows;

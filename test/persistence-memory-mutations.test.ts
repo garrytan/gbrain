@@ -246,6 +246,8 @@ describe('journaled memory publication, both engines', () => {
     try {
       for (const engine of engines) {
         const slug = 'people/supersede-example';
+        // Calibrate the fixed test embedder: an uncalibrated model never supersedes by cosine (supersession-threshold.ts).
+        await engine.setConfig('facts.supersession_thresholds', JSON.stringify({ 'openai:text-embedding-3-small@1536': 0.95 }));
         await setupPage(engine, slug);
         const privateMemory = await submitRememberMutation(context(engine), { fact: 'Confidential unrelated claim',
           provenance: 'test', entity: slug, visibility: 'private' }, 30_000);

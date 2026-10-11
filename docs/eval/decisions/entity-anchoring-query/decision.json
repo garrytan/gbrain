@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "decision_id": "entity-anchoring-query",
+  "plan": "MEMORY_PROOF_WAVE fix lane (from C4 run 3)",
+  "title": "Entity-anchored retrieval for entity-scoped current-state query/search",
+  "verdict_type": "quality",
+  "stage": "dev",
+  "candidate": {
+    "gbrain": "garrytan/gbrain@2fa44f149",
+    "config": {
+      "search.entity_anchoring": "true"
+    }
+  },
+  "baselines": [
+    {
+      "gbrain": "garrytan/gbrain@2fa44f149",
+      "config": {
+        "search.entity_anchoring": "false"
+      },
+      "note": "same brain, same query op call, key off"
+    }
+  ],
+  "preregistration": "README.md in garrytan/gbrain@9a8cfb9f7, before any gated run",
+  "models": {
+    "reader": "anthropic:claude-sonnet-5-5",
+    "embedding": "voyage:voyage-4 (1024d)",
+    "selection": "B-suite fixed reader; gbrain default embedding"
+  },
+  "gates": {
+    "1": "seeded appended-corrections workload, seeds 42/7/1234, query op expansion off, reader at 200 tokens (sensitivity: 16 rows); pass if in every seed key-on accuracy is higher or freshness lag lower, and accuracy lower in no seed",
+    "2": "NamedThingBench, relational retrieval-quality, LongMemEval nightly through the query op key on vs off (keyword-only); pass if no question top-10 recall is lower with the key on",
+    "3": "harness lane: LongMemEval knowledge-update, PersonaMem, BEAM dev slices, then validation (not run here)"
+  },
+  "decision_rule": "default-on only if gates 1 and 2 pass here and gate 3 passes in the harness lane; off until then",
+  "budget": {
+    "max_usd": 10,
+    "metered_spend_usd": 1.5243
+  },
+  "reproduce": "bun evals/entity-anchoring/query-gate.ts --run --yes --max-usd 4 --seeds 42,7,1234 --entities 6 --reader-model anthropic:claude-sonnet-5-5 --embeddings voyage:voyage-4 --json"
+}

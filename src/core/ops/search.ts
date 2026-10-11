@@ -11,6 +11,9 @@ import { readHolders } from './context.ts';
  */
 
 import { hybridSearchCached, stampContentFlags, stampUnverifiedExtractions } from '../search/hybrid.ts';
+import { anchorOpResults } from '../search/entity-anchor.ts';
+import { applyQueryArms } from '../search/query-arms.ts';
+import { factRowOutput } from '../search/facts-arm.ts';
 import { resolveSearchDateBounds } from '../search/date-bounds.ts';
 import { loadSearchModeConfig, resolveSearchMode, SOURCE_BOOSTS_KEY } from '../search/mode.ts';
 import { looksConceptShaped, classifyQueryShape } from '../search/query-intent.ts';
@@ -31,7 +34,7 @@ import { redactRetrievalOutput } from '../search/output-redaction.ts';
 import { projectRows, resultRowsFor } from '../search/lean-rows.ts';
 import { buildScoreDetails } from '../search/explain-formatter.ts';
 import { TargetTrace, diagnoseProbe, diagnoseTrace, probeTarget, type ExplainTargetDiagnosis } from '../search/explain-target.ts';
-import { assembleEvidenceForHits, capDeliveredSnippets, capEvidenceToBudget, deliverEvidence, effectivePlan, resolveEvidencePlan, unsupportedDelivery, type DeliveryMeta, type DeliveryScope, type EvidencePlan, type FrozenHit, type ReturnUnit } from '../search/evidence-delivery.ts';
+import { assembleEvidenceForHits, capDeliveredSnippets, capEvidenceToBudget, deliverEvidence, effectivePlan, pagePlanHits, resolveEvidencePlan, unsupportedDelivery, type DeliveryMeta, type DeliveryScope, type EvidencePlan, type FrozenHit, type ReturnUnit } from '../search/evidence-delivery.ts';
 import { privateProvenanceFilterFragment, resolveExcludePrivatePages } from '../search/private-visibility.ts';
 import { AUDIT_ROW_SOURCES } from '../facts/audit-sources.ts';
 import { SAFE_FENCE_CHUNKER_VERSION } from '../search/safe-chunks.ts';
@@ -108,7 +111,7 @@ function searchOutput(ctx: OperationContext, p: Record<string, unknown>, results
   if (!evidence) {
     const output = redactRetrievalOutput(results, { ...meta, ...shown });
     ctx.emitResponseMeta?.('retrieval', output.meta);
-    return projectRows(applySnippetCap(output.results, snippetCap), rows);
+    return projectRows(applySnippetCap(output.results, snippetCap).map(factRowOutput), rows);
   }
   // Evidence delivery: explicit snippet_chars wins over the delivered blocks;
   // otherwise the blocks are returned whole (their budget already bounds
@@ -118,7 +121,7 @@ function searchOutput(ctx: OperationContext, p: Record<string, unknown>, results
   // markers and redaction recounted); without one both are no-ops.
   const capped = evidence.explicitSnippet ? capDeliveredSnippets(output.results, snippetCap, output.meta.delivery) : capEvidenceToBudget(output.results, output.meta.delivery);
   ctx.emitResponseMeta?.('retrieval', output.meta);
-  return projectRows(capped, rows);
+  return projectRows(capped.map(factRowOutput), rows);
 }
 
 /** C1: the per-call row-shape escape hatch shared by `search` and `query` (`detail` is query's low/medium/high). */
@@ -361,8 +364,8 @@ async function matchingSavedFacts(ctx: OperationContext, scope: SourceScope, que
     .filter(t => t.length >= 3 && !FACT_MATCH_STOPWORDS.has(t)).slice(0, 12);
   if (terms.length === 0 || !ctx.emitResponseMeta) return [];
   const sources = scope.sourceIds?.length ? scope.sourceIds : [scope.sourceId ?? ctx.sourceId ?? 'default'];
-  const remote = ctx.remote !== false;
-  const visibility = `${remote ? `AND f.visibility = 'world' AND ${privateProvenanceFilterFragment('f')}` : ''}
+  const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
+  const visibility = `${ctx.remote !== false ? `AND f.visibility = 'world'` : ''} ${excludePrivate ? `AND ${privateProvenanceFilterFragment('f')}` : ''}
          AND ${projectionEligibleSql('facts', 'f', { floor: scope.minTrust })}`;
   try {
     // Most searches have no saved fact to find: one indexed probe (idx_facts_since) with the
@@ -444,7 +447,9 @@ async function buildRetrievalResponseMeta(
     excludeSlugPrefixes,
   });
   const aliases = (opts.declarations ?? new DeclarationMemo()).scan(results as DeclarationRow[], queryText);
-  const savedFacts = await matchingSavedFacts(ctx, scope, queryText, aliases);
+  // A fact the facts arm already returned as a row is not repeated beside the blocks.
+  const factRowIds = new Set((results as SearchResult[]).flatMap(r => r.fact_row ? [r.fact_row.id] : []));
+  const savedFacts = (await matchingSavedFacts(ctx, scope, queryText, aliases)).filter(f => !factRowIds.has(f.id));
   const heldFiles = await stampHeldHits(ctx.engine, results as SearchResult[], scope, ctx).catch(() => []);
   const heldNotice = heldFilesNotice(heldFiles, ctx.remote !== false);
   if (heldNotice) ctx.emitNotice?.(heldNotice);
@@ -750,8 +755,9 @@ const search: Operation = {
       ...searchOpts, onMeta: (m) => { capturedMeta = m; }, explain: p.explain === true, explainTarget: explainPrep?.trace,
     });
     const declarations = new DeclarationMemo();
-    const results = (await withDeclaredNameFanOut(primary, queryText, declarations,
+    let results = (await withDeclaredNameFanOut(primary, queryText, declarations,
       (alt, altLimit) => hybridSearchCached(ctx.engine, alt, { ...searchOpts, limit: altLimit, offset: 0 }))).map(r => ({ ...r }));
+    results = await anchorOpResults(ctx.engine, p, queryText, results, { ...scope, excludePrivate, requireSafeChunks: ctx.remote !== false, filtered: !!types, evidencePlan: !!plan });
     stampDeepResearchIds(results);
     const latency_ms = Date.now() - startedAt;
     bumpLastRetrievedAt(ctx.engine, results.map((r) => r.page_id));
@@ -933,7 +939,7 @@ const query: Operation = {
     // cross-source mode (matches SearchOpts.sourceId contract).
     const typeFilter = await reconcileTypeFilter(ctx, querySourceScope, excludePrivate, types);
     types = typeFilter.types;
-    let capturedMeta: HybridSearchMeta | null = null;
+    let capturedMeta: HybridSearchMeta | null = null; let queryEmbedding: Float32Array | null = null;
     const explainPrep = await prepareExplainTarget(ctx, p, querySourceScope, excludePrivate, 'query');
     // v0.32.x search-lite: route the query op through hybridSearchCached so
     // token budget and intent weighting apply at the operation boundary.
@@ -948,7 +954,7 @@ const query: Operation = {
       // `(p.limit as number) || undefined` keeps 0 in that same "unset"
       // bucket rather than requesting a literal empty result — see the
       // `limit` param description above for why.
-      limit: (p.limit as number) || undefined,
+      limit: (p.limit as number) || pagePlanHits(plan).limit,
       offset: (p.offset as number) || 0,
       excludePrivate,
       requireSafeChunks: ctx.remote !== false, decide: { remote: ctx.remote !== false, answerability: true },
@@ -976,7 +982,7 @@ const query: Operation = {
       intentWeighting: typeof p.intent_weighting === 'boolean' ? (p.intent_weighting as boolean) : undefined,
       // v0.36 cross-modal routing param.
       crossModal: p.cross_modal as 'text' | 'image' | 'both' | 'auto' | undefined,
-      onMeta: (m) => { capturedMeta = m; },
+      onMeta: (m) => { capturedMeta = m; }, onQueryEmbedding: (e) => { queryEmbedding = e; },
       // v0.36 (D15): per-call embedding column override. Resolver rejects
       // unknown names at hybrid entry with EmbeddingColumnNotRegisteredError;
       // the error surfaces back to the agent as the op error envelope.
@@ -989,16 +995,16 @@ const query: Operation = {
       adaptiveReturn: typeof p.adaptive_return === 'boolean' ? (p.adaptive_return as boolean) : undefined,
       // v0.42.3.0 — autocut ceiling override. Omitted = smart default (ON in
       // reranked modes). `false` forces the full top-K.
-      autocut: typeof p.autocut === 'boolean' ? (p.autocut as boolean) : undefined,
+      autocut: typeof p.autocut === 'boolean' ? (p.autocut as boolean) : pagePlanHits(plan).autocut,
       // v0.43 — relational recall override. Omitted = smart default (mode bundle).
       relationalRetrieval: typeof p.relational === 'boolean' ? (p.relational as boolean) : undefined,
       explain: p.explain === true, explainTarget: explainPrep?.trace,
     });
     const declarations = new DeclarationMemo();
-    results = await withDeclaredNameFanOut(results, queryText, declarations, (alt, altLimit) => hybridSearchCached(ctx.engine, alt, {
+    results = await applyQueryArms(ctx.engine, p, queryText, await withDeclaredNameFanOut(results, queryText, declarations, (alt, altLimit) => hybridSearchCached(ctx.engine, alt, {
       limit: altLimit, excludePrivate, requireSafeChunks: ctx.remote !== false, takesHoldersAllowList: readHolders(ctx),
       expansion: false, types, ...querySourceScope,
-    }));
+    })), { ...querySourceScope, excludePrivate, requireSafeChunks: ctx.remote !== false, filtered: !!types, evidencePlan: !!plan, evidenceBudget: plan?.budgetTokens, remote: ctx.remote !== false, queryEmbedding, rowCap: () => resolveEffectiveLimit(ctx, p) });
     // #1663 — CRAG confidence gate. Grade what retrieval returned (zero-LLM;
     // reads the stamped honesty signals: evidence, exact_lookup, rerank
     // score), attach grade + query shape to the retrieval meta on EVERY call,

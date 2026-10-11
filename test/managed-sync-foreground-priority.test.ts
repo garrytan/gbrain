@@ -98,9 +98,13 @@ async function writeDuringDrain(lanes: number, slug: (queued: Row[]) => string, 
   // `laneHold`, once the write is sent each lane group that has applied its pages holds before its commit turn (no
   // counter lock held) until the write commits or `laneHold` ms pass, and `beside` records, for each foreground
   // publication in this process, whether a lane group was then open.
-  let laneOpen = 0, armed = false;
+  let laneOpen = 0, armed = false, holdStarts = false;
   const beside: boolean[] = [];
   const written = Promise.withResolvers<void>();
+  // Without `laneHold`, from the moment 4 unstarted groups are seen until `before` is read, each lane parks its group
+  // at `lane:applied`, so no lane starts another group and the groups queued ahead of the write stay queued however
+  // long the write takes to be admitted (each lane can take at most one more group before it parks).
+  const counted = Promise.withResolvers<void>();
   // With `preparingHoldMs`, whichever process claims the write holds its preparation that long, and this process stamps
   // its claims with another process's owner, so either way the write is claimed elsewhere and unpublished meanwhile.
   let heldHere: [number, number] | undefined;
@@ -118,6 +122,7 @@ async function writeDuringDrain(lanes: number, slug: (queued: Row[]) => string, 
       laneOpen++;
       try { await Promise.race([written.promise, Bun.sleep(laneHold)]); } finally { laneOpen--; }
     }
+    if (!laneHold && holdStarts && point === 'lane:applied') await Promise.race([counted.promise, Bun.sleep(30_000)]);
     if (!laneHold && point === 'publication:before_commit' && detail.operation === 'submit_job') await Bun.sleep(150);
   });
   try {
@@ -131,7 +136,9 @@ async function writeDuringDrain(lanes: number, slug: (queued: Row[]) => string, 
       const begun = new Set(all.filter(row => row.state !== 'queued').map(row => row.request_id));
       queued = all.filter(row => row.state === 'queued' && row.kind?.startsWith('managed_sync_') && !(row.grp && begun.has(row.grp)) && !begun.has(row.request_id));
       // With lanes the drain admits groups ahead; without them only the publishing group is out, so the write comes while one runs.
-      return all.some(row => row.state === 'committed') && (lanes > 1 ? queued.length >= 4 : all.some(row => row.state === 'running' && row.kind?.startsWith('managed_sync_')));
+      const ready = all.some(row => row.state === 'committed') && (lanes > 1 ? queued.length >= 4 : all.some(row => row.state === 'running' && row.kind?.startsWith('managed_sync_')));
+      if (ready && lanes > 1) holdStarts = true;
+      return ready;
     });
     const target = slug(queued.length ? queued : await rows(e, source).then(all => all.filter(row => row.state === 'queued')));
     armed = true;
@@ -149,10 +156,11 @@ async function writeDuringDrain(lanes: number, slug: (queued: Row[]) => string, 
         && !(row.grp && started.has(row.grp)));
       return true;
     });
+    counted.resolve();
     const [written] = await finish();
     const result = await drain;
     return { source, target, before, written: written!, result, claims: recorder.claims, final: await rows(e, source), beside, held: heldHere ?? written!.held };
-  } finally { recorder.restore(); installFaultHook(undefined); setClaimOwnerForTest(undefined); }
+  } finally { counted.resolve(); recorder.restore(); installFaultHook(undefined); setClaimOwnerForTest(undefined); }
 }
 
 for (const lanes of [2, 1]) {

@@ -85,6 +85,8 @@ describe('legacy facts helpers on an unmanaged brain', () => {
   test('writeSingleFact DB-only supersession: the new fact is maintenance-created and the old fact keeps its creator', () => withFixedEmbeddings(async () => {
     for (const engine of engines) {
       const brain = await unmanagedBrain(engine);
+      // Calibrate the fixed test embedder: an uncalibrated model never supersedes by cosine (supersession-threshold.ts).
+      await engine.setConfig('facts.supersession_thresholds', JSON.stringify({ 'openai:text-embedding-3-small@1536': 0.95 }));
       // #5504: an entity the resolver can only slugify stores entity_slug NULL, so the page must exist for the
       // supersession candidate (keyed on the entity) to be found; the write itself stays DB-only (no local root).
       await importFromContent(engine, 'people/alice-example', '---\ntype: person\ntitle: Alice\n---\nA person.\n', { sourceId: brain.sourceId, sourcePath: 'people/alice-example.md', noEmbed: true });
@@ -101,6 +103,8 @@ describe('legacy facts helpers on an unmanaged brain', () => {
   test('writeSingleFact fence path: the fenced fact, its supersession strike and the page body mirror name the maintenance principal', () => withFixedEmbeddings(async () => {
     for (const engine of engines) {
       const brain = await unmanagedBrain(engine);
+      // Calibrate the fixed test embedder: an uncalibrated model never supersedes by cosine (supersession-threshold.ts).
+      await engine.setConfig('facts.supersession_thresholds', JSON.stringify({ 'openai:text-embedding-3-small@1536': 0.95 }));
       await sourceRoot(brain);
       const slug = 'people/bob-example';
       await importFromContent(engine, slug, '---\ntype: person\ntitle: Bob\n---\nA person.\n', { sourceId: brain.sourceId, sourcePath: `${slug}.md`, noEmbed: true });

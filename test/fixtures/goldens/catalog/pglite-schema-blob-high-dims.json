@@ -200,6 +200,9 @@
       "persistence_writer_protocols.persistence_writer_protocols_pkey": "p PRIMARY KEY (worktree_id, host_id)",
       "persistence_writer_protocols.persistence_writer_protocols_protocol_version_check": "c CHECK ((protocol_version = 2))",
       "persistence_writer_protocols.persistence_writer_protocols_worktree_id_fkey": "f FOREIGN KEY (worktree_id) REFERENCES persistence_worktrees(id)",
+      "pinned_questions.pinned_questions_pkey": "p PRIMARY KEY (id)",
+      "pinned_questions.pinned_questions_source_slug_key": "u UNIQUE (source_id, slug)",
+      "question_evidence.question_evidence_pkey": "p PRIMARY KEY (id)",
       "raw_data.raw_data_page_id_fkey": "f FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE",
       "raw_data.raw_data_page_id_source_key": "u UNIQUE (page_id, source)",
       "raw_data.raw_data_pkey": "p PRIMARY KEY (id)",
@@ -538,6 +541,12 @@
       "persistence_writer_protocols": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
+      "pinned_questions": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
+      "question_evidence": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
       "raw_data": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
@@ -836,6 +845,11 @@
       "persistence_worktree_refreshes_pkey": "CREATE UNIQUE INDEX persistence_worktree_refreshes_pkey ON public.persistence_worktree_refreshes USING btree (id)",
       "persistence_worktrees_pkey": "CREATE UNIQUE INDEX persistence_worktrees_pkey ON public.persistence_worktrees USING btree (id)",
       "persistence_writer_protocols_pkey": "CREATE UNIQUE INDEX persistence_writer_protocols_pkey ON public.persistence_writer_protocols USING btree (worktree_id, host_id)",
+      "pinned_questions_pkey": "CREATE UNIQUE INDEX pinned_questions_pkey ON public.pinned_questions USING btree (id)",
+      "pinned_questions_source_slug_key": "CREATE UNIQUE INDEX pinned_questions_source_slug_key ON public.pinned_questions USING btree (source_id, slug)",
+      "pinned_questions_state_idx": "CREATE INDEX pinned_questions_state_idx ON public.pinned_questions USING btree (state, source_id)",
+      "question_evidence_pkey": "CREATE UNIQUE INDEX question_evidence_pkey ON public.question_evidence USING btree (id)",
+      "question_evidence_question_idx": "CREATE INDEX question_evidence_question_idx ON public.question_evidence USING btree (question_id, answer_revision)",
       "raw_data_page_id_source_key": "CREATE UNIQUE INDEX raw_data_page_id_source_key ON public.raw_data USING btree (page_id, source)",
       "raw_data_pkey": "CREATE UNIQUE INDEX raw_data_pkey ON public.raw_data USING btree (id)",
       "retrieval_event_links_pkey": "CREATE UNIQUE INDEX retrieval_event_links_pkey ON public.retrieval_event_links USING btree (event_id, source_id, edge_key, to_slug)",
@@ -948,6 +962,8 @@
       "pages_id_seq": "integer start=1 min=1 max=2147483647 increment=1 cycle=false cache=1 owned_by=pages.id",
       "persistence_effects_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=persistence_effects.id",
       "persistence_requests_sequence_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=persistence_requests.sequence",
+      "pinned_questions_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=pinned_questions.id",
+      "question_evidence_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=question_evidence.id",
       "raw_data_id_seq": "integer start=1 min=1 max=2147483647 increment=1 cycle=false cache=1 owned_by=raw_data.id",
       "slug_aliases_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=slug_aliases.id",
       "subagent_messages_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=subagent_messages.id",
@@ -2091,6 +2107,60 @@
           "3 owner_epoch bigint/int8 NOT NULL",
           "4 protocol_version integer/int4 NOT NULL",
           "5 registered_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
+      "pinned_questions": {
+        "columns": [
+          "1 id bigint/int8 NOT NULL DEFAULT nextval('pinned_questions_id_seq'::regclass)",
+          "2 source_id text/text NOT NULL",
+          "3 slug text/text NOT NULL",
+          "4 question text/text NOT NULL",
+          "5 scope_slug_prefix text/text NULL",
+          "6 scope_entity text/text NULL",
+          "7 state text/text NOT NULL DEFAULT 'active'::text",
+          "8 inactive_reason text/text NULL",
+          "9 publish_mode text/text NOT NULL DEFAULT 'publish'::text",
+          "10 model text/text NULL",
+          "11 cooldown_days real/float4 NULL",
+          "12 origin text/text NOT NULL DEFAULT 'pin'::text",
+          "13 created_by text/text NOT NULL",
+          "14 revision bigint/int8 NOT NULL DEFAULT 1",
+          "15 answer_revision integer/int4 NOT NULL DEFAULT 0",
+          "16 answer text/text NULL",
+          "17 answer_model text/text NULL",
+          "18 last_refresh_at timestamp with time zone/timestamptz NULL",
+          "19 last_attempt_at timestamp with time zone/timestamptz NULL",
+          "20 last_error text/text NULL",
+          "21 watermark_generation bigint/int8 NULL",
+          "22 watermark_fact_id bigint/int8 NULL",
+          "23 watermark_at timestamp with time zone/timestamptz NULL",
+          "24 lease_token text/text NULL",
+          "25 lease_owner text/text NULL",
+          "26 lease_expires_at timestamp with time zone/timestamptz NULL",
+          "27 refresh_attempts integer/int4 NOT NULL DEFAULT 0",
+          "28 spend_usd double precision/float8 NOT NULL DEFAULT 0",
+          "29 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "30 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "31 archived_at timestamp with time zone/timestamptz NULL"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
+      "question_evidence": {
+        "columns": [
+          "1 id bigint/int8 NOT NULL DEFAULT nextval('question_evidence_id_seq'::regclass)",
+          "2 question_id bigint/int8 NOT NULL",
+          "3 answer_revision integer/int4 NOT NULL",
+          "4 sentence_id text/text NOT NULL",
+          "5 kind text/text NOT NULL",
+          "6 source_id text/text NOT NULL",
+          "7 page_id integer/int4 NULL",
+          "8 page_slug text/text NULL",
+          "9 page_generation bigint/int8 NULL",
+          "10 page_revision text/text NULL",
+          "11 item_id bigint/int8 NULL",
+          "12 content_hash text/text NULL",
+          "13 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },

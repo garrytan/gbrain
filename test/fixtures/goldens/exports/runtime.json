@@ -812,6 +812,7 @@
         "isConversationLabels",
         "locateChunks",
         "pageEvidenceText",
+        "pagePlanHits",
         "parseAutoPacking",
         "parseReturnUnit",
         "parseReturnWindow",

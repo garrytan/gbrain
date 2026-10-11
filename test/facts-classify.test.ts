@@ -50,7 +50,9 @@ function makeFact(overrides: Partial<FactRow> & { id: number }): FactRow {
   };
 }
 
-const EMBED_LEN = 8;
+/** voyage-4's width: the cosine defaults come from its calibrated threshold (supersession-threshold.ts). */
+const EMBED_LEN = 1024;
+const VOYAGE = { embeddingModel: 'voyage:voyage-4' };
 function vec(...values: number[]): Float32Array {
   const a = new Float32Array(EMBED_LEN);
   for (let i = 0; i < values.length; i++) a[i] = values[i];
@@ -96,6 +98,7 @@ describe('classifyAgainstCandidates', () => {
     const result = await classifyAgainstCandidates(
       { fact: 'new', kind: 'fact', embedding: vec(1) },
       candidates,
+      VOYAGE,
     );
     expect(result.decision).toBe('duplicate');
     expect((result as { matched_id: number }).matched_id).toBe(42);
@@ -115,11 +118,20 @@ describe('classifyAgainstCandidates', () => {
     const result = await classifyAgainstCandidates(
       { fact: 'new', kind: 'fact', embedding: a },
       candidates,
+      VOYAGE,
     );
     // Gateway configured with env:{} above → isAvailable('chat') is false →
     // straight to cosine fallback. cos ≈ 0.93 ≥ 0.92 → duplicate.
     expect(result.decision).toBe('duplicate');
     expect((result as { reason: string }).reason).toBe('cosine_fallback');
+  });
+
+  test('an uncalibrated embedding model has no cosine fast path or cosine fallback', async () => {
+    const candidates = [makeFact({ id: 42, embedding: vec(1) })];
+    for (const opts of [{}, { embeddingModel: 'openai:text-embedding-3-large' }]) {
+      const result = await classifyAgainstCandidates({ fact: 'new', kind: 'fact', embedding: vec(1) }, candidates, opts);
+      expect(result).toEqual({ decision: 'independent', reason: 'cosine_fallback' });
+    }
   });
 
   test('no embedding on new fact → falls through to classifier path or cosine fallback', async () => {
@@ -159,6 +171,7 @@ describe('classify gate — key-aware, engine-free (CX10)', () => {
       const r = await classifyAgainstCandidates(
         { fact: 'x', kind: 'fact', embedding: vec(0.93, Math.sqrt(1 - 0.93 * 0.93), 0) },
         [existing],
+        VOYAGE,
       );
       expect(r.reason).toBe('cosine_fallback');
       expect(r.decision).toBe('duplicate');

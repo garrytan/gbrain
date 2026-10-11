@@ -7,7 +7,9 @@
  * and queries on a brain with active saved facts and declared other names,
  * including one that fans out to the other name, plus the same searches on a
  * brain with neither. Regenerate only on a build whose search output is meant
- * to change, and say why in the commit.
+ * to change, and say why in the commit. The query facts arm
+ * (`search.query_facts_arm`, default on) changes query output on purpose, so
+ * these brains pin it off; test/search-facts-arm.test.ts covers it.
  *
  * Also: a fact saved with `remember` is found by the next search in the same
  * process, and by a search after another process saved it (no per-process
@@ -58,6 +60,7 @@ async function brain(withFactsAndNames: boolean): Promise<PGLiteEngine> {
     await importFromContent(engine, slug, serializeMarkdown({}, text, '', { type: 'note', title, tags: [] }), { noEmbed: true, forceRechunk: true });
   }
   if (withFactsAndNames) await engine.executeRaw(FACTS);
+  await engine.setConfig('search.query_facts_arm', 'false');
   return engine;
 }
 

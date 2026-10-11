@@ -175,6 +175,7 @@ describeE2E('E2E sync-parallel: T18 --timeout returns partial; last_commit uncha
 
   afterAll(async () => {
     if (repoPath) rmSync(repoPath, { recursive: true, force: true });
+    await getConn().unsafe(`DELETE FROM sources WHERE id IN ('e2e-timeout-source', 'e2e-timeout-partial')`);
     await teardownDB();
   });
 

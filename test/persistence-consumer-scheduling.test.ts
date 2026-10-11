@@ -239,6 +239,33 @@ for (const cooperates of [true, false]) test(`preparation deadline retains track
   }
 }), 5000);
 
+test('a write whose preparation overruns its deadline twice ends as a terminal preparation_stalled failure, not an endless retry (default limit, #6278)', async () => withEnv(env, async () => {
+  const sources = await fixtures(engine, config);
+  const row = await admitWrite(engine, admission(config, sources[0], 'deadline-twice', 'never prepares in time'));
+  let attempts = 0;
+  const consumer = new PersistenceConsumer(engine, { engine: 'pglite' }, async (_e, _current, _c, signal?: AbortSignal) => {
+    attempts++;
+    await new Promise<void>((_, reject) => signal?.addEventListener('abort', () => reject(signal.reason), { once: true }));
+    throw new Error('unreachable');
+  }, { hostId: config.hostId, pollMs: 20, preparationMs: 40 });
+  try {
+    consumer.start();
+    await waitFor(async () => (await getWriteRequestById(engine, row.id))?.state === 'failed');
+    const done = (await getWriteRequestById(engine, row.id))!;
+    expect(attempts).toBe(2);
+    expect(done.error_code).toBe('preparation_stalled');
+    expect(done.preparation_attempts).toBe(2);
+    expect(done.error_message).toContain('persistence.max_preparation_attempts (2)');
+    expect(done.error_message).toContain('new request_id');
+    expect(await engine.readPageSnapshot(row.slug, { sourceId: row.source_id })).toBeNull();
+    await Bun.sleep(100);
+    expect(attempts).toBe(2);
+    await assertConservation(engine);
+  } finally {
+    await consumer.stop();
+  }
+}), 5000);
+
 /**
  * #6278, switch on: the budget releases the claim whether or not the preparer honours its signal. The non-cooperative
  * preparer's request is back in the queue at the budget with `preparation_deadline` and one counted attempt while the

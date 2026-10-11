@@ -33,6 +33,8 @@ export const PROTECTED_JOB_NAMES: ReadonlySet<string> = new Set([
   'consolidate',
   // Temporal typed edges: the contradiction phase calls the chat model.
   'edge_contradictions',
+  // C4 pinned questions: each refresh is a paid chat call.
+  'standing_questions',
   // v0.40.3.0 — per-chunk Haiku contextual retrieval backfill. Each job
   // potentially calls Haiku 1-50 times per page; an MCP/OAuth-scoped
   // caller submitting this in bulk could drain the user's Anthropic

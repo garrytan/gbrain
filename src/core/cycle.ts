@@ -85,6 +85,7 @@ export type CyclePhase =
   // soft-band takes against recent timeline evidence; report-only in v1
   // (writes reports/drift-<date>; auto_update mutates nothing).
   | 'drift'
+  | 'standing_questions' // C4 pinned questions (src/core/questions/phase.ts)
   // #5876 — Life Chronicle events from meeting/conversation/calendar pages (default ON).
   | 'chronicle'
   // Lane D — runs queued facts-absorb jobs on PGLite (no job worker there); bounded per run and per day.
@@ -183,6 +184,7 @@ export const ALL_PHASES: CyclePhase[] = [
   // the calibration trio (fresh take resolutions) and BEFORE embed so the
   // drift report page gets embedded same-cycle. Report-only in v1.
   'drift',
+  'standing_questions', // C4 pinned questions (global); BEFORE embed so question pages embed same-cycle.
   // #5876 — Life Chronicle events (global). BEFORE embed so event pages embed same-cycle.
   'chronicle',
   // Lane D — automatic facts drain (PGLite). BEFORE embed so new facts embed same-cycle.
@@ -347,6 +349,7 @@ const NEEDS_LOCK_PHASES: ReadonlySet<CyclePhase> = new Set([
   'calibration_profile',
   // #2653 — writes the reports/drift-<date> page.
   'drift',
+  'standing_questions', // C4: writes pinned answers and question pages.
   'edge_contradictions', // writes proposals and (apply mode) closure lines
   // #5876 — writes event pages, projections and the chronicle ledger.
   'chronicle',
@@ -2789,6 +2792,13 @@ export async function runCycle(
         phaseResults.push(result);
         progress.finish();
       }
+      await safeYield(opts.yieldBetweenPhases);
+    }
+
+    if (phases.includes('standing_questions')) { // C4 pinned questions (src/core/questions/phase.ts)
+      checkAborted(cycleSignal);
+      if (!engine) phaseResults.push({ phase: 'standing_questions', status: 'skipped', duration_ms: 0, summary: 'no database connected', details: { reason: 'no_database' } });
+      else { const { result, duration_ms } = await timePhase(async () => (await import('./questions/phase.ts')).runPhaseStandingQuestions(engine, { dryRun, signal: cycleSignal }), 'standing_questions'); phaseResults.push({ ...result, duration_ms }); }
       await safeYield(opts.yieldBetweenPhases);
     }
 

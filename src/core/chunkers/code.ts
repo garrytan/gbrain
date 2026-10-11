@@ -221,6 +221,8 @@ export interface CodeChunkOptions {
    * smallest common embedder context (e.g. nomic-embed-text, 2048).
    */
   maxChunkTokens?: number;
+  /** Parse wall-clock cap for this call (default GBRAIN_CHUNKER_TIMEOUT_MS or 30 s); on expiry the source falls back to text chunks. */
+  timeoutMs?: number;
 }
 
 /**
@@ -685,7 +687,9 @@ export function parseWithTimeout(
     );
   }
   parser.setTimeoutMicros(timeoutMs * 1000);
-  const tree = parser.parse(source);
+  let tree: unknown;
+  // web-tree-sitter throws "Parsing failed" itself when the timeout makes the parse return null.
+  try { tree = parser.parse(source); } catch (e: unknown) { if (e instanceof Error && e.message === 'Parsing failed') throw new ChunkerTimeoutError(filePath, timeoutMs); throw e; }
   if (tree === null || tree === undefined) {
     throw new ChunkerTimeoutError(filePath, timeoutMs);
   }
@@ -769,7 +773,7 @@ async function chunkParsedLanguage(
 
   const largeThreshold = opts.largeChunkThresholdTokens ?? 1000;
   const chunkTarget = opts.chunkSizeTokens ?? 300;
-  const timeoutMs = resolveChunkerTimeoutMs();
+  const timeoutMs = opts.timeoutMs ?? resolveChunkerTimeoutMs();
 
   // v0.31.2: parser + tree are always reaped via finally. Pre-fix, the
   // catch block returned without delete() — a leak Codex flagged

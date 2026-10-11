@@ -191,7 +191,7 @@ export function emitFenceNotice(ctx: Pick<OperationContext, 'emitNotice'>, respo
 const OWNER_FILE_INTENTS: ReadonlySet<string> = new Set(['managed_file_import', 'managed_file_repair', 'managed_quarantine_clear']);
 
 /** #6007: a `put_pages` child: its batch, its position and the batch size are part of its identity. */
-export interface PageBatchMember { id: string; index: number; size: number; requestId: string }
+export interface PageBatchMember { id: string; index: number; size: number; requestId: string; repeats?: number[] }
 
 export async function submitPageMutation(ctx: OperationContext,
   input: { operation: string; params: Record<string, unknown>; waitMs?: number; managedFileImport?: true; timelineSection?: TimelineSection }): Promise<Record<string, unknown>> {
@@ -247,7 +247,7 @@ export async function preparePageAdmission(ctx: OperationContext,
   const { page_batch: _forged, timeline_section: _section, ...params } = input.params;
   const p: Record<string, unknown> = { ...params, ...parseMutationPrecondition(params) };
   if (p.content_origin !== undefined) contentOriginTier(p.content_origin);
-  if (input.batch) p.page_batch = { id: input.batch.id, index: input.batch.index, size: input.batch.size };
+  if (input.batch) p.page_batch = { id: input.batch.id, index: input.batch.index, size: input.batch.size, ...(input.batch.repeats?.length ? { repeats: input.batch.repeats } : {}) };
   const requestId = input.batch ? input.batch.requestId : typeof p.request_id === 'string' ? p.request_id : randomUUID();
   const sourceId = pageMutationSource(ctx, p, input.operation);
   await initializeLocalPersistence(ctx);

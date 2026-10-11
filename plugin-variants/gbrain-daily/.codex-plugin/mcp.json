@@ -46,6 +46,7 @@
         "GBRAIN_SURFACE",
         "GEMINI_API_KEY",
         "GOOGLE_GENERATIVE_AI_API_KEY",
+        "GOOGLE_GENERATIVE_AI_BASE_URL",
         "GROQ_API_KEY",
         "HOME",
         "JEV_TYPESAFE_API_KEY",

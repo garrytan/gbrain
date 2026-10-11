@@ -219,6 +219,19 @@ describe('writes commit with zero generative model calls', () => {
     }
   });
 
+  test('questions_pin with defer and questions_unpin (C4 pinned questions)', async () => {
+    COVERED.add('questions_unpin');
+    const pinned = await call('questions_pin', { question: 'What is the current quarterly roadmap with acme-example?', defer: true });
+    const id = pinned.receipt?.id as string;
+    expect(id).toEqual(expect.any(String));
+    expectNoGenerative('questions_pin defer:true');
+    wire.reset();
+    const unpinned = await call('questions_unpin', { id });
+    expect(unpinned).toMatchObject({ unpinned: true, receipt: { id } });
+    await drainEffects();
+    expectNoGenerative('questions_unpin');
+  });
+
   test('CLI import (importFromContent)', async () => {
     await importFromContent(engine, 'notes/imported', `---\ntype: note\ntitle: Imported\n---\n${BODY}`, { sourceId: 'default' });
     expectNoGenerative('importFromContent');

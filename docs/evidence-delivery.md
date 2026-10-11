@@ -71,6 +71,11 @@ gbrain recall --query "renewal terms" --return-unit section --budget-tokens 4000
 Use `page` for multi-session / temporal questions where the answer depends on
 the whole conversation. Use `window` when you only need local context.
 
+With `return_unit: page`, `query` sizes its hit list to the budget so the
+budget fills. Autocut stays off unless you set `autocut`, and a budget above
+about 6,250 tokens raises the row count to one row per 250 tokens, up to 100.
+An explicit `limit` or `autocut` still wins.
+
 ## Parameters and config
 
 Per-call params on `search`, `query`, `recall`:
@@ -85,7 +90,12 @@ Per-call params on `search`, `query`, `recall`:
   long sessions were still trimmed) and the other units use
   `search.return_budget_default` (default 6,000). Remote callers are clamped to
   `search.return_budget_max_remote` (default 32,000); the clamp is reported in
-  `delivery.budget_clamped` and `delivery.fallbacks`, never raised.
+  `delivery.budget_clamped` and `delivery.fallbacks`, never raised per call.
+  A trusted brain that needs more over stdio MCP (an eval cell's hermetic
+  brain, for example) raises the ceiling once with
+  `gbrain config set search.return_budget_max_remote 200000` and asserts that
+  `delivery.budget_clamped` is absent; trusted local CLI calls are never
+  clamped.
 - An explicit budget under `auto` (`return_unit: "auto"`, or `auto` from config
   on `search`) is a hard cap, packed by `search.auto_packing` (see
   [Explicit budgets](#explicit-budgets-the-cap)); it must be at least 32 tokens.
@@ -99,9 +109,41 @@ Think reads `think.return_unit` (default `auto`) and never
 Under `auto`, think renders conversation pages whole and keeps its usual
 excerpts for every other page.
 
+### Date headers
+
+With `search.evidence_date_header` on (default off), every delivered block,
+including `auto`'s unchanged chunks, starts with one fixed line, and
+`delivery.date_header` is `true`:
+
+```text
+[observed 2026-03-05]
+```
+
+`observed` is when the page's text was written or said: its filename or slug
+date, frontmatter `date`, `published` or a created key, in effective-date
+precedence with `event_date` removed. An event date (when something happened)
+and the row's own timestamps are never shown as observed; a page without an
+observation date reads `[observed unknown]`. A date stored at midnight UTC
+renders as written, any other instant in `brain.timezone`. The header line
+and its newline are part of `chunk_text`: they count in `delivered.tokens`,
+`tokens_delivered` and the budget, `match_spans` offsets include them, and
+`evidenceFingerprint` hashes them; under an explicit `auto` budget the cap pays for
+them first and a cut keeps the header line whole. `recall` facts gain
+`date_header: "[observed 2026-02-10; valid 2026-03-01 to unknown]"`. A fact's
+`observed` date is the observation date of the page it came from
+(`source_markdown_slug`, such as the conversation it was extracted from), and it
+reads `unknown` for a fact kept only in its entity page's facts fence. `valid`
+starts at the fact's `valid_from`: `remember` sets it from its `valid_from`
+parameter (when the fact was said or became true). A `valid_from` that only
+records the write time (within a minute of `created_at`) reads `unknown`, so a
+header never presents when a fact was written as when it became true. An open
+validity end reads `unknown`. The setting
+applies to `search`, `query`, `recall`, `think` and `assemble_evidence`.
+
 Config keys: `search.return_unit`, `search.return_window`,
 `search.return_budget_default`, `search.return_budget_conversation`,
-`search.return_budget_max_remote`, `search.auto_packing`, `think.return_unit`. Kill switch:
+`search.return_budget_max_remote`, `search.evidence_date_header`, `search.auto_packing`,
+`think.return_unit`. Kill switch:
 `gbrain config set search.return_unit chunk` and
 `gbrain config set think.return_unit chunk` (or pass `return_unit: "chunk"`
 per call).
@@ -261,6 +303,7 @@ Response meta (`_meta.retrieval.delivery` over MCP; top-level `delivery` on
   "dropped_reasons": { "budget_floor": 1 },
   "fallbacks": ["budget_clamped"], // distinct non-fatal problem codes, never silent
   "budget_clamped": { "requested": 50000, "max": 32000 },
+  "date_header": true,             // only when search.evidence_date_header is on
   "auto_packing": "cap_only"       // explicit auto budgets only: the packing that ran
 }
 ```
@@ -284,6 +327,7 @@ delivered text and each result gains `delivered`.
 | `snippet_cap` | An explicit `snippet_chars` cut a block. | Capped block, `truncated: true`. |
 | `budget_clamped` | A remote budget above the max was clamped. | Clamped budget. |
 | `tokenizer_heuristic` | cl100k unavailable; char/4 heuristic used. | Counts from the heuristic. |
+| `date_header_unavailable` | Date headers are on but the page dates could not be read. | Every header reads `[observed unknown]`. |
 | drop `not_readable` | The page is no longer readable by this caller (deleted, private, grant revoked, quarantined, archived source, source outside scope). | Result removed. Never falls back to cached text. |
 | `snippet_marker_omitted` | Under an explicit `auto` budget, a row's allocation could not hold the snippet recovery marker. | Capped block without the marker, `truncated: true`. |
 | drop `budget_floor` | Not even the block's matching span fits the remaining budget. | Result removed (rank one is instead cut to fit). Under `auto` without an explicit budget nothing is dropped for budget: the conversation keeps its ranked chunks. |

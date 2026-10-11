@@ -135,6 +135,28 @@ export function isValidTimeZone(timeZone: string): boolean {
   }
 }
 
+/** The calendar day an instant falls on in `timeZone`, as YYYY-MM-DD. */
+export function dayInZone(instant: Date, timeZone: string): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(instant);
+}
+
+/**
+ * The one rule for rendering a stored date as YYYY-MM-DD (think's `<page
+ * date>`, C1 evidence headers): exactly midnight UTC is a day-only date and
+ * renders as written; any other instant renders in `timeZone`
+ * (`brain.timezone`; UTC when unset or invalid). Null for a missing or
+ * invalid value. Which date to render (content vs observation) is the
+ * caller's choice.
+ */
+export function formatBrainDay(value: Date | string | null | undefined, timeZone?: string | null): string | null {
+  if (value === null || value === undefined || value === '') return null;
+  const d = value instanceof Date ? value : new Date(value);
+  if (!Number.isFinite(d.getTime())) return null;
+  const iso = d.toISOString();
+  if (iso.endsWith('T00:00:00.000Z')) return iso.slice(0, 10);
+  return dayInZone(d, timeZone && isValidTimeZone(timeZone) ? timeZone : 'UTC');
+}
+
 /** The instant a wall-clock time (held in `wall`'s UTC fields) names in `timeZone`, DST included. */
 function zonedWallTime(wall: Date, timeZone: string): Date {
   const format = new Intl.DateTimeFormat('en-US', { timeZone, hourCycle: 'h23', year: 'numeric', month: 'numeric',

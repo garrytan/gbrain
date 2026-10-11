@@ -12,7 +12,7 @@ import { beginConnectorSync } from '../src/core/persistence/connector-sync.ts';
 import { compactWriteReceipts } from '../src/core/persistence/journal.ts';
 import { purgeStaleCheckpoints } from '../src/core/op-checkpoint.ts';
 import { withEnv } from './helpers/with-env.ts';
-import { createConnectorFixture, options, json, googleConfig, githubConfig, contact, issueFixture, githubFetch, sourceCheckpoint, sourceCursor, cursorOf, connectorPendingSet, withPausedOwnerBudget } from './helpers/connector-fixture.ts';
+import { createConnectorFixture, options, json, googleConfig, githubConfig, contact, issueFixture, githubFetch, sourceCheckpoint, sourceCursor, cursorOf, connectorPendingSet, completeBaselineSweep, withPausedOwnerBudget } from './helpers/connector-fixture.ts';
 
 const { engines, env, backends, source, boundSource, standaloneConnector, setup, teardown } = createConnectorFixture();
 beforeAll(setup, 120_000);
@@ -54,9 +54,10 @@ test('explicit connector retry replaces a real storage failure without changing 
       const run = (retryFailed = false) => runGitHubSync(engine, f.id, parseGitHubSourceConfig(githubConfig, f.dir),
         { ...options, retryFailed, githubItem: { repo: 'acme-example/app', number: 1, kind: 'issue' } },
         async url => new URL(url).pathname.endsWith('/issues/1') ? json({ ...issueFixture, body }) : githubFetch()(url));
-      await run();
+      await completeBaselineSweep(engine, f.id, run);
       await disposePersistenceConsumer(engine);
       const checkpoint = await sourceCheckpoint(engine, f.id);
+      expect(checkpoint).toHaveLength(1);
       const path = join(f.dir, 'gh/acme-example/app/1.md');
       const initial = readFileSync(path, 'utf8');
       body = 'Updated organization retry fixture';
@@ -129,9 +130,10 @@ async function retryFixture(engine: BrainEngine, connector: 'google' | 'github',
   const run = (retryFailed = false) => connector === 'google'
     ? runGoogleSync(engine, f.id, cfg as ReturnType<typeof parseGoogleSourceConfig>, { ...options, retryFailed }, withGoogleAccount(fetcher))
     : runGitHubSync(engine, f.id, cfg as ReturnType<typeof parseGitHubSourceConfig>, { ...options, retryFailed }, fetcher);
-  await run();
+  await completeBaselineSweep(engine, f.id, run);
   await disposePersistenceConsumer(engine);
   const checkpoint = await sourceCheckpoint(engine, f.id);
+  expect(checkpoint).toHaveLength(1);
   const session = (await beginConnectorSync(engine, f.id, connector, cfg, options))!;
   await engine.executeRaw('INSERT INTO connector_retry_faults(source_id,checkpoint_key) VALUES($1,$2)', [f.id, session.checkpointKey]);
   updated = true;

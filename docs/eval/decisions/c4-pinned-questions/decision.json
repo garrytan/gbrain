@@ -1,0 +1,135 @@
+{
+  "schema_version": 1,
+  "decision_id": "c4-pinned-questions",
+  "plan": "MEMORY_PROOF_WAVE C4 + B5",
+  "title": "Pinned questions: B5 safety gate and benefit gate (accuracy, freshness and lifecycle dollars per correct fresh answer)",
+  "verdict_type": "cost_quality",
+  "stage": "dev",
+  "candidate": {
+    "gbrain": "garrytan/gbrain@1384a0db",
+    "arm": "pinned",
+    "config": {
+      "models.standing_questions": "anthropic:claude-opus-4-7",
+      "cycle.standing_questions.cooldown_days": "0"
+    },
+    "cost_lever_arm": {
+      "arm": "pinned",
+      "models.standing_questions": "anthropic:claude-sonnet-5-5"
+    }
+  },
+  "baselines": [
+    {
+      "gbrain": "garrytan/gbrain@1384a0db",
+      "arm": "anchored_reader",
+      "note": "run 3 control: the exact evidence pinned refresh retrieves (retrieveEvidence: entity page, then pages linking to or naming it, newest first, then hybrid hits, facts, timeline, takes) handed to the same reader at the pinned answer delivered-token budget (floor 200); no maintained answer. Sensitivity arms anchored_reader_full and query_reader_full get every item / top 16 hits."
+    },
+    {
+      "gbrain": "garrytan/gbrain@1384a0db",
+      "arm": "query_reader",
+      "note": "hybrid query (keyword-only: no embedding key in the harness brain) at the pinned answer's delivered-token budget, then one reader call"
+    },
+    {
+      "gbrain": "garrytan/gbrain@1384a0db",
+      "arm": "think",
+      "note": "on-demand think per read with the default deep model"
+    }
+  ],
+  "models": {
+    "answer_and_refresh": "anthropic:claude-opus-4-7",
+    "think": "anthropic:claude-opus-4-7",
+    "reader": "anthropic:claude-sonnet-5-5",
+    "selection": "answer/refresh and think: gbrain's default for questions (models.standing_questions -> deep tier); reader: the B-suite fixed reader",
+    "refresh_cost_lever": "anthropic:claude-sonnet-5-5",
+    "embedding": "voyage:voyage-4 (1024d, gbrain default; run 3 only)"
+  },
+  "sources": [
+    {
+      "kind": "seeded-workload",
+      "id": "pinned-questions-appended",
+      "run": "run_3",
+      "generator": "evals/pinned-questions/appended-gate.ts generateAppendedWorkload",
+      "seeds": [
+        42,
+        7,
+        1234
+      ],
+      "entities": 6,
+      "write_batches": 12,
+      "workload_hashes": {
+        "42": "ce95164d25dd0cb8",
+        "7": "0870f0ca0ea16cb2",
+        "1234": "67c92f500e87c0b5"
+      },
+      "engine": "pglite",
+      "embeddings": "voyage:voyage-4 after every batch; balanced search mode"
+    },
+    {
+      "kind": "seeded-workload",
+      "id": "pinned-questions-appended",
+      "run": "run_2",
+      "generator": "evals/pinned-questions/appended-gate.ts generateAppendedWorkload",
+      "seed": 42,
+      "entities": 6,
+      "write_batches": 12,
+      "writes_per_entity": 13,
+      "workload_hash": "ce95164d25dd0cb8",
+      "engine": "pglite",
+      "events": "corrections appended as dated notes (old pages left as written); conflicting notes in batch 4; remember in batch 6, forget in batch 7; newest note made private in batch 10"
+    },
+    {
+      "kind": "seeded-workload",
+      "id": "pinned-questions-benefit",
+      "generator": "evals/pinned-questions/benefit-gate.ts generateWorkload",
+      "seed": 42,
+      "entities": 6,
+      "write_batches": 4,
+      "workload_hash": "9428f19ffe229e66",
+      "engine": "pglite",
+      "run": "run_1"
+    }
+  ],
+  "frozen_reads_per_write": [
+    1,
+    10,
+    100
+  ],
+  "metrics": [
+    "accuracy",
+    "stale_wrong_rate",
+    "freshness_lag_batches",
+    "usd_per_correct_fresh_answer",
+    "break_even_reads_per_pin",
+    "leakage"
+  ],
+  "safety_gate": {
+    "suite": "test/helpers/pinned-questions-scenarios.ts",
+    "engines": [
+      "pglite",
+      "postgres"
+    ],
+    "required": "zero stale-sentence or cross-grant leakage on every surface"
+  },
+  "budget": {
+    "run_3": {
+      "max_usd": 15,
+      "metered_spend_usd": 11.8061,
+      "note": "includes a 0.38 one-entity smoke run and a 0.48 Sonnet refresh replay"
+    },
+    "run_2": {
+      "max_usd": 10,
+      "metered_spend_usd": 5.9164,
+      "note": "includes the 2.9324 pre-fix diagnostic attempt"
+    },
+    "run_1": {
+      "max_usd": 40,
+      "metered_spend_usd": 2.3402
+    }
+  },
+  "reproduce": "bun evals/pinned-questions/appended-gate.ts --run --yes --max-usd 14.1 --seeds 42,7,1234 --entities 6 --reader-model anthropic:claude-sonnet-5-5 --refresh-models anthropic:claude-opus-4-7,anthropic:claude-sonnet-5-5 --embeddings voyage:voyage-4 --json",
+  "decision_rule": {
+    "run_3": "Preregistered in the README (e17258eb) before any run-3 cell: default-on if pinned (default refresh model) beats the anchored control in every seed on accuracy or freshness lag with zero leaks; a tie means the anchored retrieval is the win and pinned goes back to opt-in; any leak means opt-in.",
+    "run_2": "Set before run 2: if pinned beats query+reader on accuracy or freshness without leakage, ship default-on (plan C1); otherwise opt-in stands."
+  },
+  "reproduce_run_1": "bun evals/pinned-questions/benefit-gate.ts --run --yes --max-usd 40 --entities 6 --batches 4 --seed 42 --reader-model anthropic:claude-sonnet-5-5 --json",
+  "reproduce_run_2": "bun evals/pinned-questions/appended-gate.ts --run --yes --max-usd 7 --entities 6 --seed 42 --reader-model anthropic:claude-sonnet-5-5 --refresh-models anthropic:claude-opus-4-7,anthropic:claude-sonnet-5-5 --json"
+}

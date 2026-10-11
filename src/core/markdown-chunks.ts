@@ -50,6 +50,15 @@ function fenceTagToPseudoPath(lang: string | undefined): string | null {
   return FENCE_TAG_TO_PSEUDO_PATH[lang.toLowerCase().trim()] ?? null;
 }
 
+const positiveEnv = (name: string, fallback: number) => {
+  const n = Number(process.env[name]);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+};
+/** Per-fence tree-sitter cap during a page write (GBRAIN_FENCE_PARSE_TIMEOUT_MS, default 2 s). */
+export const fenceParseTimeoutMs = () => positiveEnv('GBRAIN_FENCE_PARSE_TIMEOUT_MS', 2_000);
+/** All fences of one page together (GBRAIN_FENCE_PARSE_BUDGET_MS, default 5 s), well inside the 30 s preparation budget. */
+export const fenceParseBudgetMs = () => positiveEnv('GBRAIN_FENCE_PARSE_BUDGET_MS', 5_000);
+
 /** Sanitize the complete body before scanning any fenced code. */
 async function extractFencedChunks(
   markdown: string,
@@ -73,6 +82,7 @@ async function extractFencedChunks(
   }
 
   let indexOffset = 0;
+  const started = performance.now();
   for (const fence of fences) {
     const text = fence.text.trim();
     if (!text) continue;
@@ -80,8 +90,17 @@ async function extractFencedChunks(
     if (!pseudoPath) continue; // unknown or missing lang tag → prose fallback
     const lang = detectCodeLanguage(pseudoPath);
     if (!lang) continue;
+    // A fence is part of a page write, which has its own preparation budget:
+    // each fence parses under a short cap (falling back to text chunks), and
+    // once the page's fence budget is spent the remaining fences stay prose
+    // (their text is still in the page's body chunks).
+    const remaining = fenceParseBudgetMs() - (performance.now() - started);
+    if (remaining <= 0) {
+      console.warn(`[gbrain] fence parse budget (${fenceParseBudgetMs()}ms/page) spent; remaining fenced code stays in the prose chunks.`);
+      break;
+    }
     try {
-      const chunks = await chunkCodeText(text, pseudoPath);
+      const chunks = await chunkCodeText(text, pseudoPath, { timeoutMs: Math.max(1, Math.min(fenceParseTimeoutMs(), remaining)) });
       for (const c of chunks) {
         out.push({
           chunk_index: startChunkIndex + indexOffset++,

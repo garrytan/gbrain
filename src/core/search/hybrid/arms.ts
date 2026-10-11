@@ -3,6 +3,7 @@
  * Each stage reads the resolved request (HybridRequest, request.ts) and
  * writes its per-request accumulators only as `req.<field>`.
  */
+import { brainHasImageVectors } from '../image-vector-presence.ts';
 import type { ModalityMode } from '../query-intent.ts';
 import type { ExactLookupOpts } from '../exact-lookup.ts';
 import type { HybridRequest } from './request.ts';
@@ -39,6 +40,10 @@ export async function runLexicalArms(req: HybridRequest): Promise<LexicalArms> {
   // We classify modality early (it's also computed after for the modality
   // branch). The classification is pure regex via classifyQuery; running it
   // here is cheap.
+  // An inferred image/both modality on a brain with no image embeddings is
+  // text: the image arm has nothing to search and would only fail open (and
+  // 'image' would drop the keyword arm). Later stages read the same suggestion.
+  if (!(opts?.crossModal && opts.crossModal !== 'auto') && (suggestions.suggestedModality ?? 'text') !== 'text' && !await brainHasImageVectors(engine)) suggestions.suggestedModality = 'text';
   const earlyModality = (opts?.crossModal && opts.crossModal !== 'auto')
     ? opts.crossModal
     : (suggestions.suggestedModality ?? 'text');
@@ -209,6 +214,8 @@ export async function resolveModalityAndQueries(req: HybridRequest) {
       // Fail-open: regex result stands.
     }
   }
+  // The tie-break may still pick image/both; a brain with no image embeddings has nothing for that arm.
+  if (explicitModality === undefined && regexModality !== 'text' && !await brainHasImageVectors(req.engine)) regexModality = 'text';
   const effectiveModality = regexModality;
   const unifiedRouting = resolvedMode.unified_multimodal === true;
 
