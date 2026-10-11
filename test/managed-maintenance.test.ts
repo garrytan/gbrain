@@ -93,12 +93,15 @@ async function seed(engine: BrainEngine, sourceId: string, slug = 'people/exampl
   await seedFacts(engine, sourceId, slug, visibility);
 }
 
+// #6023: untyped facts that differ in a number token no longer cluster, so
+// the seeded claims vary by a plain word instead of a digit.
+const WORDS = ['alpha', 'beta', 'gamma'] as const;
 async function seedFacts(engine: BrainEngine, sourceId: string, slug: string, visibility = 'world') {
   const vector = `[${[1, ...Array(1535).fill(0)].join(',')}]`;
   for (let i = 0; i < 3; i++) {
     await engine.executeRaw(`INSERT INTO facts(source_id,entity_slug,fact,kind,source,visibility,confidence,valid_from,embedding,embedding_model,embedded_text_hash)
       VALUES($1,$2,$3,'fact','test',$4,$5,$6::timestamptz,$7::vector,'openai:text-embedding-3-large',md5($3))`,
-    [sourceId, slug, `Example claim ${i}`, visibility, 0.9 - i / 10, `2026-01-0${i + 1}T00:00:00Z`, vector]);
+    [sourceId, slug, `Example claim ${WORDS[i]}`, visibility, 0.9 - i / 10, `2026-01-0${i + 1}T00:00:00Z`, vector]);
   }
 }
 
@@ -134,7 +137,7 @@ test('runCycle consolidates only its explicitly selected source across two eligi
     expect(await engine.executeRaw('SELECT id FROM takes WHERE page_id=$1', [otherBefore.page.id])).toHaveLength(0);
     const selectedAfter = (await engine.readPageSnapshot('people/example', { sourceId }))!;
     expect(selectedAfter.revision).not.toBe(selectedBefore.revision);
-    expect(selectedAfter.page.compiled_truth).toContain('Example claim 0');
+    expect(selectedAfter.page.compiled_truth).toContain('Example claim alpha');
     expect(parseMarkdown(readFileSync(join(root, 'people/example.md'), 'utf8')))
       .toEqual(parseMarkdown(serializePageToMarkdown(selectedAfter.page, selectedAfter.tags)));
     expect((await engine.readPageSnapshot('people/example', { sourceId: otherSourceId }))!.revision).toBe(otherBefore.revision);
@@ -183,7 +186,7 @@ test('managed consolidation publishes take, facts, canonical page, and file toge
     expect(result.details.facts_consolidated).toBe(3);
     expect(result.details.takes_written).toBe(1);
     const page = (await engine.readPageSnapshot('people/example', { sourceId }))!;
-    expect(page.page.compiled_truth).toContain('Example claim 0');
+    expect(page.page.compiled_truth).toContain('Example claim alpha');
     expect(parseMarkdown(readFileSync(join(root, 'people/example.md'), 'utf8'))).toEqual(parseMarkdown(serializePageToMarkdown(page.page, page.tags)));
     const facts = await engine.executeRaw<{ consolidated_into: number }>('SELECT consolidated_into FROM facts WHERE source_id=$1', [sourceId]);
     expect(facts.every(f => f.consolidated_into === facts[0].consolidated_into && f.consolidated_into > 0)).toBe(true);
@@ -239,7 +242,7 @@ for (const retirement of ['inactive', 'resolved'] as const) {
       const ctx = { engine, sourceId, remote: false as const, config: { engine: engine.kind, embedding_disabled: true },
         dryRun: false, logger: { info() {}, warn() {}, error() {} } };
       const added = await submitPageMutation(ctx, { operation: 'takes_add', params: { slug: 'people/example',
-        claim: 'Example claim 0', kind: 'fact', holder: 'self', weight: 0.9, request_id: randomUUID() } });
+        claim: 'Example claim alpha', kind: 'fact', holder: 'self', weight: 0.9, request_id: randomUUID() } });
       await submitPageMutation(ctx, { operation: retirement === 'inactive' ? 'takes_supersede' : 'takes_resolve', params: {
         slug: 'people/example', row_num: added.row_num, request_id: randomUUID(),
         ...(retirement === 'inactive' ? { claim: 'Replacement claim' } : { quality: 'correct', evidence: 'Verified fixture evidence' }),

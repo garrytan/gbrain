@@ -2,7 +2,12 @@ import type { GetPageOpts, Page } from '../types.ts';
 
 /** Opaque logical revisions are independent of timestamps and filesystem hashes. */
 export interface PageMutationPrecondition {
-  expectedRevision?: string;
+  /**
+   * The revision the caller read, or `null` when it read no page and asserts the page is still absent (an internal
+   * writer admitted against an empty slot). Omitted: no precondition was supplied, so an existing page refuses with
+   * `revision_required` (#5385) instead of the `revision_conflict` a changed revision gets.
+   */
+  expectedRevision?: string | null;
   force?: boolean;
 }
 
@@ -71,13 +76,21 @@ export interface PageSnapshot {
   globalPurges?: GlobalPurgeMarker;
 }
 
+/**
+ * The three revision refusals. `expectedRevision` is the caller's precondition: a revision (stale → `revision_conflict`),
+ * `null` for an asserted-absent page another writer created (→ `revision_conflict`), or `undefined` when the caller
+ * supplied none and the page exists (#5385 → `revision_required`: the caller's omission, not a race, so a client
+ * can read the page and resubmit instead of treating it as contention).
+ */
 export class PageRevisionConflictError extends Error {
-  readonly code: 'revision_conflict' | 'revision_backfill_pending' = 'revision_conflict';
-  constructor(readonly expectedRevision: string | null, readonly currentRevision: string | null) {
+  readonly code: 'revision_conflict' | 'revision_required' | 'revision_backfill_pending';
+  constructor(readonly expectedRevision: string | null | undefined, readonly currentRevision: string | null) {
     super(currentRevision === null ? 'The page no longer exists at the expected revision.'
-      : expectedRevision === null ? 'The page already exists; an expected revision is required.'
+      : expectedRevision === undefined ? 'The page already exists; an expected revision is required.'
+      : expectedRevision === null ? 'The page was created after it was read. Read its current revision before retrying.'
       : 'The page changed after it was read. Read its current revision before retrying.');
     this.name = 'PageRevisionConflictError';
+    this.code = expectedRevision === undefined && currentRevision !== null ? 'revision_required' : 'revision_conflict';
   }
 }
 
@@ -99,12 +112,12 @@ export class RevisionBackfillPendingError extends PageRevisionConflictError {
 export function assertPageRevision(snapshot: Pick<PageSnapshot, 'revision'> | null, precondition: PageMutationPrecondition = {}): void {
   const { expectedRevision, force } = precondition;
   if (force !== undefined && typeof force !== 'boolean') throw new TypeError('force must be a boolean');
-  if (expectedRevision !== undefined && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(expectedRevision)) {
+  if (expectedRevision != null && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(expectedRevision)) {
     throw new TypeError('expectedRevision must be a UUID revision');
   }
   if (force && expectedRevision !== undefined) throw new TypeError('force and expectedRevision are mutually exclusive');
   if (force) return;
   if (snapshot?.revision === REVISION_BACKFILL_PENDING) throw new RevisionBackfillPendingError(expectedRevision ?? null);
   const current = snapshot?.revision ?? null;
-  if (current !== (expectedRevision?.toLowerCase() ?? null)) throw new PageRevisionConflictError(expectedRevision ?? null, current);
+  if (current !== (expectedRevision?.toLowerCase() ?? null)) throw new PageRevisionConflictError(expectedRevision, current);
 }

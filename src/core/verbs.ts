@@ -528,6 +528,7 @@ export const RESPONSE_SCHEMAS: Record<VerbName, Record<string, unknown>> = {
             evidence: { type: 'string', enum: EVIDENCE_ENUM },
             create_safety: { type: 'string', enum: CREATE_SAFETY_ENUM },
             provenance: { type: 'string', description: 'Origin page slug.' },
+            source_id: { type: 'string', description: 'The source the hit came from (#4830; absent only when a federated read cannot name one).' },
           },
         },
       },

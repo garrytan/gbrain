@@ -166,7 +166,7 @@ Response — an additive SUPERSET of the plain facts envelope on EVERY call
 | `protocol_version` | int | always present (every verb, every call) |
 | `facts[]` | array | the base fact fields, PLUS per fact: `fact_id` (opaque STRING — the value `forget` accepts; the numeric `id` remains alongside it for compatibility) and `provenance` (the stored source attribution) |
 | `total` | int | count of facts returned |
-| `results[]` | array | search arm only: `slug`, `title`, `chunk`, `evidence`, `create_safety`, `provenance` (origin page slug) |
+| `results[]` | array | search arm only: `slug`, `title`, `chunk`, `evidence`, `create_safety`, `provenance` (origin page slug), `source_id` (additive since #4830: the source the hit came from; on a federated read each hit names its own source, and a hit that carries none is labeled only when the read's scope is a single source, never a blind `default`) |
 | `search_degraded` | string? | present when keyword-only fallback fired |
 | `budget_tokens` / `budget_used` / `dropped_count` | int? | present for a positive finite numeric budget, including when its floor is zero |
 | `budget_packing` | object? | present only when a valid `budget_policy` is supplied; effective policy and per-arm accounting |
@@ -547,7 +547,11 @@ A pending write is a protocol `unavailable` error with a populated suggestion,
 `protocol_version: 1`, and optional `write_request` and `write_error` fields.
 It never returns a success `status` or `expired` value. `write_error` carries
 the detailed concurrency reason without changing the frozen protocol error
-enum. A committed receipt retains the original memory-verb success fields.
+enum. Its values branch three ways on revisions: `revision_required` (the page
+exists and the write named no `expected_revision`: read it and resend),
+`revision_conflict` (the named revision is stale: re-read and merge) and
+`revision_backfill_pending` (resume the revision backfill). A committed receipt
+retains the original memory-verb success fields.
 Compaction may remove diagnostics, but must preserve those frozen result fields.
 
 The optional caller-generated UUID `request_id` identifies one write intent.
@@ -641,6 +645,7 @@ Refusals name the edit and never include protected text:
 | `edit_protected_span` | `edit_index=<i>` | The text touches a takes or facts section; use the scoped operations. |
 | `edit_invalid` | `edit_index=<i>` when one edit is malformed | Pass 1 to 50 `{old_text, new_text}` objects with non-empty `old_text`. |
 | `revision_conflict` | `current_revision=<uuid>` | Read the page again, rebuild the edits, resend. |
+| `revision_required` | — | The page exists and the call named no `expected_revision` (`put_page`; additive since #5385, formerly reported as `revision_conflict`). Read the page, then resend with its revision, or `force: true` for an intentional overwrite. |
 
 ```json
 → get_page {"slug": "projects/example", "include_content": true}

@@ -100,12 +100,15 @@ async function committed(engine: BrainEngine, sourceId: string, slug: string) {
     `SELECT operation,intent,outcome FROM persistence_requests WHERE source_id=$1 AND slug=$2 AND state='committed' AND sequence>$3 ORDER BY sequence`,
     [sourceId, slug, since]);
 }
+// #6023: untyped facts that differ in a number token no longer cluster, so the
+// claims that should share a take vary by a plain word instead of a digit.
+const CLAIM_WORDS = ['alpha', 'beta', 'gamma'] as const;
 async function seedFacts(engine: BrainEngine, sourceId: string, slug: string) {
   const vector = `[${[1, ...Array(1535).fill(0)].join(',')}]`;
   for (let i = 0; i < 3; i++) {
     await engine.executeRaw(`INSERT INTO facts(source_id,entity_slug,fact,kind,source,visibility,confidence,valid_from,embedding,embedding_model,embedded_text_hash)
       VALUES($1,$2,$3,'fact','test','world',$4,$5::timestamptz,$6::vector,'openai:text-embedding-3-large',md5($3))`,
-    [sourceId, slug, `Example claim ${i}`, 0.9 - i / 10, `2026-01-0${i + 1}T00:00:00Z`, vector]);
+    [sourceId, slug, `Example claim ${CLAIM_WORDS[i]}`, 0.9 - i / 10, `2026-01-0${i + 1}T00:00:00Z`, vector]);
   }
 }
 
@@ -256,7 +259,7 @@ const MATRIX: Record<CyclePhase, Entry> = {
     assert: async ({ engine, sourceId, result }) => {
       expect(result.details.takes_written).toBe(1);
       expect(await committed(engine, sourceId, 'people/example')).not.toHaveLength(0);
-      expect((await engine.getPage('people/example', { sourceId }))?.compiled_truth).toContain('Example claim 0');
+      expect((await engine.getPage('people/example', { sourceId }))?.compiled_truth).toContain('Example claim alpha');
     },
   },
   propose_takes: {

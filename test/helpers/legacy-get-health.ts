@@ -145,6 +145,9 @@ export async function legacyGetHealth(
     brain_score: brainScore,
     dead_links: deadLinks,
     entity_page_count: Number(h.entity_page_count),
+    // #4772: the pre-F4a implementation always graded with its hardcoded list; on
+    // the gbrain-base fixtures that list and the pack agree, so the status is fixed.
+    entity_types_status: 'resolved',
     link_coverage: Number(h.entity_page_count) >= MIN_ENTITY_PAGES_FOR_COVERAGE ? Number(h.link_coverage) : null,
     timeline_coverage: Number(h.entity_page_count) >= MIN_ENTITY_PAGES_FOR_COVERAGE ? Number(h.timeline_coverage) : null,
     most_connected: connected.map(c => ({ slug: c.slug, link_count: Number(c.link_count) })),
