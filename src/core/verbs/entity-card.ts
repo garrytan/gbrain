@@ -470,7 +470,7 @@ async function assembleCard(
     // Zero-LLM, indexed lookup — stays inside the p99<100ms budget. A loop
     // belongs to this card when its counterparty page is THIS (source, slug):
     // a Gmail-source loop whose person page lives in `default` shows on the
-    // default card, a pre-v232 row (NULL counterparty source) on its own
+    // default card, a pre-v233 row (NULL counterparty source) on its own
     // source's card (#5504).
     const loopRows = await engine.executeRaw<{
       id: number;

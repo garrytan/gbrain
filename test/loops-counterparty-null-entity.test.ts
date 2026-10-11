@@ -217,7 +217,7 @@ describe('(b) readers confine on (slug, counterparty source)', () => {
       expect(inDefault.every((l) => l.counterparty_source_id === 'default')).toBe(true);
       const inOther = await listOpenLoops(engine, { sourceIds: [G1], status: 'open', counterparty: 'people/alice-example', counterpartySourceId: OTHER });
       expect(inOther).toEqual([]);
-      // A pre-v232 row (NULL counterparty source) reads as its own source.
+      // A pre-v233 row (NULL counterparty source) reads as its own source.
       const legacy = await listOpenLoops(engine, { sourceIds: [G1], status: 'open', counterparty: 'people/erin-example', counterpartySourceId: G1 });
       expect(legacy.map((l) => l.thread_id)).toEqual(['thread-erin']);
     }

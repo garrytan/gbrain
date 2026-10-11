@@ -236,7 +236,7 @@ interface CounterpartyGroup {
   source_id: string;
   /** Where the counterparty page lives (#5504): entity cards/aliases live
    *  THERE, not in the caller's (often 'default') scope and not always in
-   *  the loops' source. A pre-v232 row reads as its own source. */
+   *  the loops' source. A pre-v233 row reads as its own source. */
   counterparty_source_id: string;
   loop_count: number;
   oldest_opened_at: string;

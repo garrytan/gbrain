@@ -38,7 +38,7 @@ export interface OpenLoopUpsert {
   /**
    * Source of the page `counterpartySlug` names (#5504). Omitted or null
    * means the loop's own source, which is how every reader treats a NULL
-   * column (rows written before v232).
+   * column (rows written before v233).
    */
   counterpartySourceId?: string | null;
   counterpartyEmail?: string | null;
@@ -66,7 +66,7 @@ export interface OpenLoopRow {
   dedup_key: string;
   loop_type: LoopType;
   counterparty_slug: string | null;
-  /** Source of the counterparty page; NULL on pre-v232 rows (read as `source_id`). */
+  /** Source of the counterparty page; NULL on pre-v233 rows (read as `source_id`). */
   counterparty_source_id: string | null;
   counterparty_email: string | null;
   summary: string;
@@ -234,7 +234,7 @@ export interface ListLoopsOpts {
   /**
    * With `counterparty`, the source the counterparty page lives in (#5504):
    * a slug match counts only when the loop's counterparty source (its own
-   * source for a pre-v232 row) is this one. An email match is unaffected.
+   * source for a pre-v233 row) is this one. An email match is unaffected.
    */
   counterpartySourceId?: string;
   /**

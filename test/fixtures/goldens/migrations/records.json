@@ -5,7 +5,8 @@
       17,
       18,
       19,
-      100
+      100,
+      232
     ],
     "helpers": {
       "ALIAS_TABLES": "cddd37c636af42d862c08ca7754a57dfe9d12576b769fa8f74a5f02c803f67a0",
@@ -42,7 +43,7 @@
       "sqlQueryForEngine": "71fb1ccec1b22cdc1662876dbd8c17ed81e9ab83485c6965cdf5caa4fc4a4ab5",
       "verifyProjectionStatistics": "0d231b04ecfbc5a4109d6fca9567bf4e8c9e9db6c3fbbb35212e026579ed6f67"
     },
-    "latest": 232,
+    "latest": 233,
     "records": [
       {
         "handler": {
@@ -3467,7 +3468,7 @@
             "migrationNotice",
             "quietMigrationNotices"
           ],
-          "sha256": "3cc85accec244596bd36b032d658121ae3c3b8fc48b3e8d52d918813433de225"
+          "sha256": "6aa0ec5da80beb3ee59b46ac273e3109062befad63aa7ec6fba4919f72720964"
         },
         "idempotent": true,
         "name": "open_loops_counterparty_source",
@@ -3478,7 +3479,7 @@
         "sqlFor": "absent",
         "transaction": "absent",
         "verify": "absent",
-        "version": 232
+        "version": 233
       }
     ],
     "versions": [
@@ -3708,7 +3709,7 @@
       229,
       230,
       231,
-      232
+      233
     ]
   },
   "normalizer": "migrations-record-v1"

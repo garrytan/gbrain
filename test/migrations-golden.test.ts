@@ -33,7 +33,10 @@ describe('migrations full-record golden', () => {
     expect(new Set(versions).size).toBe(versions.length);
     const sorted = [...versions].sort((a, b) => a - b);
     const golden = buildMigrationsGolden(MIGRATIONS);
-    expect(golden.gaps).toEqual([17, 18, 19, 100]);
+    // 232 is provisional (wave 14 PR4 carries its migration as v233 while wave 13
+    // PR4 takes v232/v233 and wave 14 PR2 v234); the integrator renumbers at
+    // merge-slot time and restores the [17, 18, 19, 100] expectation.
+    expect(golden.gaps).toEqual([17, 18, 19, 100, 232]);
     expect(sorted[0]).toBe(2);
     expect(sorted[sorted.length - 1]).toBe(LATEST_VERSION);
   }, 60_000);
