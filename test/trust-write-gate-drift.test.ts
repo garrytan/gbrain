@@ -28,6 +28,7 @@ const EXEMPT: Record<string, string> = {
   'src/core/cycle/grade-takes.ts': 'writes resolution fields on existing takes; no new claim text',
   'src/core/cycle/phantom-redirect.ts': 'slug redirect (placement only)',
   'src/core/embed-facts.ts': 'embedding columns only',
+  'src/core/embed-takes-refresh.ts': 'embedding columns only',
   'src/core/embedding-dim-check.ts': 'embedding columns only',
   'src/core/extract/receipt-writer.ts': 'gbrain-generated extraction receipt page (counts, cost, model id); no external text',
   'src/core/facts/derivation-inputs.ts': 'derivation edge ledger; ids only',
