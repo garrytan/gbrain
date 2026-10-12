@@ -10,6 +10,28 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.181.0] - 2026-10-12
+
+**`gbrain core <subcommand> --help` prints the core usage instead of crashing without a brain (#6521).**
+
+`gbrain core --help` answered, but asking for help on a subcommand did not: `core list --help`, `core status --help`, `core show --help`, `core init --help` and `core suggest --help` ended in `Error [internal_error]: null is not an object`, and `core add`, `remove`, `diff` and `ack` with `--help` failed on a missing slug or revision. The CLI deliberately runs `core` help without connecting to a brain, but the handler only recognized help as its first word. It now answers `--help` or `-h` (before any `--`) first, for every subcommand, with the same usage block and exit 0; commands without a help flag are unchanged. Contributed by @harjothkhara.
+
+**Say to your agent:** *"Show me the usage for gbrain core list, I don't have a brain set up yet."*
+
+### What you see
+
+| Where | What changed |
+|---|---|
+| `gbrain core <list\|show\|status\|add\|remove\|diff\|ack\|init\|suggest> --help` (and `-h`) | Prints the core usage and exits 0 with no brain configured, instead of an internal error or a missing-argument error. |
+
+## To take advantage of v0.60.181.0
+
+Nothing to migrate. Check it on a machine with no brain:
+
+```bash
+gbrain core list --help
+```
+
 ## [0.60.180.0] - 2026-10-12
 
 **When `remember` refuses a forgotten claim, the refusal now says when and how widely it was forgotten.** An agent that re-saves a claim the user forgot gets `fact_withdrawn` as before, and the refusal now carries `withdrawn: { at, subject, visibility }`, where `subject` is the entity the claim was forgotten for or `all_entities`. The agent can tell the user "you asked me to forget that on <date>" instead of retrying. The object rides the immediate refusal, the batch item error, the failed write receipt and `get_write_request`. It covers the exact claim only, the message, code and suggestion are unchanged, and nothing is ever restored.
