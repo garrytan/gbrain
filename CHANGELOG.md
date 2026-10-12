@@ -10,6 +10,16 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.183.0] - 2026-10-12
+
+### Fixed
+
+- Date-format documentation and filename examples no longer appear as unfinished dates in `gbrain lint`. Actual unfilled dates in metadata, citations and timeline entries remain visible, including on a line containing a valid example.
+- `gbrain lint --fix` can repair legacy ChatGPT/Claude export summaries whose speaker and excerpt were flattened into one empty heading. The repair preserves the excerpt's words and nests its speaker under Summary. Ordinary notes and raw transcripts keep their headings.
+- Brain-writing conventions now require separate speaker headings and excerpt paragraphs, with a lint check before publishing generated pages.
+
+To take advantage of v0.60.183.0: upgrade GBrain, then run `gbrain lint <brain-directory> --fix` to repair affected legacy summaries.
+
 ## [0.60.182.0] - 2026-10-12
 
 **Image pages on a managed multimodal brain get their image vector (#6529).** With `GBRAIN_EMBEDDING_MULTIMODAL=true`, a managed `gbrain sync` now imports image files through the coordinated image importer instead of holding every one as `managed_image_sync_unsupported`, so the page is created with its OCR text, its image vector and its `source_path` in the same publication; holds from earlier syncs are re-screened and imported on the next `gbrain sync --source <id> --no-pull`. `gbrain embed --stale --images` works on a managed brain (it used to be refused by the legacy writer), finds the image pages whose `source_path` was never recorded through their slug, and a plain `gbrain embed --stale` runs that sweep first on a multimodal install. Doctor's new `image_embedding_coverage` check reports the image pages search cannot see, which `embed_coverage_pct` counted as embedded. No migration; the image vector and OCR text are the paid calls the importer already made for `gbrain import`, now also made at sync and sweep time. Image pages whose file is no longer in the checkout are not re-imported: every sweep names the first path it tried, and the explicit `--images` sweep exits non-zero when it could rebuild nothing.
