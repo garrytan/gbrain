@@ -5,7 +5,7 @@ import { afterAll, beforeAll, beforeEach, expect, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
-import { runPhaseCaptureEntities } from '../src/core/cycle/capture-entities.ts';
+import { runPhaseCaptureEntities,splitEntityCaptureCandidate } from '../src/core/cycle/capture-entities.ts';
 import { runByMentionCore } from '../src/commands/extract.ts';
 import type { MinionJobContext } from '../src/core/minions/types.ts';
 import {UnrecoverableError} from '../src/core/minions/types.ts';
@@ -240,20 +240,55 @@ test('跨页累计超过旧默认输入输出额度仍全部处理，保留用�
   expect(next.status,next.summary).toBe('ok');expect(calls).toBe(12);expect(next.details.chunks_submitted).toBe(0);
 },60000);
 
-test('单份资料的 Token 和轮数保护明确区分，不再误报整轮累计额度',async()=>{
+test('分块 Token 耗尽只跳过当前资料，后续资料仍完成',async()=>{
   await note('notes/document-tokens','这份资料用于验证单页调用保护及失败信息。');
-  const limited=await runPhaseCaptureEntities(engine,{sourceId:'vault',handler:async()=>{throw new UnrecoverableError('ingest_budget_tokens: document token limit');}});
+  await note('notes/z-good','这份正常资料需要继续识别。');
+  const limited=await runPhaseCaptureEntities(engine,{sourceId:'vault',handler:async ctx=>{
+    if(promptOf(ctx).includes('notes/document-tokens'))throw new UnrecoverableError('ingest_budget_tokens: document token limit');
+    return {ingest_verified:true,tokens:{in:10,out:5}};
+  }});
   expect(limited.details.stop_reason).toBe('document_tokens');
-  expect(limited.summary).toContain('单份资料 Token 预算到上限');
-  await resetPgliteState(engine as PGLiteEngine);
-  await engine.executeRaw("INSERT INTO sources(id,name) VALUES('vault','Vault')");
-  await engine.setConfig('version','130');
-  await engine.setConfig('models.dream.synthesize','anthropic:claude-sonnet-4-6');
-  await note('notes/document-turns','长文分块中的实体识别应保留完成断点。'.repeat(1000));
+  expect(limited.details.pages_processed).toBe(1);expect(limited.details.pages_failed).toBe(1);
+  expect(limited.details.budget_stop).toBeNull();
+},60000);
+
+test('长资料每块独立获得调用和 Token 额度，完成后不重复识别',async()=>{
+  const body='长文分块中的实体识别应保留完成断点。'.repeat(1000);
+  await note('notes/document-turns',body);
+  const chunkCount=splitEntityCaptureCandidate({slug:'notes/document-turns',sourceId:'vault',title:'notes/document-turns',body}).length;
   let calls=0;
-  const turns=await runPhaseCaptureEntities(engine,{sourceId:'vault',handler:async()=>{calls++;return {ingest_verified:true,turns_count:6,tokens:{in:10,out:5}};}});
-  expect(calls).toBe(1);expect(turns.details.stop_reason).toBe('document_turns');
-  expect(turns.summary).toContain('单份资料达到模型调用轮数上限');
+  const turns=await runPhaseCaptureEntities(engine,{sourceId:'vault',handler:async ctx=>{
+    calls++;expect(ctx.data.max_turns).toBe(20);expect(ctx.data.usage_limits).toMatchObject({input:120000,output:20000});
+    return {ingest_verified:true,stop_reason:'end_turn',turns_count:8,tokens:{in:90000,out:18000}};
+  }});
+  expect(calls).toBe(chunkCount);expect(turns.details.stop_reason).toBe('completed');
+  expect(turns.details.pages_processed).toBe(1);expect(turns.details.pages_remaining).toBe(0);
+  expect((await engine.getPage('notes/document-turns',{sourceId:'vault'}))?.compiled_truth).toBe(body);
+  const next=await runPhaseCaptureEntities(engine,{sourceId:'vault',handler:async()=>{throw new Error('已完成分块不应重复执行');}});
+  expect(next.details.chunks_submitted).toBe(0);
+},60000);
+
+for(const resultFailure of [false,true])test(`${resultFailure?'模型轮数结果':'模型轮数错误'}仅跳过当前资料，继续时只重试未完成分块`,async()=>{
+  const body='这份资料有多个分块，需要保留第一段完成结果。'.repeat(700);
+  await note('notes/a-partial',body);await note('notes/z-good','正常资料需要完成识别。');
+  let chunkCalls=0,goodCalls=0;
+  const first=await runPhaseCaptureEntities(engine,{sourceId:'vault',handler:async ctx=>{
+    if(promptOf(ctx).includes('notes/z-good')){goodCalls++;return {ingest_verified:true,stop_reason:'end_turn',tokens:{in:10,out:5}};}
+    if(++chunkCalls===2){
+      if(resultFailure)return {ingest_verified:false,stop_reason:'max_turns',turns_count:20,tokens:{in:30,out:10}};
+      await ctx.updateTokens({input:30,output:10});throw new UnrecoverableError('ingest_turn_limit: 20 turns exhausted');
+    }
+    return {ingest_verified:true,stop_reason:'end_turn',turns_count:8,tokens:{in:10,out:5}};
+  }});
+  expect(chunkCalls).toBe(2);expect(goodCalls).toBe(1);
+  expect(first.details.pages_processed).toBe(1);expect(first.details.pages_failed).toBe(1);
+  expect(first.details.stop_reason).toBe('document_turns');expect(first.details.budget_stop).toBeNull();
+  expect((first.details.page_failures as any[])[0]).toMatchObject({slug:'notes/a-partial',kind:'document_turns',input_tokens:30});
+  const resumed:string[]=[];
+  const next=await runPhaseCaptureEntities(engine,{sourceId:'vault',handler:async ctx=>{resumed.push(promptOf(ctx));return {ingest_verified:true,stop_reason:'end_turn',tokens:{in:10,out:5}};}});
+  expect(next.details.pages_processed).toBe(1);expect(next.details.pages_remaining).toBe(0);
+  expect(resumed.every(prompt=>!prompt.includes('notes/z-good')&&!prompt.includes('第 1/'))).toBe(true);
+  expect(resumed).toHaveLength(splitEntityCaptureCandidate({slug:'notes/a-partial',sourceId:'vault',title:'notes/a-partial',body}).length-1);
 },60000);
 
 test('费用到上限后停止新的模型请求，已完成结果保留，任务不失败', async () => {

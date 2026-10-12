@@ -21,6 +21,7 @@ export interface EntityIngestContext {
   body: string;
   chunkBody: string;
   acknowledged?:string[];
+  turn_entity_refs?:string[];
 }
 interface EntityRef { slug: string; sourceId: string; title: string; type: string; evidence: string; names: string[] }
 interface IngestRelation { from: string; to: string; link_type: string; evidence: string }
@@ -333,7 +334,11 @@ export async function validateIngestCompletion(engine:BrainEngine,data:SubagentH
     return null;
   }catch(error){
     if(!(error instanceof UnrecoverableError)||error.message.includes('source boundary'))throw error;
-    if(!canContinue)throw error;
+    if(!canContinue){
+      const turns=await ingestTurnAllowance(engine,jobId,data);
+      if(turns&&turns.used>=turns.limit)throw new UnrecoverableError(`ingest_turn_limit: ${turns.limit} turns exhausted; ${error.message}`);
+      throw error;
+    }
     const writes=await engine.executeRaw<{slug:string;status:string}>(`SELECT COALESCE(o->>'slug',i->>'slug') slug,o->>'status' status FROM
       (SELECT id,CASE WHEN jsonb_typeof(input)='string' THEN (input #>> '{}')::jsonb ELSE input END i,CASE WHEN jsonb_typeof(output)='string' THEN (output #>> '{}')::jsonb ELSE output END o
        FROM subagent_tool_executions WHERE job_id=$1 AND tool_name='brain_put_page' AND status='complete') x ORDER BY id`,[jobId]);
@@ -343,6 +348,10 @@ export async function validateIngestCompletion(engine:BrainEngine,data:SubagentH
 
 export async function verifyIngestResult(engine:BrainEngine,data:SubagentHandlerData,result:SubagentResult,jobId?:number):Promise<SubagentResult>{
   if(!data.ingest_context)return result;
+  if(result.stop_reason==='max_turns'){
+    const turns=jobId==null?null:await ingestTurnAllowance(engine,jobId,data);
+    throw new UnrecoverableError(`ingest_turn_limit: ${turns?.limit??data.max_turns??20} turns exhausted; unfinished chunk is resumable`);
+  }
   if(result.stop_reason!=='end_turn')throw new UnrecoverableError(result.stop_reason==='length'?'ingest_output_truncated: output truncated after bounded retry':['timeout','user_stop','service_shutdown','aborted'].includes(result.stop_reason)?`ingest_provider_${result.stop_reason}: ingest incomplete`:`ingest incomplete: ${result.stop_reason}`);
   const verified=await finalizeEntityIngest(engine,data.ingest_context,result.result,await ingestRequiredWrites(engine,data,jobId));
   const rejected=jobId==null?[]:await engine.executeRaw<{from:string;to:string;reason:string}>(`SELECT DISTINCT i->>'from' AS "from",i->>'to' AS "to",o->>'reason' AS reason
@@ -400,7 +409,27 @@ export async function checkIngestCallBudget(engine:BrainEngine,jobId:number,data
   return maxTokens;
 }
 
+async function ingestTurnAllowance(engine:BrainEngine,jobId:number,data:SubagentHandlerData):Promise<{used:number;limit:number}|null>{
+  const context=data.ingest_context;
+  if(!context?.turn_entity_refs)return null;
+  const entities=new Set(context.turn_entity_refs);
+  const tools=await engine.executeRaw<{slug:string;source_id:string}>(`SELECT COALESCE(o->>'slug',i->>'slug') slug,COALESCE(o->>'source_id',i->>'source_id',$2) source_id FROM
+    (SELECT CASE WHEN jsonb_typeof(input)='string' THEN (input #>> '{}')::jsonb ELSE input END i,
+      CASE WHEN jsonb_typeof(output)='string' THEN (output #>> '{}')::jsonb ELSE output END o FROM subagent_tool_executions
+      WHERE job_id=$1 AND status='complete' AND tool_name IN ('brain_put_page','brain_get_page')) x`,[jobId,context.sourceId]);
+  for(const tool of tools){
+    if(typeof tool.slug!=='string')continue;
+    const qualified=tool.slug.includes(':')?tool.slug:`${tool.source_id}:${tool.slug}`;
+    if(/^[^:]+:(?:people|companies|projects|concepts)\//.test(qualified))entities.add(qualified);
+  }
+  const [turns]=await engine.executeRaw<{used:number}>(`SELECT count(*)::int used FROM subagent_messages WHERE job_id=$1 AND role='assistant'
+    AND NOT jsonb_path_exists(content_blocks,'$[*] ? (@.type == "text" && @.truncated == true)')`,[jobId]);
+  return {used:turns?.used??0,limit:Math.min(data.max_turns??20,8+2*Math.max(0,entities.size-1))};
+}
+
 export async function finalizeBeforeIngestBudget(engine:BrainEngine,jobId:number,data:SubagentHandlerData,system:string,messages:unknown,tools:unknown):Promise<boolean>{
+  const turns=await ingestTurnAllowance(engine,jobId,data);
+  if(turns&&turns.used>=turns.limit-1)return true;
   const cap=Math.min(defaultMaxOutputTokens(data.model),data.model_output_limit??Infinity,data.usage_limits?.output??Infinity);
   try{
     await checkIngestCallBudget(engine,jobId,data,system,messages,tools);

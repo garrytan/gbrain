@@ -16,7 +16,7 @@ import { taskRoundCompleted, taskStatus } from '../admin/src/product/task-presen
 import type { ConsoleRun } from '../shared/contracts/common.ts';
 
 let engine: BrainEngine, runtime: ProductTaskRuntime, root: string, server: ReturnType<typeof Bun.serve>;
-let calls = 0, hold = false, invalid = false, usageInput = 20;
+let calls = 0, hold = false, invalid = false, usageInput = 20, incompleteSlug = '';
 const releases = new Set<() => void>();
 const keys = ['PMBRAIN_HOME', 'GBRAIN_HOME', 'DATABASE_URL', 'PMBRAIN_DATABASE_URL', 'GBRAIN_DATABASE_URL'];
 const original = Object.fromEntries(keys.map(key => [key, process.env[key]]));
@@ -42,11 +42,12 @@ beforeAll(async () => {
   process.env.PMBRAIN_HOME = root; process.env.GBRAIN_HOME = root; mkdirSync(join(root, '.pmbrain'));
   if (databaseUrl) assertSafeE2eDatabaseUrl(databaseUrl);
   server = Bun.serve({ port: 0, async fetch(req) {
-    const body = await req.json() as { input?: string | string[] };
+    const body = await req.json() as { input?: string | string[]; messages?: unknown[] };
     if (new URL(req.url).pathname.endsWith('/embeddings')) return Response.json({ object: 'list', data: (Array.isArray(body.input) ? body.input : [body.input]).map((_, index) => ({ object: 'embedding', index, embedding: Array.from({ length: dimensions }, (_, i) => i === 0 ? 1 : 0) })), model: 'isolated-embedding', usage: { prompt_tokens: 2, total_tokens: 2 } });
     calls++;
     if (hold) await new Promise<void>(finish => releases.add(finish));
-    return Response.json({ id: `chat-${calls}`, object: 'chat.completion', created: 1, model: 'isolated-capture', choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: JSON.stringify(invalid ? { entities: [], relations: [] } : { entities: [], relations: [], no_entities: true }) } }], usage: { prompt_tokens: usageInput, completion_tokens: 10, total_tokens: usageInput + 10 } });
+    const unfinished=invalid||!!incompleteSlug&&JSON.stringify(body.messages).includes(`资料 slug: ${incompleteSlug}\\n`);
+    return Response.json({ id: `chat-${calls}`, object: 'chat.completion', created: 1, model: 'isolated-capture', choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: JSON.stringify(unfinished ? { entities: [], relations: [] } : { entities: [], relations: [], no_entities: true }) } }], usage: { prompt_tokens: usageInput, completion_tokens: 10, total_tokens: usageInput + 10 } });
   } });
   writeFileSync(configPath(), JSON.stringify({ engine: databaseUrl ? 'postgres' : 'pglite', custom_openai_api_key: 'isolated-only', embedding_model: 'custom-openai:isolated-embedding', embedding_dimensions: dimensions, provider_base_urls: { 'custom-openai': server.url.origin + '/v1' }, models: { default: 'custom-openai:isolated-capture' }, model_usage: { generative_enabled: true, embedding_enabled: true }, desktop: { knowledge_directory: root } }));
   engine = databaseUrl ? new PostgresEngine() : new WorkerPgliteEngine() as unknown as BrainEngine;
@@ -54,7 +55,7 @@ beforeAll(async () => {
 }, 60_000);
 
 beforeEach(async () => {
-  calls = 0; invalid = false; usageInput = 20; release();
+  calls = 0; invalid = false; usageInput = 20; incompleteSlug = ''; release();
   await engine.executeRaw('DELETE FROM minion_jobs');
   await engine.executeRaw("DELETE FROM config WHERE key LIKE 'dream.entity_capture.pending.%'");
   await engine.executeRaw('DELETE FROM pages');
@@ -64,6 +65,7 @@ beforeEach(async () => {
   await engine.setConfig('dream.entity_capture.max_input_tokens', '1000000');
   await engine.setConfig('dream.entity_capture.cost_cap_cny','5');
   await engine.executeRaw("DELETE FROM config WHERE key IN ('dream.entity_capture.price.input_cny_per_million','dream.entity_capture.price.output_cny_per_million')");
+  await engine.executeRaw("DELETE FROM config WHERE key IN ('dream.entity_capture.document_max_turns','dream.entity_capture.document_max_input_tokens','dream.entity_capture.document_max_output_tokens')");
   runtime = new ProductTaskRuntime(engine); await runtime.start();
 }, 30_000);
 
@@ -130,6 +132,27 @@ test('多Source维护忽略旧累计Token额度，已完成原任务再继续不
   expect(await engine.getPage('second',{sourceId:'default'})).toBeNull();
   await engine.setConfig('dream.entity_capture.max_input_tokens','1000000');
 },180_000);
+
+test('后台任务单资料八轮耗尽仍处理后续资料，原任务继续只重试失败资料',async()=>{
+  const directory=join(root,'turn-limit-source');mkdirSync(directory);
+  await engine.executeRaw("UPDATE sources SET local_path=$1 WHERE id='default'",[directory]);
+  for(const slug of ['a-bad','z-good']){
+    const page={slug,type:'note',compiled_truth:`${slug} 是独立原文，必须保存已有成果和失败断点。`,frontmatter:{}};
+    await engine.putPage(slug,{...page,title:slug,timeline:''},{sourceId:'default'});
+    await requestImportedEntityCapture(engine,'default',page);
+  }
+  incompleteSlug='a-bad';await engine.setConfig('dream.entity_capture.cost_cap_cny','unlimited');
+  const quick=await runtime.submitDream({preset:'quick',sourceId:'default'}),done=await finished(quick.id,90000);
+  expect(calls).toBe(9);
+  const capture=(done.result as {phases:Array<{phase:string;details:Record<string,any>}>}).phases.find(phase=>phase.phase==='capture_entities');
+  expect(capture?.details).toMatchObject({pages_processed:1,pages_failed:1,pages_remaining:1,stop_reason:'document_turns',budget_stop:null});
+  const success=await engine.executeRaw("SELECT id FROM minion_jobs WHERE result->>'ingest_verified'='true' AND data->'ingest_context'->>'slug'='z-good'");
+  expect(success).toHaveLength(1);
+  incompleteSlug='';expect((await runtime.retry(quick.id))?.id).toBe(quick.id);
+  const resumed=await finished(quick.id,90000);expect(resumed.status,JSON.stringify(resumed.result)).toBe('completed');expect(calls).toBe(10);
+  expect((await engine.getPage('a-bad'))?.compiled_truth).toContain('独立原文');
+  expect(await engine.executeRaw("SELECT id FROM minion_jobs WHERE result->>'ingest_verified'='true' AND data->'ingest_context'->>'slug'='z-good'")).toHaveLength(1);
+},180000);
 
 test('多个Source仍共用费用上限，继续原任务不重置已发生费用，增加金额后完成剩余资料',async()=>{
   const first=join(root,'cost-first'),second=join(root,'cost-second');mkdirSync(first);mkdirSync(second);
