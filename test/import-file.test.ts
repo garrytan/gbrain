@@ -76,7 +76,8 @@ function mockEngine(overrides: Partial<Record<string, any>> = {}): BrainEngine {
       // transaction: just call the fn with the same engine (no real DB transaction in tests)
       if (prop === 'transaction') return async (fn: (tx: BrainEngine) => Promise<any>) => fn(engine);
       // Like a real engine, executeRaw always resolves to a row array.
-      if (prop === 'executeRaw' && !overrides.executeRaw) return (...args: any[]) => { calls.push({ method: prop, args }); return Promise.resolve([]); };
+      // #6482: the strict mode reader needs one well-formed unmanaged row.
+      if (prop === 'executeRaw' && !overrides.executeRaw) return (...args: any[]) => { calls.push({ method: prop, args }); return Promise.resolve(String(args[0]).includes('FROM persistence_brain') ? [{ enabled: false }] : []); };
       return track(prop);
     },
   });
@@ -521,7 +522,7 @@ describe('importFile — CJK wave (v0.32.7)', () => {
       },
       executeRaw: async (sql: string) => {
         if (isVersionStamp(sql)) expect(replacementCompleted).toBe(true);
-        return [];
+        return sql.includes('FROM persistence_brain') ? [{ enabled: false }] : [];
       },
     });
   }

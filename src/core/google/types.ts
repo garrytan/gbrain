@@ -132,6 +132,21 @@ export interface GoogleSourceState {
    */
   calendar_horizon_ms?: number | null;
   contacts_sync_token: string | null;
+  /**
+   * #6324: the `personFields` mask `contacts_sync_token` was minted under
+   * (`CONTACT_PERSON_FIELDS` at the time). Written together with the token
+   * after a successful sweep and never on its own: People rejects a token
+   * reused with different request parameters, so a mask that differs from
+   * the current constant means the token is unusable and the sweep lists
+   * fully. Absent on state saved before the mask grew (legacy = the old mask).
+   */
+  contacts_person_fields?: string | null;
+  /**
+   * #6324: contact-group directory cache (resource name → display name) from
+   * the last successful `contactGroups` read; the fallback when the directory
+   * cannot be read during a sweep. Never authoritative on its own.
+   */
+  contact_groups?: Record<string, string>;
   last_full_at: string | null;
   gmail_attachment_backfill?: {
     version: 1;
@@ -279,8 +294,17 @@ export interface ContactData {
   resourceName: string;
   displayName: string | null;
   emails: string[];
+  /** #6324: E.164 `canonicalForm` when Google supplies it, else the entered value; deduplicated. */
+  phones: string[];
   organization: string | null;
   title: string | null;
+  /**
+   * #6324: user-created contact groups (system groups dropped). The client
+   * fills `id` (`contactGroups/<id>`); the sweep resolves `name` from the
+   * group directory and leaves null for a group it could not resolve, which
+   * the page then carries as the raw id.
+   */
+  groups: Array<{ id: string; name: string | null }>;
   deleted: boolean;
 }
 

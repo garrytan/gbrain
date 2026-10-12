@@ -8,6 +8,7 @@ import type { MinionJobStatus } from '../minions/types.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { OperationError, opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
+import { readManagedMode } from './managed-mode.ts';
 import { authorizeStoredRequest, authorizeWrite } from './authority.ts';
 import { completeEffect } from './effect-journal.ts';
 import { guardEffectSource } from './effect-recovery.ts';
@@ -101,8 +102,7 @@ export async function prepareFactsBackstop(engine: BrainEngine, row: WriteReques
 export async function readFactsBackstopJobPage(engine: BrainEngine, data: Record<string, unknown>) {
   const slug = typeof data.slug === 'string' ? data.slug : '';
   const sourceId = typeof data.sourceId === 'string' ? data.sourceId : 'default';
-  const [brain] = await engine.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1');
-  if (brain?.enabled && data.persistence_request_id === undefined) return { skipped: 'missing_write_authority' } as const;
+  if (await readManagedMode(engine) && data.persistence_request_id === undefined) return { skipped: 'missing_write_authority' } as const;
   const snapshot = await engine.readPageSnapshot(slug, { sourceId });
   if (!snapshot) return { skipped: 'page_missing' } as const;
   if (data.persistence_request_id !== undefined) {

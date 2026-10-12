@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 230679,
-    "stdoutSha256": "dc9a2b59ffbb454139bd202eb28d827cd45dc57b91605771d154625920306eda",
+    "stdoutBytes": 231140,
+    "stdoutSha256": "bb979a78c5e89bb88016cc8af97c2215136976a11b8fdba6de37d572d83dc54d",
     "toolNames": [
       "remember",
       "entity",
@@ -1040,7 +1040,7 @@
         "scope": "write"
       },
       {
-        "description": "List your write receipts in one source, newest first. Use when a request_id was lost.",
+        "description": "List your write receipts in one source, newest first, for a lost request_id.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -2014,7 +2014,7 @@
         "scope": "read"
       },
       {
-        "description": "Link provenances in the brain (e.g. markdown, manual) with edge counts.",
+        "description": "Link provenances (e.g. markdown, manual) with their edge counts.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -2029,7 +2029,7 @@
         "scope": "read"
       },
       {
-        "description": "Walk the link graph from a page. Remote callers get bidirectional paths at depth 2 by default.",
+        "description": "Walk the link graph from a page. Remote default: both directions, depth 2.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -2138,7 +2138,7 @@
         "scope": "read"
       },
       {
-        "description": "Append a dated entry to a page timeline. Replaying the same entry changes nothing. A page's Timeline section needs no call.",
+        "description": "Append a dated entry to a page timeline. Replays change nothing; the Timeline section needs no call. To change or remove one, edit its bullet via edit_page with expected_revision.",
         "idempotent": true,
         "local_only": false,
         "mutating": true,
@@ -2161,7 +2161,7 @@
               "type": "string"
             },
             "detail": {
-              "description": "Longer text.",
+              "description": "Details.",
               "type": "string"
             },
             "expected_revision": {
@@ -2181,7 +2181,7 @@
               "type": "string"
             },
             "source": {
-              "description": "Provenance slug or URL.",
+              "description": "Source slug or URL.",
               "type": "string"
             },
             "summary": {
@@ -2199,7 +2199,7 @@
         "scope": "write"
       },
       {
-        "description": "Get timeline entries for a page, optionally filtered by date window",
+        "description": "Get timeline entries for a page, optionally filtered by date window. To change or remove an entry, edit its bullet in the page's Timeline section with edit_page (expected_revision from get_page include_content:true): the row follows the page.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -2513,6 +2513,7 @@
         "parameters": {
           "cursor": "string?",
           "limit": "number?",
+          "query": "string?",
           "schema_version": "number?",
           "section": "string?",
           "source_id": "string?"
@@ -2525,8 +2526,12 @@
               "type": "string"
             },
             "limit": {
-              "description": "Version 2 page size (1-100).",
+              "description": "Page size or rank cap (1-100).",
               "type": "number"
+            },
+            "query": {
+              "description": "Version 1 host catalog: rank skills by word overlap with this task (name, triggers, description), drop the rest, cap at limit (default 10). Refused on a shared catalog.",
+              "type": "string"
             },
             "schema_version": {
               "description": "2 for the source-qualified catalog.",
@@ -3425,7 +3430,7 @@
         "scope": "write"
       },
       {
-        "description": "Recent ingestion log entries. Use when checking what was already imported.",
+        "description": "Recent ingestion log entries: what was already imported, and when.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,

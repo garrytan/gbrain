@@ -8,7 +8,8 @@ import { isValidSourceId } from '../source-id.ts';
 import { assertValidSlugPrefixes } from '../grants/encoding.ts';
 import { isWriteRequestId } from './types.ts';
 import { writerDiagnostics } from './control.ts';
-import { acceptWriterTransfer, claimWorktree, getWorktreeBinding, humanManifestProgress, prepareWriterTransfer, storedManifestScope, worktreeManifest, type StoredWorktreeManifest } from './ownership.ts';
+import { acceptWriterTransfer, claimWorktree, getWorktreeBinding, humanManifestProgress, prepareWriterTransfer, readManagedMode, storedManifestScope, worktreeManifest, type StoredWorktreeManifest } from './ownership.ts';
+import { inspectPersistenceBrain } from './managed-mode.ts';
 import { existingLocalHostId, currentVerifiedLocalWriter, persistenceHome, readLocalWriter, registerLocalWriter, revokeLocalWriter, type LocalGrant } from './identity.ts';
 import type { PersistenceAdminOperation } from './admin-contract.ts';
 import { operationScopesAllowed } from '../scope.ts';
@@ -236,9 +237,10 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
     const writerVersions = await listWriterVersions(engine);
     await assertWriterAdminState(engine, adminState, false);
     const { cleanupRetiredManagedMarkers } = await import('./deactivation.ts');
-    const [mode] = await engine.executeRaw<{ enabled: boolean; mode_epoch: string | null }>(
-      "SELECT enabled, to_jsonb(persistence_brain)->>'mode_epoch' AS mode_epoch FROM persistence_brain WHERE singleton=1");
-    return { ...diagnostics, mode: mode?.enabled ? 'managed' : 'classic', mode_epoch: Number(mode?.mode_epoch ?? 1),
+    // #6482: a malformed singleton reports `mode: 'unknown'` with its problem (this is the refusal's fix command), never refuses.
+    const mode = await inspectPersistenceBrain(engine);
+    return { ...diagnostics, mode: !mode.row ? 'unknown' : mode.row.enabled ? 'managed' : 'classic', mode_epoch: Number(mode.row?.mode_epoch ?? 1),
+      ...(mode.problem ? { mode_problem: mode.problem } : {}),
       local_markers: await cleanupRetiredManagedMarkers(engine),
       host_id: existingLocalHostId(), local_host_id: existingLocalHostId(), bindings, admin_state: adminState,
       admin_lock: { locked: adminLock.locked, set_at: adminLock.set_at, host_id: adminLock.host_id }, blocking_effects: blockingEffects,
@@ -253,8 +255,7 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
     keys(params, ['source_id', 'path', 'dry_run', 'admin_intent', 'expected_state']);
     const sourceId = source(params.source_id), root = path(params.path);
     // #5198: say at claim time what the claim retires, before and after the fact.
-    const [brain] = await engine.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1');
-    const notice = brain?.enabled ? {} : { activation_required: CLAIM_BEFORE_ACTIVATION_NOTICE };
+    const notice = await readManagedMode(engine) ? {} : { activation_required: CLAIM_BEFORE_ACTIVATION_NOTICE };
     if (params.dry_run) return { dry_run: true, action: operation, source_id: sourceId, path: root, current: await getWorktreeBinding(engine, sourceId, existingLocalHostId()), ...notice };
     const expectedState = await requireWriterAdminIntent(engine, operation, params);
     return { claimed: true, binding: await claimWorktree(engine, sourceId, root, undefined, expectedState), ...notice };

@@ -57,6 +57,8 @@ export interface RepairStepResult {
   status: RepairStepStatus;
   applied: number;
   skipped: number;
+  /** Items refused per item and left unchanged (`failed[]` of the run); any makes the step `failed`, never `completed`. */
+  failed: number;
   message?: string;
 }
 
@@ -168,7 +170,7 @@ export async function runRepairSteps(engine: BrainEngine, steps: RepairPlanStep[
   const runner = await repairRunner(engine, { apply: true, noEmbed: opts.noEmbed, registry: opts.registry });
   const results: RepairStepResult[] = [];
   for (const step of steps) {
-    const base = { id: step.id, kind: step.kind, applied: 0, skipped: 0 };
+    const base = { id: step.id, kind: step.kind, applied: 0, skipped: 0, failed: 0 };
     let result: RepairStepResult;
     const remaining = opts.remainingUsd();
     if (step.paid && remaining !== undefined && (step.est_usd_cost === null || step.est_usd_cost > remaining)) {
@@ -185,9 +187,12 @@ export async function runRepairSteps(engine: BrainEngine, steps: RepairPlanStep[
         const applied = llm ? await runner.run(step.kind, scope, { maxLlmUsd: opts.remainingUsd() })
           : step.paid && step.embeds === 'inline' && opts.stepBudget ? await opts.stepBudget(() => runner.run(step.kind, scope)) : await runner.run(step.kind, scope);
         if (llm) opts.charge?.(Math.max(0, (applied.cost.llm_usd ?? 0) - ((opts.spentUsd?.() ?? 0) - spentBefore)));
-        result = { ...base, applied: applied.applied, skipped: applied.skipped,
-          status: applied.stopped?.reason === 'budget_exhausted' ? 'budget_exhausted' : applied.stopped ? 'stopped' : applied.complete ? 'completed' : 'stopped',
-          ...(applied.stopped ? { message: applied.stopped.message } : {}) };
+        const failed = applied.failed.length;
+        const failedMessage = failed ? `${failed} item(s) refused and left unchanged (first: ${applied.failed[0]!.item}, ${applied.failed[0]!.reason}); `
+          + `the next full scan retries them: ${applied.apply_command}` : undefined;
+        result = { ...base, applied: applied.applied, skipped: applied.skipped, failed,
+          status: applied.stopped?.reason === 'budget_exhausted' ? 'budget_exhausted' : applied.stopped ? 'stopped' : failed ? 'failed' : applied.complete ? 'completed' : 'stopped',
+          ...(applied.stopped ? { message: failedMessage ? `${applied.stopped.message} ${failedMessage}` : applied.stopped.message } : failedMessage ? { message: failedMessage } : {}) };
         // A callee (for example the stale-embedding pass) may swallow BudgetExhausted; the tracker still knows.
         if (step.paid && step.embeds === 'inline' && opts.exhausted?.()) result = { ...result, status: 'budget_exhausted',
           message: 'The --max-usd budget ran out during the step; re-sealed pages keep their text, and the rest of their embeddings resume with the printed resume command or gbrain embed --stale.' };

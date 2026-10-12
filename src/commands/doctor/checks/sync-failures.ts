@@ -5,6 +5,7 @@ import { formatManagedSyncFailure, managedSyncRetryCommand, readManagedSyncFailu
 import { resolveHoursEnv } from '../../../core/env-number.ts';
 import { makeRemediationStep } from '../../../core/remediation-step.ts';
 import { classifyManagedSyncOrphans } from '../../../core/persistence/managed-sync-orphans.ts';
+import { readManagedMode } from '../../../core/persistence/ownership.ts';
 
 export async function checkSyncFailures(engine: BrainEngine | null, opts: { sourceIds?: string[]; remote?: boolean } = {}): Promise<Check | null> {
   // #5452: sync refuses an archived source, so its failures cannot be cleared and are not a live health signal.
@@ -22,8 +23,9 @@ export async function checkSyncFailures(engine: BrainEngine | null, opts: { sour
   if (!severity.unresolved) return entries.length || archivedCount ? { name: 'sync_failures', status: 'ok', message: `${entries.length ? 'All historical sync failures are acknowledged.' : 'No sync failures on active sources.'}${archivedNote}` } : null;
   const summary = `${severity.unresolved} unresolved sync failure(s)${severity.auto_skipped ? ` (${severity.auto_skipped} auto-skipped — pages NOT indexed)` : ''}.${archivedNote}`;
   if (opts.remote !== false) return { name: 'sync_failures', status: severity.status, message: summary + ' Ask the host operator to inspect doctor and repair the accepted sync; no paths or receipt details are exposed remotely.' };
-  const [brain] = engine ? await engine.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1') : [];
-  const requiresManagedRetry = brain?.enabled || managed.length > 0 || legacy.some(row => row.managed_cursor_key);
+  // The `engine ?` tolerance is the doctor's: with no engine there is no managed retry to name; the read itself fails closed (#6482).
+  const managedBrain = engine ? await readManagedMode(engine) : false;
+  const requiresManagedRetry = managedBrain || managed.length > 0 || legacy.some(row => row.managed_cursor_key);
   const details = managed.map(formatManagedSyncFailure);
   const unresolvedLegacy = unacknowledgedSyncFailures(legacy);
   details.push(...unresolvedLegacy.map(row => `${row.source_id}: ${row.path} (${row.code}: ${row.error})`));

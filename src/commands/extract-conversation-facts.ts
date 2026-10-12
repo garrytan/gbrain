@@ -79,6 +79,7 @@ import { configureGatewayIfUninitialized, isAvailable, withBudgetTracker } from 
 import { insertDerivedFacts, writeDerivedFacts } from '../core/persistence/derived-facts.ts';
 import { managedPersistenceEnabled } from '../core/persistence/ownership.ts';
 import { clearConversationFacts, enqueueManagedPage, flushManagedBatch, managedConversationPublisher, startManagedPage, stopsRun, type ManagedConversationPublisher } from '../core/facts/conversation-publication.ts';
+import { ConversationRunClaims, listConversationPagesBySlug } from '../core/facts/conversation-enumeration.ts';
 import { BudgetTracker, BudgetExhausted, loadPricingOverrides, type BudgetReason, type NoPricingGuidance } from '../core/budget/budget-tracker.ts';
 import { noPricingMessage } from '../core/budget/no-pricing.ts';
 import { conversationFactsCostCap } from '../core/facts/conversation-budget.ts';
@@ -131,20 +132,8 @@ export { TERMINAL_AUDIT_SOURCE, NON_EXTRACTABLE_AUDIT_SOURCE };
 // Tunables (exported for tests).
 // ---------------------------------------------------------------------------
 
-/** Maximum gap between adjacent messages before we cut a new segment. */
-export const DEFAULT_SEGMENT_GAP_MINUTES = 30;
-
-/**
- * Hard cap on messages per segment, regardless of timing.
- * Tuned down from PR's 50 → 30 (Eng-v2 T5): combined with the 6500-char
- * SEGMENT_TEXT_CHAR_LIMIT, this keeps headroom under extract.ts's
- * MAX_TURN_TEXT_CHARS = 8000 so tail facts in dense Slack/email
- * segments don't vanish silently.
- */
-export const DEFAULT_SEGMENT_MAX_MESSAGES = 30;
-
-/** Minimum messages required for a segment to be worth extracting. */
-export const MIN_SEGMENT_MESSAGES = 2;
+// Segment gap/cap/budget tunables and the windowing itself live in
+// src/core/facts/conversation-windows.ts (#6267) and are re-exported below.
 
 // #4136 — labels that are common DOCUMENT section headings, never lost
 // speakers. Gate the DECLINE only (a miss here is warn-noise on healthy
@@ -167,14 +156,6 @@ function isSpeakerShapedHeadingLabel(label: string): boolean {
 
 /** Delay between extractor calls so we don't burst the chat provider. */
 export const DEFAULT_INTER_CALL_SLEEP_MS = 200;
-
-/**
- * Cap on character length of the rendered segment passed to the extractor.
- * Tuned down from PR's 7500 → 6500 (Eng-v2 T5) to leave headroom for the
- * topical/temporal header (~500 chars typical, up to ~1500 with a long
- * participant list) under extract.ts's MAX_TURN_TEXT_CHARS = 8000.
- */
-export const SEGMENT_TEXT_CHAR_LIMIT = 6500;
 
 /**
  * Hard cap on per-page body bytes (compiled_truth + timeline). Pages
@@ -221,19 +202,15 @@ export const PER_SEGMENT_SOURCE_PREFIX = 'cli:extract-conversation-facts';
 // Public types.
 // ---------------------------------------------------------------------------
 
-export interface ConversationMessage {
-  speaker: string;
-  /** ISO 8601 timestamp parsed from the rendered message line. */
-  timestamp: string;
-  text: string;
-}
-
-export interface ConversationSegment {
-  messages: ConversationMessage[];
-  startIso: string;
-  endIso: string;
-  participants: string[];
-}
+export type { ConversationMessage, ConversationSegment, SplitSegmentsOpts } from '../core/facts/conversation-types.ts';
+export {
+  DEFAULT_SEGMENT_GAP_MINUTES, DEFAULT_SEGMENT_MAX_MESSAGES, MIN_SEGMENT_MESSAGES, SEGMENT_TEXT_CHAR_LIMIT,
+  MAX_PAGE_SEGMENT_GAP_MINUTES, splitIntoSegments, renderSegmentForExtraction,
+} from '../core/facts/conversation-windows.ts';
+import type { ConversationMessage } from '../core/facts/conversation-types.ts';
+import {
+  DEFAULT_SEGMENT_GAP_MINUTES, MAX_PAGE_SEGMENT_GAP_MINUTES, splitIntoSegments, renderSegmentForExtraction,
+} from '../core/facts/conversation-windows.ts';
 
 /**
  * Core function opts. Strict — `sourceId` is always required (Eng-v2 A1).
@@ -364,6 +341,8 @@ export interface ExtractConversationFactsResult {
   pages_pending?: number;
   /** Managed brains: pages whose extraction generation is blocked until the page changes (no model call). */
   pages_blocked?: number;
+  /** Pages the run listed more than once and extracted once (#6500). */
+  pages_skipped_duplicate_listing?: number;
   budget_exhausted?: boolean;
   budget_reason?: BudgetReason;
   budget_model?: string;
@@ -422,18 +401,8 @@ export function parseConversationMessages(
 }
 
 // ---------------------------------------------------------------------------
-// Segment splitting.
+// Segment gap override (windowing: src/core/facts/conversation-windows.ts).
 // ---------------------------------------------------------------------------
-
-export interface SplitSegmentsOpts {
-  gapMinutes?: number;
-  maxMessages?: number;
-  /** Drop messages with timestamp <= this ISO before splitting. */
-  sinceIso?: string;
-}
-
-/** Upper bound for a page's `conversation_segment_gap_minutes` (one week). */
-export const MAX_PAGE_SEGMENT_GAP_MINUTES = 10_080;
 
 /**
  * A page's own segmentation gap: frontmatter `conversation_segment_gap_minutes`,
@@ -453,59 +422,6 @@ export function pageSegmentGapMinutes(page: Pick<Page, 'slug' | 'frontmatter'>):
     `To fix: set the key to an integer in that range, or remove it, then rerun gbrain extract-conversation-facts --slug ${page.slug}\n`,
   );
   return undefined;
-}
-
-export function splitIntoSegments(
-  messages: ConversationMessage[],
-  opts: SplitSegmentsOpts = {},
-): ConversationSegment[] {
-  const gapMs = (opts.gapMinutes ?? DEFAULT_SEGMENT_GAP_MINUTES) * 60_000;
-  const maxMessages = opts.maxMessages ?? DEFAULT_SEGMENT_MAX_MESSAGES;
-  const sinceMs = opts.sinceIso ? Date.parse(opts.sinceIso) : NaN;
-
-  const filtered = Number.isFinite(sinceMs)
-    ? messages.filter((m) => Date.parse(m.timestamp) > sinceMs)
-    : messages.slice();
-
-  const out: ConversationSegment[] = [];
-  let cur: ConversationMessage[] = [];
-  let lastTs: number | null = null;
-
-  const flush = () => {
-    if (cur.length < MIN_SEGMENT_MESSAGES) {
-      cur = [];
-      return;
-    }
-    const seen = new Set<string>();
-    const participants: string[] = [];
-    for (const m of cur) {
-      if (!seen.has(m.speaker)) {
-        seen.add(m.speaker);
-        participants.push(m.speaker);
-      }
-    }
-    out.push({
-      messages: cur,
-      startIso: cur[0].timestamp,
-      endIso: cur[cur.length - 1].timestamp,
-      participants,
-    });
-    cur = [];
-  };
-
-  for (const m of filtered) {
-    const ts = Date.parse(m.timestamp);
-    if (!Number.isFinite(ts)) continue;
-    if (lastTs !== null && ts - lastTs > gapMs) flush();
-    cur.push(m);
-    lastTs = ts;
-    if (cur.length >= maxMessages) {
-      flush();
-      lastTs = null;
-    }
-  }
-  flush();
-  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -535,26 +451,6 @@ export function segmentObservationDate(page: Pick<Page, 'slug' | 'frontmatter' |
   const explicit = !!day && !day.startsWith('1970-')
     && (context.source === 'explicit' || context.source === 'frontmatter_date' || day !== context.fallbackDate);
   return explicit ? observationDateFrom(startIso) : resolveObservationDate({ slug: page.slug, frontmatter: page.frontmatter });
-}
-
-export function renderSegmentForExtraction(
-  pageTitle: string,
-  segment: ConversationSegment,
-): string {
-  const header = [
-    `Page: ${pageTitle}`,
-    `Conversation between ${segment.participants.join(' and ')} from ${segment.startIso} to ${segment.endIso}`,
-    '---',
-  ].join('\n');
-  const body = segment.messages
-    .map((m) => `${m.speaker} (${m.timestamp}): ${m.text}`)
-    .join('\n');
-  const full = `${header}\n${body}`;
-  if (full.length <= SEGMENT_TEXT_CHAR_LIMIT) return full;
-  // Truncate from the end of the body, keeping the header intact so the
-  // extractor still sees the topical anchor.
-  const slack = SEGMENT_TEXT_CHAR_LIMIT - header.length - 16;
-  return `${header}\n${body.slice(0, Math.max(0, slack))}\n…(truncated)`;
 }
 
 // ---------------------------------------------------------------------------
@@ -1043,8 +939,8 @@ async function processPage(
   // a frontmatter conversation_segment_gap_minutes still wins.
   const gapMinutes = pageSegmentGapMinutes(page) ??
     (parseResult.matched_pattern_id === 'email-thread-heading' ? MAX_PAGE_SEGMENT_GAP_MINUTES : undefined);
-  const allSegments = splitIntoSegments(messages, { gapMinutes });
-  const segments = splitIntoSegments(messages, { gapMinutes, sinceIso });
+  const allSegments = splitIntoSegments(messages, { gapMinutes, pageTitle: page.title || page.slug });
+  const segments = splitIntoSegments(messages, { gapMinutes, sinceIso, pageTitle: page.title || page.slug });
   if (segments.length === 0) {
     state.result.pages_skipped++;
     if (!declinedUnrecognizedSpeaker && !skip) {
@@ -1431,7 +1327,12 @@ export async function runExtractConversationFactsCore(
      * page rather than blocking. A hard error from processPage propagates
      * up; the pool's onError='continue' captures it into failures[].
      */
+    const claims = new ConversationRunClaims();
     const processPageWithLock = async (page: Page): Promise<void> => {
+      if (!claims.claim(sourceId, page.slug)) {
+        state.result.pages_skipped_duplicate_listing = (state.result.pages_skipped_duplicate_listing ?? 0) + 1;
+        return;
+      }
       const lockId = extractConversationFactsLockId(sourceId, page.slug);
       if (opts.force) {
         state.cpMap.delete(cpMapKey(sourceId, page.slug));
@@ -1492,7 +1393,7 @@ export async function runExtractConversationFactsCore(
       // Batch mode is selected by the PRESENCE of the selector: an empty
       // list means "process exactly these zero pages" (a no-op), never a
       // fall-through to full-corpus enumeration and its LLM spend.
-      for (const slug of new Set(opts.slugs)) {
+      for (const slug of opts.slugs) {
         if (signal?.aborted) throw new Error('aborted');
         const page = await engine.getPage(slug, { sourceId });
         if (!page) {
@@ -1525,27 +1426,18 @@ export async function runExtractConversationFactsCore(
 
       await processPageWithLock(page);
     } else {
-      // Bounded slug keysets (10 × 25MB) avoid OFFSET duplicate/omission
-      // races when extraction or concurrent edits bump pages' updated_at.
+      // Multi-page enumeration: paginate per-type at small batch size to
+      // bound memory (Eng-v2 C8 — 10 × 25MB = 250MB worst case), by slug
+      // keyset so every page is listed once (#6500, conversation-enumeration.ts).
       // v0.41.15.0 (D9): inner per-page loop replaced with runSlidingPool
       // so parallel workers can claim pages from the batch. The pool
       // honors AbortSignal at each claim boundary and threads
       // BudgetExhausted abort (D13) automatically.
       let processedPagesCount = 0;
       pageLoop: for (const type of concreteTypes) {
-        let slugAfter: string | undefined;
-        // eslint-disable-next-line no-constant-condition
-        while (true) {
+        for await (const batch of listConversationPagesBySlug(engine, { type, sourceId, batchSize: PAGE_LIST_BATCH })) {
           if (signal?.aborted) throw new Error('aborted');
           if (opts.limit && processedPagesCount >= opts.limit) break pageLoop;
-
-          const batch = await engine.listPages({
-            type,
-            sourceId,
-            limit: PAGE_LIST_BATCH,
-            sort: 'slug', slugAfter,
-          });
-          if (batch.length === 0) break;
 
           let claimable = batch.filter(page => isConversationFactsEligiblePage(page, concreteTypes, strictEligibility));
           result.pages_skipped += batch.length - claimable.length;
@@ -1595,8 +1487,6 @@ export async function runExtractConversationFactsCore(
           for (const failure of poolResult.failures) recordPageFailure(result, sourceId, failure.label, failure.error);
 
           processedPagesCount += claimable.length;
-          slugAfter = batch[batch.length - 1]!.slug;
-          if (batch.length < PAGE_LIST_BATCH) break;
 
           // Persist checkpoint between batches so a crash mid-walk
           // doesn't lose all progress.
@@ -1750,7 +1640,7 @@ async function writeRunReceiptAndRollup(
     cost_delta: result.spent_usd ?? 0,
     ...classifyRunStop({
       budget_exhausted: halted,
-      error: result.pages_failed > 0 || result.budget_reason === 'no_pricing',
+      error: result.budget_reason === 'no_pricing' ? 'no_pricing' : result.pages_failed > 0 ? 'item_error' : false,
     }),
   });
 }

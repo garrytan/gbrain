@@ -2131,8 +2131,8 @@ async function routeEngineFreeSubcommands(command: string, args: string[]): Prom
   // doesn't even attempt the connect (T3=A in plans/radiant-napping-lerdorf.md).
   // The handler self-configures the AI gateway from loadConfig() + process.env.
   if (command === 'eval' && args[0] === 'cross-modal') {
-    const { runEvalCrossModal } = await import('../commands/eval-cross-modal.ts');
-    setCliExitVerdict(await runEvalCrossModal(args.slice(1)));
+    const [{ runEvalCrossModal }, { readCrossModalSlotConfigFrom }] = await Promise.all([import('../commands/eval-cross-modal.ts'), import('../core/cycle/nightly-probe-routes.ts')]);
+    setCliExitVerdict(await runEvalCrossModal(args.slice(1), { slotConfig: () => readCrossModalSlotConfigFrom(() => connectEngineForServe(ENGINE_CONNECT_HOOKS, { probeOnly: true })) }));
     return true;
   }
 

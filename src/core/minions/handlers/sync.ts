@@ -103,6 +103,12 @@ export function makeSyncHandler(engine: BrainEngine): MinionHandler {
         );
         return { skipped: true, reason: 'sync_in_progress', source_id: sourceId ?? 'default' };
       }
+      // P4.2 (supersedes #6465): a job an older daemon queued for a gbrain-owned content directory completes as a
+      // skip instead of dying after its attempts; the dispatchers no longer queue one (automaticSyncSkip).
+      if ((err as { code?: unknown } | null)?.code === 'sync_not_applicable') {
+        console.error(`[sync] skipped: sync does not apply to ${sourceId ?? 'default'} (gbrain-owned content directory, not a Git checkout).`);
+        return { skipped: true, reason: 'sync_not_applicable', source_id: sourceId ?? 'default' };
+      }
       throw err;
     }
 

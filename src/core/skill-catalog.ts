@@ -97,6 +97,14 @@ export interface SkillCatalogEntry {
   unavailable_tools: string[];
   writes_pages: boolean;
   mutating: boolean;
+  /** #6471: present only when the call carried `query`; see `scoreSkillMatch`. */
+  match?: SkillMatch;
+}
+
+/** #6471: lexical relevance of a skill to a task. `matched_on` names the strongest contributor. */
+export interface SkillMatch {
+  score: number;
+  matched_on: 'trigger' | 'name' | 'description';
 }
 
 export interface ListSkillsResult {
@@ -473,21 +481,62 @@ function dirNameOf(entry: ManifestEntry): string {
   return entry.path.split('/')[0] ?? entry.name;
 }
 
+const QUERY_STOPWORDS = new Set(['a', 'an', 'the', 'and', 'or', 'of', 'to', 'for', 'in', 'on', 'at', 'by', 'with', 'my', 'me', 'is', 'it', 'be', 'this', 'that', 'from', 'as']);
+const QUERY_RESULT_LIMIT_DEFAULT = 10;
+const QUERY_RESULT_LIMIT_MAX = 100;
+
+/** Lowercased word tokens; hyphens and punctuation split, so `meeting-prep` is `meeting` + `prep`. */
+function queryTokens(text: string): string[] {
+  return text.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(t => t.length >= 2 && !QUERY_STOPWORDS.has(t));
+}
+
+/**
+ * #6471: lexical token overlap between a task and one catalog entry. Trigger
+ * tokens count 2 each and a whole trigger phrase inside the query counts
+ * double again; name tokens count 3; description tokens count 1. Null when
+ * nothing overlaps (the entry is dropped from a ranked list). No model call:
+ * the catalog is ~100 entries and `list_skills` must stay keyless and fast.
+ */
+export function scoreSkillMatch(entry: Pick<SkillCatalogEntry, 'name' | 'description' | 'triggers'>, query: string): SkillMatch | null {
+  const queryWords = queryTokens(query);
+  if (queryWords.length === 0) return null;
+  const inQuery = new Set(queryWords);
+  const queryText = ` ${queryWords.join(' ')} `;
+  const overlap = (text: string): number => new Set(queryTokens(text).filter(t => inQuery.has(t))).size;
+  let trigger = 0;
+  for (const phrase of entry.triggers) {
+    const words = queryTokens(phrase);
+    if (words.length === 0) continue;
+    trigger += queryText.includes(` ${words.join(' ')} `) ? 4 * words.length : 2 * overlap(phrase);
+  }
+  const name = 3 * overlap(entry.name);
+  const description = overlap(entry.description);
+  const score = trigger + name + description;
+  if (score === 0) return null;
+  const matched_on = trigger >= name && trigger >= description ? 'trigger' : name >= description ? 'name' : 'description';
+  return { score, matched_on };
+}
+
 /**
  * Build the flat host-repo skill catalog + the instructional envelope. Resilient:
  * a single malformed/escaping skill is skipped, never throws the whole call.
+ * With `opts.query` (#6471) the section-filtered catalog is ranked by
+ * `scoreSkillMatch`, zero-score entries are dropped, ties break by name and
+ * `opts.limit` (default 10, max 100) caps the list; without it the output is
+ * unchanged.
  */
 export function buildSkillCatalog(
   ctx: OperationContext,
   skillsDir: string,
   source: ResolvedSkillsDirSource,
-  opts: { section?: string; gateDisabled?: ReadonlySet<string> } = {},
+  opts: { section?: string; gateDisabled?: ReadonlySet<string>; query?: string; limit?: number } = {},
 ): ListSkillsResult {
   const { skills: manifest } = loadOrDeriveManifest(skillsDir);
   const triggerMap = buildTriggerMap(skillsDir);
   const sectionFilter = opts.section?.trim();
+  const query = opts.query?.trim();
 
-  const skills: SkillCatalogEntry[] = [];
+  let skills: SkillCatalogEntry[] = [];
   for (const entry of manifest) {
     let path: string;
     try {
@@ -529,6 +578,13 @@ export function buildSkillCatalog(
   }
 
   skills.sort((a, b) => a.name.localeCompare(b.name));
+  if (query) {
+    const limit = Math.min(QUERY_RESULT_LIMIT_MAX, Math.max(1, Math.floor(opts.limit ?? QUERY_RESULT_LIMIT_DEFAULT)));
+    skills = skills
+      .flatMap(entry => { const match = scoreSkillMatch(entry, query); return match ? [{ ...entry, match }] : []; })
+      .sort((a, b) => b.match!.score - a.match!.score || a.name.localeCompare(b.name))
+      .slice(0, limit);
+  }
 
   return {
     schema_version: 1,

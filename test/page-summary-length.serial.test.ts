@@ -130,7 +130,10 @@ describe('surrogate-safe document truncation (#5316)', () => {
       'a'.repeat(SYNOPSIS_DOC_MAX_CHARS - 1) + '𝑇' + 'b'.repeat(100);
     const result = await generatePerChunkSynopsis({ ...baseArgs, documentText });
     expect(result.kind).toBe('success');
-    const prompt = captured[0].messages[0].content as string;
+    // Two text blocks since PR #6341 (page, chunk); the truncation lives in the page block.
+    const content = captured[0].messages[0].content;
+    expect(typeof content).not.toBe('string');
+    const prompt = (content as Array<{ type: string; text: string }>).map(b => b.text).join('\n');
     expect(prompt.isWellFormed()).toBe(true);
     expect(() => JSON.parse(JSON.stringify(prompt))).not.toThrow();
     expect(prompt).toContain('chars truncated for synopsis budget');

@@ -16,7 +16,7 @@ the row shape per call.
 
 ## `add_timeline_entry`
 
-Append an entry to the canonical Markdown timeline and structured timeline store in one committed write. Exact replay changes neither store.
+Append an entry to the canonical Markdown timeline and structured timeline store in one committed write. Exact replay changes neither store. The receipt returns `bullet`, the rendered Markdown line. There is no update or remove verb: the page is the system of record, so to change or remove an entry read the page with `get_page include_content: true`, replace or delete that bullet with `edit_page` (passing `expected_revision`), and the timeline row follows the page.
 
 | Parameter | Type | Guidance |
 | --- | --- | --- |
@@ -252,10 +252,11 @@ List the skills this agent's brain publishes. A skill is a named prose instructi
 | Parameter | Type | Guidance |
 | --- | --- | --- |
 | `schema_version` | number | Request 2 for the canonical source-qualified sealed catalog; omitted preserves version 1. |
-| `limit` | number | Version 2 page size, 1-100. |
+| `limit` | number | Version 2 page size, 1-100; with `query`, how many ranked skills to return (default 10). |
 | `cursor` | string | Version 2 opaque snapshot cursor. |
 | `source_id` | string | Narrow version 2 enumeration to one permitted source. |
 | `section` | string | Optional: only skills whose routing section matches this exactly. |
+| `query` | string | Full surface, version 1 host catalog only: the task in plain words. Skills are ranked by word overlap over their name, triggers and description (a whole trigger phrase inside the query counts most, then name words, then description words); skills matching nothing are dropped, ties break by name, `limit` caps the list, and each kept entry carries `match: { score, matched_on: trigger \| name \| description }`. Without `query` the catalog is unchanged (name order, every skill, no `match`). On a shared catalog (`schema_version: 2`, or a brain whose shared catalog is active) `query` is refused with `invalid_params` rather than ignored: filter with `section` there. No model call. |
 
 ## `list_write_requests`
 

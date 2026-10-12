@@ -275,6 +275,25 @@ export const ROLLBACK_CASES: RollbackCase[] = [
     },
   },
   {
+    domain: 'pages (stale reserved frontmatter keys, #6454)',
+    async seed(engine) {
+      await seedPage(engine);
+      await engine.executeRaw(`UPDATE pages SET frontmatter = frontmatter || '{"type":"legacy","title":"Stored Title"}'::jsonb WHERE slug = $1 AND source_id = 'default'`, [SLUG]);
+    },
+    async write(tx) {
+      const [row] = await tx.listStaleFrontmatterKeyPages({ sourceId: 'default', afterId: 0, limit: 10 });
+      expect(row).toMatchObject({ slug: SLUG, keys: ['title', 'type'] });
+      expect(await tx.countStaleFrontmatterKeyPages({ sourceIds: ['default'] })).toEqual([{ source_id: 'default', n: 1 }]);
+      expect(await tx.stripStaleFrontmatterKeys({ sourceId: 'default', ids: [row.id] })).toBe(1);
+      expect(await tx.countStaleFrontmatterKeyPages({ sourceIds: ['default'] })).toEqual([]);
+    },
+    async observe(engine) {
+      const rows = await engine.executeRaw<{ stale: boolean }>(
+        `SELECT frontmatter ?| ARRAY['type','title','tags','slug'] AS stale FROM pages WHERE slug = $1 AND source_id = 'default'`, [SLUG]);
+      return rows[0]?.stale ?? null;
+    },
+  },
+  {
     domain: 'pages (attendance marker)',
     async seed(engine) {
       await seedPage(engine);

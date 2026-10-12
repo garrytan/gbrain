@@ -34,6 +34,10 @@ export type WriteSwitches = Record<WriteSwitch, boolean>;
 export const WRITE_SWITCH_KEYS: readonly string[] = Object.values(WRITE_SWITCHES).map(s => s.key);
 export const SWITCH_TTL_MS = 5000;
 
+/** `sync.write_through` as the write path and onboarding read it: on unless explicitly off (#6449 shares the predicate with activation). */
+export function writeThroughConfigured(value: string | null | undefined): boolean {
+  return !/^(false|0|off|no)$/i.test(value ?? 'true');
+}
 const off = (value: string | null | undefined) => typeof value === 'string' && /^(0|false)$/i.test(value.trim());
 const on = (value: string | null | undefined) => typeof value === 'string' && /^(1|true)$/i.test(value.trim());
 /** One snapshot read: the switches plus the #6278 preparation budgets (preparation-budget.ts), so a claim never reads config on its own. */

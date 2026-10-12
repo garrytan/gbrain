@@ -418,11 +418,7 @@ export function parseMarkdown(
   const tags = extractTags(frontmatter);
   const slug = coerceFrontmatterString(frontmatter.slug) || inferSlug(filePath);
 
-  const cleanFrontmatter = { ...frontmatter };
-  delete cleanFrontmatter.type;
-  delete cleanFrontmatter.title;
-  delete cleanFrontmatter.tags;
-  delete cleanFrontmatter.slug;
+  const cleanFrontmatter = comparableFrontmatter(frontmatter);
 
   const result: ParsedMarkdown = {
     frontmatter: cleanFrontmatter,
@@ -1212,6 +1208,21 @@ import { existsSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep as pathSep } from 'node:path';
 
 /** Options for serializePageToMarkdown. */
+/**
+ * #6454: the four top-level frontmatter keys the parser lifts into page
+ * columns (`type`, `title`, `tags`, `slug`) and drops from
+ * `ParsedMarkdown.frontmatter`. A file can never carry them into the stored
+ * frontmatter, so a stored copy of one of them (older imports kept them) is
+ * not drift: every file-versus-database comparison and every render strips
+ * them first, top-level only; nested user keys are left alone.
+ */
+export const RESERVED_FRONTMATTER_KEYS = ['type', 'title', 'tags', 'slug'] as const;
+export function comparableFrontmatter(frontmatter: Record<string, unknown> | null | undefined): Record<string, unknown> {
+  const clean: Record<string, unknown> = { ...(frontmatter ?? {}) };
+  for (const key of RESERVED_FRONTMATTER_KEYS) delete clean[key];
+  return clean;
+}
+
 export interface SerializePageOpts {
   /** Frontmatter fields merged on top of page.frontmatter at render time.
    *  Use this to stamp provenance (`ingested_via: 'webhook'`), identity
@@ -1240,8 +1251,12 @@ export function serializePageToMarkdown(
   tags: string[],
   opts: SerializePageOpts = {},
 ): string {
+  // #6454: the columns are the page's type, title and tags; a stored reserved key (older imports kept
+  // them) never overrides them in the rendered file. A stored `slug` still reaches the #5966 stamp rule, which
+  // replaces one that names another identity with the page's slug.
+  const stored = page.frontmatter ?? {};
   const frontmatter: Record<string, unknown> = {
-    ...slugStampedFrontmatter(page.slug, (page.frontmatter ?? {}) as Record<string, unknown>),
+    ...slugStampedFrontmatter(page.slug, { ...comparableFrontmatter(stored), ...(stored.slug !== undefined ? { slug: stored.slug } : {}) }),
     ...(opts.frontmatterOverrides ?? {}),
   };
   return serializeMarkdown(

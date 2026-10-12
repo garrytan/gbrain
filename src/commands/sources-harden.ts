@@ -17,7 +17,8 @@ import {
   hardenBrainRepo, unhardenBrainRepo, acceptPat,
   type DurabilityReport,
 } from '../core/brain-repo-durability.ts';
-import { divergenceSafePull, detectDefaultBranch, isInsideGitRepo } from '../core/git-remote.ts';
+import { divergenceSafePull, detectDefaultBranch, isInsideGitRepo, pullStrategyOf, type PullStrategy } from '../core/git-remote.ts';
+import { parseSourceConfig } from '../core/sources-load.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { invalidateBackupStatus } from '../core/backup/status-file.ts';
 import { existsSync } from 'fs';
@@ -110,7 +111,7 @@ export async function runHarden(engine: BrainEngine, args: string[]): Promise<vo
       continue;
     }
     const report = await hardenBrainRepo({
-      repoPath: row.local_path, sourceId: row.id, branch,
+      repoPath: row.local_path, sourceId: row.id, branch, pullStrategy: pullStrategyOf(parseSourceConfig(row.config)),
       pat: pat?.token, installCron, verify, dryRun,
       logger: json ? undefined : (l) => console.error(`  ${l}`),
     });
@@ -150,6 +151,7 @@ export async function runPull(engine: BrainEngine | null, args: string[]): Promi
   const branchFlag = flagVal(args, '--branch');
 
   let repoPath: string;
+  let pullStrategy: PullStrategy = 'rebase';
   if (path) {
     repoPath = path;
   } else {
@@ -164,6 +166,7 @@ export async function runPull(engine: BrainEngine | null, args: string[]): Promi
       process.exit(1);
     }
     repoPath = rows[0].local_path;
+    pullStrategy = pullStrategyOf(parseSourceConfig(rows[0].config));
   }
 
   if (!isInsideGitRepo(repoPath)) {
@@ -171,7 +174,7 @@ export async function runPull(engine: BrainEngine | null, args: string[]): Promi
     process.exit(1);
   }
   const branch = branchFlag || detectDefaultBranch(repoPath);
-  const outcome = divergenceSafePull(repoPath, branch);
+  const outcome = divergenceSafePull(repoPath, branch, { strategy: pullStrategy });
   switch (outcome.status) {
     case 'up_to_date': console.log(`up to date (${branch})`); break;
     case 'advanced': console.log(`advanced ${outcome.from.slice(0, 7)}→${outcome.to.slice(0, 7)} (${branch})`); break;

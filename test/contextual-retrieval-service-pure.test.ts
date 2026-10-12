@@ -569,7 +569,10 @@ function makeServiceEngine(chunks: ChunkInput[]) {
 }
 
 function extractChunk(opts: ChatOpts): string {
-  const content = String(opts.messages[0]?.content ?? '');
+  // The synopsis prompt is two text blocks (page, chunk) since PR #6341;
+  // joined with '\n' they render as the former single string.
+  const raw = opts.messages[0]?.content ?? '';
+  const content = typeof raw === 'string' ? raw : raw.map(b => (b.type === 'text' ? b.text : '')).join('\n');
   return content.match(/<chunk>\n([\s\S]*?)\n<\/chunk>/)?.[1] ?? '';
 }
 

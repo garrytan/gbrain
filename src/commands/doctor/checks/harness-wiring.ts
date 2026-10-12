@@ -12,8 +12,17 @@
  * its reason and fix. A live status-only `serve --http` (its marker under
  * GBRAIN_HOME, answering `/health` 503 as that instance within 500 ms) is
  * reported first as `serve_status_only` (transport http) with the status
- * reason's fix. Doctor seeds nothing; the only file it removes is a status
- * marker whose process is gone.
+ * reason's fix. On a brain with no PGLite lock to consult (Postgres,
+ * `database_url`, a `remote_mcp` thin client) an HTTP registration is probed
+ * with a credential-free GET of its `/health` (`?deep=1` locally, shallow for
+ * a thin client, 3 s, redirects not followed): a gbrain `status: ok` answer is
+ * `wired_running` with `mcp_access: 'unverified'` (a listener is proven, the
+ * registration's credentials and tool access are not); a refused loopback
+ * `http:` port is `http_serve_missing` with the `serve --http` fix; every other
+ * outcome is `http_serve_unreachable` / `http_serve_unhealthy` with no fix.
+ * Registered URLs are printed without userinfo, query or fragment (#6453).
+ * Doctor seeds nothing; the only file it removes is a status marker whose
+ * process is gone.
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -30,8 +39,10 @@ import type { Action } from '../../../core/agent-output.ts';
 import type { Check } from '../../doctor.ts';
 import { checkError, doctorVerify, infoCheck } from '../check-fix.ts';
 import type { DoctorContext, DoctorEntry } from '../context.ts';
+import { VERSION } from '../../../version.ts';
 
 export const HARNESS_SMOKE_TIMEOUT_MS = 15_000;
+export const HARNESS_HTTP_PROBE_TIMEOUT_MS = 3_000;
 const NAME = 'harness_wiring';
 const SMOKE_QUERY = 'gbrain install check';
 const STATUS_TOOL = 'gbrain_status';
@@ -147,18 +158,36 @@ function detectedHarnesses(): ReadinessHarness[] {
   return out;
 }
 
-function brainLock(): ReturnType<typeof peekLock> | null {
+type BrainLockView =
+  | { kind: 'pglite'; lock: ReturnType<typeof peekLock> }
+  | { kind: 'none'; remote: boolean };
+
+/** The PGLite lock when this brain has one to consult; otherwise which kind of lock-less brain this is. */
+function brainLock(): BrainLockView {
   try {
     const cfg = loadConfig();
-    if (!cfg || cfg.engine !== 'pglite' || cfg.database_url || cfg.remote_mcp) return null;
-    return peekLock(cfg.database_path ?? gbrainPath('brain.pglite'));
+    if (!cfg) return { kind: 'none', remote: false };
+    if (cfg.remote_mcp) return { kind: 'none', remote: true };
+    if (cfg.engine !== 'pglite' || cfg.database_url) return { kind: 'none', remote: false };
+    return { kind: 'pglite', lock: peekLock(cfg.database_path ?? gbrainPath('brain.pglite')) };
   } catch {
-    return null;
+    return { kind: 'none', remote: false };
+  }
+}
+
+/** A registered URL as doctor prints it: origin and path only, never userinfo, query or fragment. */
+export function redactRegistrationUrl(url: string | undefined): string {
+  if (!url) return '<no url>';
+  try {
+    const u = new URL(url);
+    return `${u.protocol}//${u.host}${u.pathname}`;
+  } catch {
+    return '<unparseable url>';
   }
 }
 
 function describeRegistration(r: HarnessRegistration): string {
-  return r.kind === 'http' ? `${HARNESS_LABEL[r.harness]} → ${r.url}` : `${HARNESS_LABEL[r.harness]} → ${[r.command, ...(r.args ?? [])].join(' ')}`;
+  return r.kind === 'http' ? `${HARNESS_LABEL[r.harness]} → ${redactRegistrationUrl(r.url)}` : `${HARNESS_LABEL[r.harness]} → ${[r.command, ...(r.args ?? [])].join(' ')}`;
 }
 
 function rewireFix(r: HarnessRegistration): Action | undefined {
@@ -166,7 +195,79 @@ function rewireFix(r: HarnessRegistration): Action | undefined {
   return harnessWiringEntry({ transport: 'cli', harnesses: [r.harness], lockOwner: null, gbrainBin: bin }).fix;
 }
 
-interface SmokeOutcome { ok: boolean; reason: string; message: string; fix?: Action }
+interface SmokeOutcome { ok: boolean; reason: string; message: string; fix?: Action; details?: Record<string, unknown> }
+
+const serveHttpFix = (): Action => ({ argv: ['gbrain', 'serve', '--http'], consent: [], actor: 'user', requires_exclusive: true, verify: doctorVerify(NAME),
+  why: 'The registration points at the shared HTTP server; it must be running (a long-lived process, so the user or a service manager starts it).',
+  user_message: 'gbrain\'s shared memory server is not running. Please start `gbrain serve --http` (or its service) so your agent sessions can reach memory.' });
+
+function isLoopbackHost(hostname: string): boolean {
+  const h = hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  return h === 'localhost' || h === '::1' || /^127\.\d+\.\d+\.\d+$/.test(h);
+}
+
+function connectionRefused(e: unknown): boolean {
+  const codes = [(e as { code?: unknown })?.code, (e as { cause?: { code?: unknown } })?.cause?.code];
+  return codes.some((c) => c === 'ECONNREFUSED' || c === 'ConnectionRefused');
+}
+
+/**
+ * GET the registration's `/health` without any credential from the
+ * registration (userinfo, query and `headers` are dropped; the probe URL is
+ * built from scheme, host and path only). `/health` proves a listener, not
+ * that the registration's token or tool access works, so a healthy answer is
+ * reported `mcp_access: 'unverified'`. Never throws; never echoes the URL.
+ */
+export async function probeHttpRegistration(r: HarnessRegistration, opts: { remote: boolean; timeoutMs?: number }): Promise<SmokeOutcome> {
+  const timeoutMs = opts.timeoutMs ?? HARNESS_HTTP_PROBE_TIMEOUT_MS;
+  const unreachable = (error: string, extra: Record<string, unknown> = {}): SmokeOutcome => ({
+    ok: false, reason: 'http_serve_unreachable', details: { probe: 'health', error, ...extra },
+    message: `the registered endpoint did not answer (${error}); MCP access unverified. Doctor cannot tell whether that server should be started here, so check the registration and the server it points at.`,
+  });
+  let probe: URL;
+  try {
+    probe = new URL(r.url ?? '');
+    probe.username = '';
+    probe.password = '';
+    probe.hash = '';
+    probe.search = opts.remote ? '' : '?deep=1';
+    probe.pathname = `${probe.pathname.replace(/\/mcp\/?$/, '').replace(/\/$/, '')}/health`;
+  } catch {
+    return unreachable('invalid_url');
+  }
+  const remoteDetail = opts.remote ? { remote: true } : {};
+  let res: Response;
+  try {
+    res = await fetch(probe, { method: 'GET', headers: { accept: 'application/json' }, redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) });
+  } catch (e: unknown) {
+    if (connectionRefused(e)) {
+      if (probe.protocol === 'http:' && isLoopbackHost(probe.hostname)) {
+        return { ok: false, reason: 'http_serve_missing', fix: serveHttpFix(), details: { probe: 'health', error: 'connection_refused', ...remoteDetail },
+          message: 'is registered, but nothing answers on that local port, so new sessions get no memory tools.' };
+      }
+      return unreachable('connection_refused', remoteDetail);
+    }
+    const name = e instanceof Error ? e.name : 'error';
+    return unreachable(name === 'TimeoutError' || name === 'AbortError' ? 'timeout' : (name === 'TypeError' ? 'connect_failed' : name), remoteDetail);
+  }
+  const unhealthy = (why: string, extra: Record<string, unknown> = {}): SmokeOutcome => ({
+    ok: false, reason: 'http_serve_unhealthy', details: { probe: 'health', http_status: res.status, ...remoteDetail, ...extra },
+    message: `the registered endpoint answered, but not as a healthy gbrain server (${why}); MCP access unverified. Doctor does not start a second server on a port something already answers on.`,
+  });
+  if (res.status >= 300 && res.status < 400) return unhealthy(`HTTP ${res.status} redirect; doctor does not follow redirects`);
+  type HealthBody = { status?: unknown; version?: unknown; error_description?: unknown };
+  let body: HealthBody | null = null;
+  try { body = await res.json() as HealthBody | null; } catch { body = null; }
+  if (res.status !== 200 || !body || typeof body !== 'object') {
+    const why = body && typeof body.error_description === 'string' ? `HTTP ${res.status}: ${body.error_description.slice(0, 200)}` : `HTTP ${res.status}${body ? '' : ', not a JSON health document'}`;
+    return unhealthy(why);
+  }
+  if (body.status !== 'ok') return unhealthy('a JSON answer without status: ok');
+  const version = typeof body.version === 'string' ? body.version : undefined;
+  const details: Record<string, unknown> = { probe: 'health', mcp_access: 'unverified', ...remoteDetail, ...(version ? { version } : {}), ...(version && version !== VERSION ? { version_mismatch: true } : {}) };
+  return { ok: true, reason: 'wired_running', details,
+    message: `endpoint reachable (${probe.pathname}${version ? `, gbrain ${version}` : ''}); MCP access unverified: the health route proves a listener, not that this registration's credentials reach memory tools.` };
+}
 
 /** Spawn the registered stdio argv and run initialize + tools/list + recall. Never throws. */
 export async function smokeStdioRegistration(r: HarnessRegistration, timeoutMs = HARNESS_SMOKE_TIMEOUT_MS): Promise<SmokeOutcome> {
@@ -212,7 +313,14 @@ export async function smokeStdioRegistration(r: HarnessRegistration, timeoutMs =
 
 async function smoke(r: HarnessRegistration): Promise<Check> {
   const details = { harness: r.harness, registration: r.source, kind: r.kind };
-  const lock = brainLock();
+  const view = brainLock();
+  if (r.kind === 'http' && view.kind === 'none') {
+    const outcome = await probeHttpRegistration(r, { remote: view.remote });
+    if (outcome.ok) return { name: NAME, status: 'ok', message: `${describeRegistration(r)}: ${outcome.message}`, details: { ...details, reason: outcome.reason, ...outcome.details } };
+    return { name: NAME, status: 'warn', message: `${describeRegistration(r)} ${outcome.message}`, details: { ...details, reason: outcome.reason, ...outcome.details },
+      ...(outcome.fix ? { fix: outcome.fix } : { fix_unavailable_reason: 'no_safe_automatic_fix' as const }) };
+  }
+  const lock = view.kind === 'pglite' ? view.lock : null;
   if (lock?.held && lock.isServe) {
     const transport = lock.http ? 'serve --http' : 'stdio serve';
     if (r.kind === 'http' && !lock.http) {
@@ -224,10 +332,7 @@ async function smoke(r: HarnessRegistration): Promise<Check> {
   }
   if (r.kind === 'http') {
     return { name: NAME, status: 'warn', message: `${describeRegistration(r)} is registered, but no \`gbrain serve --http\` is running on this machine, so new sessions get no memory tools.`,
-      details: { ...details, reason: 'http_serve_missing' },
-      fix: { argv: ['gbrain', 'serve', '--http'], consent: [], actor: 'user', requires_exclusive: true, verify: doctorVerify(NAME),
-        why: 'The registration points at the shared HTTP server; it must be running (a long-lived process, so the user or a service manager starts it).',
-        user_message: 'gbrain\'s shared memory server is not running. Please start `gbrain serve --http` (or its service) so your agent sessions can reach memory.' } };
+      details: { ...details, reason: 'http_serve_missing' }, fix: serveHttpFix() };
   }
   const outcome = await smokeStdioRegistration(r);
   if (outcome.ok) return { name: NAME, status: 'ok', message: `${describeRegistration(r)}: ${outcome.message}`, details: { ...details, reason: 'wired_running', smoke: outcome.reason } };
@@ -256,7 +361,8 @@ export async function harnessWiringCheck(opts: { smoke: boolean }): Promise<Chec
         details: { reason: 'plugin_lane_enabled', plugins: plugins.map((p) => p.plugin), harnesses: plugins.map((p) => p.harness),
           verify: 'start a new session in the harness and list its tools; gbrain\'s recall and remember should appear' } };
     }
-    const lock = brainLock();
+    const view = brainLock();
+    const lock = view.kind === 'pglite' ? view.lock : null;
     const lockOwner = lock?.held && lock.isServe && lock.pid !== undefined ? { pid: lock.pid, transport: lock.http ? 'http' as const : 'stdio' as const, is_self: false } : null;
     const entry = harnessWiringEntry({ transport: 'cli', harnesses, lockOwner, gbrainBin: resolveGbrainBin() });
     if (harnesses.length === 0) return infoCheck(NAME, `${entry.why} Wire one when the user picks an agent app.`, entry.state, entry.fix, { reason: entry.reason });

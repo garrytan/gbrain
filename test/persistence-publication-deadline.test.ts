@@ -35,24 +35,44 @@ const putPage = operations.find(o => o.name === 'put_page')!;
 const page = (body: string) => `---\ntitle: Example\ntype: note\n---\n\n${body}\n`;
 const tick = (ms: number) => new Promise(r => setTimeout(r, ms));
 
+/** A manual scheduler for `PublicationBound.later`: time moves only through `advance`, so a stalled runner cannot fire a phase early. */
+function manualClock() {
+  let now = 0;
+  const pending: Array<{ at: number; fn: () => void; cancelled: boolean; fired: boolean }> = [];
+  return {
+    later: (ms: number, fn: () => void) => { const entry = { at: now + ms, fn, cancelled: false, fired: false }; pending.push(entry); return () => { entry.cancelled = true; }; },
+    async advance(ms: number) {
+      now += ms;
+      for (const entry of [...pending].sort((a, b) => a.at - b.at)) if (!entry.cancelled && !entry.fired && entry.at <= now) { entry.fired = true; entry.fn(); }
+      await Promise.resolve();
+    },
+    pending: () => pending.filter(entry => !entry.cancelled && !entry.fired).length,
+  };
+}
+
 describe('boundPublication', () => {
   test('never settles before the publish; overdue at the ceiling, signal aborted after the grace, stuck after the settle window', async () => {
     const events: string[] = [];
     let release!: (value: string) => void, seen: AbortSignal | undefined;
     const fake = { transaction: (fn: (tx: unknown) => Promise<unknown>, opts?: { signal?: AbortSignal }) => { seen = opts?.signal; return fn({}); } } as unknown as BrainEngine;
     let stuckSettled: Promise<void> | undefined;
+    const clock = manualClock();
     const work = boundPublication(() => publicationTransaction(fake, () => new Promise<string>(resolve => { release = resolve; })),
-      { ceilingMs: 20, graceMs: 20, settleMs: 20, onOverdue: () => events.push('overdue'), onStuck: settled => { events.push('stuck'); stuckSettled = settled; } });
+      { ceilingMs: 20, graceMs: 20, settleMs: 20, later: clock.later, onOverdue: () => events.push('overdue'), onStuck: settled => { events.push('stuck'); stuckSettled = settled; } });
     let outcome: string | undefined;
     void work.then(value => { outcome = value; });
-    await tick(10); expect(events).toEqual([]); expect(seen?.aborted).toBe(false);
-    await tick(20); expect(events).toEqual(['overdue']); expect(seen?.aborted).toBe(false);
-    await tick(20); expect(seen?.aborted).toBe(true); expect(events).toEqual(['overdue']);
-    await tick(25); expect(events).toEqual(['overdue', 'stuck']);
+    await clock.advance(10);
+    // A loaded runner stalling here used to let the wall-clock abort fire before the next assertion; the manual clock does not move.
+    { const stalled = performance.now(); while (performance.now() - stalled < 15); }
+    expect(events).toEqual([]); expect(seen?.aborted).toBe(false);
+    await clock.advance(20); expect(events).toEqual(['overdue']); expect(seen?.aborted).toBe(false);
+    await clock.advance(20); expect(seen?.aborted).toBe(true); expect(events).toEqual(['overdue']);
+    await clock.advance(25); expect(events).toEqual(['overdue', 'stuck']);
     expect(outcome).toBeUndefined();
     release('committed');
     expect(await work).toBe('committed');
     await stuckSettled;
+    expect(clock.pending()).toBe(0);
   });
 
   test('a publish that settles in time fires nothing; a rejection propagates; outside a publication no signal is passed', async () => {

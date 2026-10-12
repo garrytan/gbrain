@@ -53,6 +53,7 @@ function buildMockEngine(opts: { takes: Take[] }): {
     },
     async executeRaw<T>(sql: string, params?: unknown[]): Promise<T[]> {
       captured.push({ sql, params: params ?? [] });
+      if (sql.includes('FROM persistence_brain')) return [{ enabled: false } as unknown as T]; // #6482: the strict mode reader needs one well-formed unmanaged row.
       if (sql.includes('SELECT verdict, confidence, applied FROM take_grade_cache')) return [];
       return [];
     },

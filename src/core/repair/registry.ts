@@ -60,6 +60,7 @@ import { attributionBackfillRepair } from './attribution-backfill.ts';
 import { plannerStatsRepair } from './planner-stats.ts';
 import { fencesRepair } from './fences.ts';
 import { slugConflictsRepair } from './slug-conflicts.ts';
+import { frontmatterKeysRepair } from './frontmatter-keys.ts';
 import { ERROR_CATALOGUE, catalogueError } from '../error-catalogue.ts';
 import type { OperationError } from '../ops/contract.ts';
 
@@ -258,6 +259,13 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
       + 'cursors recorded by a principal that is no longer an active local writer (or superseded pre-options cursors) whose pending request is terminal. '
       + 'Bookkeeping only (op_checkpoints); no journal admission. The preview prints a hash; --apply --expect <hash> retires exactly that set. '
       + 'A cursor with a live pending request, or one the live writer can still resume, is kept and counted.',
+  },
+  'frontmatter-keys': {
+    handler: frontmatterKeysRepair, embeds: 'none', checks: ['stale_frontmatter_keys'], explicit_only: true, preview_bound: true,
+    summary: 'Strip the parser\'s reserved keys (type, title, tags, slug) that older imports stored inside pages.frontmatter (#6454). Since this release '
+      + 'those keys are not file/database drift and never render, so the sweep is hygiene: database rows only, in source-scoped coordinated batches of up '
+      + 'to 1,000 pages, no file, body or embedding change. Each swept page advances its knowledge_revision once (a client holding an older revision '
+      + 'gets one revision_conflict). Preview-bound: --apply --expect <hash> sweeps exactly the previewed set; runs only when named.',
   },
 };
 

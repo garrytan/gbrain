@@ -57,6 +57,7 @@
 import { randomUUID } from 'node:crypto';
 import { withLegacySyncDelegation } from './persistence/sync-authority.ts';
 import { verifyLocalWriter, withVerifiedLocalRegistration } from './persistence/identity.ts';
+import { readManagedMode } from './persistence/managed-mode.ts';
 import { OperationError } from './ops/contract.ts';
 import { trustedCliRequired } from './ops/op-fix.ts';
 import { withHumanLineSink } from './console-prefix.ts';
@@ -329,8 +330,7 @@ async function startVerifiedDelegatedSync(
       await withVerifiedLocalRegistration(engine, registration, () => withHumanLineSink(push, async () => {
         const { performSync } = await import('../commands/sync.ts');
         const sourceId = await resolveJobSource(engine, job);
-        const [brain] = await engine.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1');
-        const managed = brain?.enabled === true;
+        const managed = await readManagedMode(engine);
         log(
           `start job=${job.id} source=${sourceId ?? 'default'} writer=${verified.principal.id} managed=${managed} ` +
           `opts=${JSON.stringify({ ...options, timeoutSeconds: undefined })} deadline=${options.timeoutSeconds}s`,

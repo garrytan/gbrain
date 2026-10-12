@@ -31,8 +31,8 @@ function mockEngine(): BrainEngine {
       if (prop === 'transaction') return async (fn: (tx: BrainEngine) => Promise<any>) => fn(engine);
       return (...args: any[]) => {
         calls.push({ method: String(prop), args });
-        // Like a real engine, executeRaw always resolves to a row array.
-        return Promise.resolve(prop === 'executeRaw' ? [] : null);
+        // Like a real engine, executeRaw always resolves to a row array. // #6482: the strict mode reader needs one well-formed unmanaged row.
+        return Promise.resolve(prop === 'executeRaw' ? (String(args[0]).includes('FROM persistence_brain') ? [{ enabled: false }] : []) : null);
       };
     },
   });

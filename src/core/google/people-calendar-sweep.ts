@@ -8,9 +8,9 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { CALENDAR_HORIZON_DAYS, CalendarSyncWindow, planCalendarPage, staleCalendarPages } from './calendar-window.ts';
-import { CalendarClient, GoogleCursorExpiredError, PeopleClient } from './google-clients.ts';
-import { calendarRelPath, personSlugFromContact, renderCalendarEventPage, renderPersonPage } from './google-render.ts';
-import { DEFAULT_CALENDAR_ID, type CalendarEventData, type GoogleSourceState } from './types.ts';
+import { CalendarClient, CONTACT_PERSON_FIELDS, GoogleCursorExpiredError, GoogleSyncTokenRejectedError, PeopleClient } from './google-clients.ts';
+import { calendarRelPath, contactIdSlug, personSlugFromContact, renderCalendarEventPage, renderPersonPage } from './google-render.ts';
+import { DEFAULT_CALENDAR_ID, type CalendarEventData, type ContactData, type GoogleSourceState } from './types.ts';
 import { deletePageByRelPath, importRendered, type ActivePack, type GoogleSyncDeps, type GoogleSyncSummary } from './sweep-shared.ts';
 
 // ── Contacts sweep ───────────────────────────────────────────────────────────
@@ -23,21 +23,28 @@ export async function sweepContacts(
   summary: GoogleSyncSummary,
   countedSlugs: Set<string>,
 ): Promise<void> {
+  const signal = deps.opts.signal ? { signal: deps.opts.signal } : {};
+  // #6324: a syncToken is only valid with the request parameters that minted
+  // it. A token minted under another `personFields` (legacy state has none
+  // recorded) is unusable, so the sweep lists fully once and then records the
+  // new token with the mask it was minted under.
+  const maskChanged = state.contacts_person_fields !== CONTACT_PERSON_FIELDS;
+  const syncToken = deps.opts.full || maskChanged ? null : state.contacts_sync_token;
+  if (maskChanged && state.contacts_sync_token && !deps.opts.full) deps.log('[google] contacts field mask changed; full re-list');
   let result;
   try {
-    result = await people.listConnections({
-      syncToken: deps.opts.full ? null : state.contacts_sync_token,
-      ...(deps.opts.signal ? { signal: deps.opts.signal } : {}),
-    });
+    result = await people.listConnections({ syncToken, ...signal });
   } catch (e) {
-    if (e instanceof GoogleCursorExpiredError) {
-      deps.log('[google] contacts syncToken expired; full re-list');
-      state.contacts_sync_token = null;
-      result = await people.listConnections({ syncToken: null, ...(deps.opts.signal ? { signal: deps.opts.signal } : {}) });
-    } else {
-      throw e;
-    }
+    // One bounded recovery: an expired or rejected token drops to a single
+    // full list; a failure of that list propagates and commits nothing.
+    if (!syncToken) throw e;
+    if (e instanceof GoogleCursorExpiredError) deps.log('[google] contacts syncToken expired; full re-list');
+    else if (e instanceof GoogleSyncTokenRejectedError) deps.log('[google] contacts syncToken rejected (HTTP 400); one full re-list');
+    else throw e;
+    state.contacts_sync_token = null;
+    result = await people.listConnections({ syncToken: null, ...signal });
   }
+  const groupNames = await resolveContactGroups(deps, people, state, result.contacts);
   // Ownership is keyed on google_contact_id, not path alone: a page owned by
   // a DIFFERENT contact (name collision — two "John Smith"s) must neither be
   // rewritten nor deleted; the colliding contact gets a disambiguated slug.
@@ -68,7 +75,7 @@ export async function sweepContacts(
       } else {
         // Page not (yet) in the DB — fall back to slug candidates, guarded
         // by file ownership. Delete only the page THIS contact owns.
-        for (const slug of [personSlugFromContact(c, false, contactsDir), personSlugFromContact(c, true, contactsDir)]) {
+        for (const slug of [personSlugFromContact(c, false, contactsDir), personSlugFromContact(c, true, contactsDir), contactIdSlug(c.resourceName, contactsDir)]) {
           if (slug && await ownerOf(`${slug}.md`) === c.resourceName) {
             await deletePageByRelPath(deps, `${slug}.md`, summary);
           }
@@ -80,7 +87,11 @@ export async function sweepContacts(
     if (!baseSlug) continue;
     const baseOwner = await ownerOf(`${baseSlug}.md`);
     const collides = baseOwner !== null && baseOwner !== 'hand-authored' && baseOwner !== c.resourceName;
-    const rendered = renderPersonPage(c, collides, contactsDir);
+    const rendered = renderPersonPage(
+      { ...c, groups: c.groups.map((g) => ({ id: g.id, name: groupNames[g.id] ?? null })) },
+      collides,
+      contactsDir,
+    );
     if (!rendered) continue;
     const owner = await ownerOf(rendered.relPath);
     if (owner === 'hand-authored') {
@@ -97,8 +108,40 @@ export async function sweepContacts(
     }
     deps.tick(`contact ${c.resourceName}`);
   }
-  // Cursor commits only after the whole sweep succeeded.
+  // Cursor and the mask it was minted under commit together, only after the
+  // whole sweep succeeded. A full list that returned no replacement token
+  // leaves no cursor behind (the next sweep lists fully again); a same-mask
+  // list without one keeps the token it already had.
   if (result.nextSyncToken) state.contacts_sync_token = result.nextSyncToken;
+  else if (maskChanged) state.contacts_sync_token = null;
+  state.contacts_person_fields = CONTACT_PERSON_FIELDS;
+}
+
+/**
+ * #6324: group names for this sweep's pages. Read the directory only when a
+ * listed contact carries a user group; a complete read replaces the cache (a
+ * deleted or renamed group is current for every page rendered from now on,
+ * an untouched contact's page refreshes when it next changes or on `--full`),
+ * an incomplete read is merged over it and said so, an unreadable directory
+ * falls back to the cache. A group no entry names is rendered as its raw id.
+ */
+async function resolveContactGroups(
+  deps: GoogleSyncDeps,
+  people: PeopleClient,
+  state: GoogleSourceState,
+  contacts: ContactData[],
+): Promise<Record<string, string>> {
+  const cached = state.contact_groups ?? {};
+  if (!contacts.some((c) => !c.deleted && c.groups.length > 0)) return cached;
+  try {
+    const { names, complete } = await people.listContactGroups(deps.opts.signal ? { signal: deps.opts.signal } : {});
+    if (!complete) deps.log('[google] contact groups directory exceeds the bounded read; groups it did not name keep their ids');
+    state.contact_groups = complete ? names : { ...cached, ...names };
+    return state.contact_groups;
+  } catch (e) {
+    deps.log(`[google] contact groups unavailable (${e instanceof Error ? e.message : String(e)}); pages keep cached names or raw ids`);
+    return cached;
+  }
 }
 
 /** Existing calendar page's source_path for an event id, or null. */

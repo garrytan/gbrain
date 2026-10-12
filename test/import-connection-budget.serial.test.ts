@@ -86,7 +86,7 @@ beforeEach(() => {
 function fakeEngine(kind: 'postgres' | 'pglite'): BrainEngine {
   return {
     kind,
-    executeRaw: async () => [],
+    executeRaw: async (sql: string) => sql.includes('FROM persistence_brain') ? [{ enabled: false }] : [], // #6482: one well-formed unmanaged row
     getConfig: async () => null,
   } as unknown as BrainEngine;
 }

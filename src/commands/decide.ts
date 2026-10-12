@@ -23,7 +23,7 @@ import {
 import { runDecide } from '../core/ai/decide/index.ts';
 import { estimateContextTokens, packShape, planBatches } from '../core/ai/decide/pack.ts';
 import { KEY_DEFAULT_LABEL, keyDefaultOptOut, readiness, resolveSlotPolicy, type PolicyInputs, type SlotPolicy } from '../core/ai/decide/policy.ts';
-import { REFERENCE_CALIBRATIONS, recommendedSlots } from '../core/ai/decide/reference-calibrations.ts';
+import { newerReference, recommendedSlots } from '../core/ai/decide/reference-calibrations.ts';
 import { REFUSAL_CATALOG, SLOT_PLAIN_NAMES, refusalLine } from '../core/ai/decide/outcomes.ts';
 import { toWireQuestion } from '../core/ai/decide/providers/typesafe.ts';
 import { SLOT_SPECS } from '../core/ai/decide/slots.ts';
@@ -196,13 +196,12 @@ export async function buildStatus(engine: BrainEngine, state: DecideState) {
     const p = policyFor(state, slot);
     const u = usage.find((x) => x.slot === slot);
     const inputs = policyInputs(state, slot);
-    const newestRef = REFERENCE_CALIBRATIONS.filter((r) => r.slot === slot && r.provider === p.provider).at(-1);
     return {
       slot, plain: SLOT_PLAIN_NAMES[slot], wired: SLOT_SPECS[slot].wired, mode: p.requested, effective: p.effective,
       readiness: readiness(p, inputs), inactive: p.inactive ?? null, provider: p.provider, model: p.model,
       threshold: p.threshold ?? null, threshold_source: p.thresholdSource, calibration: p.calibration?.ref ?? null,
       min_keep: SLOT_SPECS[slot].thresholded ? p.minKeep : null, force_on: p.forceOn,
-      newer_reference: newestRef && p.calibration && `ref:${newestRef.id}` !== p.calibration.ref ? `ref:${newestRef.id}` : null,
+      newer_reference: newerReference(p),
       receipts_24h: u?.rows ?? 0, decisions_24h: u?.decisions ?? 0, errors_24h: u?.errors ?? 0,
       error_rate_24h: u && u.rows > 0 ? Number((u.errors / u.rows).toFixed(4)) : 0, egress_refusals_24h: u?.egress ?? 0,
       status: !u || u.rows === 0 ? 'pending' : u.skipped === u.rows ? (p.inactive ? 'demoted' : 'blocked') : 'active',

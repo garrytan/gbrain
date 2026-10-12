@@ -67,9 +67,15 @@ const PARAM_DESCRIPTION_HARD_CAP = 200;
  * entity 470 -> 550: the additive `names` param (resolve up to 50 names in one
  * call, Cat 40 Hard round 4), measured at 546 with the `name` example and part
  * of the miss sentence trimmed so the served starter list stays under 25,000.
+ * add_timeline_entry 680 -> 730 (#5970, wave 15): the description names the
+ * correction route (edit its bullet via edit_page with expected_revision),
+ * measured at 720 after its own text was tightened; get_ingest_log,
+ * list_write_requests, traverse_graph and list_link_sources lost redundant
+ * words (no pinned phrase, every description still >= 60 characters) so the
+ * served starter list stays at or under 25,000.
  */
 const TOOL_BUDGETS: Record<string, number> = {
-  add_timeline_entry: 680, cancel_job: 270, cancel_write_request: 350, capture: 1250, context_pack: 760,
+  add_timeline_entry: 730, cancel_job: 270, cancel_write_request: 350, capture: 1250, context_pack: 760,
   delete_skill: 810, delta: 830, edit_page: 1090, entity: 550, find_anomalies: 520, forget: 560, get_agent_job: 270,
   get_backlinks: 770, get_ingest_log: 280, get_page: 930, get_recent_salience: 660, get_skill: 910,
   get_skill_asset: 790, get_write_request: 360, join_brain: 560, leave_brain: 540, list_brain_skillpack: 230,

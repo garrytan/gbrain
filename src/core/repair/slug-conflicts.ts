@@ -634,7 +634,7 @@ async function reportConflicts(ctx: OperationContext, scope: RepairScope, result
       if (outcome.outcome === 'repaired') { const tier = outcome.detail?.tier as Tier | undefined; if (tier) repairedByTier[tier]++; if (tier === 'llm') judgments++; }
       else if (outcome.reason && !skips.has(outcome.reason)) { remaining[outcome.reason] = (remaining[outcome.reason] ?? 0) + 1; if (outcome.detail?.tier === 'llm') judgments++; }
     }
-    const unattempted = result.affected - result.applied - result.skipped;
+    const unattempted = result.affected - result.applied - result.skipped - result.failed.length;
     if (unattempted > 0 && result.stopped) remaining[result.stopped.reason] = (remaining[result.stopped.reason] ?? 0) + unattempted;
   } else if (result.affected) remaining.pending_repair = result.affected;
   const [oldest] = await ctx.engine.executeRaw<{ held_at: string | null }>(`SELECT min(completed_keys->0->>'held_at') AS held_at FROM op_checkpoints

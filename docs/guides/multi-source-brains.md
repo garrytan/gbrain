@@ -426,7 +426,12 @@ without writing anything"* — your agent runs `gbrain sync --dry-run`.
 This hardening path applies to unmanaged worktrees. After activating managed
 writers, Git effects belong to the persistence outbox; generated legacy push
 helpers refuse to run rather than bypass that ownership boundary. See the
-[concurrent-write guide](concurrent-writes.md).
+[concurrent-write guide](concurrent-writes.md). On a managed root the owner
+commits and pushes page writes (`gbrain sources writer git-durability <source>
+--enable`), files that are not pages are committed with plain git and ride the
+owner's next push, the checkout is never pulled or rebased, and the durability
+block below is regenerated in its managed form by that verb; see
+[files that are not pages](../architecture/topologies.md#files-that-are-not-pages).
 
 A long-lived agent that writes to a knowledge-wiki git repo needs three
 things to never lose work: pull before it edits, push every write, and not
@@ -455,9 +460,17 @@ gbrain sources unharden wiki
 What hardening guarantees:
 
 - **Pull-first, conflict-safe.** Every pull is a divergence-safe rebase. A
-  dirty working tree is skipped (your in-progress edits are never touched); a
-  rebase conflict is aborted cleanly and flagged for attention, never left
-  half-applied.
+  dirty working tree is skipped (your in-progress edits are never touched; the
+  pull runs with `--no-autostash`, so a `rebase.autoStash` setting never
+  stashes and replays edits under it); a rebase conflict is aborted cleanly and
+  flagged for attention, never left half-applied. A brain whose intermediate
+  snapshot commits conflict under rebase replay while the two tips merge
+  cleanly can record `gbrain sources set-pull-strategy <id> merge`: pulls of
+  that source then fast-forward when possible and otherwise make a merge
+  commit, and a real conflict is aborted with `merge --abort`. The setting
+  lives in the source's config (`sources list --json` shows `pull_strategy`),
+  so a repository or global `pull.rebase` never changes it; `--path` pulls with
+  no source row keep `rebase`.
 - **Push is never deferred.** `scripts/brain-commit-push.sh "<msg>" <path>`
   commits and pushes, and refuses to report success without a successful push
   or confirmation that the exact destination branch at every effective origin

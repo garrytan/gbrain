@@ -1039,6 +1039,13 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   // statement shape, doctor's extract_health falls back to a 0-column
   // query). Column-only, no bootstrap probe needed.
   'extract_rollup_7d.expected_limit_count',
+  // #5495 (migration v239) — per-reason halt counter (jsonb). Same precedent
+  // as expected_limit_count: extract_rollup_7d is migration-created (v106,
+  // absent from both schema blobs), no index references the column, and both
+  // consumers handle absence explicitly (the rollup writer retries the
+  // pre-v239 UPSERT shape, the doctor read returns no reasons so every halt
+  // is `unknown`). Column-only, no bootstrap probe needed.
+  'extract_rollup_7d.halt_reasons',
   // #4069 (migration v143) — verdict TTL column. The PGLite half of this
   // exemption is correct: dream_verdicts is migration-created on PGLite
   // (v30, absent from PGLITE_SCHEMA_SQL), so no PGLite-blob forward

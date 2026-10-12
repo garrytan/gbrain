@@ -164,6 +164,16 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 |---|---|---|---|---|---|---|
 | The autopilot job is bound to a different brain. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### backup_dump_failed
+
+<a id="backup_dump_failed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| `gbrain backup create` could not dump the PGLite data dir: an entry PGLite cannot read (a socket, FIFO or symlink that is not a dead gbrain socket) is still inside it. | The backup removes only gbrain's own IPC sockets, and only when nothing listens on them; a live gbrain socket, a foreign socket or FIFO, or a symlink is left in place and named in the message, because the database lock proves no other PGLite owner, not who owns an arbitrary endpoint. | Stop the process that uses each named entry (or move the entry out of the data dir), then rerun the same `gbrain backup create` command. Do not delete an entry something is still listening on. Run: gbrain doctor --json | agent | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/in-agent-setup.md#6-back-up-the-complete-local-database](../../docs/guides/in-agent-setup.md#6-back-up-the-complete-local-database)
+
 ### benchmark_duplicate_task_id
 
 <a id="benchmark_duplicate_task_id"></a>
@@ -1760,6 +1770,14 @@ More: [docs/guides/write-refusals.md#merge_recommended](../../docs/guides/write-
 |---|---|---|---|---|---|---|
 | The HTTP method is not allowed on this endpoint. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### migration_declined
+
+<a id="migration_declined"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An explicit apply-migrations --migration named a migration the brain's config declines, so nothing was run or written. | The migration's opt-out key (for v0.53.0: shared_skills.migration.enabled=false) is brain-level config shared by every machine on that database; an explicit run from one machine would rewrite config for all of them, so the runner refuses instead of overriding the owner's choice. Ordinary runs skip a declined migration and list it as declined. | Do not retry. Tell the user the migration is declined on this brain and give them the fix command (gbrain config set <key> true) if they want it to run; --list --json shows it declined. | user | `repeat the read that failed` | 3 | no |
+
 ### migration_failed
 
 <a id="migration_failed"></a>
@@ -2268,7 +2286,7 @@ More: [docs/guides/company-brain-ingestion.md#agent-and-ci-use](../../docs/guide
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| An earlier write left state that must be inspected and recovered before new writes. | Only the operator of the brain host can change what blocks this. | Only the brain host's operator can resolve this. Tell the user the message and run `gbrain doctor --json` on the brain host. | host_admin | `gbrain doctor --json` | 1 | no |
+| An earlier write left state that must be inspected and recovered before new writes. | Details name the exit when there is one: physical_root_device_changed (the checkout's filesystem device number changed; re-stamped by itself when ownership verifies) and physical_root_directory_changed (the directory at the recorded path was recreated, or its birth time drifted beyond 1 µs; the relocated-root self-transfer, `transfer prepare/accept <source> --self-transfer --confirm-relocated-root`, re-stamps it). Both are explained in docs/guides/write-refusals.md. | Only the brain host's operator can resolve this. Tell the user the message and run `gbrain doctor --json` on the brain host. | host_admin | `gbrain doctor --json` | 1 | no |
 
 ### redirect_uri_mismatch
 
@@ -2774,7 +2792,7 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| Reading or writing durable storage failed. | The server failed; this is not a caller mistake. | Server-side failure, not a caller mistake. Run `gbrain doctor --json` on the brain host; if it repeats, report it to the user. | host_admin | `gbrain doctor --json` | 1 | no |
+| Reading or writing durable storage failed. | Usually a dropped connection or a failed statement; the same error after a rerun is not transient. `detail: persistence_mode_unknown` (#6482): the persistence_brain singleton is missing, duplicated or carries a non-boolean `enabled`, so gbrain cannot tell whether the brain is managed and refuses every write, sync, connector run and activation step that depends on it rather than route a managed brain through the unmanaged writer; only a well-formed `enabled: false` row selects the unmanaged path. | For persistence_mode_unknown: run gbrain sources writer status --probe --json on the brain host (it reports the malformed state instead of refusing), fix the persistence_brain row it names, then gbrain doctor --json. | host_admin | `gbrain doctor --json` | 1 | no |
 
 ### sync_in_progress
 
@@ -3009,6 +3027,16 @@ More: [docs/guides/write-refusals.md#unclosed_ambiguous_tail](../../docs/guides/
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | Reclone only replaces a checkout created and managed by GBrain. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+### unpriced_model
+
+<a id="unpriced_model"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The configured decide model has no price, so its spend cannot be metered; nothing was sent. | A `typesafe:<model>` id that gbrain ships no tariff for (a gateway-fronted or self-hosted Jev) would otherwise be admitted as $0 against `decide.budget.daily_usd` and its remote share, and the spend ledger would record $0 for a real bill (#5980). | Register the price the endpoint bills with `gbrain pricing set typesafe:<model> --rate <usd-per-1M-input-tokens> --source <pricing-page-url>`, then `gbrain decide probe`. Run: gbrain pricing list --json | agent | `gbrain config get pricing.overrides` | 1 | no |
+
+More: [docs/guides/system-one.md#unpriced_model](../../docs/guides/system-one.md#unpriced_model)
 
 ### unsupported_export_data
 

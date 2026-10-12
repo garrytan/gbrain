@@ -64,7 +64,9 @@ export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<
     // #6349: a delta past the cursor bound syncs in stages; a drain takes the next stage from where the last one landed
     // until it reaches HEAD (each stage freezes its own bounded manifest, and a stop resumes at the stored cursor).
     while (opts.drain && result.staged && result.drain?.outcome === 'synced' && !opts.dryRun && !opts.signal?.aborted) {
-      serr(`[sync] staged catch-up: synced to ${result.staged.target.slice(0, 12)}, short of HEAD ${result.staged.head.slice(0, 12)} (the delta exceeds the cursor bound); taking the next stage.`);
+      serr(result.staged.slice
+        ? `[sync] sliced catch-up: committed the ${result.staged.slice.phase} slice of ${result.staged.target.slice(0, 12)} through ${result.staged.slice.after ?? '(start)'} (the target exceeds the cursor bound); taking the next slice.`
+        : `[sync] staged catch-up: synced to ${result.staged.target.slice(0, 12)}, short of HEAD ${result.staged.head.slice(0, 12)} (the delta exceeds the cursor bound); taking the next stage.`);
       const next = await (await import('../../core/persistence/sync-drain.ts')).drainManagedSync(engine, opts, true);
       const stages = (result.staged.stages ?? 1) + 1, d = result.drain, n = next.drain;
       result = { ...next, fromCommit: result.fromCommit, added: result.added + next.added, modified: result.modified + next.modified, deleted: result.deleted + next.deleted,

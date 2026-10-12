@@ -93,6 +93,7 @@ export async function prepareSemanticPageMutation(engine: BrainEngine, row: Writ
     const [stored] = gate.verdict === 'flag' ? await tx.executeRaw<{ id: number }>(`SELECT t.id FROM timeline_entries t JOIN pages p ON p.id = t.page_id
       WHERE p.source_id = $1 AND p.slug = $2 AND t.date = $3::date AND t.summary = $4 ORDER BY t.id DESC LIMIT 1`, [row.source_id, row.slug, rendered.canonical.date, rendered.canonical.summary]) : [];
     const flagged = stored ? gateField(gate, `p:${row.source_id}/${row.slug}`, await recordWriteGateReceipt(tx, { targetTable: 'timeline_entries', targetId: Number(stored.id), sourceId: row.source_id, assessment: gate, requestId: row.id })) : undefined;
-    return { ...outcome, status: exact && !inserted ? 'skipped' : 'ok', ...(exact && !inserted ? { reason: 'duplicate' } : {}), entry: rendered.canonical, ...(flagged ? { gate: flagged } : {}) };
+    // #5970: the rendered bullet is the exact line to edit (edit_page) when the entry needs a correction.
+    return { ...outcome, status: exact && !inserted ? 'skipped' : 'ok', ...(exact && !inserted ? { reason: 'duplicate' } : {}), entry: rendered.canonical, bullet: rendered.block, ...(flagged ? { gate: flagged } : {}) };
   } };
 }

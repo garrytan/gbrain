@@ -9,9 +9,9 @@ import type { MinionQueue } from '../core/minions/queue.ts';
 import { loadAllSources, parseSourceConfig, sourceConfigHasRemoteUrl, sourceLocalPathSkipWarning, type SourceRow } from '../core/sources-load.ts';
 import { isConnectorSourceKind } from '../core/persistence/connector-identity.ts';
 import { attemptedConnectorSourceIds } from '../core/persistence/connector-state.ts';
-import { automaticSyncPull } from '../core/persistence/automatic-sync-policy.ts';
+import { AUTOPILOT_GIT_PULL_KEY, automaticGitPullDisabled, automaticSyncPull } from '../core/persistence/automatic-sync-policy.ts';
 import { isSyncDisabledConfig } from '../core/sync-policy.ts';
-import { loadActivationPendingSourceIds, skipActivationPendingSync } from '../core/sync-policy.ts';
+import { automaticSyncSkip, loadActivationPendingSourceIds, reportAutomaticSyncSkip, skipActivationPendingSync } from '../core/sync-policy.ts';
 import { resolveAutopilotDispatchTimeoutMs } from './autopilot-timeout.ts';
 import {
   autopilotRemediationIdempotencyKey,
@@ -262,6 +262,12 @@ export async function dispatchFreshnessSyncs(
     if (await isFederatedV2Enabled(engine)) {
       const attempted = await attemptedConnectorSourceIds(engine).catch(() => null);
       const sources = await loadAllSources(engine);
+      // #6451: one status line per tick when the operator turned automatic pulls off.
+      if (await automaticGitPullDisabled(engine)) {
+        process.stderr.write((jsonMode
+          ? JSON.stringify({ event: 'git_pull_disabled', key: AUTOPILOT_GIT_PULL_KEY })
+          : `[autopilot] git_pull: off (${AUTOPILOT_GIT_PULL_KEY}=false); remote sources sync their local checkout without pulling`) + '\n');
+      }
       const activationPending = await loadActivationPendingSourceIds(engine);
       const intervalMs = baseInterval * 1000;
       const now = Date.now();
@@ -271,11 +277,12 @@ export async function dispatchFreshnessSyncs(
           continue;
         }
         if (!src.local_path) continue;
-        // #4399: config.syncEnabled=false excludes a source from AUTOMATIC
-        // sync (this loop, the full-cycle fan-out, `sync --all`); an
-        // explicit `gbrain sync --source <id>` is unaffected.
-        if (isSyncDisabledConfig(src.config)) continue;
-        if (skipActivationPendingSync(activationPending, src.id, 'freshness_sync_skipped', jsonMode, (l) => process.stderr.write(l + '\n'))) continue; // #5198
+        // #4399 / #5198 / P4.2 (supersedes #6465): one predicate decides whether AUTOMATIC sync runs for this source
+        // (disabled config, claim awaiting activation, gbrain-owned content directory where sync does not apply); the
+        // reason is stated once per source and reason, and an explicit `gbrain sync --source <id>` is unaffected.
+        const skip = await automaticSyncSkip(engine, src, activationPending);
+        if (skip?.reason !== 'sync_disabled') reportAutomaticSyncSkip(src.id, skip, 'freshness_sync_skipped', jsonMode, (l) => process.stderr.write(l + '\n'));
+        if (skip) continue;
         // A local_path this machine cannot use — relative (#3696: cwd is
         // launchd's, not the registering shell's) or absent on disk and
         // not a managed clone sync can re-create — would sync a phantom

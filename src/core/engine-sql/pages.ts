@@ -421,8 +421,9 @@ export async function listPages(exec: ScopedRead, filters?: PageFilters): Promis
     const slugCondition = slugPrefix
       ? sqlFragment`AND p.slug LIKE ${slugPrefix.replace(/[\\%_]/g, (c) => '\\' + c) + '%'} ESCAPE '\\'`
       : sqlFragment``;
+    // #6500 slug keyset (single-source contract, see PageFilters.slugAfter).
     const slugAfterCondition = filters?.slugAfter !== undefined
-      ? sqlFragment` AND p.slug > ${filters.slugAfter}`
+      ? sqlFragment`AND p.slug > ${filters.slugAfter}`
       : sqlFragment``;
     // v0.31.12 + v0.34.1 (#876, D9): scope to a single source OR an array
     // of sources. When BOTH are set, the array wins (federated semantics
@@ -458,7 +459,7 @@ export async function listPages(exec: ScopedRead, filters?: PageFilters): Promis
       const { rows } = await exec.run(sqlFragment`
         SELECT ${columns}, to_char(p.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at_iso FROM pages p
         ${tagJoin}
-        WHERE 1=1 ${typeCondition} ${tagCondition} ${updatedCondition} ${slugCondition}${slugAfterCondition} ${sourceCondition} ${deletedCondition} ${privateCondition} ${effectiveAfterCondition} ${effectiveBeforeCondition}
+        WHERE 1=1 ${typeCondition} ${tagCondition} ${updatedCondition} ${slugCondition} ${slugAfterCondition} ${sourceCondition} ${deletedCondition} ${privateCondition} ${effectiveAfterCondition} ${effectiveBeforeCondition}
         ORDER BY ${orderBy} LIMIT ${limit} OFFSET ${offset}
       `);
       return rows.map(rowToPage);
@@ -784,6 +785,44 @@ export async function markPagesAttendanceBlocked(
       FROM unnest(${refs.map(r => r.slug)}::text[], ${refs.map(r => r.source_id)}::text[], ${refs.map(r => r.revision)}::text[])
         AS v(slug, source_id, revision)
       WHERE p.slug = v.slug AND p.source_id = v.source_id AND p.knowledge_revision = v.revision::uuid AND p.deleted_at IS NULL
+    `);
+    return result.affectedRows;
+  }
+
+/**
+ * #6454: live pages whose stored frontmatter still carries one of the parser's
+ * reserved top-level keys (`type`, `title`, `tags`, `slug`; older imports kept
+ * them). Not drift since `comparableFrontmatter` (markdown.ts), but hygiene
+ * `gbrain repair frontmatter-keys` sweeps on consent. Counts per source for
+ * the doctor check; the listing pages by id for the preview-bound sweep.
+ */
+export const RESERVED_FRONTMATTER_KEYS_SQL = ['type', 'title', 'tags', 'slug'];
+const normalizeStaleKeyCount = compileRowNormalizer<{ source_id: string; n: number }>({ n: 'bigint' });
+export async function countStaleFrontmatterKeyPages(exec: ScopedRead, opts: { sourceIds: string[] }): Promise<Array<{ source_id: string; n: number }>> {
+    if (opts.sourceIds.length === 0) return [];
+    const { rows } = await exec.run<{ source_id: string; n: number | string }>(sqlFragment`
+      SELECT source_id, count(*)::bigint AS n FROM pages
+      WHERE source_id = ANY(${opts.sourceIds}::text[]) AND deleted_at IS NULL AND frontmatter ?| ${RESERVED_FRONTMATTER_KEYS_SQL}::text[]
+      GROUP BY source_id ORDER BY source_id
+    `);
+    return rows.map(row => normalizeStaleKeyCount(row));
+  }
+export async function listStaleFrontmatterKeyPages(exec: ScopedRead, opts: { sourceId: string; afterId: number; limit: number }):
+  Promise<Array<{ id: number; slug: string; keys: string[] }>> {
+    const { rows } = await exec.run<{ id: number | string; slug: string; keys: string[] }>(sqlFragment`
+      SELECT id, slug, ARRAY(SELECT k FROM unnest(${RESERVED_FRONTMATTER_KEYS_SQL}::text[]) AS k WHERE frontmatter ? k ORDER BY k) AS keys
+      FROM pages
+      WHERE source_id = ${opts.sourceId} AND deleted_at IS NULL AND frontmatter ?| ${RESERVED_FRONTMATTER_KEYS_SQL}::text[] AND id > ${opts.afterId}
+      ORDER BY id LIMIT ${opts.limit}
+    `);
+    return rows.map(row => ({ id: Number(row.id), slug: row.slug, keys: row.keys }));
+  }
+/** Strips the reserved keys from the named live pages of one source; the revision trigger advances each changed row. */
+export async function stripStaleFrontmatterKeys(exec: SqlExecutor, opts: { sourceId: string; ids: number[] }): Promise<number> {
+    if (opts.ids.length === 0) return 0;
+    const result = await exec.run(sqlFragment`
+      UPDATE pages SET frontmatter = frontmatter - ${RESERVED_FRONTMATTER_KEYS_SQL}::text[]
+      WHERE source_id = ${opts.sourceId} AND id = ANY(${opts.ids}::int[]) AND deleted_at IS NULL AND frontmatter ?| ${RESERVED_FRONTMATTER_KEYS_SQL}::text[]
     `);
     return result.affectedRows;
   }

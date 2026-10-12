@@ -40,6 +40,8 @@ export interface ProgressOptions {
 export interface ProgressReporter {
   start(phase: string, total?: number): void;
   tick(n?: number, note?: string): void;
+  /** Replace the phase total once the exact amount of work is known mid-phase (#5968: a heal split or a re-entry grows it). Optional for hand-built reporters. */
+  setTotal?(total: number): void;
   heartbeat(note: string): void;
   finish(note?: string): void;
   child(phase: string, total?: number): ProgressReporter;
@@ -330,6 +332,10 @@ class Reporter implements ReporterInternal {
     } else {
       this.emitHumanLine(renderHumanLine(s.phase, s.done, s.total, note));
     }
+  }
+
+  setTotal(total: number): void {
+    if (this.state) this.state.total = total;
   }
 
   heartbeat(note: string): void {

@@ -443,8 +443,10 @@ function contact(over: Partial<ContactData> = {}): ContactData {
     resourceName: 'people/c000000001',
     displayName: 'Alice Example',
     emails: ['alice@example.com', 'alice.alt@example.com'],
+    phones: [],
     organization: 'Acme Example',
     title: 'Engineer',
+    groups: [],
     deleted: false,
     ...over,
   };

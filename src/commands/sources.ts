@@ -73,6 +73,7 @@ import { preflightOauthClientColumns } from './auth.ts';
 import { deleteSourceRow } from '../core/source-delete.ts';
 import { USAGE_EXIT_CODE } from '../core/exit-codes.ts';
 import { isSyncStrategy } from '../core/sync.ts';
+import { pullStrategyOf } from '../core/git-remote.ts';
 
 // ── Validation ──────────────────────────────────────────────
 
@@ -106,6 +107,7 @@ interface SourceListEntry {
   federated: boolean;
   mirror_read_only: boolean;
   strategy: 'markdown' | 'code' | 'auto' | null;
+  pull_strategy: 'rebase' | 'merge';
   page_count: number;
   last_sync_at: string | null;
 }
@@ -615,6 +617,7 @@ async function runPush(engine: BrainEngine, args: string[]): Promise<void> {
   }
 
   let dir = path;
+  let pullStrategy: 'rebase' | 'merge' = 'rebase';
   if (id) {
     const src = await fetchSource(engine, id);
     if (!src) {
@@ -626,6 +629,7 @@ async function runPush(engine: BrainEngine, args: string[]): Promise<void> {
       process.exit(1);
     }
     dir = src.local_path;
+    pullStrategy = pullStrategyOf(parseConfig(src.config));
   }
 
   const { workspacePush, formatBlockedSecrets } = await import('../core/workspace-push.ts');
@@ -633,6 +637,7 @@ async function runPush(engine: BrainEngine, args: string[]): Promise<void> {
   const res = await workspacePush({
     dir: dir!,
     branch,
+    pullStrategy,
     commitMessage: message,
     allowUnverifiedRemote: allowUnverified,
     logger: (l) => console.error(`[gbrain] ${l}`),
@@ -713,6 +718,7 @@ async function runList(engine: BrainEngine, args: string[]): Promise<void> {
       federated: isFederated(r.config),
       mirror_read_only: parseConfig(r.config).mirror_read_only === true,
       strategy: isSyncStrategy(parseConfig(r.config).strategy) ? parseConfig(r.config).strategy as 'markdown' | 'code' | 'auto' : null,
+      pull_strategy: pullStrategyOf(parseConfig(r.config)),
       page_count: pageCount,
       last_sync_at: r.last_sync_at ? new Date(r.last_sync_at).toISOString() : null,
     });
@@ -1883,6 +1889,7 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
     case 'unfederate': return runFederate(engine, rest, false);
     case 'mirror-readonly': case 'mirror-writable': return (await import('./sources-mirror.ts')).runMirrorMode(engine, rest, sub === 'mirror-readonly');
     case 'set-strategy': return (await import('./sources-strategy.ts')).runSetStrategy(engine, rest);
+    case 'set-pull-strategy': return (await import('./sources-pull-strategy.ts')).runSetPullStrategy(engine, rest);
     case 'refresh':    return (await import('./sources-refresh.ts')).runSourcesRefresh(engine, rest);
     case 'archive':    return runArchive(engine, rest);
     case 'restore':    return runRestore(engine, rest);
@@ -1976,6 +1983,7 @@ Subcommands:
   mirror-readonly <id>              Read-only mirror (#5409): managed writes never touch its checkout.
   mirror-writable <id>              Undo mirror-readonly.
   set-strategy <id> <markdown|code|auto>  Persist the sync strategy every sync of the source uses (PR #5955).
+  set-pull-strategy <id> <rebase|merge>   How pulls reconcile local commits with origin (#5429); default rebase.
   refresh <id> [--dry-run] [--wait-drain <s>] [--fetch-timeout-ms <ms>] [--resume|--abandon] [--json]
                                     Managed brains: drain writes to the source's worktree, fast-forward
                                     it to its upstream (git merge --ff-only) and sync every source bound

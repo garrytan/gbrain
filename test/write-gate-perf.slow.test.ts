@@ -14,12 +14,15 @@
  * The gate's work is deterministic, so slow samples come from outside it
  * (another process on the CPU, a GC pause from earlier work). On a loaded CI
  * machine wall time measures the machine, so the 300 KB check alternates gate
- * samples with a fixed reference workload in the same process and bounds the
- * gate relative to it (calibration below); the absolute 5 ms check applies to
- * rounds whose reference ran at quiet speed and is logged as skipped
- * otherwise. Each check takes the best of three rounds, and every round is
- * printed. `GBRAIN_WRITE_GATE_P95_MS` overrides the budget on slower
- * hardware (default 5).
+ * samples with a fixed reference workload in the same process and applies the
+ * absolute 5 ms check only to rounds whose reference ran at quiet speed
+ * (calibration below), logging it as skipped otherwise. The detector's cost
+ * itself is pinned machine-independently by the work counters in
+ * test/write-gate-work-counters-6490.test.ts (#6490: the earlier gate/reference
+ * timing ratio was a one-machine calibration and tripped on other hardware
+ * with no detector change). Each check takes the best of three rounds, and
+ * every round is printed. `GBRAIN_WRITE_GATE_P95_MS` overrides the budget on
+ * slower hardware (default 5).
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
@@ -36,24 +39,19 @@ const BUDGET_MS = Number(process.env.GBRAIN_WRITE_GATE_P95_MS ?? '5');
 /**
  * Calibration (Capy cloud machine, 4 vCPU, Bun 1.4.2, quiet; 9 rounds of 60):
  * the reference workload's p95 was 1.90-1.98 ms (outliers to 4.4 ms came with
- * a gate p95 of 7.9 ms in the same round). The gate then measured p50 3.2-3.4
- * ms, p95 3.4-3.9 ms (ratio 1.76-1.99); with the optimized detector it is p50
- * 2.5-2.6 ms, p95 3.2-3.5 ms (ratio 1.26-1.42). The ratio limit is
- * the budget over the quiet reference p95, 5 / 1.95 = 2.56, so on a quiet
- * machine it is exactly the 5 ms budget, and under load (six busy loops on
- * four cores: both p95s 12-17 ms, ratio 1.10-1.25) contention cancels out.
- * Load flattens the p95s toward the scheduler quantum, so the same limit also
- * applies to the p50 ratio (3.3 / 1.9 quiet), which keeps a slower detector
- * failing on a loaded machine. The absolute check runs only on rounds whose
- * reference ran at quiet speed (within 1.25x its calibrated p95).
+ * a gate p95 of 7.9 ms in the same round); with the optimized detector the
+ * gate measured p50 2.5-2.6 ms, p95 3.2-3.5 ms. The reference is the quiet-run
+ * predicate only: the absolute check runs on rounds whose reference ran at
+ * quiet speed (within 1.25x its calibrated p95). It is no longer a divisor:
+ * the gate and the reference do not co-scale across hardware (a 16-vCPU shard
+ * VM ran the reference faster and the gate slower than this calibration).
  */
 const QUIET_REFERENCE_P95_MS = 1.95;
 const QUIET_TOLERANCE = 1.25;
-const RATIO_LIMIT = BUDGET_MS / QUIET_REFERENCE_P95_MS;
 let engine: PGLiteEngine;
 
 function walk(dir: string, ext: string, out: string[] = []): string[] {
-  for (const n of readdirSync(dir)) { const p = join(dir, n); if (statSync(p).isDirectory()) walk(p, ext, out); else if (n.endsWith(ext)) out.push(p); }
+  for (const n of readdirSync(dir).sort()) { const p = join(dir, n); if (statSync(p).isDirectory()) walk(p, ext, out); else if (n.endsWith(ext)) out.push(p); }
   return out;
 }
 
@@ -153,9 +151,6 @@ describe('write gate p95 (assessment + receipt insert)', () => {
         + `reference p50 ${r.reference.p50.toFixed(2)} / p95 ${r.reference.p95.toFixed(2)} ms; ratio p50 ${(r.gate.p50 / r.reference.p50).toFixed(2)} / p95 ${(r.gate.p95 / r.reference.p95).toFixed(2)}`);
     }
     if (process.env.PERF_CALIBRATE) return;
-    const ratio = (pick: (s: Stats) => number) => Math.min(...rounds.map(r => pick(r.gate) / pick(r.reference)));
-    expect({ p95_ratio: ratio(x => x.p95) }).toEqual({ p95_ratio: Math.min(ratio(x => x.p95), RATIO_LIMIT) });
-    expect({ p50_ratio: ratio(x => x.p50) }).toEqual({ p50_ratio: Math.min(ratio(x => x.p50), RATIO_LIMIT) });
     const quiet = rounds.filter(r => r.reference.p95 <= QUIET_REFERENCE_P95_MS * QUIET_TOLERANCE);
     if (quiet.length) withRoundSamples(rounds, () => expect(Math.min(...quiet.map(r => r.gate.p95))).toBeLessThan(BUDGET_MS));
     else console.log(`[write-gate perf] absolute ${BUDGET_MS} ms check skipped for load: reference p95 above ${(QUIET_REFERENCE_P95_MS * QUIET_TOLERANCE).toFixed(2)} ms in every round`);

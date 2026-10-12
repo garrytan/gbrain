@@ -30,26 +30,44 @@ const list_skills: Operation = {
   publishGateKey: 'mcp.publish_skills',
   params: {
     schema_version: { type: 'number', description: '2 for the source-qualified catalog.' },
-    limit: { type: 'number', description: 'Version 2 page size (1-100).' },
+    limit: { type: 'number', description: 'Page size or rank cap (1-100).' },
     cursor: { type: 'string', description: 'Version 2 cursor.' },
     source_id: { type: 'string', description: 'Version 2: one source.' },
     section: {
       type: 'string',
       description: 'Only this routing section.',
     },
+    query: {
+      type: 'string',
+      description: 'Version 1 host catalog: rank skills by word overlap with this task (name, triggers, description), drop the rest, cap at limit (default 10). Refused on a shared catalog.',
+      fullSurfaceOnly: true,
+    },
   },
   handler: async (ctx, p) => {
-    if (p.schema_version === 2) return (await import('../shared-skills/catalog.ts')).listSharedSkills(ctx, p);
+    if (p.query !== undefined && typeof p.query !== 'string') throw invalidParam(ctx, 'list_skills', 'query', 'query must be a string naming the task.', { example: 'prepare for a meeting' });
+    const query = typeof p.query === 'string' && p.query.trim().length > 0 ? p.query : undefined;
+    // #6471: the shared catalogs do not rank yet; refusing beats a silently unranked list.
+    const refuseQueryOnSharedCatalog = (which: string) => opError('invalid_params',
+      `query ranks the version 1 host skill catalog only; ${which} does not support it yet.`,
+      'Drop query and narrow the shared catalog with section (and source_id for version 2) instead; rank the host catalog by calling list_skills with query on a brain that serves it.');
+    if (p.schema_version === 2) {
+      if (query) throw refuseQueryOnSharedCatalog('the version 2 catalog');
+      return (await import('../shared-skills/catalog.ts')).listSharedSkills(ctx, p);
+    }
     if (p.schema_version !== undefined && p.schema_version !== 1) throw invalidParam(ctx, 'list_skills', 'schema_version', 'Supported skill catalog schema versions are 1 and 2.', { choices: ['1', '2'], example: 2 });
     const compatibility = await import('../shared-skills/compatibility.ts');
-    if (await compatibility.sharedCatalogActive(ctx)) return compatibility.listLegacySharedSkills(ctx, typeof p.section === 'string' ? p.section : undefined);
+    if (await compatibility.sharedCatalogActive(ctx)) {
+      if (query) throw refuseQueryOnSharedCatalog("this brain's shared catalog");
+      return compatibility.listLegacySharedSkills(ctx, typeof p.section === 'string' ? p.section : undefined);
+    }
     const sc = await import('../skill-catalog.ts');
     const publish = await sc.readMcpPublishSkills(ctx);
     sc.assertPublishEnabled(ctx, publish);
     const override = await sc.readMcpSkillsDir(ctx);
     const { dir, source } = sc.resolveSkillsDir(ctx, override);
     const section = typeof p.section === 'string' ? p.section : undefined;
-    return sc.buildSkillCatalog(ctx, dir, source, { section, gateDisabled: await sc.readSkillToolGates(ctx) });
+    const limit = typeof p.limit === 'number' ? p.limit : undefined;
+    return sc.buildSkillCatalog(ctx, dir, source, { section, query, limit, gateDisabled: await sc.readSkillToolGates(ctx) });
   },
   scope: 'read',
   cliHints: { name: 'skills', positional: [] },

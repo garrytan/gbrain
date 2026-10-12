@@ -939,8 +939,8 @@ describe('#3374 — transient network retry branch', () => {
         if (prop === 'putPage') {
           return async (slug: string, page: any) => { pageStore.set(slug, page); };
         }
-        // Like a real engine, executeRaw always resolves to a row array.
-        if (prop === 'executeRaw') return () => Promise.resolve([]);
+        // Like a real engine, executeRaw always resolves to a row array (#6482: one well-formed unmanaged mode row).
+        if (prop === 'executeRaw') return (sql?: unknown) => Promise.resolve(String(sql).includes('FROM persistence_brain') ? [{ enabled: false }] : []);
         return () => Promise.resolve(null);
       },
     });

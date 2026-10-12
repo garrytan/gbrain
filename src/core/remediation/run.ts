@@ -365,7 +365,7 @@ export async function runRemediation(
       }
       if (trackerExhausted) status = 'budget_exhausted';
       else if (status === 'completed' && pendingEmbedSources.length) status = 'stopped';
-      repairResults.push({ id: 'repair:safe-chunks:embeddings', kind: 'safe-chunks', status, applied: embedded, skipped: 0,
+      repairResults.push({ id: 'repair:safe-chunks:embeddings', kind: 'safe-chunks', status, applied: embedded, skipped: 0, failed: 0,
         ...(status === 'budget_exhausted' || status === 'budget_refused' ? { message: 'The --max-usd budget does not cover the embeddings of re-sealed pages; resume with a higher cap to continue.' }
           : status === 'stopped' ? { message: `Some re-sealed pages still lack embeddings (${pendingEmbedSources.join(', ')}); check the embedding provider, then run gbrain embed --stale.` } : {}) });
     }

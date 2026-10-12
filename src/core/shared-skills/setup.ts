@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { gbrainPath, isThinClient } from '../config.ts';
 import { opError, type OperationContext } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
-import { claimWorktree, getWorktreeBinding } from '../persistence/ownership.ts';
+import { claimWorktree, getWorktreeBinding, readPersistenceBrain } from '../persistence/ownership.ts';
 import { activateSharedSkillPersistence } from '../persistence/skill-activation.ts';
 import { checkedContentRoot } from './setup-files.ts';
 import { DEFAULT_SHARED_PACK_ID, packagedSharedSkillPolicy, packagedSharedSkills } from './setup-bundle.ts';
@@ -65,12 +65,12 @@ export async function setupSharedBrainContent(ctx: OperationContext, options: Sh
     return receipt;
   }
   const sourceId = options.sourceId ?? ctx.sourceId;
-  const [brain] = await ctx.engine.executeRaw<{ brain_id: string; enabled: boolean; skill_bundles_enabled: boolean }>('SELECT brain_id,enabled,skill_bundles_enabled FROM persistence_brain WHERE singleton=1');
+  const brain = await readPersistenceBrain(ctx.engine);
   const [source] = await ctx.engine.executeRaw<{ id: string; incarnation: string; local_path: string | null }>(
     'SELECT id,incarnation,local_path FROM sources WHERE id=$1 AND NOT archived', [sourceId]);
-  if (!brain || !source) {
-    throw opError('source_changed', 'Content setup requires the persistent brain identity and an active selected source.',
-      `Source ${sourceId} is archived or not registered, or this brain has no persistence identity yet. Check the registered sources, then run gbrain init again for an active one.`,
+  if (!source) {
+    throw opError('source_changed', 'Content setup requires an active selected source.',
+      `Source ${sourceId} is archived or not registered. Check the registered sources, then run gbrain init again for an active one.`,
       { fix: readFix('Lists the registered sources and whether each is archived.', { argv: ['gbrain', 'sources', 'list', '--json'] }) });
   }
   receipt.brain_id = brain.brain_id;

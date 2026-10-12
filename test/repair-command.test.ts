@@ -180,18 +180,24 @@ describe('gbrain repair timeline', () => {
     });
   }, 120_000);
 
-  test('a terminal failure does not block the retry once its cause is fixed', async () => {
+  // PR #6459: a per-item refusal (source_changed) is recorded in failed[] and the run goes on; the file is untouched and the next full scan retries it.
+  test('a per-item refusal is recorded, leaves the file untouched, and does not block the retry once its cause is fixed', async () => {
     await brain(async (engine, [source]) => {
       await pageWithHistory(engine, source, 'notes/a');
       const [{ local_path }] = await engine.executeRaw<{ local_path: string }>('SELECT local_path FROM sources WHERE id=$1', [source]);
       const file = join(local_path, 'notes/a.md');
       const original = readFileSync(file, 'utf8');
-      writeFileSync(file, `${original}\nAn uncoordinated local edit.\n`);
+      const edited = `${original}\nAn uncoordinated local edit.\n`;
+      writeFileSync(file, edited);
       const scope = await resolveRepairScope(engine);
-      await expect(runRepair(ctxFor(engine, source), timelineRepair, scope, { apply: true })).rejects.toBeDefined();
+      const refused = await runRepair(ctxFor(engine, source), timelineRepair, scope, { apply: true });
+      expect(refused).toMatchObject({ applied: 0, skipped: 0, complete: true, failed: [{ item: `${source}:notes/a`, slug: 'notes/a', reason: 'source_changed', retry: 'next_full_scan' }] });
+      expect(refused.stopped).toBeUndefined();
+      expect(readFileSync(file, 'utf8')).toBe(edited);
+      expect(await markedPages(engine, source)).toEqual([]);
       writeFileSync(file, original);
       const retried = await runRepair(ctxFor(engine, source), timelineRepair, scope, { apply: true });
-      expect(retried).toMatchObject({ applied: 1, complete: true });
+      expect(retried).toMatchObject({ applied: 1, failed: [], complete: true });
       expect(await markedPages(engine, source)).toEqual(['notes/a']);
     });
   }, 120_000);

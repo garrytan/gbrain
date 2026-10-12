@@ -346,6 +346,8 @@ jobs:
         id: paidgate
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # #5903: the repository-wide paid-lane switch (see e2e.yml tier2).
+          GBRAIN_PAID_LANES: ${{ vars.GBRAIN_PAID_LANES }}
         run: |
           if ! command -v hermes >/dev/null 2>&1; then
             echo "::error::hermes did not resolve on PATH after install" >&2
@@ -358,6 +360,17 @@ jobs:
           if ! printf '%s' "$version_output" | grep -qF "v$HERMES_VERSION"; then
             echo "::error::hermes version drift — expected v$HERMES_VERSION in: $version_output" >&2
             exit 1
+          fi
+          if [ "${GBRAIN_PAID_LANES:-}" = "0" ]; then
+            # Same visible-skip shape as the missing secret below, with its own
+            # line: the operator switched every paid lane off on purpose.
+            echo "paid=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::hermes door PAID LEG SKIPPED — paid lanes disabled by the repository variable GBRAIN_PAID_LANES='0'. Installer digest + payload + version pins verified; no hermes turn ran." >&2
+            {
+              echo "## Hermes door: paid leg skipped (paid lanes disabled)"
+              echo "The repository variable \`GBRAIN_PAID_LANES\` is \`0\` — installer digest, payload, and version pins verified, but no hermes turn ran. This run is not green coverage of the paid leg; unset the variable (or set it to \`1\`) to run it."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
           fi
           if [ -z "$ANTHROPIC_API_KEY" ]; then
             # Visible skip on every event: the owner has approved setting the
@@ -817,7 +830,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        lane: ${{ fromJSON((inputs.run_opencode_paid || vars.GBRAIN_OPENCODE_PAID_E2E == '1') && '["keyless","credentialed"]' || '["keyless"]') }}
+        # #5903: GBRAIN_PAID_LANES='0' switches the credentialed lane off even when it is requested.
+        lane: ${{ fromJSON((inputs.run_opencode_paid || vars.GBRAIN_OPENCODE_PAID_E2E == '1') && format('{0}', vars.GBRAIN_PAID_LANES) != '0' && '["keyless","credentialed"]' || '["keyless"]') }}
     # Measured local door wall-time: full 6-test run 35.8s + one-time
     # compiled gbrain build (~2-4 min) + npm install (~15s); free-tier +
     # paid turn budgets 2 x 240s each. 20 min = measured + >50% headroom.
@@ -932,7 +946,7 @@ jobs:
         if: matrix.lane == 'keyless'
         run: |
           echo "## OpenCode: keyless coverage only" >> "$GITHUB_STEP_SUMMARY"
-          echo "No paid turn ran in this lane. Request run_opencode_paid on dispatch or set GBRAIN_OPENCODE_PAID_E2E=1 to enable the separate credentialed lane." >> "$GITHUB_STEP_SUMMARY"
+          echo "No paid turn ran in this lane. Request run_opencode_paid on dispatch or set GBRAIN_OPENCODE_PAID_E2E=1 to enable the separate credentialed lane (GBRAIN_PAID_LANES=0 keeps it off either way)." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Preconditions (credentialed lane requires secret)
         if: matrix.lane == 'credentialed'

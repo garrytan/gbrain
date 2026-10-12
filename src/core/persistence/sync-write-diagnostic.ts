@@ -20,7 +20,7 @@ export function managedSyncWriteDiagnostic(cursor: { sourceId: string; root: str
   const code = terminal ? row.error_code ?? (row.state === 'cancelled' ? 'cancelled' : 'storage_error') : 'write_pending';
   const blockedReason = ['writer_busy', 'writer_pool_capacity', 'owner_unavailable', 'recovery_required', 'writer_lock_unavailable',
     'database_contention', 'consumer_stopping', 'revision_changed_repreparing', 'unexpected_file_bytes', 'unexpected_staging_bytes',
-    'preparation_deadline', 'group_member_waiting'].includes(row.blocked_reason ?? '') ? row.blocked_reason! : 'write_pending';
+    'preparation_deadline', 'group_member_waiting', 'lane_lock_timeout', 'lane_statement_timeout'].includes(row.blocked_reason ?? '') ? row.blocked_reason! : 'write_pending';
   const detail = terminal ? writeFailureDiagnostic(code, row.error_message) : {
     reason: blockedReason, message: 'The write is accepted but not committed; the sync checkpoint has not advanced.',
     suggestion: 'Re-run the same sync options to resume this request. Do not submit a replacement request or skip the pending write.',

@@ -108,6 +108,7 @@
       "  [OK] captured_facts_active: No active fact from a gbrain self-capture or paste candidate remains. This counts facts in the database; the self_capture check counts corpus files.",
       "  [OK] loop_facts_drift: Every closed commitment loop has its fact retired.",
       "  [OK] ontology_facts_fenced: No ontology observation is held by a page's Facts table.",
+      "  [OK] stale_frontmatter_keys: No stored frontmatter carries a parser-reserved key (type, title, tags, slug).",
       "  [OK] extraction_date_grounding: Relative dates resolve against each source's observation date in fact extraction, dream synthesis, extract_atoms and propose_takes (the default). life chronicle events keep their current prompt unless extraction.date_grounding is set to true. Facts extracted before this was on keep their original wording; re-extract a source only with the user's consent (gbrain extract-conversation-facts --source-id <id> --dry-run previews it).",
       "  [OK] integrity: Sampled 5 pages; no bare-tweet phrases or external links.",
       "  [OK] jsonb_integrity: All JSONB columns store objects/arrays",

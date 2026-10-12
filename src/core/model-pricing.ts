@@ -57,6 +57,53 @@ export interface ModelPricing {
    * absent (under-estimate for writes; documented, not silent).
    */
   cache_write?: number;
+  /**
+   * #6448 item 1 — long-prompt tier. Some providers bill the WHOLE request at
+   * higher rates once its prompt exceeds `threshold_tokens` input tokens
+   * (Anthropic's long-context pricing: Haiku 5.5 bills 5x on input, cache
+   * and output above 100K). `priceAtPromptSize()` selects this tier from the
+   * request's total input tokens (cache reads and writes included; they are
+   * part of the prompt). Absent when the provider publishes one flat rate.
+   */
+  long_prompt?: LongPromptTier;
+}
+
+/** The rates a request pays once its prompt exceeds `threshold_tokens` (strictly greater). */
+export interface LongPromptTier {
+  threshold_tokens: number;
+  input: number;
+  output: number;
+  cache_read?: number;
+  cache_write?: number;
+}
+
+/**
+ * Anthropic's long-context boundary: a prompt of MORE than 100,000 input
+ * tokens bills at the long-prompt tier (platform.claude.com/docs/en/about-claude/pricing,
+ * checked 2026-10-11). Exactly 100,000 is still the base tier.
+ */
+export const ANTHROPIC_LONG_PROMPT_THRESHOLD_TOKENS = 100_000;
+
+/**
+ * The flat rates a request of `inputTokens` prompt tokens pays: the
+ * `long_prompt` tier when the prompt exceeds its threshold, else the base
+ * row. Returns a tier-free `ModelPricing` so every consumer prices with one
+ * `input`/`output`/`cache_*` set and cannot apply the base rate to part of a
+ * long prompt. A missing or non-finite size prices at the base tier.
+ */
+export function priceAtPromptSize(pricing: ModelPricing, inputTokens: number | null | undefined): ModelPricing {
+  const tier = pricing.long_prompt;
+  if (!tier || typeof inputTokens !== 'number' || !Number.isFinite(inputTokens) || inputTokens <= tier.threshold_tokens) {
+    if (!tier) return pricing;
+    const { long_prompt: _omit, ...base } = pricing;
+    return base;
+  }
+  return {
+    input: tier.input,
+    output: tier.output,
+    ...(tier.cache_read !== undefined ? { cache_read: tier.cache_read } : {}),
+    ...(tier.cache_write !== undefined ? { cache_write: tier.cache_write } : {}),
+  };
 }
 
 /** Anthropic prompt-cache multipliers (verified 2026-08 against published
@@ -118,10 +165,16 @@ export const CANONICAL_PRICING: Record<string, ModelPricing> = {
   'anthropic:claude-sonnet-5':            anthro( 2.00, 10.00),
   'anthropic:claude-sonnet-4-6':          anthro( 3.00, 15.00),
   // Haiku 5.5: $0.10 in / $0.50 out for prompts up to 100,000 tokens
-  // (platform.claude.com/docs/en/about-claude/pricing, checked 2026-10-08).
-  // Longer prompts bill 5x ($0.50 / $2.50); that tier is not modeled. The
-  // default facts extraction model on Anthropic-keyed installs.
-  'anthropic:claude-haiku-5-5':           anthro( 0.10,  0.50),
+  // (platform.claude.com/docs/en/about-claude/pricing, checked 2026-10-11).
+  // Longer prompts bill 5x on every rate ($0.50 in / $0.625 5m cache write /
+  // $0.05 cache read / $2.50 out) — the `long_prompt` tier, selected per
+  // request by priceAtPromptSize() (#6448 item 1). The 1h cache-write rate
+  // ($0.20 / $1.00) stays unmodeled. The default facts extraction model on
+  // Anthropic-keyed installs.
+  'anthropic:claude-haiku-5-5':           {
+    ...anthro( 0.10,  0.50),
+    long_prompt: { threshold_tokens: ANTHROPIC_LONG_PROMPT_THRESHOLD_TOKENS, ...anthro( 0.50,  2.50) },
+  },
   // Haiku 4.5 — both the dateless canonical id and the dated snapshot.
   'anthropic:claude-haiku-4-5':           anthro( 1.00,  5.00),
   'anthropic:claude-haiku-4-5-20251001':  anthro( 1.00,  5.00),

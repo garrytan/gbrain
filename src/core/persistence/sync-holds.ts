@@ -669,6 +669,8 @@ export interface SyncImportProvenance {
   origin: string;
   raw_sha256: string;
   blob_oid?: string;
+  /** #5459 (P4.5): true when the bytes came from the working tree (an untracked or uncommitted file), false from the pinned Git blob; absent on records written before the stamp. */
+  working?: boolean;
   gbrain_version: string;
   validated: true;
   recovery?: Array<{ kind: string; key: string; line: number; recovery_version: number }>;
@@ -682,6 +684,14 @@ export async function recordSyncImportProvenance(tx: Exec, value: Omit<SyncImpor
   await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb)
     ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()`,
   [SYNC_IMPORT_PROVENANCE_OP, provenanceFingerprint(value.source_id, value.incarnation, value.page_id), JSON.stringify([record])]);
+}
+
+/** The provenance of several pages in one statement, keyed by page id; pages without a record are absent. */
+export async function readSyncImportProvenances(engine: Exec, sourceId: string, incarnation: string, pageIds: readonly number[]): Promise<Map<number, SyncImportProvenance>> {
+  if (!pageIds.length) return new Map();
+  const rows = await engine.executeRaw<{ record: SyncImportProvenance }>('SELECT completed_keys->0 AS record FROM op_checkpoints WHERE op=$1 AND fingerprint = ANY($2::text[])',
+    [SYNC_IMPORT_PROVENANCE_OP, pageIds.map(id => provenanceFingerprint(sourceId, incarnation, id))]);
+  return new Map(rows.map(row => [Number(row.record.page_id), row.record]));
 }
 
 export async function readSyncImportProvenance(engine: Exec, sourceId: string, incarnation: string, pageId: number): Promise<SyncImportProvenance | null> {

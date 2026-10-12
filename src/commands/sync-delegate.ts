@@ -527,8 +527,8 @@ export async function maybeDelegateManagedSyncToServe(engine: BrainEngine, args:
   if (cfg?.engine !== 'postgres' || !cfg.database_url) return own('not_postgres');
   const sourceId = opts.sourceId ?? 'default';
   // 1. Only a managed source has the two-consumer problem; classic sync keeps its own path.
-  const [brain] = await engine.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1');
-  if (!brain?.enabled) return own('not_managed');
+  const { readManagedMode } = await import('../core/persistence/managed-mode.ts');
+  if (!await readManagedMode(engine)) return own('not_managed');
   // 2. The owner probe: the B3 heartbeat row, through the database (the persistence socket does not exist on Postgres).
   let owner: ConsumerRow | null;
   try {

@@ -44,7 +44,8 @@ describe('isSyncDisabledConfig', () => {
 
 describe('#5198: activation-pending sync skip', () => {
   test('returns the bound source ids the query yields', async () => {
-    const engine = { executeRaw: async () => [{ source_id: 'alpha' }, { source_id: 'beta' }] };
+    // #6482: the mode read is the strict shared reader, so the fake answers it with one well-formed unmanaged row.
+    const engine = { executeRaw: async (sql: string) => sql.includes('persistence_brain') ? [{ enabled: false }] : [{ source_id: 'alpha' }, { source_id: 'beta' }] };
     expect(await loadActivationPendingSourceIds(engine as never)).toEqual(new Set(['alpha', 'beta']));
   });
 

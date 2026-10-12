@@ -35,7 +35,9 @@ test('device-only change is recognized only with a non-zero matching birth time 
   expect(physicalRootDeviceChange(stamp, reservation, info(7n, 11n, 13n))).toBeNull();
   expect(physicalRootDeviceChange({ ...stamp, birth: '0' }, reservation, info(8n, 11n, 0n))).toBeNull();
   expect(physicalRootDeviceChange(stamp, reservation, info(8n, 12n, 13n))).toBeNull();
-  expect(physicalRootDeviceChange(stamp, reservation, info(8n, 11n, 14n))).toBeNull();
+  // #6501: a birth time within 1 µs of the stamp is the same directory (14 vs 13 ns); beyond it is not.
+  expect(physicalRootDeviceChange(stamp, reservation, info(8n, 11n, 14n))).toEqual({ from: '7', to: '8' });
+  expect(physicalRootDeviceChange(stamp, reservation, info(8n, 11n, 13n + 1001n))).toBeNull();
   expect(physicalRootDeviceChange(stamp, { ...reservation, token: randomUUID() }, info(8n, 11n, 13n))).toBeNull();
   expect(physicalRootDeviceChange({ ...stamp, root: '/other' }, reservation, info(8n, 11n, 13n))).toBeNull();
 });

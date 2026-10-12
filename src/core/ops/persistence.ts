@@ -155,7 +155,7 @@ export const persistenceOperations: Operation[] = [
     name: 'list_write_requests',
     idempotent: true,
     outputRedaction: 'no_stored_text',
-    description: 'List your write receipts in one source, newest first. Use when a request_id was lost.',
+    description: 'List your write receipts in one source, newest first, for a lost request_id.',
     params: {
       source_id: { type: 'string', description: 'Default: yours.' },
       limit: { type: 'number', default: 25, description: '1-100 (default 25).' },

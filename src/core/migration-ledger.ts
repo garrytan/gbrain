@@ -13,6 +13,7 @@
  * test/migration-ledger.test.ts so it cannot drift silently.
  */
 
+import type { BrainEngine } from './engine.ts';
 import { loadCompletedMigrations, type CompletedMigrationEntry } from './preferences.ts';
 
 /**
@@ -25,6 +26,30 @@ export const MIGRATION_VERSIONS: readonly string[] = [
   '0.18.0', '0.18.1', '0.21.0', '0.22.4', '0.28.0', '0.29.1', '0.31.0',
   '0.32.2', '0.43.0', '0.46.3', '0.53.0', '0.60.31',
 ];
+
+/**
+ * #6466: migrations a brain owner can decline, by version → the brain-level
+ * DB config key whose explicit off value declines it. Registry-free (version
+ * strings and keys only, like MIGRATION_VERSIONS); pinned against each
+ * module's `optOut` by test/migration-ledger.test.ts.
+ */
+export const MIGRATION_OPT_OUT_KEYS: Readonly<Record<string, string>> = {
+  '0.53.0': 'shared_skills.migration.enabled',
+};
+
+/** True for an explicit off value; absent, empty or anything else keeps the migration enabled. */
+export function isMigrationDeclinedValue(raw: string | null | undefined): boolean {
+  return typeof raw === 'string' && ['false', '0', 'off', 'no'].includes(raw.trim().toLowerCase());
+}
+
+/** Versions MIGRATION_OPT_OUT_KEYS declines on this brain, in version order; an unreadable key counts as enabled. */
+export async function declinedMigrations(engine: Pick<BrainEngine, 'getConfig'>): Promise<Set<string>> {
+  const declined = new Set<string>();
+  for (const [version, key] of Object.entries(MIGRATION_OPT_OUT_KEYS)) {
+    if (isMigrationDeclinedValue(await engine.getConfig(key).catch(() => null))) declined.add(version);
+  }
+  return declined;
+}
 
 /** Bug 3 attempt cap — consecutive partials before a version counts wedged. */
 export const MAX_CONSECUTIVE_PARTIALS = 3;
@@ -131,6 +156,8 @@ export interface MigrationLedgerSummary {
   partial: string[];
   /** Hit the consecutive-partial cap — needs an explicit forced retry. */
   wedged: string[];
+  /** #6466: declined by the brain's config (a migration's `optOut` key is off); never pending, partial or wedged. */
+  declined: string[];
   /**
    * Migrations newer than the installed binary (count only). Future-versioned
    * migrations are excluded from ALL status buckets regardless of ledger
@@ -147,16 +174,17 @@ export interface MigrationLedgerSummary {
  * BrainEngine.getHealth() in both engines. Version strings only; never
  * migration internals.
  */
-export function migrationLedgerSummary(installedVersion: string): MigrationLedgerSummary {
+export function migrationLedgerSummary(installedVersion: string, declined: ReadonlySet<string> = new Set()): MigrationLedgerSummary {
   const entries = loadCompletedMigrations();
   const byVersion = indexCompletedEntries(entries);
   const freshVersion = freshInstallVersion(entries);
-  const summary: MigrationLedgerSummary = { pending: [], pending_fresh_install: [], partial: [], wedged: [], skipped_future: 0 };
+  const summary: MigrationLedgerSummary = { pending: [], pending_fresh_install: [], partial: [], wedged: [], declined: [], skipped_future: 0 };
   for (const version of MIGRATION_VERSIONS) {
     if (compareVersions(version, installedVersion) > 0) {
       summary.skipped_future += 1;
       continue;
     }
+    if (declined.has(version)) { summary.declined.push(version); continue; }
     const status = statusForVersion(version, byVersion);
     if (status === 'pending') (isPendingFreshInstall(version, freshVersion) ? summary.pending_fresh_install : summary.pending).push(version);
     else if (status === 'partial') summary.partial.push(version);

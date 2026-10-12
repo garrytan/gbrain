@@ -41,6 +41,7 @@ import { opError } from '../ops/contract.ts';
 import { CONNECTOR_SOURCE_KINDS } from '../persistence/connector-identity.ts';
 import { withCoordinatedWrite, withTrustBackfill } from '../persistence/context.ts';
 import { maintenanceAttribution } from '../persistence/attribution.ts';
+import { readManagedMode } from '../persistence/managed-mode.ts';
 import { frontmatterTrustCapsSql } from './channel.ts';
 import { claimedSourceSql, legacyRowSql, notConnectorSourceSql, readLegacyCeilings, type LegacyCeilings } from './claim-state.ts';
 import { TRUST_BACKFILL_COMPLETED_KEY, type TrustTable } from './schema.ts';
@@ -305,7 +306,7 @@ export async function runTrustBackfill(engine: BrainEngine, opts: TrustBackfillO
       });
   }
   const { forTable, signals } = classifier(cols, [], await readLegacyCeilings(engine).catch(() => null));
-  const [brain] = await engine.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton = 1');
+  const managedBrain = await readManagedMode(engine);
   const attribution = await maintenanceAttribution(engine);
   const scoped = opts.sources !== undefined;
   const op = scoped ? CLAIM_CHECKPOINT_OP : CHECKPOINT_OP;
@@ -327,7 +328,7 @@ export async function runTrustBackfill(engine: BrainEngine, opts: TrustBackfillO
         `WITH b AS (SELECT x.id, ${trustTierFromRankSql(rule)} AS tier FROM ${from} WHERE x.id = ANY($1::bigint[]))
          UPDATE ${table} t SET trust_tier = b.tier, write_origin = COALESCE(t.write_origin, $2::text::jsonb)
            FROM b WHERE t.id = b.id AND t.trust_tier = 'unknown' AND b.tier <> 'unknown' RETURNING t.id`, [ids, origin])).length);
-      updated += await engine.transaction(tx => brain?.enabled && sources.length
+      updated += await engine.transaction(tx => managedBrain && sources.length
         ? withCoordinatedWrite(tx, sources, () => apply(tx), attribution)
         : apply(tx));
       after = ids[ids.length - 1]!;

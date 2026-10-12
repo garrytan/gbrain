@@ -441,8 +441,23 @@ substitute the new value and retry. Dry runs do not grant permission to apply.
 
 Activation additionally requires every older writer and maintenance process on
 every host to be upgraded and stopped, filesystem sources to have their intended
-owners, and outstanding locks and recovery to be resolved. Preview activation
-with `--confirm-quiesced --dry-run`, then, only when approved:
+owners, and outstanding locks and recovery to be resolved. On a brain whose
+`sync.write_through` is `false` (a database-only brain), a rooted source with no
+owner needs none: `writer status` already reports it `database_only`, and
+activation lists it under `database_only_sources` and goes ahead (#6449). Page
+writes to it publish to the database only (`write_through.skipped:
+disabled_by_config`), `gbrain sync` on it refuses `owner_unavailable` naming the
+claim, and turning `sync.write_through` back on does not claim it, not even on
+PGLite (activation records the listed source ids as a JSON array in the config
+key `persistence.database_only_sources`, deactivation clears it, and
+`gbrain config unset persistence.database_only_sources` is the escape hatch if a
+listing outlives its brain state; it is not a setting to edit by hand): the next write
+refuses with `detail: unbound_source` and the `writer claim` to run (preview
+with `--dry-run`), or stays database-only under
+`persistence.unbound_write=database_only`. With `sync.write_through` on, the
+same source refuses activation with `writer_registration_required`, and the
+suggestion names that claim and the database-only alternative. Preview
+activation with `--confirm-quiesced --dry-run`, then, only when approved:
 
 ```bash
 gbrain sources writer activate --brain host --confirm-quiesced \
@@ -719,6 +734,27 @@ the host that owns the binding can change it (`writer_registration_required`
 elsewhere), and never during a pending recovery or transfer
 (`recovery_required`). The setting is not a backup: the owner still never pulls
 or rebases the checkout.
+
+<a id="files-that-are-not-pages"></a>**Files that are not pages.** The owner's
+Git effect commits only the page paths it wrote (`git commit --only`) and then
+pushes HEAD. Everything else in the checkout (`MEMORY.md`, daily notes,
+`AGENTS.md`, scripts) is the operator's: `git add` and `git commit` it with
+plain git in the checkout. Those commits reach the remote on the owner's next
+push, because the owner pushes HEAD, or sooner with a hand `git push` from the
+checkout; `gbrain sources push` refuses on a managed root and its secret scan
+does not run on a hand push. A hand push and the owner's push race only by
+ordinary Git semantics (both push the same HEAD; a push the remote rejects is
+retried by the owner and, after repeated failures, parked, which
+`writer status --json` shows). Never
+`git pull --rebase`, `git reset` or `git checkout` page paths in the checkout:
+the owner never pulls, and moving files under it is what `source_changed`
+guards against; bring remote commits in with `gbrain sources refresh <source>`.
+The durability block `sources harden` writes into `AGENTS.md`/`RESOLVER.md`
+before activation says the opposite (run the push helper after every write,
+pull before writing), so `writer git-durability <source> --enable` and
+`--pat-file` rewrite that block in place to the managed variant (#5808); the
+preview reports it as `agents`, the rewrite touches nothing outside the
+markers, and the file is left for you to commit.
 
 ### Supported managed work and explicit repair
 

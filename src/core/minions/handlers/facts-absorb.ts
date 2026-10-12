@@ -8,6 +8,7 @@ import { loadConfig, loadConfigWithEngine } from '../../config.ts';
 import type { FactsBackstopResult } from '../../facts/backstop.ts';
 import { JobDeferredError, UnrecoverableError } from '../errors.ts';
 import { ERROR_CATALOGUE } from '../../error-catalogue.ts';
+import { readManagedMode } from '../../persistence/managed-mode.ts';
 
 /** Shared predicate: an inline result reporting execution-time unavailability. */
 export function factsAbsorbUnavailable(result: FactsBackstopResult): boolean {
@@ -67,8 +68,7 @@ export function makeFactsAbsorbHandler(engine: BrainEngine): MinionHandler {
     };
     // #5362: before activation the legacy fence writer refuses every file in a claimed
     // worktree, so check the source root before any inference is paid for.
-    const [brain] = await engine.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1');
-    if (!brain?.enabled) {
+    if (!await readManagedMode(engine)) {
       const [source] = await engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id=$1', [sourceId]);
       if (source?.local_path) {
         const { assertLegacyFilesystemWriter } = await import('../../persistence/filesystem-guard.ts');

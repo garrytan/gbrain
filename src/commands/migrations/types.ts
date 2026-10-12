@@ -74,6 +74,12 @@ export interface Migration {
   preview?: (opts: OrchestratorOpts) => Promise<unknown>;
   reconcile?: boolean;
   /**
+   * #6466: brain-level DB config key whose explicit off value declines this
+   * migration (`./opt-out.ts`): the runner skips it, reconcile included,
+   * lists it `declined`, and refuses an explicit `--migration <v>`.
+   */
+  optOut?: { key: string };
+  /**
    * Consent effects the orchestrator performs (agent operator contract A4);
    * apply-migrations asks for them before running it. `persistent_install`
    * is skipped (and not asked) under --no-autopilot-install or on PGLite.

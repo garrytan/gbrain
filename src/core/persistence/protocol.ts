@@ -1,5 +1,6 @@
 import type { SqlEngine, WriteRequest } from './model.ts';
 import { opError, OperationError } from '../ops/contract.ts';
+import { readPersistenceBrain } from './managed-mode.ts';
 
 const declared = new WeakSet<object>();
 /**
@@ -49,9 +50,8 @@ export function assertMutationProtocol(row: Pick<WriteRequest, 'target_kind' | '
 }
 
 export async function assertSharedSkillPersistence(engine: SqlEngine, sourceId?: string): Promise<void> {
-  const [brain] = await engine.executeRaw<{ enabled: boolean; skill_bundles_enabled: boolean; writer_protocol_floor: number }>(
-    'SELECT enabled,skill_bundles_enabled,writer_protocol_floor FROM persistence_brain WHERE singleton=1');
-  if (!brain?.enabled || !brain.skill_bundles_enabled || brain.writer_protocol_floor !== 2) {
+  const brain = await readPersistenceBrain(engine);
+  if (!brain.enabled || !brain.skill_bundles_enabled || brain.writer_protocol_floor !== 2) {
     throw new OperationError('writer_not_quiesced', 'Shared skill publication requires an activated protocol-2 canonical owner.',
       'Stop older writers and direct-file skill servers, then activate shared skill persistence on the canonical host.');
   }

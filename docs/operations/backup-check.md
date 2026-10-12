@@ -112,7 +112,10 @@ time. Evidence expires after one hour even if the configured coverage interval
 is longer. Reuse retains its original timestamp and requires unchanged source
 identity, physical Git directory, HEAD, branch, origin, push-status identity and
 a clean tree. Roots beyond the budget report `budget_exhausted`; successive
-sweeps can cover them. Background and stdio refreshes use local probes only;
+sweeps can cover them. A probe starts only when its full two-second slot is
+still inside the eight-second budget: a root that would get less is deferred
+(`budget_exhausted`, and earlier `verified` evidence for it is kept) rather
+than probed on the leftover and recorded as `unavailable`. Background and stdio refreshes use local probes only;
 remote MCP doctor reads aggregate cache only, with no engine or Git access.
 
 ### Remote verification and your Git configuration
@@ -134,8 +137,8 @@ export is not used, and the remote's host key must already be in `known_hosts`.
 | `verified` | The remote branch HEAD matches a clean local HEAD. | Nothing. |
 | `missing_ref` | The remote answered but has no such branch. | `git push -u origin <branch>`, then `gbrain backup check`. |
 | `mismatch` | The remote HEAD differs from the local HEAD, or the tree changed during the probe. | Push or pull until they match, then `gbrain backup check`. |
-| <a id="remote-unavailable"></a>`unavailable` | `git ls-remote` failed: no network, authentication refused, or an unknown host key. The probe passes only `HOME`, `PATH`, `XDG_CONFIG_HOME`, `SSH_AUTH_SOCK`, `GIT_CONFIG_GLOBAL`, `HTTPS_PROXY`/`https_proxy`, `HTTP_PROXY`/`http_proxy`, `NO_PROXY`/`no_proxy` (and `USERPROFILE`, `APPDATA`, `SystemRoot` on Windows). | Run `git -C <root> ls-remote origin` in the same shell; credentials must come from your Git config, a credential helper, `~/.ssh/config` or the SSH agent, not from a prompt or `GIT_SSH_COMMAND`. |
-| `budget_exhausted` | The sweep's eight-probe or eight-second budget ran out first. | Run `gbrain backup check` again. |
+| <a id="remote-unavailable"></a>`unavailable` | `git ls-remote` failed: no network, authentication refused, or an unknown host key. `cause` says which kind: `timeout` (the remote did not answer within its full two-second slot) or `exit` (git exited with an error). The probe passes only `HOME`, `PATH`, `XDG_CONFIG_HOME`, `SSH_AUTH_SOCK`, `GIT_CONFIG_GLOBAL`, `HTTPS_PROXY`/`https_proxy`, `HTTP_PROXY`/`http_proxy`, `NO_PROXY`/`no_proxy` (and `USERPROFILE`, `APPDATA`, `SystemRoot` on Windows). | Run `git -C <root> ls-remote origin` in the same shell; credentials must come from your Git config, a credential helper, `~/.ssh/config` or the SSH agent, not from a prompt or `GIT_SSH_COMMAND`. |
+| `budget_exhausted` | The sweep's eight-probe or eight-second budget ran out first, or this remote would not have received its full two-second slot. | Run `gbrain backup check` again. |
 | `stale`, `not_checked` | Earlier evidence expired or no probe ran yet. | `gbrain backup check`. |
 
 When does the compute actually run? On any of: `gbrain backup check`, a stale

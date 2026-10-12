@@ -218,7 +218,11 @@ export function renderRepairResult(result: RepairResult, opts: { diff: boolean }
       + `${typeof llmLeft === 'number' ? ` ($${llmLeft.toFixed(4)} left under today's cap)` : ''}`}`);
   for (const c of result.capacity) lines.push(`  capacity ${c.scope} ${c.resource}: ${c.used} of ${c.limit} (stops at ${c.stop_at})`);
   if (result.resumed_from) lines.push(`  resuming after item ${result.resumed_from.phase}:${result.resumed_from.id}`);
-  if (result.mode === 'apply') lines.push(`  applied ${result.applied}, skipped ${result.skipped}${result.complete ? ', complete' : ''}`);
+  if (result.mode === 'apply') lines.push(`  applied ${result.applied}, skipped ${result.skipped}, failed ${result.failed.length}${result.complete ? ', complete' : ''}`);
+  for (const failed of result.mode === 'apply' ? result.failed : []) lines.push(`  FAILED ${failed.item} (${failed.reason}): ${failed.message}`);
+  if (result.mode === 'apply' && result.failed.length) {
+    lines.push(`  ${result.failed.length} item(s) left unchanged; a resumed run skips past them, the next full scan retries them: ${result.apply_command}`);
+  }
   if (result.mode === 'apply' && result.repaired !== undefined) {
     const left = Object.entries(result.remaining ?? {}).map(([k, v]) => `${k}=${v}`).join(', ');
     lines.push(`  repaired ${result.repaired}; ${left ? `still waiting: ${left}` : 'nothing left in this selection'}`);
@@ -302,5 +306,10 @@ export async function runRepairCommand(engine: BrainEngine, args: string[]): Pro
     }
     if (explicitKindsNotRun.length) console.log(`Explicit-only kinds (not run without their name; preview each): ${explicitKindsNotRun.map(n => n.preview_command).join('; ')}`);
   }
-  if (results.some(r => r.stopped)) setCliExitVerdict(1);
+  if (repairExitVerdict(results) !== 0) setCliExitVerdict(1);
+}
+
+/** Exit 1 when any kind stopped early or refused an item; 0 only when every pending item was attempted and applied or skipped. */
+export function repairExitVerdict(results: ReadonlyArray<Pick<RepairResult, 'stopped' | 'failed'>>): 0 | 1 {
+  return results.some(r => r.stopped || r.failed.length > 0) ? 1 : 0;
 }

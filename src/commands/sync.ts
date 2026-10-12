@@ -51,6 +51,8 @@ export interface SyncResult {
   /** Managed sync: files skipped because another origin keeps their slug, and links derived after the checkpoint. */
   slugCollisions?: import('../core/persistence/sync-discovery.ts').SyncSlugCollision[];
   fileRefusals?: import('../core/persistence/sync-discovery.ts').SyncFileRefusal[]; links?: import('../core/persistence/links-maintenance.ts').ManagedLinkExtraction;
+  /** #5459 (P4.5): live pages a `--full` tree walk kept because their file is in the working tree and their import provenance is the working tree or unknown. */
+  working_tree_kept?: number;
   /**
    * Aggregated alias/undeclared explicit-type warnings (schema.type_warnings,
    * default on) — one entry per distinct non-canonical type this run.
@@ -96,8 +98,8 @@ export interface SyncResult {
   bankedFiles?: number;
   /** #5984: the managed drain's verdict and the next step for the agent (see sync-drain.ts). */
   drain?: import('../core/persistence/sync-drain.ts').DrainReport;
-  /** #6349: this run synced a staged first-parent commit (`target`) short of `head`, because the delta to HEAD exceeded the cursor bound; `stages` counts the stages a CLI loop took. */
-  staged?: { target: string; head: string; stages?: number };
+  /** #6349: this run synced a staged first-parent commit (`target`) short of `head`, because the delta to HEAD exceeded the cursor bound; `stages` counts the stages a CLI loop took. P4.4: `slice` names the path slice of `target` this run committed when the target itself exceeds the bound. */
+  staged?: { target: string; head: string; stages?: number; slice?: { phase: 'import' | 'delete'; after: string | null } };
   /** #6278: the run stopped because too many writes stalled while preparing (one systemic diagnostic instead of a pile of holds). */
   breaker?: import('../core/persistence/sync-run.ts').ManagedSyncBreaker;
   /** #5984: managed cursor position (`index` of `total` manifest entries) and its active drain window. */

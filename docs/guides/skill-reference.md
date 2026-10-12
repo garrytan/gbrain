@@ -19,6 +19,18 @@ Preconditions and trigger routing limited to what the skill covers.
 **Skillify loop:** skillify (the markdown orchestration), skillpack-check
 (agent-readable health report).
 
+**Finding the right skill for a task over MCP:** `list_skills` takes an optional
+`query` (full MCP surface, host catalog) and returns the skills whose name,
+triggers or description share words with it, best first, with
+`match.matched_on` saying which of the three matched; skills that share no
+words are left out, and `limit` (default 10) caps the list. It is a word-overlap
+ranking, not a model call, so it is free and instant, and the same call
+without `query` returns the whole catalog exactly as before. On a brain that
+serves a shared catalog (`schema_version: 2`, or shared skills activated)
+`query` is refused with `invalid_params` instead of being ignored; narrow with
+`section` there. **Say to your agent:** *"Which of my brain's skills fit
+preparing for this meeting?"*
+
 **Brain-resident skillpacks + advisor:** A brain repo can carry its
 own publishable skillpack (`brain_resident: true` in `skillpack.json` + `schema_pack`);
 `gbrain skillpack init-brain-pack` scaffolds one with a 5-section machine-parseable README.

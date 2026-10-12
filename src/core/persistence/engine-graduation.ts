@@ -27,6 +27,7 @@ import { liveServeOwner } from '../exclusive-fix.ts';
 import { opError, type OperationError } from '../ops/contract.ts';
 import { acquireKernelLockOnly, inspectLockHolder, PgliteBusyError, peekLock, releaseLock, type LockHandle } from '../pglite-lock.ts';
 import { localHostId } from './identity.ts';
+import { readManagedMode } from './managed-mode.ts';
 import { quiesceAutopilot } from '../../commands/migrate-engine.ts';
 import { LATEST_VERSION } from '../migrate.ts';
 import {
@@ -882,8 +883,7 @@ async function stepVerify(run: Run): Promise<void> {
     runId: run.m.runId, expectFence: true,
     runDoctor: async () => {
       phase(run, 'doctor');
-      const [brain] = await run.source!.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton = 1');
-      const doctor = await run.deps.runTargetDoctor(run.m.runId, run.m.targetUrls!.main, brain?.enabled === true);
+      const doctor = await run.deps.runTargetDoctor(run.m.runId, run.m.targetUrls!.main, await readManagedMode(run.source!));
       exempted = doctor.exempted;
       return doctor.failing;
     },
@@ -905,11 +905,11 @@ async function stepVerify(run: Run): Promise<void> {
 async function stepCutover(run: Run): Promise<void> {
   phase(run, 'cutover');
   await run.deps.copySequences({ source: run.source!, target: run.main! }, { runId: run.m.runId });
-  const [brain] = await run.source!.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton = 1');
+  const sourceEnabled = await readManagedMode(run.source!);
   const [seq] = await run.source!.executeRaw<{ s: string }>('SELECT COALESCE(max(sequence), 0)::text AS s FROM persistence_requests');
   const row = await readGraduationRow(run.source!);
   if (row?.state !== 'cutover') await withSourceWritable(run.source!, tx => setSourceState(tx, run.m.runId, 'cutover', { cutoverSequence: seq?.s ?? '0' }));
-  if (run.m.state !== 'cutover') advance(run, 'cutover', { sourceEnabled: brain?.enabled === true, cutoverSequence: seq?.s ?? '0' });
+  if (run.m.state !== 'cutover') advance(run, 'cutover', { sourceEnabled, cutoverSequence: seq?.s ?? '0' });
   await boundary(run, 'source_cutover');
   const source = run.source!;
   run.lock = await source.closeRetainingLock();

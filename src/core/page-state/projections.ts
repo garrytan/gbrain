@@ -374,6 +374,14 @@ export interface ProjectionRebuildOptions {
   pages?: { sourceId: string; slugs: readonly string[] };
   /** Receives each failed page; without it a generic stderr line is printed. */
   onFailure?: (failure: ProjectionRebuildFailure) => void;
+  /**
+   * Receives each queue row this call consumed without a rebuild: `removed`
+   * (a stale row deleted under the page guard) or `deferred` (a page whose
+   * revision moved during its install, stamped `updated_at=now()` so a run
+   * bounded by `notAfter` does not try it again). Progress, unlike a bare
+   * `superseded` no-op.
+   */
+  onHeal?: (heal: { kind: 'removed' | 'deferred'; source_id: string; slug: string }) => void;
 }
 
 /** Live Markdown and code rows a rebuild can take, and how many of them last failed. */
@@ -386,7 +394,20 @@ export async function projectionBacklog(engine: Pick<BrainEngine, 'executeRaw'>)
   return { pending: Number(row?.pending ?? 0), failed: Number(row?.failed ?? 0), oldest_age_seconds: oldest };
 }
 
-/** Bounded and keyless. Unsupported media remains queued for its source importer. */
+/**
+ * Bounded and keyless. Unsupported media remains queued for its source importer.
+ *
+ * A queue row that no longer matches its live page is healed under the page
+ * guard (PR #6400 (b)), with a compare-and-set on the exact
+ * (source_incarnation, slug, revision) this call listed, so a newer row the
+ * `pages` trigger queued meanwhile survives: a row of a dead incarnation is
+ * deleted (never re-keyed onto the live one, which has its own rows); a row
+ * whose revision is stale under the live incarnation is deleted when the page
+ * is already projected, else re-keyed to the live `knowledge_revision` and
+ * rebuilt in the same pass. A row another worker consumed is a no-op
+ * (`superseded`). A page whose revision moves during its install is deferred
+ * by `updated_at` and reported through `onFailure` once per run.
+ */
 export async function rebuildPendingPageProjections(engine: BrainEngine, limit = 20, opts: ProjectionRebuildOptions = {}): Promise<{ rebuilt: number; superseded: number }> {
   const now = opts.now ?? Date.now;
   const startedAt = now();
@@ -407,27 +428,45 @@ export async function rebuildPendingPageProjections(engine: BrainEngine, limit =
   let superseded = 0;
   for (const [index, job] of jobs.entries()) {
     if (opts.deadlineMs !== undefined && index > 0 && now() - startedAt >= opts.deadlineMs) break;
+    const observed = [job.source_incarnation, job.slug, job.revision];
     try {
       const prepared = await engine.transaction(async tx => {
         await tx.lockPageKeys([{ sourceId: job.source_id, slug: job.slug }]);
         const pending = await tx.executeRaw(`SELECT 1 FROM page_projection_jobs
-          WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid`, [job.source_incarnation, job.slug, job.revision]);
+          WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid`, observed);
         if (!pending.length) return null;
-        return readGuardedProjectionSnapshot(tx, job.slug, job.source_id, { allowUnsealed: true });
+        const read = await readGuardedProjectionSnapshot(tx, job.slug, job.source_id, { allowUnsealed: true });
+        if (!read) return null;
+        const { snapshot } = read;
+        if (snapshot.sourceIncarnation === job.source_incarnation && snapshot.revision === job.revision) return read;
+        if (snapshot.sourceIncarnation !== job.source_incarnation || snapshot.page.text_projection_revision === snapshot.revision) {
+          await tx.executeRaw('DELETE FROM page_projection_jobs WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid', observed);
+          return 'removed';
+        }
+        await tx.executeRaw(`UPDATE page_projection_jobs SET revision=$4::uuid,updated_at=now()
+          WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid`, [...observed, snapshot.revision]);
+        return read;
       });
-      if (!prepared || prepared.snapshot.sourceIncarnation !== job.source_incarnation || prepared.snapshot.revision !== job.revision) { superseded++; continue; }
+      if (!prepared) { superseded++; continue; }
+      if (prepared === 'removed') { superseded++; opts.onHeal?.({ kind: 'removed', source_id: job.source_id, slug: job.slug }); continue; }
       const projection = await preparePageProjection(prepared);
       await installPageProjection(engine, prepared, projection.chunks, { seal: true, preserveEmbeddings: true, code: projection.code });
       rebuilt++;
     } catch (error) {
       if (!(error instanceof PageRevisionConflictError)) {
         await engine.executeRaw(`UPDATE page_projection_jobs SET reason='rebuild_failed',updated_at=now()
-          WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid`, [job.source_incarnation, job.slug, job.revision]);
+          WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid`, observed);
         if (opts.onFailure) opts.onFailure({ source_id: job.source_id, slug: job.slug, reason: (error instanceof Error ? error.message : String(error)).split('\n')[0].slice(0, 300) });
         else process.stderr.write('[gbrain] Projection rebuild failed; work remains queued. Inspect projection readiness and the recorded source path.\n');
         continue;
       }
-      superseded++;
+      // The page moved under its install: defer the exact row this call listed
+      // (a newer trigger-queued row already carries its own stamp) and report it.
+      const deferred = await engine.executeRaw(`UPDATE page_projection_jobs SET updated_at=now()
+        WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid RETURNING slug`, observed);
+      if (!deferred.length) { superseded++; continue; }
+      opts.onHeal?.({ kind: 'deferred', source_id: job.source_id, slug: job.slug });
+      opts.onFailure?.({ source_id: job.source_id, slug: job.slug, reason: `revision_conflict: ${error.message.split('\n')[0].slice(0, 280)}` });
     }
   }
   if (rebuilt > 0) {
@@ -472,16 +511,21 @@ export async function drainProjections(engine: BrainEngine, opts: { limit?: numb
   let superseded = 0;
   let tried = 0;
   try {
+    // Continue while a batch rebuilt, removed, failed or durably deferred a
+    // row; stop on a no-op batch. A bare `superseded` row (another worker
+    // consumed it) is not progress, so one row can never spin the drain.
     while (opts.limit === undefined || tried < opts.limit) {
-      const failuresBefore = failed.length;
+      let healed = 0;
+      let failedNow = 0;
       const batch = await rebuildPendingPageProjections(engine, Math.min(DRAIN_BATCH, (opts.limit ?? Infinity) - tried),
-        { notAfter: runStart, reasons: opts.reasons, onFailure: failure => failed.push(failure) });
-      const attempted = batch.rebuilt + batch.superseded + failed.length - failuresBefore;
-      if (attempted === 0) break;
+        { notAfter: runStart, reasons: opts.reasons, onHeal: () => { healed++; },
+          onFailure: failure => { failed.push(failure); if (!failure.reason.startsWith('revision_conflict:')) failedNow++; } });
       rebuilt += batch.rebuilt;
       superseded += batch.superseded;
-      tried += attempted;
-      opts.progress?.tick(attempted, `${rebuilt} rebuilt, ${failed.length} failed`);
+      const progressed = batch.rebuilt + healed + failedNow;
+      if (progressed === 0) break;
+      tried += progressed;
+      opts.progress?.tick(progressed, `${rebuilt} rebuilt, ${failed.length} failed`);
     }
   } finally {
     opts.progress?.finish();

@@ -2,8 +2,8 @@
  * #6349 (P2.14): a managed source whose delta since its last synced commit exceeds the cursor bound used to refuse every
  * sync forever. Discovery now stages it: the furthest first-parent commit whose delta fits, found by a forward gallop that
  * verifies every candidate (a net delta is not monotone along history, so binary search has no valid predicate); a drain
- * then takes stage after stage to HEAD. One commit above the bound still refuses, naming that commit. The bound is
- * lowered through the test seam. Synthetic content only.
+ * then takes stage after stage to HEAD. One commit above the bound is pinned and cut into path slices (#6349 P4.4,
+ * `test/sync-full-cursor-slices-6349.test.ts`). The bound is lowered through the test seam. Synthetic content only.
  */
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
@@ -129,21 +129,21 @@ describe('staged managed catch-up on a real brain', () => {
     }
   }), 300_000);
 
-  test('the byte bound stages too, and one commit above the bound refuses naming it', () => withEnv({ GBRAIN_HOME: home, GBRAIN_SYNC_FAILURES_DIR: home }, async () => {
+  test('the byte bound stages too, and one commit above the bound is pinned and path-sliced (#6349 P4.4) instead of refused', () => withEnv({ GBRAIN_HOME: home, GBRAIN_SYNC_FAILURES_DIR: home }, async () => {
     for (const engine of engines) {
-      const { r, opts, lastCommit } = await managedSource(engine);
+      const { r, opts, lastCommit, pages } = await managedSource(engine);
       const before = await lastCommit();
       for (const n of ['p', 'q', 'r', 's']) r.write(n);
       const big = r.commit('add 4 in one commit');
       _setCursorBoundForTest({ entries: 3, bytes: 1024 ** 2 });
-      const refusal = await drainManagedSync(engine, opts, false).then(() => null, (error: { code?: string; message: string; suggestion?: string }) => error);
-      expect(refusal).toMatchObject({ code: 'request_too_large' });
-      expect(refusal!.message).toContain('One commit exceeds the bounded cursor size.');
-      expect(refusal!.suggestion).toContain(`Commit ${big.slice(0, 12)} alone changes 4 syncable entries`);
+      const sliced = await drainManagedSync(engine, opts, false);
+      expect(sliced.staged).toMatchObject({ target: big, head: big, slice: { phase: 'import', after: 'notes/r.md' } });
       expect(await lastCommit()).toBe(before);
+      expect((await drainManagedSync(engine, opts, false)).staged).toBeUndefined();
+      expect(await lastCommit()).toBe(big);
+      expect(await pages()).toEqual(['notes/base', 'notes/p', 'notes/q', 'notes/r', 'notes/s']);
       // The byte bound: ample entries, but only one entry's worth of bytes per stage.
       _setCursorBoundForTest({ entries: 100, bytes: 120 });
-      r.git('reset', '-q', '--hard', before!);
       r.write('x'); const c1 = r.commit('x'); r.write('y'); r.commit('y');
       const staged = await drainManagedSync(engine, opts, false);
       expect(staged.staged?.target).toBe(c1);

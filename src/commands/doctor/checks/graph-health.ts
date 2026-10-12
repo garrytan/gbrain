@@ -326,6 +326,7 @@ export const timelineHistoryEntry: DoctorEntry = {
     'captured_facts_active',
     'loop_facts_drift',
     'ontology_facts_fenced',
+    'stale_frontmatter_keys',
   ],
   run: runTimelineHistory,
 };

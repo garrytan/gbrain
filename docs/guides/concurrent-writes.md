@@ -287,6 +287,17 @@ makes it report-only on any brain (`details.lint_fix: false`, phase `warn`
 while issues remain); `gbrain config set cycle.lint_fix true` turns repairs
 back on. An explicit `gbrain lint <dir> --fix` is not affected.
 
+**Turn the lint phase off entirely:** `cycle.lint.enabled` (default `true`)
+is the off switch for the cycle's lint phase. A brain whose page contract
+differs from `gbrain lint`'s rules (its own frontmatter checks in write hooks
+or CI, say) otherwise carries a lint warning on every cycle that nothing can
+clear. `gbrain config set cycle.lint.enabled false` makes the phase report
+`skipped` (`details.reason: disabled`, with the enable command in
+`details.enable_hint`) without reading a single file; `gbrain dream --phase
+lint --once` runs it once while it is off; `gbrain config set
+cycle.lint.enabled true` turns it back on. `gbrain lint <dir>` and the
+`lint`/`lint-fix` minion jobs are not affected.
+
 **Skip files the cycle should not lint:** `cycle.lint_exclude` (string, default
 unset = exclude nothing) is a comma-separated list of directory or file
 basenames that the cycle's lint phase and the `lint`/`lint-fix` minion jobs

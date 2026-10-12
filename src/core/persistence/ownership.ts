@@ -5,6 +5,7 @@ import { pipelined } from '../page-state/transactions.ts';
 import type { BrainEngine } from '../engine.ts';
 import { OperationError, opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
+import { readManagedMode } from './managed-mode.ts';
 import type { Action } from '../agent-output.ts';
 import { discoverGitRoot } from '../sync-git.ts';
 import { cliOptsToProgressOptions, getCliOptions } from '../cli-options.ts';
@@ -46,9 +47,10 @@ export function containsPath(root: string, path: string): boolean {
   const rel = relative(root, path);
   return !isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`);
 }
+export { MANAGED_MODE_SQL, managedModeFromRows, readManagedMode, readPersistenceBrain, unknownManagedModeRefusal,
+  type ManagedModeReadOptions, type ManagedModeRefusalContext, type PersistenceBrainRow } from './managed-mode.ts';
 export async function managedPersistenceEnabled(engine: SqlEngine): Promise<boolean> {
-  const [row] = await engine.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1');
-  return row?.enabled === true;
+  return readManagedMode(engine);
 }
 /**
  * #6331: the verify-step doctor of an engine graduation runs on the fenced target before cutover sets
@@ -192,6 +194,15 @@ async function lockWorktree(binding: WorktreeBinding, waitMs: number, signal: Ab
   try { assertPhysicalRoot(binding.local_path, identity); return lock; }
   catch (error) {
     try {
+      if (error instanceof OperationError && error.detail === 'physical_root_directory_changed') {
+        // #6501: a directory recreated (or drifted beyond tolerance) at its recorded path; fill the #5914 exit for this source.
+        error.suggestion = `The directory at ${binding.local_path} is not the one this owner stamped (inode or birth time changed; owner token, brain, worktree, root and device match). `
+          + `If this checkout was restored or recreated at its recorded path, on the brain host run gbrain sources writer status ${binding.source_id} and note admin_state, `
+          + `then gbrain sources writer transfer prepare ${binding.source_id} --self-transfer --confirm-relocated-root --admin-intent writer_transfer_prepare --expected-state <admin_state>, `
+          + `then gbrain sources writer transfer accept ${binding.source_id} --path ${binding.local_path} --expected-epoch ${binding.owner_epoch} --manifest <manifest digest printed by prepare> `
+          + `--self-transfer --confirm-relocated-root --admin-intent writer_transfer_accept --expected-state <admin_state from a fresh status>. Retry the original write with the same request_id afterwards; never remove the ownership markers.`;
+        throw error;
+      }
       if (!(error instanceof OperationError) || error.detail !== 'physical_root_device_changed') throw error;
       if (engine && await restampPhysicalRoot(engine, binding, localHostId())) { assertPhysicalRoot(binding.local_path, identity); return lock; }
       const why = !engine ? 'this caller cannot verify database ownership'

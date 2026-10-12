@@ -86,6 +86,14 @@ export interface PublicationBound {
   onOverdue?(): void;
   /** Past the ceiling, the grace and the settle window: the owner must restart. `settled` resolves when the publish finally does. */
   onStuck?(settled: Promise<void>): void;
+  /** Scheduler seam: run `fn` once after `ms`, returning its cancel. Default: a real timer that does not hold the process open. Tests drive a manual clock through it. */
+  later?(ms: number, fn: () => void): () => void;
+}
+
+function realTimer(ms: number, fn: () => void): () => void {
+  const timer = setTimeout(fn, ms);
+  timer.unref?.();
+  return () => clearTimeout(timer);
 }
 
 /** Runs `publish` under the ceiling; settles only with `publish`'s own outcome. */
@@ -93,12 +101,13 @@ export function boundPublication<T>(publish: () => Promise<T>, bound: Publicatio
   const controller = new AbortController();
   const work = signals.run(controller.signal, publish);
   const settled = work.then(() => undefined, () => undefined);
-  const timers: Array<ReturnType<typeof setTimeout>> = [];
-  const later = (ms: number, fn: () => void) => { const timer = setTimeout(fn, ms); timer.unref?.(); timers.push(timer); };
+  const schedule = bound.later ?? realTimer;
+  const cancels: Array<() => void> = [];
+  const later = (ms: number, fn: () => void) => { cancels.push(schedule(ms, fn)); };
   const grace = bound.graceMs ?? PUBLICATION_GRACE_MS, settle = bound.settleMs ?? PUBLICATION_SETTLE_MS;
   later(bound.ceilingMs, () => bound.onOverdue?.());
   later(bound.ceilingMs + grace, () => controller.abort(Object.assign(new Error('publication_deadline'), { code: 'publication_deadline' })));
   later(bound.ceilingMs + grace + settle, () => bound.onStuck?.(settled));
-  void settled.then(() => { for (const timer of timers) clearTimeout(timer); });
+  void settled.then(() => { for (const cancel of cancels) cancel(); });
   return work;
 }

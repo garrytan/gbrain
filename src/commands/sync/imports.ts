@@ -27,6 +27,7 @@ import { resolveStallAbortSeconds, composeAbortSignals } from '../../core/sync-r
 import { sanitizePathForDisplay } from '../../core/sync.ts';
 import { isWindowsColonTarget } from '../../core/persistence/native-file-target.ts';
 import { ERROR_CATALOGUE } from '../../core/error-catalogue.ts';
+import { enginePoolStats } from '../../core/postgres-engine/pool-stats.ts';
 import type { SyncOpts, SyncResult } from '../sync.ts';
 import { clearLegacyHold, holdRefusedImport, noteScreenedImport, type LegacyHolds } from './holds.ts';
 import { partial, markCompleted, noteTypeWarning, maybeYield } from './sync-run.ts';
@@ -93,6 +94,8 @@ export async function runImportsPhase(
 
   if (importsToDo.length > 0) {
     progress.start('sync.imports', importsToDo.length);
+    // #6366 (P4.7): the pool's state as the drain starts, so a later hang report carries it next to the stall line.
+    serr(`[sync] imports start: ${importsToDo.length} file(s), concurrency ${effectiveConcurrency}${poolLine(engine)}`);
 
     // Core import logic shared by serial and parallel paths.
     // Paths from git diff are relative to gitContextRoot; under #4342's
@@ -231,7 +234,7 @@ function startStallWatchdog(
     stallTimer = setInterval(() => {
       if (Date.now() - progressAt.last >= stallMs) {
         serr(
-          `[sync] no import progress for ${stallSeconds}s — aborting (stall watchdog). ` +
+          `[sync] no import progress for ${stallSeconds}s — aborting (stall watchdog)${poolLine(run.engine)}. ` +
           `The per-source lock will release; the next 'gbrain sync' resumes from the checkpoint.`,
         );
         run.stallAborted = true;
@@ -243,6 +246,12 @@ function startStallWatchdog(
     opts = { ...opts, signal: composeAbortSignals(opts.signal, stallController.signal) };
   }
   return { opts, stallTimer, progressAt };
+}
+
+/** #6366: ` · pool max=<n> checked_out=<n> waiters=<n>` for an engine that reports a pool (Postgres), empty otherwise. */
+export function poolLine(engine: unknown): string {
+  const pool = enginePoolStats(engine);
+  return pool ? ` · pool max=${pool.max} checked_out=${pool.checked_out} waiters=${pool.waiters}` : '';
 }
 
 /** Core import logic shared by the serial and parallel paths. */

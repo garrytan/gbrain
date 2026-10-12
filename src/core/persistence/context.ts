@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import type { BrainEngine } from '../engine.ts';
 import { opError, OperationError } from '../ops/contract.ts';
 import type { WriteAttribution } from './attribution.ts';
+import { readPersistenceBrain } from './managed-mode.ts';
 import { isTrustTier, nestWriteTrust, trustRankSql, type TrustTier, type WriteTrust } from '../trust/tier.ts';
 import type { TrustTable } from '../trust/schema.ts';
 
@@ -142,8 +143,8 @@ export function withTrustBackfill<T>(engine: Pick<BrainEngine, 'executeRaw'>, fn
   return withTransactionSettings(engine, [TRUST_BACKFILL_SETTING], () => ['on'], fn);
 }
 export async function assertCoordinatedWrite(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string): Promise<void> {
-  const [brain] = await engine.executeRaw<{ brain_id: string; enabled: boolean }>('SELECT brain_id,enabled FROM persistence_brain WHERE singleton=1');
-  if (!brain?.enabled) return;
+  const brain = await readPersistenceBrain(engine);
+  if (!brain.enabled) return;
   const held = publication.getStore();
   if (!held?.active || held.brainId !== brain.brain_id || !held.sourceIds.has(sourceId)) {
     throw new OperationError('writer_coordinator_required', 'This writer must enter the canonical persistence coordinator.',

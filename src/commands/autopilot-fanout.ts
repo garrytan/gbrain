@@ -44,8 +44,7 @@ import { isConnectorSourceKind } from '../core/persistence/connector-identity.ts
 import { attemptedConnectorSourceIds } from '../core/persistence/connector-state.ts';
 import { parseSourceConfig, sourceLocalPathSkipWarning } from '../core/sources-load.ts';
 import { automaticSyncPull } from '../core/persistence/automatic-sync-policy.ts';
-import { isSyncDisabledConfig } from '../core/sync-policy.ts';
-import { loadActivationPendingSourceIds, skipActivationPendingSync } from '../core/sync-policy.ts';
+import { automaticSyncSkip, loadActivationPendingSourceIds, reportAutomaticSyncSkip } from '../core/sync-policy.ts';
 import { AUTOPILOT_FULL_CYCLE_FLOOR_MINUTES } from './autopilot-remediation-policy.ts';
 
 // #2194 fix #2: failure cooldown. A source whose autopilot-cycle keeps
@@ -575,11 +574,11 @@ export async function dispatchPerSource(
       // stamp; only the sync phase (and the pull that feeds it) is dropped —
       // normalizeQueuedSourcePhases passes a freshness subset through as-is.
       // #5198: a claimed source awaiting activation is treated the same way,
-      // so its cycle does not fail on a sync that is refused by contract.
-      const pendingActivation = skipActivationPendingSync(
-        activationPending, src.id, 'fanout_sync_skipped', opts.jsonMode === true, opts.jsonMode ? emit : log,
-      );
-      const syncDisabled = isSyncDisabledConfig(src.config) || pendingActivation;
+      // so its cycle does not fail on a sync that is refused by contract, and
+      // so is a gbrain-owned content directory where sync does not apply (P4.2).
+      const skip = await automaticSyncSkip(engine, src, activationPending);
+      if (skip?.reason !== 'sync_disabled') reportAutomaticSyncSkip(src.id, skip, 'fanout_sync_skipped', opts.jsonMode === true, opts.jsonMode ? emit : log);
+      const syncDisabled = !!skip;
       const connector = connectorIds.has(src.id);
       const shouldPull = !syncDisabled && !connector && await automaticSyncPull(engine, src);
       const job = await queue.add(

@@ -32,6 +32,8 @@ const PRESERVE_TABLES: ReadonlySet<string> = new Set([
   'subagent_rate_leases',
   // System One eval arms insert calibrations once per brain (configureDecideBrain); empty otherwise.
   'decide_calibrations',
+  // The brain's identity and persistence-mode singleton (#6482): a brain without exactly one row refuses every write.
+  'persistence_brain',
 ]);
 
 export async function createBenchmarkBrain(): Promise<PGLiteEngine> {

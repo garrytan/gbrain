@@ -123,6 +123,36 @@ Two remedies, independent of each other:
   pages it reaches; `gbrain doctor --only junk_entity_hubs` names the
   canonical twin of each stub and the next step.
 
+### What a contact page carries
+
+Each page records the contact's names, email addresses, organization and
+title, phone numbers and user-created contact groups:
+
+- `emails:` is always present (empty for a phone-only contact); `phones:`
+  appears when the contact has any, in E.164 form (`+15550100`) where Google
+  supplies it, else as entered. Phones are exact identifiers for a manual
+  `entity_identity_link` join, not aliases: a digit string never takes part
+  in mention matching.
+- `groups:` lists the display names of the contact's user-created groups
+  (Google's built-in groups such as My Contacts or Starred are omitted). The
+  names come from one bounded `contactGroups` read per sweep that needs it;
+  when that read fails the sweep uses the names it cached last time, and a
+  group it cannot name at all is carried as its raw `contactGroups/<id>`. A
+  renamed or deleted group reaches a page when that contact next changes, or
+  on `gbrain sync --full`.
+- A contact with phones but no email gets a page too; one with no name
+  either lives at `contact-<id-hash>` (never at its phone number). A contact
+  with neither emails nor phones renders nothing.
+
+The contacts cursor is bound to the field mask that minted it: the People
+API rejects a sync token reused with different request parameters, so the
+source state records the mask next to the token (`contacts_person_fields`),
+commits the two together only after a sweep completed, and lists every
+contact once when the mask changes (as it did when phones and groups
+arrived). A sync token Google rejects with a 400 that is not an expiry gets
+exactly one full-list attempt; if that list fails as well, the error
+surfaces and the cursor is left alone.
+
 ## Secondary calendars
 
 The calendar sweep reads ONE calendar per source (so each keeps its own
@@ -386,8 +416,10 @@ attached. The catalog (also emitted as structured JSON with `--json`):
 Cursor expiries (`historyId` older than ~a week, calendar/contacts
 `syncToken` 410, or a contacts HTTP 400 explicitly reporting an expired sync
 token) use bounded re-lists automatically. Contacts recovery refreshes its
-own cursor without restarting Gmail. Unrelated HTTP 400 errors remain
-upstream failures rather than triggering a full re-list.
+own cursor without restarting Gmail. A contacts HTTP 400 on a sync-token
+request that is not an expiry (a token minted under other request
+parameters) gets one full-list attempt; every other HTTP 400 remains an
+upstream failure rather than triggering a re-list.
 
 ## Custody, privacy, spend
 

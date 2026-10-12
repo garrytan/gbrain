@@ -91,23 +91,26 @@ const KNOWN_MODEL_RENAMES: Readonly<Record<string, string>> = {
 /**
  * Recovery text for a provider 404 (`model_not_found`): the model id and
  * provider from the call context (`chat(provider:model)`), the command that
- * lists the configured routes, and a known rename when there is one.
+ * lists the configured routes, a known rename when there is one and, #5304,
+ * `routeHint`: the sentence naming the config key that selected the model
+ * (`model-not-found-hint.ts`), appended when the caller knows it.
  */
-export function modelNotFoundFix(context: string | undefined): string {
+export function modelNotFoundFix(context: string | undefined, routeHint = ''): string {
   const model = context?.match(/\(([^()\s]+:[^()\s]+)\)\s*$/)?.[1];
   const provider = model?.slice(0, model.indexOf(':'));
   const rename = model ? KNOWN_MODEL_RENAMES[model] : undefined;
   return `Check the model id: ${model ? `the ${provider} provider does not serve ${model}` : 'the provider does not serve this model'}, or this key has no access to it. ` +
     'Run `gbrain models` to see the configured model routes, then set a model the provider lists.' +
-    (rename ? ` ${model} was renamed: use ${rename}.` : '');
+    (rename ? ` ${model} was renamed: use ${rename}.` : '') +
+    (routeHint ? ` ${routeHint}` : '');
 }
 
 /**
  * `redact` scrubs upstream text before it becomes the message, and in the
  * wrapped error (#5137: the gateway passes its provider-key redactor, since
- * auth errors echo keys).
+ * auth errors echo keys). `routeHint` (#5304) is appended to a 404's fix only.
  */
-export function normalizeAIError(err: unknown, context?: string, redact?: (text: string) => string): AIServiceError {
+export function normalizeAIError(err: unknown, context?: string, redact?: (text: string) => string, routeHint = ''): AIServiceError {
   if (redact) scrubErrorChain(err, redact);
   if (err instanceof AIServiceError) return err;
 
@@ -136,7 +139,7 @@ export function normalizeAIError(err: unknown, context?: string, redact?: (text:
   if (typeof status === 'number' && status >= 400 && status < 500 && status !== 429) {
     return carryStatusFields(err, new AIConfigError(
       `${ctxPrefix}${msg}`,
-      status === 404 || MODEL_NOT_FOUND_MESSAGE_RE.test(msg) ? modelNotFoundFix(context)
+      status === 404 || MODEL_NOT_FOUND_MESSAGE_RE.test(msg) ? modelNotFoundFix(context, routeHint)
         : status === 401 || status === 403 ? 'Check your API key is valid and has access to this model.'
         : 'Check your model id + provider options match the provider API.',
       err,

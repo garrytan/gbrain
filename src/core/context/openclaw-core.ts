@@ -71,7 +71,20 @@ export interface OpenClawCoreLane {
   compacted(sessionId: string | null): void;
 }
 
-export function createOpenClawCoreLane(opts: { workspaceDir?: string; timeoutMs: number; fetcher?: CoreFetcher }): OpenClawCoreLane {
+export interface OpenClawCoreLaneOptions {
+  workspaceDir?: string;
+  timeoutMs: number;
+  fetcher?: CoreFetcher;
+  /** Scheduler seam: run `fn` once after `ms`. Default: a real timer that does not hold the process open. Tests fire the deadline by hand instead of racing a wall clock. */
+  later?(ms: number, fn: () => void): void;
+}
+
+function realLater(ms: number, fn: () => void): void {
+  const t = setTimeout(fn, ms);
+  (t as { unref?: () => void }).unref?.();
+}
+
+export function createOpenClawCoreLane(opts: OpenClawCoreLaneOptions): OpenClawCoreLane {
   let memo: { at: number; identity: string; value: CoreFetch } | null = null;
   const warned = new Set<string>();
   const lastTokens = new Map<string, number>();
@@ -108,10 +121,7 @@ export function createOpenClawCoreLane(opts: { workspaceDir?: string; timeoutMs:
         return null;
       }
     })();
-    return Promise.race([work, new Promise<null>((resolve) => {
-      const t = setTimeout(() => resolve(null), opts.timeoutMs);
-      (t as { unref?: () => void }).unref?.();
-    })]);
+    return Promise.race([work, new Promise<null>((resolve) => (opts.later ?? realLater)(opts.timeoutMs, () => resolve(null)))]);
   }
 
   async function getCore(sessionId: string | null): Promise<CoreFetch> {

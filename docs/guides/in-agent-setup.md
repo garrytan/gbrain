@@ -188,6 +188,17 @@ destination on a local filesystem with Windows ACL support and permitted
 Windows PowerShell. A busy database or a
 changing file fails the operation instead of publishing a success receipt.
 
+Before the dump, the command removes gbrain's own IPC socket files
+(`.gbrain-resolve.sock`, `.gbrain-persistence.sock`) from the data dir when
+nothing listens on them, so a `gbrain serve` that was killed does not block
+later backups; each removal is listed in the archive's `omitted` inventory.
+Any other socket, FIFO or symlink in the data dir is left alone and the
+command refuses with `backup_dump_failed` naming it: stop the process that
+uses it (or move it out of the data dir) and run the same command again.
+This cleanup is verified on Linux and macOS; on Windows a stale socket is
+removed through the native lock binding and has not been exercised on a
+native runner.
+
 | Included | Excluded or inventoried for reconnection |
 | --- | --- |
 | Full PGLite database: pages, DB-only facts, jobs, settings, authentication state, and other tables | Runtime packages, Bun, caches, Git metadata, previous backups |

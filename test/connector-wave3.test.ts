@@ -383,10 +383,17 @@ test('migration 176: re-keys the newest committed checkpoint, re-walks a compact
     expect(await migrateConnectorCheckpoints(engine, () => {})).toEqual({ rekeyed: [], rewalking: [], removed: { checkpoints: 0, retries: 0 } });
     expect(await engine.executeRaw("SELECT op,fingerprint,completed_keys FROM op_checkpoints WHERE op LIKE 'managed-connector%' ORDER BY op,fingerprint")).toEqual(snapshot);
     // The first post-upgrade runs: the live source resumes its legacy cursor and is pinned with unverified continuity; the compacted one re-walks once.
+    // #6324: the resumed cursor carries no `contacts_person_fields`, so it was minted under the old field mask and People would
+    // reject it; the first sweep lists without it and commits a token under the current mask, which the second sweep reuses.
     calls.length = 0;
     await google(engine, live, fetcher);
-    expect(calls.some(url => url.includes('syncToken=legacy-token'))).toBe(true);
+    const connections = () => calls.filter(url => url.includes('/people/me/connections'));
+    expect(connections().length).toBeGreaterThan(0);
+    expect(connections().some(url => url.includes('syncToken='))).toBe(false);
     expect((await readConnectorSourceStatuses(engine)).get(live.id)).toMatchObject({ upgrade_recovery: 'resumed', continuity_unverified: true, account_pinned: true });
+    calls.length = 0;
+    await google(engine, live, fetcher);
+    expect(connections().some(url => url.includes('syncToken=contacts-stable'))).toBe(true);
     await google(engine, compacted, fetcher);
     expect((await readConnectorSourceStatuses(engine)).get(compacted.id)).toMatchObject({ upgrade_recovery: 'none' });
   }

@@ -562,7 +562,7 @@ async function reportFences(ctx: OperationContext, scope: RepairScope, result: R
       if (outcome.outcome === 'repaired') { const tier = outcome.detail?.tier as RepairTier | undefined; if (tier) repairedByTier[tier]++; }
       else if (outcome.reason && outcome.reason !== 'already_clean') remaining[outcome.reason] = (remaining[outcome.reason] ?? 0) + 1;
     }
-    const unattempted = result.affected - result.applied - result.skipped;
+    const unattempted = result.affected - result.applied - result.skipped - result.failed.length;
     if (unattempted > 0 && result.stopped) remaining[result.stopped.reason] = (remaining[result.stopped.reason] ?? 0) + unattempted;
     // An --expect apply replays the approved set only; re-check the selection for what the preview listed as held.
     if (opts.expect) for (const [reason, count] of Object.entries(await heldInScope(ctx.engine, scope, opts, result))) remaining[reason] = (remaining[reason] ?? 0) + count;

@@ -6,7 +6,7 @@ import type { SqlEngine } from './model.ts';
 import { persistenceHome } from './identity.ts';
 import { canonicalFilesystemPath } from './root-registry.ts';
 import { adoptTransferredRootStamp, assertNoPhysicalRootOverlap, assertPhysicalRoot, assertPhysicalRootStamp, PHYSICAL_ROOT_MARKER, physicalRootDeviceChange, physicalRootError,
-  readPhysicalRootReservation, readPhysicalRootStamp, reservePhysicalRootRecord, restampPhysicalRootDevice, writePhysicalRootStamp, type PhysicalRootReservation } from './physical-root-record.ts';
+  readPhysicalRootReservation, readPhysicalRootStamp, reservePhysicalRootRecord, restampPhysicalRootDevice, samePhysicalBirth, writePhysicalRootStamp, type PhysicalRootReservation } from './physical-root-record.ts';
 
 export { assertPhysicalRoot, isPhysicalRootMetadata, readPhysicalRootReservation } from './physical-root-record.ts';
 export interface PhysicalRootClaim { hostId: string; worktreeId?: string; coordinationPath?: string; }
@@ -46,7 +46,7 @@ export async function claimPhysicalRoot(tx: SqlEngine, path: string, opts: Physi
   }
   else {
     const info = statSync(reservation.root, { bigint: true });
-    if (reservation.initialDevice !== info.dev.toString() || reservation.initialInode !== info.ino.toString() || reservation.initialBirth !== info.birthtimeNs.toString()) throw physicalRootError();
+    if (reservation.initialDevice !== info.dev.toString() || reservation.initialInode !== info.ino.toString() || !samePhysicalBirth(reservation.initialBirth, info.birthtimeNs)) throw physicalRootError();
     writePhysicalRootStamp(reservation.root, reservation);
   }
   return reservation;

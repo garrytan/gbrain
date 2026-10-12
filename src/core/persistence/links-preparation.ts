@@ -135,9 +135,7 @@ export async function prepareAutomaticLinks(engine: BrainEngine, slug: string,
     try {
       const result = await tx.replaceDerivedLinks({ slug, sourceId, expectedRevision: snapshot.revision,
         sourceIncarnation: snapshot.sourceIncarnation, snapshot }, rows, { preserveExisting: true, semanticsPrimed: primeSemantics, lineGrammar: settings, wanted: { ...wanted, producers: [...wanted.producers] },
-        expectedEndpoints: capturedLinkEndpoints(rows, new Map([...metadata,
-          [`${sourceId}\0${slug}`, { slug, source_id: sourceId, type: page.type, knowledge_revision: snapshot.revision }]]))
-          .filter(endpoint => endpoint.slug !== slug || endpoint.sourceId !== sourceId) });
+        expectedEndpoints: capturedLinkEndpoints(rows, metadata, { slug, sourceId }) });
       return { ...result, errors: 0, unresolved_count: unresolved.length, skipped_cross_source: skippedCrossSource, wanted_count: wanted.rows.length,
         ...(wanted.rows.length ? { wanted: wanted.rows.slice(0, 10).map(row => ({ slug: row.target_ref, source_id: row.target_source_id })),
           wanted_message: 'These link targets have no page yet; each edge is created when its page is. Create the page if it is real, or fix the link if it is a typo.',

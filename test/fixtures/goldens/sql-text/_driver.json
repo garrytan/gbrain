@@ -1176,6 +1176,17 @@
             "via": "unsafe"
           }
         ],
+        "chunkId": [
+          {
+            "paramCount": 5,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ],
         "default": [
           {
             "paramCount": 3,
@@ -1200,6 +1211,17 @@
         ]
       },
       "getCallersOf": {
+        "chunkId": [
+          {
+            "paramCount": 5,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ],
         "default": [
           {
             "paramCount": 3,
@@ -2489,6 +2511,19 @@
       }
     },
     "pages": {
+      "countStaleFrontmatterKeyPages": {
+        "default": [
+          {
+            "paramCount": 2,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
       "countStalePagesForExtraction": {
         "attendance-blocked+sourceId": [
           {
@@ -3028,6 +3063,19 @@
         "sourceIds": [
           {
             "paramCount": 14,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
+      "listStaleFrontmatterKeyPages": {
+        "default": [
+          {
+            "paramCount": 5,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
@@ -3680,6 +3728,19 @@
         "default": [
           {
             "paramCount": 2,
+            "unsafeOptions": {
+              "cancelFence": false,
+              "prepare": true,
+              "simple": false
+            },
+            "via": "unsafe"
+          }
+        ]
+      },
+      "stripStaleFrontmatterKeys": {
+        "default": [
+          {
+            "paramCount": 4,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,

@@ -54,6 +54,23 @@ export function extractableTypesFromPack(
 }
 
 /**
+ * Page types the pack declares and does NOT mark extractable (#5756). The
+ * manifest schema reads an omitted flag as `false`, so a declared type
+ * without `extractable: true` is a pack decision; a type the pack never
+ * declares is not in this set, which is how the legacy floor in
+ * cycle/extract-atoms.ts stays for types a pack is silent about.
+ */
+export function nonExtractableTypesFromPack(
+  pack: Pick<SchemaPackManifest, 'page_types'>,
+): Set<string> {
+  return new Set(
+    pack.page_types
+      .filter(pt => !isExtractable(pt.extractable))
+      .map(pt => pt.name),
+  );
+}
+
+/**
  * Convenience predicate: is this type facts-extractable per the
  * active pack? Avoids creating a Set on every call when the caller
  * only has a manifest, not a precomputed Set.

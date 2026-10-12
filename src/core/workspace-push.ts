@@ -59,7 +59,7 @@ import {
 import { dirname, join, resolve } from 'path';
 import { createHash, randomBytes } from 'crypto';
 import { execFileSync } from './spawn.ts';
-import { GIT_ENV, GIT_ENV_AUTH, GIT_SSRF_SUBCOMMAND_FLAGS, detectDefaultBranch, divergenceSafePull } from './git-remote.ts';
+import { GIT_ENV, GIT_ENV_AUTH, GIT_SSRF_SUBCOMMAND_FLAGS, detectDefaultBranch, divergenceSafePull, type PullStrategy } from './git-remote.ts';
 import { loadConfigFileOnly } from './config.ts';
 import { ensureGbrainHome } from './gbrain-home.ts';
 import { invalidateBackupStatus, loadBackupStatus } from './backup/status-file.ts';
@@ -150,6 +150,8 @@ export interface WorkspacePushOpts {
   dir: string;
   /** Branch to pull/push; default `detectDefaultBranch(root)`. */
   branch?: string;
+  /** How the pre-push pull reconciles divergence (`sources.config.pull_strategy`, #5429); default rebase. */
+  pullStrategy?: PullStrategy;
   /** Escape hatch for self-hosted git: skip the gh privacy verification [G8]. Logged. */
   allowUnverifiedRemote?: boolean;
   commitMessage?: string;
@@ -991,7 +993,7 @@ export async function workspacePush(opts: WorkspacePushOpts): Promise<WorkspaceP
     // 6. pull AFTER commit [CX2-7] — a dirty tree is impossible here short of
     // a mid-run writer, and divergenceSafePull handles that as skipped_dirty.
     try {
-      const pull = divergenceSafePull(root, branch);
+      const pull = divergenceSafePull(root, branch, { strategy: opts.pullStrategy });
       if (pull.status === 'conflict_aborted') {
         return finish({
           ok: false, status: 'pull_conflict', repoRoot: root, branch, committed,

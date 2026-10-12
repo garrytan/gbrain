@@ -295,6 +295,26 @@ agent runs `gbrain config set sync.include_hidden '.github/'`.
 Everything else is ordinary synced content — including `ops/` (the bundled
 daily-task-manager skill files its canonical page under `ops/tasks`).
 
+### Renaming a page
+
+A page's slug is its file path, so a rename is a file move (#5915). In the
+source's checkout, `git mv old/path.md new/path.md`, commit, and run
+`gbrain sync --source <id>` (`--no-pull` on a managed source). Sync pairs the
+vanished origin with the new file through the page's own origin and
+`frontmatter.id`, so the move is imported onto the same page row: its links,
+facts, timeline and version history survive, and nothing is deleted and
+re-created. On a managed source the import is prepared against the moved page
+and refuses `revision_conflict` if that page changed after the sync admitted
+it; the Git projection is the sync's own commit. Keep `frontmatter.id` as it
+is; a changed id is a different page.
+
+`put_page` at a new slug is not a rename. A content-only write cannot prove the
+old file is gone, so a create-only `put_page` whose `frontmatter.id` and
+content match an existing page resolves to that page (`duplicate`: the receipt
+names the existing slug), and the same id with different content indexes both
+pages (`shared_id`). There is no `rename_page` operation; a write-side rename
+would need the moved file as evidence, which is what the sync route provides.
+
 ### Sync is Idempotent — and Resumable
 
 Concurrent runs are safe. Two syncs on the same commit no-op because content
@@ -489,6 +509,26 @@ vars — incident-time escape hatches, not everyday knobs.
    brain current runs the refresh instead of `git pull`.
 
    **Say to your agent:** *"Bring my notes source up to date with its remote."*
+
+9. **Turn automatic pulls off for every source.** On an unmanaged brain,
+   autopilot's freshness sync and its per-source cycle run `git pull` for a
+   source that has a remote URL. A checkout you keep current yourself (a
+   deploy script, a mirror, a branch you rebase by hand) should not be
+   pulled behind your back:
+
+   ```bash
+   gbrain config set autopilot.git_pull false   # default: true
+   ```
+
+   Automatic syncs then index the local checkout as it is (`pull: false` on
+   every queued sync job), and the daemon prints `git_pull: off
+   (autopilot.git_pull=false)` once per tick (`{"event":"git_pull_disabled"}`
+   under `--json`). Per-source `syncEnabled: false` still removes a source from
+   automatic sync entirely; an explicit `gbrain sync --source <id>` keeps its
+   own `--pull`/`--no-pull` choice. Managed brains never pull automatically
+   whatever this key says (item 8).
+
+   **Say to your agent:** *"Stop autopilot from git-pulling my sources; I update the checkouts myself."*
 
 ## How to Verify
 

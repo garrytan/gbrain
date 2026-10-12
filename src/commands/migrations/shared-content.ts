@@ -6,8 +6,11 @@ import type { OrchestratorOpts } from './types.ts';
 import { exportDatabaseContent } from '../../core/shared-skills/migration-export.ts';
 import { PgliteBusyError } from '../../core/pglite-lock.ts';
 import { shellQuote } from '../../core/agent-output.ts';
+import { MIGRATION_OPT_OUT_KEYS } from '../../core/migration-ledger.ts';
 
 export const SHARED_CONTENT_MIGRATION_VERSION = '0.53.0';
+/** #6466: `gbrain config set shared_skills.migration.enabled false` declines this migration (brain-level, every machine). */
+export const SHARED_CONTENT_MIGRATION_OPT_OUT_KEY = MIGRATION_OPT_OUT_KEYS[SHARED_CONTENT_MIGRATION_VERSION]!;
 
 /** Read-only: prints every source's remaining stage, its reason and the command for it (`pending_actions`). */
 export const SHARED_CONTENT_INSPECT_ARGV = ['gbrain', 'apply-migrations', '--migration', SHARED_CONTENT_MIGRATION_VERSION, '--dry-run', '--json'];
@@ -44,6 +47,7 @@ export const sharedContentMigration: Migration = {
   },
   preview: options => inspectSharedContentMigration(true, options.dbOnlyExport, options.acceptReviewedInventory),
   reconcile: true,
+  optOut: { key: SHARED_CONTENT_MIGRATION_OPT_OUT_KEY },
   orchestrator: async options => {
     try {
       const report = await inspectSharedContentMigration(options.dryRun, options.dbOnlyExport, options.acceptReviewedInventory);

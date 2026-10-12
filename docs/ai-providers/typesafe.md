@@ -85,6 +85,35 @@ that already opted in. If the pinned id stops being served, calls fail with
 `pinned_model_unavailable` and doctor names the recovery. See
 [troubleshooting](../guides/system-one.md#pinned_model_unavailable).
 
+## Self-hosted or gateway-fronted endpoints
+
+Two settings route decide at a Jev served somewhere other than
+`api.typesafe.ai` (an inference gateway, an on-prem deployment):
+
+- `provider_base_urls.typesafe` (in `~/.gbrain/config.json`, or
+  `gbrain config set provider_base_urls.typesafe https://gw.example.com/typesafe/v1`)
+  replaces the origin; the `/systemone` path is appended to it. The reranker
+  path uses the same setting.
+- `decide.provider` accepts any model id the endpoint publishes, not only
+  `jev-<version>`: `typesafe:oc/jev-1.13-free`, `typesafe:jev_custom`. The id
+  may contain letters, digits, `.`, `_`, `@`, `/` and `-`; no whitespace and
+  no second colon. The endpoint still has to answer with the resolved model
+  name, and an id it does not serve fails with `pinned_model_unavailable`.
+
+An id that GBrain ships no tariff for has no price, so its spend cannot be
+metered against `decide.budget.daily_usd`: decide refuses it before anything
+is sent, with `unpriced_model`, until you register the price the endpoint
+bills you:
+
+```bash
+gbrain pricing set typesafe:oc/jev-1.13-free --rate 0.05 --source https://gw.example.com/pricing
+gbrain decide probe
+```
+
+The spend ledger then records that price per call; it never records $0 for
+a model whose cost is unknown. See
+[troubleshooting](../guides/system-one.md#unpriced_model).
+
 ## Reranker setup
 
 Carried from #5178 by [dsandrade](https://github.com/dsandrade), who designed

@@ -68,6 +68,7 @@
           "countChunklessPagesWithContent: (opts?: { sourceId?: string; }) => Promise<number>",
           "countKeywordPages: (query: string, opts?: SearchOpts & { timeoutMs?: number; }) => Promise<number>",
           "countStaleChunks: (opts?: { sourceId?: string; signature?: string; includeNullSignature?: boolean; }) => Promise<number>",
+          "countStaleFrontmatterKeyPages: (opts: { sourceIds: string[]; }) => Promise<Array<{ source_id: string; n: number; }>>",
           "countStalePagesForExtraction: (opts?: { sourceId?: string; versionTs?: string; attendance?: \"exclude\" | \"blocked\"; }) => Promise<number>",
           "countStaleTakes: (opts?: StaleTakeOpts) => Promise<number>",
           "countUnconsolidatedFacts: (source_id: string) => Promise<number>",
@@ -97,8 +98,8 @@
           "getBacklinkCounts: (pageIds: number[], opts?: PageReadScope) => Promise<Map<number, number>>",
           "getBacklinks: (slug: string, opts?: LinkReadScope) => Promise<Link[]>",
           "getCalibrationCurve: (opts: CalibrationCurveOpts, allowList: string[] | undefined) => Promise<CalibrationBucket[]>",
-          "getCalleesOf: (qualifiedName: string, opts?: { sourceId?: string; allSources?: boolean; limit?: number; bareFallback?: boolean; }) => Promise<CodeEdgeResult[]>",
-          "getCallersOf: (qualifiedName: string, opts?: { sourceId?: string; allSources?: boolean; limit?: number; }) => Promise<CodeEdgeResult[]>",
+          "getCalleesOf: (qualifiedName: string, opts?: { sourceId?: string; allSources?: boolean; limit?: number; bareFallback?: boolean; chunkId?: number; }) => Promise<CodeEdgeResult[]>",
+          "getCallersOf: (qualifiedName: string, opts?: { sourceId?: string; allSources?: boolean; limit?: number; chunkId?: number; }) => Promise<CodeEdgeResult[]>",
           "getChunkWindows: (requests: ChunkWindowRequest[], opts: ChunkWindowOpts) => Promise<ChunkWindowPage[]>",
           "getChunks: (slug: string, opts?: PageReadScope & { includeEmbedding?: boolean; includeUnsealed?: boolean; }) => Promise<Chunk[]>",
           "getChunksWithEmbeddings: (slug: string, opts?: { sourceId?: string; includeUnsealed?: boolean; }) => Promise<Chunk[]>",
@@ -154,6 +155,7 @@
           "listPages: (filters?: PageFilters) => Promise<Page[]>",
           "listPrefixSampledPages: (opts: DomainBankSampleOpts) => Promise<DomainBankRow[]>",
           "listStaleChunks: (opts?: { batchSize?: number; afterPageId?: number; afterChunkIndex?: number; sourceId?: string; orderBy?: \"page_id\" | \"updated_desc\"; afterUpdatedAt?: string | null; }) => Promise<StaleChunkRow[]>",
+          "listStaleFrontmatterKeyPages: (opts: { sourceId: string; afterId: number; limit: number; }) => Promise<Array<{ id: number; slug: string; keys: string[]; }>>",
           "listStalePagesForExtraction: (opts: { batchSize: number; afterPageId?: number; sourceId?: string; versionTs?: string; }) => Promise<StalePageRow[]>",
           "listStaleTakes: (opts?: StaleTakeOpts) => Promise<StaleTakeRow[]>",
           "listSupersessions: (source_id: string, opts?: { since?: Date; limit?: number; visibility?: FactVisibility[]; eligibility?: FactListOpts[\"eligibility\"]; excludePrivate?: boolean; }) => Promise<FactRow[]>",
@@ -208,6 +210,7 @@
           "setPageEmbeddingSignature: (slug: string, opts: { sourceId?: string; signature: string; }) => Promise<void>",
           "softDeletePage: (slug: string, opts?: { sourceId?: string; }) => Promise<{ slug: string; } | null>",
           "softDeletePages: (slugs: string[], opts: { sourceId: string; }) => Promise<string[]>",
+          "stripStaleFrontmatterKeys: (opts: { sourceId: string; ids: number[]; }) => Promise<number>",
           "sumStaleChunkChars: (opts?: { sourceId?: string; signature?: string; includeNullSignature?: boolean; }) => Promise<number>",
           "supersedeTake: (pageId: number, oldRow: number, newRow: Omit<TakeBatchInput, \"page_id\" | \"row_num\" | \"superseded_by\">) => Promise<{ oldRow: number; newRow: number; }>",
           "sweepContradictionCache: () => Promise<number>",
@@ -1034,6 +1037,7 @@
           "countChunklessPagesWithContent: (opts?: { sourceId?: string; }) => Promise<number>",
           "countKeywordPages: (query: string, opts?: SearchOpts & { timeoutMs?: number; }) => Promise<number>",
           "countStaleChunks: (opts?: { sourceId?: string; signature?: string; includeNullSignature?: boolean; }) => Promise<number>",
+          "countStaleFrontmatterKeyPages: (opts: { sourceIds: string[]; }) => Promise<{ source_id: string; n: number; }[]>",
           "countStalePagesForExtraction: (opts?: { sourceId?: string; versionTs?: string; attendance?: \"exclude\" | \"blocked\"; }) => Promise<number>",
           "countStaleTakes: (opts?: StaleTakeOpts) => Promise<number>",
           "countUnconsolidatedFacts: (source_id: string) => Promise<number>",
@@ -1064,8 +1068,8 @@
           "getBacklinkCounts: (pageIds: number[], opts?: PageReadScope) => Promise<Map<number, number>>",
           "getBacklinks: (slug: string, opts?: LinkReadScope) => Promise<Link[]>",
           "getCalibrationCurve: (opts: CalibrationCurveOpts, allowList: string[] | undefined) => Promise<CalibrationBucket[]>",
-          "getCalleesOf: (qualifiedName: string, opts?: { sourceId?: string; allSources?: boolean; limit?: number; bareFallback?: boolean; }) => Promise<CodeEdgeResult[]>",
-          "getCallersOf: (qualifiedName: string, opts?: { sourceId?: string; allSources?: boolean; limit?: number; }) => Promise<CodeEdgeResult[]>",
+          "getCalleesOf: (qualifiedName: string, opts?: { sourceId?: string; allSources?: boolean; limit?: number; bareFallback?: boolean; chunkId?: number; }) => Promise<CodeEdgeResult[]>",
+          "getCallersOf: (qualifiedName: string, opts?: { sourceId?: string; allSources?: boolean; limit?: number; chunkId?: number; }) => Promise<CodeEdgeResult[]>",
           "getChunkWindows: (requests: ChunkWindowRequest[], opts: ChunkWindowOpts) => Promise<ChunkWindowPage[]>",
           "getChunks: (slug: string, opts?: { sourceId?: string; sourceIds?: string[]; includeEmbedding?: boolean; excludePrivate?: boolean; requireSafeChunks?: boolean; includeUnsealed?: boolean; }) => Promise<Chunk[]>",
           "getChunksWithEmbeddings: (slug: string, opts?: { sourceId?: string; includeUnsealed?: boolean; }) => Promise<Chunk[]>",
@@ -1122,6 +1126,7 @@
           "listPages: (filters?: PageFilters) => Promise<Page[]>",
           "listPrefixSampledPages: (opts: DomainBankSampleOpts) => Promise<DomainBankRow[]>",
           "listStaleChunks: (opts?: { batchSize?: number; afterPageId?: number; afterChunkIndex?: number; sourceId?: string; orderBy?: \"page_id\" | \"updated_desc\"; afterUpdatedAt?: string | null; }) => Promise<StaleChunkRow[]>",
+          "listStaleFrontmatterKeyPages: (opts: { sourceId: string; afterId: number; limit: number; }) => Promise<{ id: number; slug: string; keys: string[]; }[]>",
           "listStalePagesForExtraction: (opts: { batchSize: number; afterPageId?: number; sourceId?: string; versionTs?: string; }) => Promise<StalePageRow[]>",
           "listStaleTakes: (opts?: StaleTakeOpts) => Promise<StaleTakeRow[]>",
           "listSupersessions: (source_id: string, opts?: { since?: Date; limit?: number; visibility?: (\"private\" | \"world\")[]; eligibility?: FactListOpts[\"eligibility\"]; excludePrivate?: boolean; }) => Promise<FactRow[]>",
@@ -1215,6 +1220,7 @@
           "softDeletePage: (slug: string, opts?: { sourceId?: string; }) => Promise<{ slug: string; } | null>",
           "softDeletePages: (slugs: string[], opts: { sourceId: string; }) => Promise<string[]>",
           "sql: postgres.Sql<{}>",
+          "stripStaleFrontmatterKeys: (opts: { sourceId: string; ids: number[]; }) => Promise<number>",
           "sumStaleChunkChars: (opts?: { sourceId?: string; signature?: string; includeNullSignature?: boolean; }) => Promise<number>",
           "supersedeTake: (pageId: number, oldRow: number, newRow: Omit<TakeBatchInput, \"page_id\" | \"row_num\" | \"superseded_by\">) => Promise<{ oldRow: number; newRow: number; }>",
           "sweepContradictionCache: () => Promise<number>",
@@ -1638,7 +1644,7 @@
         "kind": "type",
         "name": "ChatBlock",
         "signature": [
-          "{ type: \"text\"; text: string; providerMetadata?: Record<string, unknown>; } | { type: \"reasoning\"; text: string; providerMetadata?: Record<string, unknown>; } | { type: \"tool-call\"; toolCallId: string; toolName: string; input: unknown; providerMetadata?: Record<string, unknown>; } | { type: \"tool-result\"; toolCallId: string; toolName: string; output: unknown; isError?: boolean; providerMetadata?: Record<string, unknown>; }"
+          "{ type: \"text\"; text: string; cache?: true; providerMetadata?: Record<string, unknown>; } | { type: \"reasoning\"; text: string; providerMetadata?: Record<string, unknown>; } | { type: \"tool-call\"; toolCallId: string; toolName: string; input: unknown; providerMetadata?: Record<string, unknown>; } | { type: \"tool-result\"; toolCallId: string; toolName: string; output: unknown; isError?: boolean; providerMetadata?: Record<string, unknown>; }"
         ]
       },
       {
@@ -1899,7 +1905,7 @@
         "kind": "type",
         "name": "ToolLoopStopReason",
         "signature": [
-          "\"length\" | \"unrecoverable\" | \"end\" | \"refusal\" | \"content_filter\" | \"max_turns\" | \"aborted\""
+          "\"length\" | \"unrecoverable\" | \"end\" | \"refusal\" | \"content_filter\" | \"max_turns\" | \"aborted\" | \"empty_response\""
         ]
       },
       {
@@ -2380,7 +2386,7 @@
         "kind": "function",
         "name": "toModelMessages",
         "signature": [
-          "(messages: ChatMessage[]) => unknown[]"
+          "(messages: ChatMessage[], cacheControl?: { type: \"ephemeral\"; ttl?: \"5m\" | \"1h\"; }) => unknown[]"
         ]
       },
       {
@@ -2965,6 +2971,13 @@
       },
       {
         "kind": "variable",
+        "name": "ANTHROPIC_LONG_PROMPT_THRESHOLD_TOKENS",
+        "signature": [
+          "100000"
+        ]
+      },
+      {
+        "kind": "variable",
         "name": "CANONICAL_PRICING",
         "signature": [
           "Record<string, ModelPricing>"
@@ -2976,6 +2989,18 @@
           "cache_read?: number | undefined",
           "cache_write?: number | undefined",
           "input: number",
+          "output: number",
+          "threshold_tokens: number"
+        ],
+        "name": "LongPromptTier"
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "cache_read?: number | undefined",
+          "cache_write?: number | undefined",
+          "input: number",
+          "long_prompt?: LongPromptTier | undefined",
           "output: number"
         ],
         "name": "ModelPricing"
@@ -2985,6 +3010,13 @@
         "name": "canonicalLookup",
         "signature": [
           "(modelId: string | null | undefined) => ModelPricing | undefined"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "priceAtPromptSize",
+        "signature": [
+          "(pricing: ModelPricing, inputTokens: number | null | undefined) => ModelPricing"
         ]
       }
     ],
@@ -3275,6 +3307,7 @@
           "countChunklessPagesWithContent: (opts?: { sourceId?: string; }) => Promise<number>",
           "countKeywordPages: (query: string, opts?: SearchOpts & { timeoutMs?: number; }) => Promise<number>",
           "countStaleChunks: (opts?: { sourceId?: string; signature?: string; includeNullSignature?: boolean; }) => Promise<number>",
+          "countStaleFrontmatterKeyPages: (opts: { sourceIds: string[]; }) => Promise<Array<{ source_id: string; n: number; }>>",
           "countStalePagesForExtraction: (opts?: { sourceId?: string; versionTs?: string; attendance?: \"exclude\" | \"blocked\"; }) => Promise<number>",
           "countStaleTakes: (opts?: StaleTakeOpts) => Promise<number>",
           "countUnconsolidatedFacts: (source_id: string) => Promise<number>",
@@ -3304,8 +3337,8 @@
           "getBacklinkCounts: (pageIds: number[], opts?: PageReadScope) => Promise<Map<number, number>>",
           "getBacklinks: (slug: string, opts?: LinkReadScope) => Promise<Link[]>",
           "getCalibrationCurve: (opts: CalibrationCurveOpts, allowList: string[] | undefined) => Promise<CalibrationBucket[]>",
-          "getCalleesOf: (qualifiedName: string, opts?: { sourceId?: string; allSources?: boolean; limit?: number; bareFallback?: boolean; }) => Promise<CodeEdgeResult[]>",
-          "getCallersOf: (qualifiedName: string, opts?: { sourceId?: string; allSources?: boolean; limit?: number; }) => Promise<CodeEdgeResult[]>",
+          "getCalleesOf: (qualifiedName: string, opts?: { sourceId?: string; allSources?: boolean; limit?: number; bareFallback?: boolean; chunkId?: number; }) => Promise<CodeEdgeResult[]>",
+          "getCallersOf: (qualifiedName: string, opts?: { sourceId?: string; allSources?: boolean; limit?: number; chunkId?: number; }) => Promise<CodeEdgeResult[]>",
           "getChunkWindows: (requests: ChunkWindowRequest[], opts: ChunkWindowOpts) => Promise<ChunkWindowPage[]>",
           "getChunks: (slug: string, opts?: PageReadScope & { includeEmbedding?: boolean; includeUnsealed?: boolean; }) => Promise<Chunk[]>",
           "getChunksWithEmbeddings: (slug: string, opts?: { sourceId?: string; includeUnsealed?: boolean; }) => Promise<Chunk[]>",
@@ -3361,6 +3394,7 @@
           "listPages: (filters?: PageFilters) => Promise<Page[]>",
           "listPrefixSampledPages: (opts: DomainBankSampleOpts) => Promise<DomainBankRow[]>",
           "listStaleChunks: (opts?: { batchSize?: number; afterPageId?: number; afterChunkIndex?: number; sourceId?: string; orderBy?: \"page_id\" | \"updated_desc\"; afterUpdatedAt?: string | null; }) => Promise<StaleChunkRow[]>",
+          "listStaleFrontmatterKeyPages: (opts: { sourceId: string; afterId: number; limit: number; }) => Promise<Array<{ id: number; slug: string; keys: string[]; }>>",
           "listStalePagesForExtraction: (opts: { batchSize: number; afterPageId?: number; sourceId?: string; versionTs?: string; }) => Promise<StalePageRow[]>",
           "listStaleTakes: (opts?: StaleTakeOpts) => Promise<StaleTakeRow[]>",
           "listSupersessions: (source_id: string, opts?: { since?: Date; limit?: number; visibility?: FactVisibility[]; eligibility?: FactListOpts[\"eligibility\"]; excludePrivate?: boolean; }) => Promise<FactRow[]>",
@@ -3415,6 +3449,7 @@
           "setPageEmbeddingSignature: (slug: string, opts: { sourceId?: string; signature: string; }) => Promise<void>",
           "softDeletePage: (slug: string, opts?: { sourceId?: string; }) => Promise<{ slug: string; } | null>",
           "softDeletePages: (slugs: string[], opts: { sourceId: string; }) => Promise<string[]>",
+          "stripStaleFrontmatterKeys: (opts: { sourceId: string; ids: number[]; }) => Promise<number>",
           "sumStaleChunkChars: (opts?: { sourceId?: string; signature?: string; includeNullSignature?: boolean; }) => Promise<number>",
           "supersedeTake: (pageId: number, oldRow: number, newRow: Omit<TakeBatchInput, \"page_id\" | \"row_num\" | \"superseded_by\">) => Promise<{ oldRow: number; newRow: number; }>",
           "sweepContradictionCache: () => Promise<number>",
@@ -5383,6 +5418,13 @@
         ]
       },
       {
+        "kind": "variable",
+        "name": "RESERVED_FRONTMATTER_KEYS",
+        "signature": [
+          "readonly [\"type\", \"title\", \"tags\", \"slug\"]"
+        ]
+      },
+      {
         "kind": "type",
         "name": "RecoveryKind",
         "signature": [
@@ -5408,6 +5450,13 @@
         "name": "coerceFrontmatterString",
         "signature": [
           "(v: unknown) => string"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "comparableFrontmatter",
+        "signature": [
+          "(frontmatter: Record<string, unknown> | null | undefined) => Record<string, unknown>"
         ]
       },
       {
@@ -6074,7 +6123,7 @@
       {
         "kind": "class",
         "members": [
-          "canonical?: \"unknown\" | \"keyword_candidates_incomplete\" | \"projection_pending\" | \"timeout\" | \"rate_limited\" | \"embedding_disabled\" | \"writer_lock_unavailable\" | \"writer_pool_capacity\" | \"owner_unavailable\" | \"recovery_required\" | \"queue_capacity\" | \"revision_required\" | \"revision_conflict\" | \"idempotency_conflict\" | \"source_changed\" | \"write_pending\" | \"storage_error\" | \"cancelled\" | \"permission_denied\" | \"scope_denied\" | \"invalid_params\" | \"not_found\" | \"page_not_found\" | \"page_identity_changed\" | \"write_claim_lost\" | \"request_too_large\" | \"response_too_large\" | \"writer_registration_required\" | \"writer_identity_invalid\" | \"writer_not_initialized\" | \"writer_coordinator_required\" | \"fact_already_expired\" | \"source_writeback_required\" | \"unsupported_mutation_protocol\" | \"writer_upgrade_required\" | \"writer_not_quiesced\" | \"skill_bundle_required\" | \"take_row_collision\" | \"invalid_source_uri\" | \"writer_admin_locked\" | \"connector_account_changed\" | \"connector_intent_outdated\" | \"checkpoint_validation_timeout\" | \"invalid_connector_text\" | \"connector_holds_exhausted\" | \"connector_fence_below_timeline\" | \"core_budget_exceeded\" | \"core_mark_owner_only\" | \"core_remote_edit_refused\" | \"core_delete_owner_only\" | \"timeline_rows_would_be_removed\" | \"purged_content\" | \"preparation_stalled\" | \"fence_unrenderable\" | \"write_outcome_unknown\" | \"embedding_failed\" | \"bucket_not_found\" | \"database_error\" | \"unknown_transport\" | \"extraction_failed\" | \"fact_not_found\" | \"provenance_required\" | \"unavailable\" | \"budget_unsatisfiable\" | \"embedding_budget_below_worst_case\" | \"access_command_failed\" | \"access_denied_test_user\" | \"access_env_missing\" | \"acknowledgment_unavailable\" | \"admin_policy_enforced\" | \"ambient_capture_off\" | \"ambiguous_id\" | \"ambiguous_ref\" | \"ambiguous_skill\" | \"answer_not_yours\" | \"answer_pending\" | \"answer_unavailable\" | \"api_not_enabled\" | \"approval_required\" | \"autopilot_job_owned_by_other_brain\" | \"budget_below_recent_runtime\" | \"benchmark_duplicate_task_id\" | \"benchmark_empty\" | \"benchmark_exists\" | \"benchmark_judge_llm_no_rubric\" | \"benchmark_judge_qrels_no_expected\" | \"benchmark_judge_rule_no_checks\" | \"benchmark_judge_unknown_kind\" | \"benchmark_malformed\" | \"benchmark_missing_judge\" | \"benchmark_missing_task\" | \"benchmark_missing_task_id\" | \"benchmark_not_found\" | \"benchmark_rule_check_bad_arg\" | \"benchmark_rule_check_malformed\" | \"benchmark_rule_check_unknown_op\" | \"bootstrap_empty\" | \"bootstrap_pending_review\" | \"bridge_ownership_conflict\" | \"cache_quota_exceeded\" | \"catalog_capacity_exceeded\" | \"catalog_unavailable\" | \"changed_since_preview\" | \"chronicle_skipped\" | \"no_pricing\" | \"checkpoint_missing\" | \"claim_already_used\" | \"client_json_unreadable\" | \"client_json_wrong_type\" | \"client_shape_invalid\" | \"code_callees_requires_symbol\" | \"code_callers_requires_symbol\" | \"code_def_requires_symbol\" | \"code_refs_requires_symbol\" | \"code_reused\" | \"colon_slug_windows_write_through\" | \"command_failed\" | \"concurrent_write\" | \"config_error\" | \"confirmation_required\" | \"conflicting_source_scope\" | \"connection_lost\" | \"consent_required\" | \"consent_timeout\" | \"consumers_without_heartbeat\" | \"content_repair_needs_human\" | \"content_rejected\" | \"cost_cap_exceeded\" | \"cost_preview_requires_yes\" | \"cycle_failed\" | \"d_sel_too_small\" | \"delta_cursor_upgrade_required\" | \"demo_graph_failed\" | \"demo_import_failed\" | \"demo_verification_failed\" | \"derived_cap_exhausted\" | \"destination_not_ready\" | \"drain_stalled\" | \"managed_sync_not_moving\" | \"dream_breaker_tripped\" | \"dirty_tree\" | \"effect_not_failed\" | \"embedding_auth_failed\" | \"embedding_configuration\" | \"embedding_model_mismatch\" | \"embedding_plane_split\" | \"embedding_storage_unavailable\" | \"embedding_unavailable\" | \"embedding_unconfigured\" | \"embedding_width_mismatch\" | \"engine_graduated\" | \"eval_suite_unwired\" | \"export_limit\" | \"extractor_identity_mismatch\" | \"facts_absorb_write_refused\" | \"facts_backstop_skipped\" | \"facts_drain_deferred\" | \"facts_drain_job_failed\" | \"facts_payload_expired\" | \"feedback_disabled\" | \"feedback_not_authorized\" | \"fetch_failed\" | \"fix_not_writable\" | \"file_removed_during_scan\" | \"file_too_large\" | \"follow_approval_required\" | \"forget_requires_owner\" | \"frontmatter_slug_conflict\" | \"full_resync_required\" | \"gate_failed\" | \"git_branch_unborn\" | \"git_checkout_required\" | \"git_detached_head\" | \"git_index_locked\" | \"git_index_stale\" | \"git_push_unavailable\" | \"git_target_unsafe\" | \"git_unavailable\" | \"graduation_drain_timeout\" | \"graduation_embedding_dimension_mismatch\" | \"graduation_foreign_host_binding\" | \"graduation_in_progress\" | \"graduation_interrupted\" | \"graduation_rollback_writes_lost\" | \"graduation_source_writer_held\" | \"graduation_split_brain\" | \"graduation_target_auth_failed\" | \"graduation_target_ddl_unreachable\" | \"graduation_target_not_empty\" | \"graduation_target_unsupported\" | \"graduation_unclassified_table\" | \"graduation_unsupported_platform\" | \"graduation_verify_failed\" | \"graph_incomplete\" | \"host_identity_mismatch\" | \"harness_hook_duplicates\" | \"harness_hook_unowned\" | \"held_failed\" | \"held_out_overlaps_benchmark\" | \"held_out_required_for_bundled\" | \"independent_principal_required\" | \"insufficient_scope\" | \"internal\" | \"internal_error\" | \"interrupted\" | \"invalid_acknowledgment\" | \"invalid_client\" | \"invalid_fence\" | \"unclosed_ambiguous_tail\" | \"tail_exposure_approval\" | \"sync_in_progress\" | \"invalid_frontmatter\" | \"invalid_grant_clock_skew\" | \"invalid_grant_revoked\" | \"invalid_grant_testing_expiry\" | \"invalid_rating\" | \"invalid_receipt\" | \"invalid_receipt_transition\" | \"invalid_request\" | \"invalid_source\" | \"invalid_source_pin\" | \"invalid_token\" | \"invalid_write_wait\" | \"legacy_job_selection_invalid\" | \"legacy_jobs_active\" | \"local_conflict\" | \"lock_busy\" | \"loops_extraction_skipped\" | \"maintenance_backpressure\" | \"maintenance_lock_busy\" | \"managed_failure_unsettled\" | \"merge_recommended\" | \"managed_pull_skipped\" | \"manual_only_skipped\" | \"membership_inactive\" | \"membership_not_found\" | \"method_not_allowed\" | \"migration_lease_lost\" | \"migration_failed\" | \"migrations_pending\" | \"migrations_running\" | \"missing_source_scope\" | \"missing_source_value\" | \"models_strict_violation\" | \"no_refresh_token\" | \"no_routing_eval\" | \"no_skill_md\" | \"no_worker\" | \"no_worker_surface\" | \"not_a_git_repo\" | \"not_connected\" | \"no_brain\" | \"overlapping_path\" | \"page_projection_conflict\" | \"parse_error\" | \"parser_regression\" | \"pasted_wrong_url\" | \"payload_too_large\" | \"pattern_claims_pending\" | \"pending_writes\" | \"persistence_write_stall\" | \"schema_lock_blocked\" | \"pg_connection_stuck\" | \"pg_pool_stalled\" | \"pg_statement_build_failed\" | \"pglite_busy\" | \"pglite_vector_index_too_large\" | \"plan_output_failed\" | \"plan_stale\" | \"port_in_use\" | \"preview_changed\" | \"profile_incompatible\" | \"projection_owner_resident\" | \"publication_pending\" | \"purge_blocked_pending_recovery\" | \"question_not_found\" | \"question_owner_only\" | \"receipt_conflict\" | \"receipt_fence_changed\" | \"receipt_fence_required\" | \"receipt_identity_mismatch\" | \"pat_file_unreadable\" | \"redirect_uri_mismatch\" | \"ref_not_in_answer\" | \"refresh_dirty\" | \"refresh_diverged\" | \"refresh_drain_timeout\" | \"refresh_no_upstream\" | \"refresh_not_managed\" | \"refresh_not_owner\" | \"refresh_source_changed\" | \"relay_disabled\" | \"relay_session_expired\" | \"relay_unreachable\" | \"rename_held\" | \"request_already_submitted\" | \"requirements_changed\" | \"requires_local_engine\" | \"resume_spec_mismatch\" | \"revision_unavailable\" | \"scope_missing\" | \"search_cursor_requires_keyword\" | \"search_mode_local_only\" | \"search_offset_over_cap\" | \"serve_port_in_use\" | \"serve_status_only\" | \"setup_harness_unsupported\" | \"setup_hosted_connection\" | \"setup_owner_conflict\" | \"shared_skills_unavailable\" | \"shared_skills_unsupported\" | \"skill_asset_not_found\" | \"skill_candidate_invalid\" | \"skill_not_found\" | \"skill_retention_capacity\" | \"skill_unavailable\" | \"source_binding_required\" | \"source_id_taken\" | \"source_mismatch\" | \"source_not_ready\" | \"source_profile_no_backfill\" | \"source_referenced\" | \"source_root_conflict\" | \"split_bad_ratio\" | \"split_unparseable\" | \"stale_unavailable\" | \"state_mismatch\" | \"sync_not_applicable\" | \"sync_parser_regression\" | \"target_escape\" | \"timeline_comment_markup\" | \"topology_change_required\" | \"transcript_secret_exposure\" | \"triage_unreliable_backoff\" | \"trust_raise_refused\" | \"two_consumers_on_host\" | \"trusted_local_only\" | \"unexpected_file_bytes\" | \"unexpected_staging_bytes\" | \"unknown_command\" | \"unknown_flag\" | \"unknown_method\" | \"unknown_source\" | \"unknown_tool\" | \"unmanaged_path\" | \"unsupported_export_data\" | \"upstream\" | \"verification_failed\" | \"withdrawal_capacity\" | \"withdrawal_provenance\" | \"write_gate_rejected\" | \"write_held\" | \"worktree_dirty\" | \"writer_admin_intent_required\" | \"writer_admin_state_changed\" | \"writer_busy\" | \"writer_identity_publish_failed\" | \"writer_manifest_mismatch\" | \"writer_manifest_rescope_required\" | \"writer_manifest_unsafe\" | \"writer_regrant_required\" | \"writer_transfer_conflict\" | \"writer_transfer_required\" | \"wrong_account_consented\" | \"schema_pack_too_large\" | \"schema_pack_emit_mismatch\" | undefined",
+          "canonical?: \"unknown\" | \"keyword_candidates_incomplete\" | \"projection_pending\" | \"timeout\" | \"rate_limited\" | \"embedding_disabled\" | \"writer_lock_unavailable\" | \"writer_pool_capacity\" | \"owner_unavailable\" | \"recovery_required\" | \"queue_capacity\" | \"revision_required\" | \"revision_conflict\" | \"idempotency_conflict\" | \"source_changed\" | \"write_pending\" | \"storage_error\" | \"cancelled\" | \"permission_denied\" | \"scope_denied\" | \"invalid_params\" | \"not_found\" | \"page_not_found\" | \"page_identity_changed\" | \"write_claim_lost\" | \"request_too_large\" | \"response_too_large\" | \"writer_registration_required\" | \"writer_identity_invalid\" | \"writer_not_initialized\" | \"writer_coordinator_required\" | \"fact_already_expired\" | \"source_writeback_required\" | \"unsupported_mutation_protocol\" | \"writer_upgrade_required\" | \"writer_not_quiesced\" | \"skill_bundle_required\" | \"take_row_collision\" | \"invalid_source_uri\" | \"writer_admin_locked\" | \"connector_account_changed\" | \"connector_intent_outdated\" | \"checkpoint_validation_timeout\" | \"invalid_connector_text\" | \"connector_holds_exhausted\" | \"connector_fence_below_timeline\" | \"core_budget_exceeded\" | \"core_mark_owner_only\" | \"core_remote_edit_refused\" | \"core_delete_owner_only\" | \"timeline_rows_would_be_removed\" | \"purged_content\" | \"preparation_stalled\" | \"fence_unrenderable\" | \"write_outcome_unknown\" | \"embedding_failed\" | \"bucket_not_found\" | \"database_error\" | \"unknown_transport\" | \"extraction_failed\" | \"fact_not_found\" | \"provenance_required\" | \"unavailable\" | \"budget_unsatisfiable\" | \"embedding_budget_below_worst_case\" | \"access_command_failed\" | \"access_denied_test_user\" | \"access_env_missing\" | \"acknowledgment_unavailable\" | \"admin_policy_enforced\" | \"ambient_capture_off\" | \"ambiguous_id\" | \"ambiguous_ref\" | \"ambiguous_skill\" | \"answer_not_yours\" | \"answer_pending\" | \"answer_unavailable\" | \"api_not_enabled\" | \"approval_required\" | \"autopilot_job_owned_by_other_brain\" | \"budget_below_recent_runtime\" | \"backup_dump_failed\" | \"benchmark_duplicate_task_id\" | \"benchmark_empty\" | \"benchmark_exists\" | \"benchmark_judge_llm_no_rubric\" | \"benchmark_judge_qrels_no_expected\" | \"benchmark_judge_rule_no_checks\" | \"benchmark_judge_unknown_kind\" | \"benchmark_malformed\" | \"benchmark_missing_judge\" | \"benchmark_missing_task\" | \"benchmark_missing_task_id\" | \"benchmark_not_found\" | \"benchmark_rule_check_bad_arg\" | \"benchmark_rule_check_malformed\" | \"benchmark_rule_check_unknown_op\" | \"bootstrap_empty\" | \"bootstrap_pending_review\" | \"bridge_ownership_conflict\" | \"cache_quota_exceeded\" | \"catalog_capacity_exceeded\" | \"catalog_unavailable\" | \"changed_since_preview\" | \"chronicle_skipped\" | \"no_pricing\" | \"checkpoint_missing\" | \"claim_already_used\" | \"client_json_unreadable\" | \"client_json_wrong_type\" | \"client_shape_invalid\" | \"code_callees_requires_symbol\" | \"code_callers_requires_symbol\" | \"code_def_requires_symbol\" | \"code_refs_requires_symbol\" | \"code_reused\" | \"colon_slug_windows_write_through\" | \"command_failed\" | \"concurrent_write\" | \"config_error\" | \"confirmation_required\" | \"conflicting_source_scope\" | \"connection_lost\" | \"consent_required\" | \"consent_timeout\" | \"consumers_without_heartbeat\" | \"content_repair_needs_human\" | \"content_rejected\" | \"cost_cap_exceeded\" | \"cost_preview_requires_yes\" | \"cycle_failed\" | \"d_sel_too_small\" | \"delta_cursor_upgrade_required\" | \"demo_graph_failed\" | \"demo_import_failed\" | \"demo_verification_failed\" | \"derived_cap_exhausted\" | \"destination_not_ready\" | \"drain_stalled\" | \"managed_sync_not_moving\" | \"dream_breaker_tripped\" | \"dirty_tree\" | \"effect_not_failed\" | \"embedding_auth_failed\" | \"embedding_configuration\" | \"embedding_model_mismatch\" | \"embedding_plane_split\" | \"embedding_storage_unavailable\" | \"embedding_unavailable\" | \"embedding_unconfigured\" | \"embedding_width_mismatch\" | \"engine_graduated\" | \"eval_suite_unwired\" | \"export_limit\" | \"extractor_identity_mismatch\" | \"facts_absorb_write_refused\" | \"facts_backstop_skipped\" | \"facts_drain_deferred\" | \"facts_drain_job_failed\" | \"facts_payload_expired\" | \"feedback_disabled\" | \"feedback_not_authorized\" | \"fetch_failed\" | \"fix_not_writable\" | \"file_removed_during_scan\" | \"file_too_large\" | \"follow_approval_required\" | \"forget_requires_owner\" | \"frontmatter_slug_conflict\" | \"full_resync_required\" | \"gate_failed\" | \"git_branch_unborn\" | \"git_checkout_required\" | \"git_detached_head\" | \"git_index_locked\" | \"git_index_stale\" | \"git_push_unavailable\" | \"git_target_unsafe\" | \"git_unavailable\" | \"graduation_drain_timeout\" | \"graduation_embedding_dimension_mismatch\" | \"graduation_foreign_host_binding\" | \"graduation_in_progress\" | \"graduation_interrupted\" | \"graduation_rollback_writes_lost\" | \"graduation_source_writer_held\" | \"graduation_split_brain\" | \"graduation_target_auth_failed\" | \"graduation_target_ddl_unreachable\" | \"graduation_target_not_empty\" | \"graduation_target_unsupported\" | \"graduation_unclassified_table\" | \"graduation_unsupported_platform\" | \"graduation_verify_failed\" | \"graph_incomplete\" | \"host_identity_mismatch\" | \"harness_hook_duplicates\" | \"harness_hook_unowned\" | \"held_failed\" | \"held_out_overlaps_benchmark\" | \"held_out_required_for_bundled\" | \"independent_principal_required\" | \"insufficient_scope\" | \"internal\" | \"internal_error\" | \"interrupted\" | \"invalid_acknowledgment\" | \"invalid_client\" | \"invalid_fence\" | \"unclosed_ambiguous_tail\" | \"tail_exposure_approval\" | \"sync_in_progress\" | \"invalid_frontmatter\" | \"invalid_grant_clock_skew\" | \"invalid_grant_revoked\" | \"invalid_grant_testing_expiry\" | \"invalid_rating\" | \"invalid_receipt\" | \"invalid_receipt_transition\" | \"invalid_request\" | \"invalid_source\" | \"invalid_source_pin\" | \"invalid_token\" | \"invalid_write_wait\" | \"legacy_job_selection_invalid\" | \"legacy_jobs_active\" | \"local_conflict\" | \"lock_busy\" | \"loops_extraction_skipped\" | \"maintenance_backpressure\" | \"maintenance_lock_busy\" | \"managed_failure_unsettled\" | \"merge_recommended\" | \"managed_pull_skipped\" | \"manual_only_skipped\" | \"membership_inactive\" | \"membership_not_found\" | \"method_not_allowed\" | \"migration_lease_lost\" | \"migration_declined\" | \"migration_failed\" | \"migrations_pending\" | \"migrations_running\" | \"missing_source_scope\" | \"missing_source_value\" | \"models_strict_violation\" | \"no_refresh_token\" | \"no_routing_eval\" | \"no_skill_md\" | \"no_worker\" | \"no_worker_surface\" | \"not_a_git_repo\" | \"not_connected\" | \"no_brain\" | \"overlapping_path\" | \"page_projection_conflict\" | \"parse_error\" | \"parser_regression\" | \"pasted_wrong_url\" | \"payload_too_large\" | \"pattern_claims_pending\" | \"pending_writes\" | \"persistence_write_stall\" | \"schema_lock_blocked\" | \"pg_connection_stuck\" | \"pg_pool_stalled\" | \"pg_statement_build_failed\" | \"pglite_busy\" | \"pglite_vector_index_too_large\" | \"plan_output_failed\" | \"plan_stale\" | \"port_in_use\" | \"preview_changed\" | \"profile_incompatible\" | \"projection_owner_resident\" | \"publication_pending\" | \"purge_blocked_pending_recovery\" | \"question_not_found\" | \"question_owner_only\" | \"receipt_conflict\" | \"receipt_fence_changed\" | \"receipt_fence_required\" | \"receipt_identity_mismatch\" | \"pat_file_unreadable\" | \"redirect_uri_mismatch\" | \"ref_not_in_answer\" | \"refresh_dirty\" | \"refresh_diverged\" | \"refresh_drain_timeout\" | \"refresh_no_upstream\" | \"refresh_not_managed\" | \"refresh_not_owner\" | \"refresh_source_changed\" | \"relay_disabled\" | \"relay_session_expired\" | \"relay_unreachable\" | \"rename_held\" | \"request_already_submitted\" | \"requirements_changed\" | \"requires_local_engine\" | \"resume_spec_mismatch\" | \"revision_unavailable\" | \"scope_missing\" | \"search_cursor_requires_keyword\" | \"search_mode_local_only\" | \"search_offset_over_cap\" | \"serve_port_in_use\" | \"serve_status_only\" | \"setup_harness_unsupported\" | \"setup_hosted_connection\" | \"setup_owner_conflict\" | \"shared_skills_unavailable\" | \"shared_skills_unsupported\" | \"skill_asset_not_found\" | \"skill_candidate_invalid\" | \"skill_not_found\" | \"skill_retention_capacity\" | \"skill_unavailable\" | \"source_binding_required\" | \"source_id_taken\" | \"source_mismatch\" | \"source_not_ready\" | \"source_profile_no_backfill\" | \"source_referenced\" | \"source_root_conflict\" | \"split_bad_ratio\" | \"split_unparseable\" | \"stale_unavailable\" | \"state_mismatch\" | \"sync_not_applicable\" | \"sync_parser_regression\" | \"target_escape\" | \"timeline_comment_markup\" | \"topology_change_required\" | \"transcript_secret_exposure\" | \"triage_unreliable_backoff\" | \"trust_raise_refused\" | \"two_consumers_on_host\" | \"trusted_local_only\" | \"unexpected_file_bytes\" | \"unexpected_staging_bytes\" | \"unknown_command\" | \"unknown_flag\" | \"unknown_method\" | \"unknown_source\" | \"unknown_tool\" | \"unpriced_model\" | \"unmanaged_path\" | \"unsupported_export_data\" | \"upstream\" | \"verification_failed\" | \"withdrawal_capacity\" | \"withdrawal_provenance\" | \"write_gate_rejected\" | \"write_held\" | \"worktree_dirty\" | \"writer_admin_intent_required\" | \"writer_admin_state_changed\" | \"writer_busy\" | \"writer_identity_publish_failed\" | \"writer_manifest_mismatch\" | \"writer_manifest_rescope_required\" | \"writer_manifest_unsafe\" | \"writer_regrant_required\" | \"writer_transfer_conflict\" | \"writer_transfer_required\" | \"wrong_account_consented\" | \"schema_pack_too_large\" | \"schema_pack_emit_mismatch\" | undefined",
           "canonicalCode: string",
           "cause?: unknown",
           "code: ErrorCode",
@@ -6293,6 +6342,7 @@
           "countChunklessPagesWithContent: (opts?: { sourceId?: string; }) => Promise<number>",
           "countKeywordPages: (query: string, opts?: SearchOpts & { timeoutMs?: number; }) => Promise<number>",
           "countStaleChunks: (opts?: { sourceId?: string; signature?: string; includeNullSignature?: boolean; }) => Promise<number>",
+          "countStaleFrontmatterKeyPages: (opts: { sourceIds: string[]; }) => Promise<{ source_id: string; n: number; }[]>",
           "countStalePagesForExtraction: (opts?: { sourceId?: string; versionTs?: string; attendance?: \"exclude\" | \"blocked\"; }) => Promise<number>",
           "countStaleTakes: (opts?: StaleTakeOpts) => Promise<number>",
           "countUnconsolidatedFacts: (source_id: string) => Promise<number>",
@@ -6323,8 +6373,8 @@
           "getBacklinkCounts: (pageIds: number[], opts?: PageReadScope) => Promise<Map<number, number>>",
           "getBacklinks: (slug: string, opts?: LinkReadScope) => Promise<Link[]>",
           "getCalibrationCurve: (opts: CalibrationCurveOpts, allowList: string[] | undefined) => Promise<CalibrationBucket[]>",
-          "getCalleesOf: (qualifiedName: string, opts?: { sourceId?: string; allSources?: boolean; limit?: number; bareFallback?: boolean; }) => Promise<CodeEdgeResult[]>",
-          "getCallersOf: (qualifiedName: string, opts?: { sourceId?: string; allSources?: boolean; limit?: number; }) => Promise<CodeEdgeResult[]>",
+          "getCalleesOf: (qualifiedName: string, opts?: { sourceId?: string; allSources?: boolean; limit?: number; bareFallback?: boolean; chunkId?: number; }) => Promise<CodeEdgeResult[]>",
+          "getCallersOf: (qualifiedName: string, opts?: { sourceId?: string; allSources?: boolean; limit?: number; chunkId?: number; }) => Promise<CodeEdgeResult[]>",
           "getChunkWindows: (requests: ChunkWindowRequest[], opts: ChunkWindowOpts) => Promise<ChunkWindowPage[]>",
           "getChunks: (slug: string, opts?: { sourceId?: string; sourceIds?: string[]; includeEmbedding?: boolean; excludePrivate?: boolean; requireSafeChunks?: boolean; includeUnsealed?: boolean; }) => Promise<Chunk[]>",
           "getChunksWithEmbeddings: (slug: string, opts?: { sourceId?: string; includeUnsealed?: boolean; }) => Promise<Chunk[]>",
@@ -6380,6 +6430,7 @@
           "listPages: (filters?: PageFilters) => Promise<Page[]>",
           "listPrefixSampledPages: (opts: DomainBankSampleOpts) => Promise<DomainBankRow[]>",
           "listStaleChunks: (opts?: { batchSize?: number; afterPageId?: number; afterChunkIndex?: number; sourceId?: string; orderBy?: \"page_id\" | \"updated_desc\"; afterUpdatedAt?: string | null; }) => Promise<StaleChunkRow[]>",
+          "listStaleFrontmatterKeyPages: (opts: { sourceId: string; afterId: number; limit: number; }) => Promise<{ id: number; slug: string; keys: string[]; }[]>",
           "listStalePagesForExtraction: (opts: { batchSize: number; afterPageId?: number; sourceId?: string; versionTs?: string; }) => Promise<StalePageRow[]>",
           "listStaleTakes: (opts?: StaleTakeOpts) => Promise<StaleTakeRow[]>",
           "listSupersessions: (source_id: string, opts?: { since?: Date; limit?: number; visibility?: (\"private\" | \"world\")[]; eligibility?: FactListOpts[\"eligibility\"]; excludePrivate?: boolean; }) => Promise<FactRow[]>",
@@ -6466,6 +6517,7 @@
           "setPageEmbeddingSignature: (slug: string, opts: { sourceId?: string; signature: string; }) => Promise<void>",
           "softDeletePage: (slug: string, opts?: { sourceId?: string; }) => Promise<{ slug: string; } | null>",
           "softDeletePages: (slugs: string[], opts: { sourceId: string; }) => Promise<string[]>",
+          "stripStaleFrontmatterKeys: (opts: { sourceId: string; ids: number[]; }) => Promise<number>",
           "sumStaleChunkChars: (opts?: { sourceId?: string; signature?: string; includeNullSignature?: boolean; }) => Promise<number>",
           "supersedeTake: (pageId: number, oldRow: number, newRow: Omit<TakeBatchInput, \"page_id\" | \"row_num\" | \"superseded_by\">) => Promise<{ oldRow: number; newRow: number; }>",
           "sweepContradictionCache: () => Promise<number>",
@@ -7738,6 +7790,7 @@
           "cost_usd?: number | undefined",
           "diagnostics: { pagesFromHybrid: number; takesFromKeyword: number; takesFromVector: number; graphHits: number; }",
           "evidence_delivery?: DeliveryMeta | undefined",
+          "evidence_truncated?: boolean | undefined",
           "extractive?: ExtractiveFallback | undefined",
           "feedback_evidence?: { source_id: string; slug: string; content_hash: string | null; }[] | undefined",
           "gaps: string[]",

@@ -4,6 +4,7 @@ import type { JournalLimits } from './model.ts';
 import { publicationConcurrency } from './pool-capacity.ts';
 import { WRITER_INSPECTION_HINT } from './admin-intent.ts';
 import { writeHealth } from './health.ts';
+import { inspectPersistenceBrain } from './managed-mode.ts';
 import { claimStall, claimStateOf, isOwnerThisProcess, sqlLabel, type ClaimRow, type ClaimState, type ClaimStall } from './claim-phase.ts';
 import { cliRenderContext, renderAction, type Action, type RenderedAction } from '../agent-output.ts';
 import { enginePoolStats } from '../postgres-engine/pool-stats.ts';
@@ -134,7 +135,9 @@ export function capacityDiagnostics(counters: Counter[], limits: JournalLimits) 
 }
 /** Trusted-admin counts only: neither normalized intent nor private paths leave here. */
 export async function readWriterDiagnostics(engine: BrainEngine) {
-  const [brain] = await engine.executeRaw<{ enabled: boolean; brain_id: string }>('SELECT enabled,brain_id FROM persistence_brain WHERE singleton=1');
+  // #6482: writer status is the probe the mode refusal names, so a malformed singleton is reported here, never refused.
+  const inspected = await inspectPersistenceBrain(engine);
+  const brain = inspected.row ? { enabled: inspected.row.enabled, brain_id: inspected.row.brain_id } : { enabled: false, brain_id: null, persistence_mode_problem: inspected.problem };
   const worktrees = await engine.executeRaw(`SELECT w.id,w.owner_host_id,w.owner_epoch::text AS owner_epoch,w.topology_generation::text AS topology_generation,w.state,w.heartbeat_at,
     COUNT(r.id) FILTER (WHERE r.state='queued')::integer AS queued,
     COUNT(r.id) FILTER (WHERE r.state='running')::integer AS running,

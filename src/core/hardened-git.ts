@@ -15,7 +15,7 @@
  * (`assertHardenedGitArgs`, wave 12 W4.3), and `hardenedPathDirty` answers
  * "is this file changed from HEAD" without `git status`.
  */
-import { spawnSync } from 'node:child_process';
+import { spawnSync } from './spawn.ts';
 import { lstatSync } from 'node:fs';
 import { join } from 'node:path';
 

@@ -298,6 +298,13 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     impact: 'Some ontology observations were moved onto an entity page\'s Facts table, and ontology_get no longer returns the ones a later page write retired',
     run: async (engine, scope) => (await import('./checks/ontology-facts.ts')).ontologyFactsCheck(engine, scope.sourceIds),
   },
+  {
+    id: 'stale_frontmatter_keys', resolution: 'repair', registration: 'wave',
+    hostOnly: 'Sweeping stored frontmatter keys is a host-side, explicit-only repair.',
+    count: d => Number(d.count ?? 0),
+    impact: 'Some pages store a parser-reserved frontmatter key (type, title, tags, slug) left by an older import; writes compare around it, the sweep is hygiene',
+    run: async (engine, scope) => (await import('./checks/frontmatter-keys.ts')).staleFrontmatterKeysCheck(engine, scope.sourceIds),
+  },
 ];
 
 /** A check that could not run reports unknown, never ok. */

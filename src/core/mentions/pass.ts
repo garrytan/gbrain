@@ -495,7 +495,7 @@ export async function runMentionPass(engine: BrainEngine, opts: MentionPassOpts 
   const passStart = new Date().toISOString();
   const policy = await readMentionPolicy(engine);
   const sources = await sourcesInScope(engine, opts.sourceId);
-  const managed = await managedPersistenceEnabled(engine).catch(() => false);
+  const managed = await managedPersistenceEnabled(engine);
   if (!policy.enabled) {
     const status = new Map((await engine.executeRaw<{ source_id: string; state: string }>(
       'SELECT source_id, state FROM mention_index_status WHERE source_id = ANY($1::text[])', [sources])).map(r => [r.source_id, r.state]));

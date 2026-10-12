@@ -30,7 +30,7 @@
  */
 
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { canonicalLookup } from '../model-pricing.ts';
+import { canonicalLookup, priceAtPromptSize } from '../model-pricing.ts';
 import { priceFor, type PricingOverrides } from '../budget/reservation-cost.ts';
 
 export interface ChatUsageRecord {
@@ -127,10 +127,13 @@ export function estimateChatCostUsd(
     cache_write_tokens?: number;
   },
 ): number | null {
-  const p = canonicalLookup(model);
-  if (!p) return null;
+  const row = canonicalLookup(model);
+  if (!row) return null;
   const cacheRead = usage.cache_read_tokens ?? 0;
   const cacheWrite = usage.cache_write_tokens ?? 0;
+  // #6448 item 1: the prompt size that selects a long-prompt tier is the
+  // whole prompt — uncached input plus both cache buckets.
+  const p = priceAtPromptSize(row, usage.input_tokens + cacheRead + cacheWrite);
   return (
     (usage.input_tokens * p.input +
       usage.output_tokens * p.output +

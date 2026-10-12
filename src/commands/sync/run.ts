@@ -19,8 +19,7 @@ import {
 } from '../../core/sync-embed-backfill.ts';
 import type { SyncEmbedBackfillOutcome } from '../../core/sync-embed-backfill.ts';
 import { runBreakLock } from '../../core/sync-lock.ts';
-import { isSyncDisabledConfig } from '../../core/sync-policy.ts';
-import { syncContentDirectory } from '../../core/sync-applicability.ts';
+import { automaticSyncSkip, isSyncDisabledConfig } from '../../core/sync-policy.ts';
 import { composeAbortSignals } from '../../core/sync-reconcile.ts';
 import { acknowledgeFailures, unacknowledgedSyncFailures } from '../../core/sync.ts';
 import type { SyncResult, SyncOpts } from '../sync.ts';
@@ -38,6 +37,7 @@ import {
 } from './report.ts';
 import { runSyncTrigger } from './trigger.ts';
 import { drainJsonFields, formatDrainSummary, syncOutcome } from '../../core/persistence/sync-drain.ts';
+import { readManagedMode } from '../../core/persistence/ownership.ts';
 import { writeJsonDocument } from '../../core/cli-force-exit.ts';
 
 /** D2: under the `--json` guard only writeStdoutFinal reaches fd 1 (writeJsonDocument). */
@@ -359,9 +359,10 @@ async function runSyncAll(
   //     performSync get the [<source-id>] prefix under parallel mode (D6)
   //   - stable JSON envelope {schema_version:1, sources, ...} when --json
   // v0.41.31: v2Enabled resolved once above (cost gate). Reused here.
+  // P4.2: the same predicate the autopilot dispatchers use decides which sources this bulk run skips.
   const notApplicable: string[] = [];
   for (const s of sources) {
-    if (await syncContentDirectory(engine, { sourceId: s.id, repoPath: s.local_path ?? undefined })) notApplicable.push(s.id);
+    if ((await automaticSyncSkip(engine, s))?.reason === 'sync_not_applicable') notApplicable.push(s.id);
   }
   const activeSources = sources.filter((s) => !isSyncDisabledConfig(s.config) && !notApplicable.includes(s.id));
   const disabledCount = sources.filter((s) => isSyncDisabledConfig(s.config)).length;
@@ -558,8 +559,8 @@ async function runSyncAll(
   // capped at min(sourceCount, --max-sources, 8) in the parallel path.
   // #5984 (ENG-A14): managed sources drain one at a time. Parallel drains contend on the brain-wide
   // publication counters (55P03) and, at high RTT, made no progress at all.
-  const [persistence] = await engine.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1').catch(() => []);
-  const managedSerial = fanOutEligible && persistence?.enabled === true && runnableSources.length > 1;
+  // #6482: no catch-to-unmanaged; an unknown persistence state refuses before any source is dispatched.
+  const managedSerial = fanOutEligible && runnableSources.length > 1 && await readManagedMode(engine);
   if (managedSerial) writeHuman('Managed brain: sources drain one at a time (parallel drains contend on the shared publication counters).');
   const effectiveParallel = fanOutEligible && !managedSerial
     ? Math.min(runnableSources.length, maxSources ?? 8)
@@ -819,9 +820,9 @@ async function runSingleSourceSync(
     // carry source_id (#1939), so a single-source retry shouldn't report
     // another source's failures.
     // A managed retry resumes only the cursor its own options select; failures under other options are named, not counted.
-    const [brain] = await engine.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1');
+    const managedBrain = await readManagedMode(engine);
     let failures: Array<{ source_id: string }> = unacknowledgedSyncFailures().filter(f => f.source_id === sourceId);
-    if (brain?.enabled) {
+    if (managedBrain) {
       const managed = await readManagedSyncFailures(engine, [sourceId]);
       const key = await managedSyncCursorKey(engine, opts).catch(() => null);
       const other = key ? managed.filter(f => f.cursor_key !== key) : [];

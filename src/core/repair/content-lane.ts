@@ -39,7 +39,7 @@ import { readFix } from '../ops/op-fix.ts';
 import { shellQuote } from '../agent-output.ts';
 import { fenceHoldStatus, type FenceAutoRepair } from '../fence-repair/hold-fix.ts';
 import type { GitHoldRecord } from '../persistence/sync-holds.ts';
-import type { RepairKind, RepairResult, RepairScope } from './core.ts';
+import type { RepairFailedItem, RepairKind, RepairResult, RepairScope } from './core.ts';
 import { repairRunner, type RepairKindSpec } from './registry.ts';
 
 /** The lane, in run order: fences first (a merged or closed fence can change what a slug conflict's page looks like), then slug conflicts. */
@@ -122,6 +122,8 @@ export interface ContentLaneResult {
   cost: { llm_usd: number; llm_allowance_remaining_usd: number | null };
   /** Every kind that stopped, with its reason (`time_budget` ends the lane; the rest let the next kind run). */
   stopped: Array<{ kind: RepairKind } & NonNullable<RepairResult['stopped']>>;
+  /** Every item a kind refused per item and left unchanged (the kinds' `failed[]`, with the kind); the next full scan retries them. */
+  failed: Array<{ kind: RepairKind } & RepairFailedItem>;
   /** The command that applies exactly these plans (dry run), or reruns the lane (apply). */
   apply_command: string;
 }
@@ -153,6 +155,7 @@ export async function runContentLane(engine: BrainEngine, scope: RepairScope, op
   const runner = await repairRunner(engine, { apply: opts.apply, noEmbed: opts.noEmbed, ...(opts.logger ? { logger: opts.logger } : {}), ...(opts.registry ? { registry: opts.registry } : {}) });
   const hashes: ContentLaneResult['preview_hashes'] = {};
   const stopped: ContentLaneResult['stopped'] = [];
+  const failed: ContentLaneResult['failed'] = [];
   const results: RepairResult[] = [];
   let spent = 0;
   const allowance = () => opts.maxLlmUsd === undefined ? undefined : Math.max(0, opts.maxLlmUsd - spent);
@@ -164,10 +167,11 @@ export async function runContentLane(engine: BrainEngine, scope: RepairScope, op
     spent += result.cost.llm_usd ?? 0;
     results.push(result);
     if (result.stopped) stopped.push({ kind, ...result.stopped });
+    for (const item of result.failed) failed.push({ kind, ...item });
     if (result.stopped?.reason === 'time_budget') break;
   }
   const expect = kinds.map(kind => hashes[kind] ?? null);
-  return { mode: opts.apply ? 'apply' : 'dry_run', scope, kinds, results, preview_hashes: hashes, cost: { llm_usd: spent, llm_allowance_remaining_usd: allowance() ?? null }, stopped,
+  return { mode: opts.apply ? 'apply' : 'dry_run', scope, kinds, results, preview_hashes: hashes, cost: { llm_usd: spent, llm_allowance_remaining_usd: allowance() ?? null }, stopped, failed,
     apply_command: shellQuote(contentLaneArgv({ source: opts.sourceFlag, only: opts.only, skip: opts.skip, noLlm: opts.noLlm, maxLlmUsd: opts.maxLlmUsd, apply: true,
       expect: expect.every((hash): hash is string => hash !== null) ? expect : undefined })) };
 }

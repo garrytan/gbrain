@@ -37,6 +37,7 @@ export const SKIP_REASONS = [
   'no_calibration', 'pack_shape_mismatch', 'action_precision_low', 'no_qualification', 'pinned_model_unavailable',
   'payload_too_large', 'llm_capability', 'egress_private_denied', 'egress_class_denied', 'missing_provenance',
   'denied_source', 'shadow_queue_full', 'reranker_not_jev', 'cache_hit', 'no_candidates', 'egress_denied',
+  'unpriced_model',
 ] as const;
 export type SkipReason = typeof SKIP_REASONS[number];
 
@@ -48,6 +49,9 @@ export interface RefusalEntry {
   /** Anchor in docs/guides/system-one.md's troubleshooting table. */
   anchor: string;
 }
+
+/** The `gbrain pricing set` call that registers a price for an unpriced decide id (argv form; the catalog renders it). */
+export const UNPRICED_MODEL_FIX_ARGV: readonly string[] = ['gbrain', 'pricing', 'set', 'typesafe:<model>', '--rate', '<usd-per-1M-input-tokens>', '--source', '<pricing-page-url>'];
 
 /** Refusal and inactive-cause catalog. Every refusal path must emit one of these keys. */
 export const REFUSAL_CATALOG: Readonly<Record<string, RefusalEntry>> = {
@@ -65,6 +69,7 @@ export const REFUSAL_CATALOG: Readonly<Record<string, RefusalEntry>> = {
   egress_fallback_missing: { problem: 'Refused items have no fallback provider.', cause: 'decide.egress_fallback is none', fix: 'gbrain config set decide.egress_fallback llm:<provider:model>', anchor: '#egress_fallback_missing' },
   split_mismatch: { problem: 'The calibration was built from a different dataset split.', cause: 'split_hash differs from the eval split or calibrate_only is false', fix: 'gbrain decide calibrate --slot <slot> --dataset <jsonl>', anchor: '#split_mismatch' },
   pinned_model_unavailable: { problem: 'The pinned model is no longer served.', cause: 'the provider returned unknown or unavailable model', fix: 'gbrain config set decide.provider typesafe:<new-id> && gbrain decide calibrations list', anchor: '#pinned_model_unavailable' },
+  unpriced_model: { problem: 'The decide model has no price, so its spend cannot be metered.', cause: 'the configured typesafe:<model> id has no shipped tariff and no pricing.overrides entry', fix: UNPRICED_MODEL_FIX_ARGV.join(' '), anchor: '#unpriced_model' },
   budget_exhausted: { problem: 'The daily decide budget is spent.', cause: 'decide_spend for the current UTC day reached decide.budget.daily_usd', fix: 'gbrain config set decide.budget.daily_usd <usd>', anchor: '#budget_exhausted' },
   thin_client: { problem: 'gbrain decide runs on the brain host.', cause: 'this install is a thin client', fix: 'run gbrain decide on the brain host', anchor: '#thin_client' },
   malformed_response: { problem: 'The provider response failed validation.', cause: 'a requested id was missing or a value was non-numeric or out of range', fix: 'gbrain decide probe', anchor: '#malformed_response' },

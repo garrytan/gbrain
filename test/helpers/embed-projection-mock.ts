@@ -29,6 +29,7 @@ export function mockEmbedProjectionEngine(overrides: Partial<Record<string, any>
   overrides.executeRaw = async (sql: string, params?: unknown[]) => sql.startsWith('SELECT page_kind FROM pages WHERE id=')
     ? [{ page_kind: pageKinds.get(Number(params?.[0])) ?? 'markdown' }]
     : sql === 'SELECT archived FROM sources WHERE id=$1' ? [{ archived: false }]
+    : sql.includes('FROM persistence_brain') ? [{ enabled: false }]
     : executeRaw(sql, params);
   const calls: { method: string; args: any[] }[] = [];
   const track = (method: string) => (...args: any[]) => {

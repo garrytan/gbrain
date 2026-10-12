@@ -156,7 +156,13 @@ async function runTypesafe(req: DecideRequest, ctx: DecideContext, cfg: DecideCo
   }
   const budgetKind = req.budgetKind ?? 'decide';
   const estimatedTokens = plan.reduce((n, b) => n + b.estimatedInputTokens, 0);
-  const priced = (tokens: number) => usageCostUsd(a.provider, tokens, 0, budgetKind) ?? 0;
+  // [R18] (#5980): an id with no shipped tariff and no operator price is
+  // refused before transport. `?? 0` here would admit it as free against the
+  // daily and remote-share budgets and write $0 spend rows for a real bill.
+  if (usageCostUsd(a.provider, 1, 0, budgetKind, cfg.pricingOverrides) === null) {
+    throw new DecideError('unpriced_model', `decide: ${a.provider} has no price; register one with gbrain pricing set ${a.provider} --rate <usd-per-1M-input-tokens> --source <url>`);
+  }
+  const priced = (tokens: number) => usageCostUsd(a.provider, tokens, 0, budgetKind, cfg.pricingOverrides)!;
   if (budgetKind === 'decide' && ctx.engine) {
     const spent = await dailySpend(ctx.engine, a.now()).catch(() => ({ total: 0, remote: 0 }));
     const estimate = priced(estimatedTokens);

@@ -1196,6 +1196,17 @@ destination on a local filesystem with Windows ACL support and permitted
 Windows PowerShell. A busy database or a
 changing file fails the operation instead of publishing a success receipt.
 
+Before the dump, the command removes gbrain's own IPC socket files
+(`.gbrain-resolve.sock`, `.gbrain-persistence.sock`) from the data dir when
+nothing listens on them, so a `gbrain serve` that was killed does not block
+later backups; each removal is listed in the archive's `omitted` inventory.
+Any other socket, FIFO or symlink in the data dir is left alone and the
+command refuses with `backup_dump_failed` naming it: stop the process that
+uses it (or move it out of the data dir) and run the same command again.
+This cleanup is verified on Linux and macOS; on Windows a stale socket is
+removed through the native lock binding and has not been exercised on a
+native runner.
+
 | Included | Excluded or inventoried for reconnection |
 | --- | --- |
 | Full PGLite database: pages, DB-only facts, jobs, settings, authentication state, and other tables | Runtime packages, Bun, caches, Git metadata, previous backups |
@@ -6613,6 +6624,26 @@ agent runs `gbrain config set sync.include_hidden '.github/'`.
 Everything else is ordinary synced content — including `ops/` (the bundled
 daily-task-manager skill files its canonical page under `ops/tasks`).
 
+### Renaming a page
+
+A page's slug is its file path, so a rename is a file move (#5915). In the
+source's checkout, `git mv old/path.md new/path.md`, commit, and run
+`gbrain sync --source <id>` (`--no-pull` on a managed source). Sync pairs the
+vanished origin with the new file through the page's own origin and
+`frontmatter.id`, so the move is imported onto the same page row: its links,
+facts, timeline and version history survive, and nothing is deleted and
+re-created. On a managed source the import is prepared against the moved page
+and refuses `revision_conflict` if that page changed after the sync admitted
+it; the Git projection is the sync's own commit. Keep `frontmatter.id` as it
+is; a changed id is a different page.
+
+`put_page` at a new slug is not a rename. A content-only write cannot prove the
+old file is gone, so a create-only `put_page` whose `frontmatter.id` and
+content match an existing page resolves to that page (`duplicate`: the receipt
+names the existing slug), and the same id with different content indexes both
+pages (`shared_id`). There is no `rename_page` operation; a write-side rename
+would need the moved file as evidence, which is what the sync route provides.
+
 ### Sync is Idempotent — and Resumable
 
 Concurrent runs are safe. Two syncs on the same commit no-op because content
@@ -6808,6 +6839,26 @@ vars — incident-time escape hatches, not everyday knobs.
 
    **Say to your agent:** *"Bring my notes source up to date with its remote."*
 
+9. **Turn automatic pulls off for every source.** On an unmanaged brain,
+   autopilot's freshness sync and its per-source cycle run `git pull` for a
+   source that has a remote URL. A checkout you keep current yourself (a
+   deploy script, a mirror, a branch you rebase by hand) should not be
+   pulled behind your back:
+
+   ```bash
+   gbrain config set autopilot.git_pull false   # default: true
+   ```
+
+   Automatic syncs then index the local checkout as it is (`pull: false` on
+   every queued sync job), and the daemon prints `git_pull: off
+   (autopilot.git_pull=false)` once per tick (`{"event":"git_pull_disabled"}`
+   under `--json`). Per-source `syncEnabled: false` still removes a source from
+   automatic sync entirely; an explicit `gbrain sync --source <id>` keeps its
+   own `--pull`/`--no-pull` choice. Managed brains never pull automatically
+   whatever this key says (item 8).
+
+   **Say to your agent:** *"Stop autopilot from git-pulling my sources; I update the checkouts myself."*
+
 ## How to Verify
 
 1. **Edit a file and search for the change.** Edit a brain markdown file,
@@ -6990,6 +7041,13 @@ Every hold and error has three fields, from one table
 | `plan_stale` | systemic | none | yes | always |
 | `invalid_params` | systemic | none | yes | always |
 <!-- sync-fault-table:end -->
+
+A `cancelled` error whose group was released by a lane fault (`lock_timeout`
+or `statement_timeout` on a parallel publish lane) also carries that fault as
+`last_error.detail`, and the cancelled rows keep it as their `blocked_reason`
+(`lane_lock_timeout`, `lane_statement_timeout`) and in the cancel message.
+The verdict is the same retry; the detail says the database, not the page,
+ended the group.
 
 An unknown code is systemic and human: `gbrain errors <code>` explains it
 offline, `gbrain doctor --json` says what the brain thinks.
@@ -7253,6 +7311,15 @@ per-transcript synthesis subagents. The dials:
   Pages that already existed are checked only on the sentences this run
   added. The off switch is the incident escape hatch; telemetry lands in
   `details.synthesis.quote_verify`.
+- `cycle.propose_takes.types` (default unset = every page type) — a JSON array
+  of page types the `propose_takes` phase may scan, for example
+  `gbrain config set cycle.propose_takes.types '["meeting","analysis"]'`.
+  Pages of other types (machine-written lanes, `note` scratch pages) are
+  never sent to the model, so the phase spends only on the lanes you name.
+  The built-in exclusions (receipts, atoms, the dream cycle's own output)
+  still apply; a value that is not a JSON array is ignored with one stderr
+  line and the phase scans every type. Note that a page with no `type` has
+  no type to match, so it is excluded whenever the list is set.
 - `dream.synthesize.attribution_rules` and `dream.propose_takes.attribution_rules`
   (default off) — extra prompt rules from #5425: keep who proposed what and
   later corrections explicit; an assistant-authored judgment is not the
@@ -8975,6 +9042,36 @@ purpose, no dedicated status); a `max_tokens`-cut envelope parses as
 `output_truncated` (warning `LLM_OUTPUT_TRUNCATED`) so a too-small output
 budget is distinguishable from malformed model output.
 
+#### synthesize evidence budget and provenance (additive, #5461)
+
+The pages the model reads are excerpts, not whole pages. Each gathered page
+gets `min(ceiling, floor(total / pages_gathered))` characters, never fewer
+than 600, with `total` from `think.pages_budget_chars` (4 000-200 000,
+default 12 000) and `ceiling` from `think.excerpt_ceiling_chars`
+(600-200 000, default 2 400), both set with `gbrain config set` on the brain
+host (the verb surface stays frozen: no new parameter). The total is a SOFT
+bound: the 600-character floor wins, so 40 pages at the default read 24 000
+characters. Raising the total alone never delivers whole pages while the
+ceiling holds, and even with both raised the unit shown is the gathered
+chunk or compiled text, so full pages are not promised. A value outside its
+range is refused at set time; a stored bad value is ignored for the call,
+the default applies and `warnings` carries
+`THINK_BUDGET_CONFIG_IGNORED:<key>`. Conversation-type pages (meetings,
+chats, transcripts) travel through evidence delivery instead, under
+`think.return_unit` and its token budget; the character budget does not
+apply to them.
+
+Two optional response fields report what happened:
+
+- `evidence_truncated: boolean` — true when at least one gathered page
+  reached the model in part (an excerpt cut at either end, or a delivered
+  block cut to its window). False means every gathered unit was shown whole.
+- `citations: [{ slug, source_id, row_num }]` — `sources[]` with
+  provenance, same order and length: `source_id` is the source the cited
+  page was gathered from (the highest-ranked gathered page with that slug);
+  `null` when the model cited a slug outside the gather (the response also
+  warns `CITATION_NOT_IN_GATHER:<slug>`). `sources: string[]` is unchanged.
+
 #### Answer feedback fields (additive)
 
 `recall` (when its `query` arm searched pages on the hybrid path) and
@@ -9808,7 +9905,7 @@ Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/tro
 | Conversation facts are dated 1970-01-01 | same preview: `gbrain repair conversation-labels` (an undated page's pre-fix facts carry a `segment 1970-01-01` context); add a `date:` to the page frontmatter before re-extracting it | agent, after the user agrees | `destructive` | `gbrain doctor --only conversation_label_facts --json` is ok |
 | `remember` or `put_page` refused `source_changed` "The canonical file contains an uncoordinated local edit" on many pages nobody edited, or doctor `lost_caller_writes` warns | upgrade to v0.60.157.0 or later (a database-only v0.13.1 `validate: false` stamp was read as a file edit, #6429); then `gbrain repair failed-writes --source <id>` previews the refused writes and prints the apply command ([failed writes](repair.md#failed-writes)) | agent; the apply after the user agrees | none to preview | `gbrain doctor --only lost_caller_writes --json` is ok |
 | A write (`add_timeline_entry`, `put_page`, `remember`, any `mutating` tool) refused `invalid_params` "unknown parameter … write operations always reject unknown parameters; nothing was written" | the call named a parameter the tool does not declare (for example `content` instead of `detail`); the `suggestion` names the submitted key and the declared one; resend with the declared name. Reads keep the `mcp.strict_params` warn grace period | agent | none | the resent call returns no `invalid_params` and no `unknown_param` warning |
-| Facts extraction or embedding reports `(cause=AIConfigError model_not_found)` or `gbrain models doctor` says `model_not_found` while the key is valid | the provider refused the model, not the key (a 404, or a 403 "project does not have access to model"): check the model id with `gbrain models`, enable the model for the project in the provider console or set another model (`gbrain config set models.facts <provider:model>`) | user (provider console); agent for the config change, after the user agrees | none | `gbrain models doctor` reports the model `ok` |
+| Facts extraction or embedding reports `(cause=AIConfigError model_not_found)` or `gbrain models doctor` says `model_not_found` while the key is valid | the provider refused the model, not the key (a 404, or a 403 "project does not have access to model"): the fix text names the config key that selected the model when the gateway knows it ("Selected via models.tier.reasoning. Fix: gbrain config set …"; an env var or config.json pin says what to clear); otherwise check the model id with `gbrain models`, enable the model for the project in the provider console or set another model (`gbrain config set models.facts <provider:model>`) | user (provider console); agent for the config change, after the user agrees | none | `gbrain models doctor` reports the model `ok` |
 | A gbrain call failed with a code you don't recognize | follow `fix.next` ([protocol](../protocol/AGENT_OPERATOR_v1.md)); `gbrain errors <code>` | agent | as the fix's `consent` | the fix's `verify` |
 | A graph read omits a relationship you know existed, or says someone still works somewhere they left | the default read returns relationships true today: repeat with `status: "all"` or `as_of`; to record an end, add a dated timeline line (`Ended works_at [[companies/x]]`) or `add_link ... valid_until` ([temporal edges](temporal-edges.md)) | agent | none | `gbrain doctor --only edge_validity --json` |
 | A command exited 3 (`confirmation_required`) | relay `user_message`; run `fix.command` only after the user agrees | agent, after the user agrees | the payload's `effects` | the fix's `verify` |
@@ -9822,7 +9919,8 @@ Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/tro
 | [Sync held a file for its facts or takes fence (`Held <path>: invalid_fence …`)](#held-fence-files) | nothing for most holds: the next maintenance run repairs and commits the fence. To see or do it now, preview `gbrain repair fences --source <id>` and run its printed `--apply --expect <hash>`; to pause automatic repair, `gbrain config set fences.repair.enabled false` (ask the user first). A `manual` reason needs the edit the hold names | agent; the apply needs no extra consent | none (model repair spends within the `fences.repair.*` caps; raising them is `paid`, the user's call) | `gbrain doctor --only fence_integrity --json` |
 | A managed catch-up on a live checkout keeps dying (`revision_conflict`, `pinned_git_worktree_conflict`, `page_identity_changed`, `write ECONNABORTED`), or you want an agent to drive the recovery | `gbrain sync status --source <id> --json` (cursor, `committed_last_10m`, each hold and the last error with `class` / `safe_actions` / `needs_human`); when nothing moved and `needs_human` is false, `gbrain sync unblock --source <id> --apply`, then the sync it prints ([runbook](sync-unblock-runbook.md)) | agent; a person only when `needs_human` names a slug | none | `gbrain sync status --source <id> --json` |
 | [Sync held a file with `worktree_dirty`](#worktree-dirty-hold) | commit (or restore) the file, then `gbrain sync unblock --source <id> --apply` and the sync it prints | agent; whoever edits the file commits it | none | `gbrain sources status <id> --json` |
-| A managed sync of a source far behind HEAD prints `staged catch-up: synced to <commit>, short of HEAD`, or refuses `request_too_large` with `One commit exceeds the bounded cursor size` | Staging is automatic: `gbrain sync --source <id> --no-pull` takes stage after stage (each the furthest first-parent commit whose delta fits 100,000 entries and 16 MiB) until it reaches HEAD, and a stop resumes at the stored cursor; a scheduled sync takes one stage per run. When one commit alone is above the bound, exclude part of it (`--exclude`, or `gbrain config set sync.exclude`) and rerun; `--full` above the bound still refuses | agent | none | `gbrain sync status --source <id> --json` (cursor target reaches HEAD) |
+| A managed sync of a source far behind HEAD prints `staged catch-up: synced to <commit>, short of HEAD`, or `sliced catch-up: committed the <phase> slice of <commit> through <path>` | Staging is automatic: `gbrain sync --source <id> --no-pull` takes stage after stage (each the furthest first-parent commit whose delta fits 100,000 entries and 16 MiB) until it reaches HEAD, and a stop resumes at the stored cursor; a scheduled sync takes one stage per run. A first sync, a `--full` sync or one commit that alone exceeds the bound is cut into path slices instead (#6349): every import slice, then bounded deletion slices, pinned at one target; `last_commit` moves only when the last slice settles, and the same command resumes an unfinished target at its stored slice. Only one file whose manifest entry alone exceeds the byte bound still refuses `request_too_large`, naming it; exclude it (`--exclude`, or `gbrain config set sync.exclude`) and rerun | agent | none | `gbrain sync status --source <id> --json` (cursor target reaches HEAD) |
+| A write, sync, connector run or activation refuses `storage_error` with `requires exactly one known boolean persistence state` (`detail: persistence_mode_unknown`) | The `persistence_brain` singleton is missing, duplicated or malformed, so gbrain cannot tell whether the brain is managed and refuses instead of writing around the owner (#6482). Run `gbrain sources writer status --probe --json` on the brain host (it reports `mode: unknown` and the problem instead of refusing), restore the one row (`gbrain doctor --json` names the repair), then rerun the command | host operator | none | `gbrain doctor --json` |
 | The drain stopped `connection_lost` | check the database and pooler (`gbrain doctor --json`), then rerun the same sync; it resumes at the stored cursor | agent | none | `gbrain sync status --source <id> --json` |
 | [Managed catch-up stuck, or `Held <path>: preparation_stalled`, or the drain stopped `preparation_abandoned` / `preparation_systemic` / `write_capacity`](#catch-up-stuck) | `gbrain sources writer status --source <id> --json` (what the stuck write was doing: step, `waiting_on`, owner, version), fix what it names or upgrade the owner, then `gbrain sources retry-held <id>` and the same sync with its options | agent; a restart or upgrade of the owner after the user agrees | none to inspect; `persistent_install` when the fix restarts a service | `gbrain sources status <id> --json`, then `gbrain doctor --only git_held_files,persistence_write_stall --json` |
 | [The catch-up is parked: `data_moving: false`, doctor `managed_sync_not_moving`, or `gbrain sources writer movement` exited 1](#managed-sync-not-moving) | `gbrain sources status <id> --json` prints the exact writer-status command; run it: `gbrain sources writer status --source <id> --json` ends each running claim in a `claim.next` (`claim_running`: rerun after `retry_after_ms`; `claim_overdue`: `tell_user_to_run`, restart the named owner pid) | agent; the restart after the user agrees | none to inspect; `persistent_install` when the fix restarts a service | `gbrain sources writer movement <id>` (exit 0 when the data moves again), then `gbrain doctor --only managed_sync_not_moving --json` |
@@ -9845,6 +9943,7 @@ Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/tro
 | [`dream_paid_loop`, or dream keeps skipping one transcript](#dream-paid-loop) | fix the cause, then `gbrain dream reset-key --list` and `gbrain dream reset-key '<key>'` | agent, after the user agrees | `paid` (the key is retried) | `gbrain doctor --only dream_paid_loop --json` |
 | [Search answers look keyword-only on a large Postgres brain](#hybrid-search-returns-only-keyword-hits) | read doctor's `vector_plan`; run the index command it prints | brain host | none | `gbrain doctor --only vector_plan --json` |
 | A second `gbrain serve` cannot open the brain | the readiness `harness_wiring` fix: every session shares one `gbrain serve --http` | user | `persistent_install`, `credentials` | `gbrain doctor --only harness_wiring --json` |
+| `harness_wiring` reports `http_serve_unreachable` or `http_serve_unhealthy` for an HTTP registration | nothing automatic: doctor probed the registered `/health` without credentials and the endpoint did not answer as a healthy gbrain server; check the URL in the harness config and the server it points at (a hosted brain is its operator's). A `wired_running` verdict with `mcp_access: unverified` proves a listener only: confirm tools in a new session | user | none | `gbrain doctor --only harness_wiring --json` |
 | A tool the fix names is missing after a serve recovered | restart the gbrain MCP server in the harness, or start a new session ([why](../protocol/AGENT_OPERATOR_v1.md#tool-catalog-changes-toolslist_changed)) | user | none | list the tools again |
 | A command waits on stdin with no terminal | close stdin (`</dev/null`) or set `GBRAIN_NON_INTERACTIVE=1`; prompts then decline | agent | none | re-run the read-only part of the command |
 | [An outdated build (brainstorm `judge_failed`, lost tags, Windows `ENOTFOUND`)](#outdated-build) | `gbrain upgrade`, then the steps in [recover after upgrading](repair.md#recover-after-upgrading-to-this-release) | agent, after the user agrees | `persistent_install` when it rewrites services | `gbrain --version`, then `gbrain doctor --json` |

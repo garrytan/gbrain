@@ -7,10 +7,13 @@
  * It is a `PERSISTENCE_ADMIN_OPERATIONS` verb (never a public operation) with
  * the same `--admin-intent`/`--expected-state` handshake as `writer_activate`:
  * the binding column is part of the admin-state hash, so a stale state is
- * refused. Nothing under the canonical root is written: the opt-in is a
- * database column, the credential is Git metadata in `.git/config` plus a
- * 0600 store under the gbrain home (the same keys `sources harden` uses, so
- * `sources unharden` removes it), and the push probe is `git push --dry-run`.
+ * refused. The opt-in is a database column, the credential is Git metadata in
+ * `.git/config` plus a 0600 store under the gbrain home (the same keys
+ * `sources harden` uses, so `sources unharden` removes it), and the push probe
+ * is `git push --dry-run`. The one file under the canonical root this verb
+ * writes is the resolver file's durability block (#5808): `--enable` and
+ * `--pat-file` rewrite it idempotently to the managed variant, which never
+ * sends agents around the owner, and leave it for the operator to commit.
  */
 import { chmodSync, existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -28,6 +31,7 @@ import { getWorktreeBinding, type GitDurabilitySetting, type WorktreeBinding } f
 import { requireWriterAdminIntent, assertWriterAdminState, writerAdminState } from './admin-intent.ts';
 import { gitDurabilityPolicy, planGitDurabilityCatchUp, requeueGitDurabilityCatchUp } from './git-durability-policy.ts';
 import { retryParkedEffects } from './effect-retry.ts';
+import { patchManagedDurabilityBlock } from '../brain-repo-durability.ts';
 
 export const GIT_DURABILITY_PARAMS = ['source_id', 'enable', 'disable', 'pat_file', 'dry_run', 'admin_intent', 'expected_state'] as const;
 
@@ -232,6 +236,12 @@ export async function runGitDurabilityAdministration(engine: BrainEngine, params
   }
   const plan = target === 'enabled' ? await planGitDurabilityCatchUp(engine, binding) : [];
   report.catch_up = { planned: plan.length, paths: plan.slice(0, 50).map(effect => effect.relative_path) };
+  // #5808: a block `sources harden` rendered before activation tells agents to pull --rebase and run the push helper;
+  // on this managed root it is replaced with the managed variant (a non-page file: the operator commits it).
+  if (checkout) {
+    const agents = patchManagedDurabilityBlock(root, input.sourceId, input.dryRun);
+    report.agents = { ...agents, ...(agents.status === 'fixed' && !input.dryRun ? { commit: 'The durability block is a non-page file: review it and commit it with plain git; it rides the owner\'s next push.' } : {}) };
+  }
   if (input.dryRun) {
     const state = await writerAdminState(engine);
     if (before === target && !token) return { ...report, queued_catch_up: 0, why: 'The setting is already as requested; nothing to apply.' };

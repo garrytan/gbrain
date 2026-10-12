@@ -547,7 +547,17 @@ jobs:
     # stays in front as the broken-build SPEND gate: this job burns real
     # OpenAI/Anthropic tokens and must not fire when the build
     # can't even pass the cheapest DB guard.
+    # #5903: the repository variable GBRAIN_PAID_LANES='0' switches every
+    # paid lane off (this job, the hermes door's paid leg and the OpenCode
+    # credentialed lane in heavy-tests.yml) for forks and spend freezes.
+    # Unset or any other value keeps them on. e2e-status accepts this job as
+    # `skipped` only when that exact variable is '0' and says so in the step
+    # summary; any other skip, failure or cancellation still fails the aggregate.
+    # format() keeps the comparison on strings: an unset variable is null, and
+    # GitHub's `!=` coerces null and '0' both to the number 0, which would skip
+    # this job on every repository that never set the variable.
     needs: jsonb-parity
+    if: format('{0}', vars.GBRAIN_PAID_LANES) != '0'
     runs-on: ubicloud-standard-4-ubuntu-2404
     timeout-minutes: 30
     services:
@@ -1081,19 +1091,36 @@ jobs:
     runs-on: ubicloud-standard-2-ubuntu-2404
     timeout-minutes: 5
     steps:
+      # The job results come in through env so test/paid-lanes-switch-5903.test.ts
+      # can run this exact script under bash with every result combination.
       - name: Aggregate result
         env:
           FULL_CORPUS: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full_corpus) }}
+          JSONB: ${{ needs.jsonb-parity.result }}
+          TIER1: ${{ needs.tier1.result }}
+          BACKEND_MATRIX: ${{ needs.tier1-backend-matrix.result }}
+          TIER2: ${{ needs.tier2.result }}
+          PREPARE: ${{ needs.prepare-e2e.result }}
+          SELECTED: ${{ needs.selected-e2e.result }}
+          FULL_UNIT: ${{ needs.coverage-full-unit.result }}
+          FULL_SERIAL: ${{ needs.coverage-full-serial.result }}
+          FULL_SLOW: ${{ needs.coverage-full-slow.result }}
+          FULL_E2E: ${{ needs.coverage-full-e2e.result }}
+          EVENT: ${{ github.event_name }}
+          # #5903: the one value that authorizes a skipped tier2.
+          GBRAIN_PAID_LANES: ${{ vars.GBRAIN_PAID_LANES }}
         run: |
-          JSONB="${{ needs.jsonb-parity.result }}"
-          TIER1="${{ needs.tier1.result }}"
-          BACKEND_MATRIX="${{ needs.tier1-backend-matrix.result }}"
-          TIER2="${{ needs.tier2.result }}"
-          PREPARE="${{ needs.prepare-e2e.result }}"
-          SELECTED="${{ needs.selected-e2e.result }}"
-          EVENT="${{ github.event_name }}"
           echo "event=$EVENT"
           echo "jsonb-parity=$JSONB  tier1=$TIER1  tier1-backend-matrix=$BACKEND_MATRIX  tier2=$TIER2  prepare-e2e=$PREPARE  selected-e2e=$SELECTED"
+          if [ "$TIER2" = "skipped" ] && [ "$GBRAIN_PAID_LANES" = "0" ]; then
+            echo "tier2 skipped: paid lanes disabled by the repository variable GBRAIN_PAID_LANES='0' (not green coverage of Tier 2)"
+            echo "::notice::Tier 2 (LLM Skills) skipped: paid lanes disabled by GBRAIN_PAID_LANES='0'"
+            {
+              echo "## Tier 2 (LLM Skills): skipped, paid lanes disabled"
+              echo "The repository variable \`GBRAIN_PAID_LANES\` is \`0\`, so no paid lane ran. This is not green coverage of Tier 2; unset the variable (or set it to \`1\`) to run it."
+            } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+            TIER2="success"
+          fi
           for r in "$JSONB" "$TIER1" "$BACKEND_MATRIX" "$TIER2" "$PREPARE" "$SELECTED"; do
             if [ "$r" != "success" ]; then
               echo "✗ gated e2e job did not succeed (got $r) — E2E fail"
@@ -1101,10 +1128,6 @@ jobs:
             fi
           done
           if [ "$FULL_CORPUS" = "true" ]; then
-            FULL_UNIT="${{ needs.coverage-full-unit.result }}"
-            FULL_SERIAL="${{ needs.coverage-full-serial.result }}"
-            FULL_SLOW="${{ needs.coverage-full-slow.result }}"
-            FULL_E2E="${{ needs.coverage-full-e2e.result }}"
             echo "full-unit=$FULL_UNIT full-serial=$FULL_SERIAL full-slow=$FULL_SLOW full-e2e=$FULL_E2E"
             for r in "$FULL_UNIT" "$FULL_SERIAL" "$FULL_SLOW" "$FULL_E2E"; do
               if [ "$r" != "success" ]; then

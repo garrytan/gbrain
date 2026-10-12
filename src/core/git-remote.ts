@@ -15,9 +15,9 @@ import { assertManagedFilesystemWrite } from './persistence/filesystem-guard.ts'
  * reachable only via Tailscale, set GBRAIN_ALLOW_PRIVATE_REMOTES=1; loud
  * stderr warning at use site is the operator's signal.
  */
-import { execFileSync } from 'child_process';
+import { execFileSync } from './spawn.ts';
 import { lstatSync, existsSync, readdirSync } from 'fs';
-import { join } from 'path';
+import { isAbsolute, join } from 'path';
 import { isInternalUrl } from './url-safety.ts';
 import { execFileBounded } from './bounded-child-exec.ts';
 import { gitChildEnv } from './git-env.ts';
@@ -547,18 +547,20 @@ export function detectDefaultBranch(repoPath: string): string {
   return 'main';
 }
 
+/** True if the git-dir entry `name` (a state file or directory) exists; false when git cannot be asked. */
+function gitStateExists(repoPath: string, name: string): boolean {
+  try {
+    const p = execFileSync('git', ['-C', repoPath, 'rev-parse', '--git-path', name], {
+      stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, env: gitChildEnv({ ...GIT_ENV }),
+    }).toString().trim();
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- `p` is git's own answer to `rev-parse --git-path <literal>` for the checkout at repoPath (MERGE_HEAD, rebase-merge, rebase-apply); no caller passes user input, and the result is only tested for existence.
+    return existsSync(isAbsolute(p) ? p : join(repoPath, p));
+  } catch { return false; }
+}
+
 /** True if a rebase is mid-flight (rebase-merge or rebase-apply state dir exists). */
 function rebaseInProgress(repoPath: string): boolean {
-  for (const name of ['rebase-merge', 'rebase-apply']) {
-    try {
-      const p = execFileSync('git', ['-C', repoPath, 'rev-parse', '--git-path', name], {
-        stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000, env: gitChildEnv({ ...GIT_ENV }),
-      }).toString().trim();
-      const abs = p.startsWith('/') ? p : join(repoPath, p);
-      if (existsSync(abs)) return true;
-    } catch { /* ignore */ }
-  }
-  return false;
+  return ['rebase-merge', 'rebase-apply'].some(name => gitStateExists(repoPath, name));
 }
 
 export type PullOutcome =
@@ -567,14 +569,34 @@ export type PullOutcome =
   | { status: 'skipped_dirty' }
   | { status: 'conflict_aborted'; detail: string };
 
+/** How `divergenceSafePull` reconciles local commits with origin (#5429): `sources.config.pull_strategy`, default `rebase`. */
+export const PULL_STRATEGIES = ['rebase', 'merge'] as const;
+export type PullStrategy = (typeof PULL_STRATEGIES)[number];
+export function isPullStrategy(value: unknown): value is PullStrategy {
+  return typeof value === 'string' && (PULL_STRATEGIES as readonly string[]).includes(value);
+}
+/** The strategy a source's parsed `config` records; anything else is the default. */
+export function pullStrategyOf(config: Record<string, unknown> | null | undefined): PullStrategy {
+  return isPullStrategy(config?.pull_strategy) ? config.pull_strategy : 'rebase';
+}
+
 /**
- * Divergence-safe pull: `fetch` + `pull --rebase`, never leaving a mid-rebase.
+ * Divergence-safe pull: `fetch` + `pull --rebase` (or `pull --no-rebase` under
+ * `strategy: 'merge'`), never leaving a mid-rebase or a mid-merge.
  *
  *  - Dirty working tree  → `skipped_dirty` (NORMAL mid-session state, not an
- *    error; never auto-stashes, never touches in-progress edits).
+ *    error; never auto-stashes, never touches in-progress edits). The pull
+ *    itself carries `--no-autostash` (#5429): a repository or user
+ *    `rebase.autoStash=true` would otherwise stash edits made between the
+ *    dirty check and the pull and replay them onto the rebased tree.
  *  - Rebase conflict     → `git rebase --abort`, verify no rebase state remains,
  *    return `conflict_aborted` ("manual attention needed"). Never throws past
  *    this — the repo is always left clean (possibly un-advanced).
+ *  - Merge strategy      → fast-forward when possible, else a merge commit
+ *    (`--no-edit`); a conflict runs `git merge --abort`, verifies MERGE_HEAD is
+ *    gone and returns `conflict_aborted`. For a brain whose intermediate
+ *    snapshot commits conflict under rebase replay while the two tips merge
+ *    cleanly (#5429); per source via `sources.config.pull_strategy`.
  *
  * Auth-capable (GIT_ENV_AUTH) so it works against private remotes via the
  * repo's configured credential helper. SSRF flags applied on every call.
@@ -582,10 +604,11 @@ export type PullOutcome =
 export function divergenceSafePull(
   repoPath: string,
   branch: string,
-  opts: { timeoutMs?: number } = {},
+  opts: { timeoutMs?: number; strategy?: PullStrategy } = {},
 ): PullOutcome {
   assertManagedFilesystemWrite(repoPath);
   const timeoutMs = opts.timeoutMs ?? 300_000;
+  const merge = opts.strategy === 'merge';
 
   if (isWorkingTreeDirty(repoPath)) return { status: 'skipped_dirty' };
 
@@ -596,28 +619,33 @@ export function divergenceSafePull(
     timeoutMs, env: { ...GIT_ENV_AUTH },
   });
 
+  const mode = merge ? ['--no-rebase', '--no-edit', '--no-autostash'] : ['--rebase', '--no-autostash'];
   try {
-    runGit(repoPath, ssrf, 'pull', [...GIT_SSRF_SUBCOMMAND_FLAGS, '--rebase', 'origin', branch], 'pull', {
+    runGit(repoPath, ssrf, 'pull', [...GIT_SSRF_SUBCOMMAND_FLAGS, ...mode, 'origin', branch], 'pull', {
       timeoutMs, env: { ...GIT_ENV_AUTH },
     });
   } catch (e) {
-    // Abort any half-applied rebase so the tree is never left mid-rebase.
+    // Abort any half-applied rebase or merge so the tree is never left mid-operation.
+    const abort = merge ? ['merge', '--abort'] : ['rebase', '--abort'];
+    const inProgress = () => merge ? gitStateExists(repoPath, 'MERGE_HEAD') : rebaseInProgress(repoPath);
     try {
-      execFileSync('git', ['-C', repoPath, 'rebase', '--abort'], {
+      execFileSync('git', ['-C', repoPath, ...abort], {
         stdio: 'ignore', timeout: 30_000, env: gitChildEnv({ ...GIT_ENV }),
       });
     } catch { /* best-effort */ }
     // If state STILL remains, try once more, then report regardless.
-    if (rebaseInProgress(repoPath)) {
+    if (inProgress()) {
       try {
-        execFileSync('git', ['-C', repoPath, 'rebase', '--abort'], {
+        execFileSync('git', ['-C', repoPath, ...abort], {
           stdio: 'ignore', timeout: 30_000, env: gitChildEnv({ ...GIT_ENV }),
         });
       } catch { /* best-effort */ }
     }
     return {
       status: 'conflict_aborted',
-      detail: `pull --rebase on ${branch} conflicted; rebase aborted — manual attention needed (${(e as Error).message.slice(0, 120)})`,
+      detail: merge
+        ? `pull --no-rebase (merge) on ${branch} conflicted; merge aborted — manual attention needed (${(e as Error).message.slice(0, 120)})`
+        : `pull --rebase on ${branch} conflicted; rebase aborted — manual attention needed (${(e as Error).message.slice(0, 120)})`,
     };
   }
 

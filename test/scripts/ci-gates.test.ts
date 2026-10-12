@@ -18,7 +18,9 @@ function aggregate(workflow: Workflow, name: string, event: string, results: Rec
   const render = (value: string) => value
     .replace(/\$\{\{ needs\.([\w-]+)\.result \}\}/g, (_, job) => results[job] ?? 'success')
     .replaceAll('${{ ' + fullProfile + ' }}', String(event === 'schedule' || (event === 'workflow_dispatch' && fullCorpus)))
-    .replace(/\$\{\{ github.event_name \}\}/g, event);
+    .replace(/\$\{\{ github.event_name \}\}/g, event)
+    // The paid-lane switch is unset here; test/paid-lanes-switch-5903.test.ts covers its values.
+    .replaceAll('${{ vars.GBRAIN_PAID_LANES }}', '');
   const script = render(step.run!);
   const env = Object.fromEntries(Object.entries(step.env ?? {}).map(([key, value]) => [key, render(value)]));
   expect(script).not.toContain('${{');
@@ -40,7 +42,8 @@ describe('CI execution evidence', () => {
       expect(unit.jobs[name].if).toBe("${{ github.event_name != 'workflow_dispatch' || (inputs.native_only != true && inputs.race_hunt != true && !inputs.stress_files && !inputs.stress_base) }}");
     }
     expect(e2e.jobs.tier2.needs).toBe('jsonb-parity');
-    expect(e2e.jobs.tier2.if).toBeUndefined();
+    // No event gating: the only condition is the repository-wide paid-lane switch (#5903).
+    expect(e2e.jobs.tier2.if).toBe("format('{0}', vars.GBRAIN_PAID_LANES) != '0'");
   });
 
   test('the verify job runs `bun run verify`, which dispatches through run-verify-parallel.sh', () => {

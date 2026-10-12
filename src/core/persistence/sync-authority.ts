@@ -11,6 +11,7 @@ import { throwIfAborted } from '../abort-check.ts';
 import { authorizePageVisibility } from './page-visibility.ts';
 import { submissionAuthority, authorizeWrite } from './authority.ts';
 import { currentVerifiedLocalWriter, registerLocalWriter } from './identity.ts';
+import { readManagedMode } from './managed-mode.ts';
 import type { WriteAuthority } from './model.ts';
 import { writerAdminState } from './admin-intent.ts';
 
@@ -44,9 +45,9 @@ export function assertSyncDispatchActive(): void {
   throwIfAborted(currentJobSignal());
 }
 export async function resolveSyncPersistenceMode(engine: BrainEngine, opts: SyncOpts): Promise<boolean> {
-  const [brain] = await engine.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1');
+  const managed = await readManagedMode(engine);
   assertSyncDispatchActive();
-  if (brain?.enabled || opts.signal?.aborted) return brain?.enabled === true;
+  if (managed || opts.signal?.aborted) return managed;
   const [source] = await engine.executeRaw<{ claimed: boolean }>(`SELECT
     EXISTS(SELECT 1 FROM persistence_source_bindings WHERE source_id=s.id AND source_incarnation=s.incarnation) AS claimed
     FROM sources s WHERE s.id=$1`, [opts.sourceId ?? 'default']);
@@ -71,8 +72,7 @@ async function preActivationClaimRefusal(engine: BrainEngine, sourceId: string):
       verify: { argv: ['gbrain', 'sources', 'status', sourceId, '--json'] }, docs: 'docs/architecture/topologies.md#deactivate-runbook' } });
 }
 export async function assertManagedSyncActive(engine: BrainEngine, lock = false): Promise<void> {
-  const [brain] = await engine.executeRaw<{ enabled: boolean }>(`SELECT enabled FROM persistence_brain WHERE singleton=1${lock ? ' FOR SHARE' : ''}`);
-  if (!brain?.enabled) throw new OperationError('writer_coordinator_required', 'Sync cannot publish through an inactive persistence coordinator.',
+  if (!await readManagedMode(engine, lock ? { lock: 'share' } : {})) throw new OperationError('writer_coordinator_required', 'Sync cannot publish through an inactive persistence coordinator.',
     'Stop older writers and review gbrain sources writer status, then explicitly activate persistence before retrying. Claiming a source alone does not exclude running legacy writers.');
 }
 export async function managedSyncAuthority(engine: BrainEngine, sourceId: string, incarnation: string, repoPath: string): Promise<SyncAuthority> {

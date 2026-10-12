@@ -400,12 +400,17 @@ function renderExtractorSystem(admitsLow: boolean): string {
     '  * "ARR: $2M" → metric=arr, value=2000000, unit=USD, period=annual',
     '  * "Team size: 12" → metric=team_size, value=12, unit=people, period=null',
     '  * "Closed Series A: $15M" → metric=fundraise, value=15000000, unit=USD, period=null',
+    '  * "Seed round: €620K" → metric=fundraise, value=620000, unit=EUR, period=null',
+    '  * "CAD 2.75M committed" → metric=fundraise, value=2750000, unit=CAD, period=null',
     '  * "User churn: 5%" → metric=churn_rate, value=0.05, unit=pct, period=null',
     '  Use lowercase snake_case for metric. Common labels: mrr, arr, revenue,',
     '  runway, burn_rate, cash, gross_margin, team_size, headcount, users, mau,',
     '  dau, cac, ltv, churn_rate, fundraise. For non-metric claims (preferences,',
     '  events, beliefs), set all four to null. Numeric values: emit the raw',
     '  number after currency/scale normalization (50000 not "$50K"; 0.05 not "5%").',
+    '  Currency: a bare "$" is USD. When the text states another currency by',
+    '  symbol or code (€, £, ¥, EUR, GBP, CAD, ...), preserve the stated currency',
+    '  as the unit and never convert the amount.',
   ].join('\n');
 }
 

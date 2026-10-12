@@ -7,6 +7,7 @@ import { PGLiteEngine } from '../pglite-engine.ts';
 import { acquireBootstrapLock } from '../bootstrap/lock.ts';
 import { configDir, type GBrainConfig } from '../config.ts';
 import { LATEST_VERSION } from '../migrate.ts';
+import { backupDumpFailed, sweepStaleRuntimeArtefacts } from './runtime-artefacts.ts';
 import { AgentInstallError, checkedManagedPaths, checkedRoot, confinedPath, privateWrite, readFileConfigState, readInstallReceipt, syncDirectory, type AgentInstallReceipt } from '../agent-install/state.ts';
 import { extractPgliteDump, hashFile, isBackupArchiveFile, readBackupArchive, writeBackupArchive, type ArchiveManifest } from './archive.ts';
 import { quarantineRestoredExecution, rebaseRestorePath, relativeBackupPath, type RestoreQuarantine } from './quarantine.ts';
@@ -163,7 +164,9 @@ export async function createPgliteBackup(options: { output: string; root?: strin
     const externalPaths: string[] = [];
     rebaseManagedConfig(state.config, root, root, managedPaths, externalPaths);
     const inventoryBefore = originals.map(path => ({ path, ...hashFile(confinedPath(root, path)) }));
-    const dump = await engine.db.dumpDataDir('none');
+    // Under the writer lock: a dead serve's IPC socket in the data dir would fail the dump (#5312).
+    const sweep = await sweepStaleRuntimeArtefacts(dbPath);
+    const dump = await engine.db.dumpDataDir('none').catch(cause => { throw backupDumpFailed(cause, sweep); });
     privateWrite(join(work, 'database.tar'), new Uint8Array(await dump.arrayBuffer()));
     const files = [
       { path: 'database.tar', file: join(work, 'database.tar') },
@@ -186,6 +189,7 @@ export async function createPgliteBackup(options: { output: string; root?: strin
         'Unmanaged files, including .gbrain/credential-deliveries, browser sessions, git metadata, caches and prior backups outside managed data paths, are not included.',
         ...excludedPaths,
         ...externalPaths,
+        ...sweep.removed.map(path => `Removed stale runtime socket left by an exited gbrain process: ${path}`),
         ...(state.config.storage && (state.config.storage as { backend?: string }).backend !== 'local' ? ['Remote object storage content is not included; reconnect and verify the configured storage backend.'] : []),
         ...sources.filter(s => s.local_path && !s.managed_relative_path).map(s => `External source ${s.id}: ${s.local_path}`),
         'Native harness skills/routines must be reattached and verified; no platform account state is included.',

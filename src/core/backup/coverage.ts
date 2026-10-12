@@ -44,7 +44,7 @@ import {
   type BackupComputedBy,
   type BackupStatus,
 } from './status-file.ts';
-import { assessBackupRepository, BACKUP_REMOTE_PROBE_CAP, type RemoteProbeBudget } from './repository.ts';
+import { assessBackupRepository, BACKUP_REMOTE_PROBE_CAP, budgetAllowsProbe, type RemoteProbeBudget } from './repository.ts';
 
 /** No silent caps: at most this many deduped git roots are probed per run;
  * anything beyond is logged as skipped. */
@@ -323,14 +323,16 @@ export async function computeBackupCoverage(
     });
     for (const { root, index } of ordered) {
       const asset = assets[index];
-      if (remoteBudget.remaining <= 0 || (remoteBudget.deadline !== undefined && Date.now() >= remoteBudget.deadline)) {
+      if (!budgetAllowsProbe(remoteBudget)) {
         if (asset.verification?.state !== 'verified') {
           asset.verification = { ...asset.verification, state: 'budget_exhausted' };
         }
         continue;
       }
       await yieldLoop();
-      assets[index] = await assessBackupRepository(root, asset.kind as 'source_repo' | 'bootstrap_workspace', asset.id, now, remoteBudget);
+      const probed = await assessBackupRepository(root, asset.kind as 'source_repo' | 'bootstrap_workspace', asset.id, now, remoteBudget);
+      // A deferred probe (the slot closed between the pre-check and the call) keeps first-pass verified evidence; a real transport failure still supersedes it.
+      assets[index] = probed.verification?.state === 'budget_exhausted' && asset.verification?.state === 'verified' ? asset : probed;
     }
   }
 

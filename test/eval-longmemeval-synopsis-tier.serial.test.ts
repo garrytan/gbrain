@@ -60,7 +60,8 @@ beforeAll(() => {
   __setEmbedTransportForTests(embedTransport);
   __setChatTransportForTests(async (opts) => {
     chatModels.push(String(opts.model));
-    const user = String(opts.messages[0]?.content ?? '');
+    const raw = opts.messages[0]?.content ?? '';
+    const user = typeof raw === 'string' ? raw : raw.map(b => (b.type === 'text' ? b.text : '')).join('\n');
     const chunk = user.slice(user.indexOf('<chunk>') + 8, user.indexOf('</chunk>')).trim();
     return {
       text: `Synopsis: ${chunk.split(/\s+/).slice(0, 4).join(' ')}`, blocks: [], stopReason: 'end',

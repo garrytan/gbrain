@@ -22,7 +22,7 @@ import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { readSyncStatus } from '../src/core/persistence/sync-status.ts';
 import { classifySyncFault } from '../src/core/persistence/sync-fault-class.ts';
 import { managedSyncRetryCommand, readManagedSyncFailures, recordManagedSyncFailure } from '../src/core/persistence/sync-failures.ts';
-import { claimedHeadOrder, WINDOW_CANCEL_MESSAGE } from '../src/core/persistence/sync-window.ts';
+import { claimedHeadOrder, laneFaultBlockedReason, laneFaultCancelMessage, laneFaultInMessage, laneFaultOf, WINDOW_CANCEL_MESSAGE } from '../src/core/persistence/sync-window.ts';
 import { submissionAuthority } from '../src/core/persistence/authority.ts';
 import { admitWrite, claimNextWrite } from '../src/core/persistence/journal.ts';
 import { localHostId, registerLocalWriter } from '../src/core/persistence/identity.ts';
@@ -123,3 +123,56 @@ test('a head whose window predecessor was never admitted is cancelled naming tha
   expect(row!.error_message).toContain(missing);
   expect(row!.error_message).not.toBe(WINDOW_CANCEL_MESSAGE);
 }));
+
+test('#6402 residual (P4.3): a lane group released after a lock timeout keeps the fault on its rows, and its cancel names it', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+  expect(laneFaultBlockedReason('lock_timeout')).toBe('lane_lock_timeout');
+  expect(laneFaultOf('lane_statement_timeout')).toBe('statement_timeout');
+  expect(laneFaultOf('group_member_waiting')).toBeNull();
+  await registerLocalWriter(engine, 'cli');
+  const f = await fixture({ 'seed.md': note('Seed.') });
+  const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation FROM sources WHERE id=$1', [f.id]);
+  const ctx: OperationContext = { engine, config: { engine: 'pglite' }, dryRun: false, remote: false, sourceId: f.id, logger: { info() {}, warn() {}, error() {} } } as OperationContext;
+  // A predecessor that ended uncommitted, then a two-member lane group behind it (a claimed worktree, so the group is scoped like a sync's).
+  const failedId = randomUUID();
+  const authority = await submissionAuthority(ctx, 'put_page', f.id, source!.incarnation, 'notes/lane-prior');
+  await admitWrite(engine, { principal: authority.principal, authority, operation: 'put_page', sourceId: f.id, sourceIncarnation: source!.incarnation,
+    slug: 'notes/lane-prior', pageId: null, requestId: failedId, callerIntent: { content: note('Prior.') }, intent: { content: note('Prior.') } });
+  await engine.executeRaw("UPDATE persistence_requests SET state='failed',completed_at=now(),error_code='storage_error' WHERE request_id=$1::uuid", [failedId]);
+  const headId = randomUUID();
+  for (const [slug, requestId] of [['notes/lane-head', headId], ['notes/lane-member', randomUUID()]] as const) {
+    const a = await submissionAuthority(ctx, 'put_page', f.id, source!.incarnation, slug);
+    const intent = { content: note(slug), after: failedId, group: headId };
+    await admitWrite(engine, { principal: a.principal, authority: a, operation: 'put_page', sourceId: f.id, sourceIncarnation: source!.incarnation,
+      slug, pageId: null, requestId, callerIntent: intent, intent });
+  }
+  // The group's publish hit a lock timeout: laneFallback released every member with the lane fault as its blocked reason.
+  await engine.executeRaw("UPDATE persistence_requests SET blocked_reason=$2 WHERE intent->>'group'=$1", [headId, laneFaultBlockedReason('lock_timeout')]);
+  // Scoped to the source's claimed worktree, as a managed sync's group rows are.
+  await engine.executeRaw('UPDATE persistence_requests SET worktree_id=(SELECT worktree_id FROM persistence_source_bindings WHERE source_id=$1 LIMIT 1) WHERE source_id=$1', [f.id]);
+  const head = (await claimNextWrite(engine, localHostId()))!;
+  expect(head.request_id).toBe(headId);
+  expect(head.blocked_reason).toBeNull();
+  // Claimed as a window head (a lane head re-runs through laneFallback, which names the fault itself).
+  const settled = await claimedHeadOrder(engine, head, false);
+  expect(Array.isArray(settled)).toBe(true);
+  const rows = settled as Awaited<ReturnType<typeof claimNextWrite>>[];
+  expect(rows.map(row => row!.state)).toEqual(['cancelled', 'cancelled']);
+  for (const row of rows) {
+    expect(row!.error_code).toBe('cancelled');
+    expect(row!.error_message).toBe(laneFaultCancelMessage('lock_timeout'));
+    expect(row!.error_message).toContain('after lock_timeout on its lane group');
+  }
+  expect(classifySyncFault({ code: 'cancelled' })).toMatchObject({ class: 'page', safe_actions: ['retry'], needs_human: false });
+}));
+
+test('#6402 residual (P4.3): sync status carries the lane fault as the cancelled failure\'s detail', async () => withEnv({ GBRAIN_HOME: home, GBRAIN_SYNC_FAILURES_DIR: home }, async () => {
+  expect(laneFaultInMessage(laneFaultCancelMessage('statement_timeout'))).toBe('statement_timeout');
+  expect(laneFaultInMessage(WINDOW_CANCEL_MESSAGE)).toBeNull();
+  const f = await blockedRun();
+  await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_set(jsonb_set(completed_keys,'{0,code}','"cancelled"'),'{0,message}',to_jsonb($1::text))
+    WHERE op='managed-sync-failure' AND completed_keys->0->>'source_id'=$2`, [laneFaultCancelMessage('lock_timeout'), f.id]);
+  const status = await readSyncStatus(engine, f.id);
+  expect(status.last_error).toMatchObject({ code: 'cancelled', detail: 'lock_timeout', class: 'page', safe_actions: ['retry'], needs_human: false });
+  expect(status.last_error!.message).toContain('after lock_timeout on its lane group');
+  expect(status.needs_human).toBe(false);
+}), 120_000);

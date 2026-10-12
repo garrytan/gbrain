@@ -244,17 +244,22 @@ for (const backendName of testBackends()) {
       const engine = engineOf();
       const marker = `cnrycore${randomUUID().slice(0, 8)}`;
       await corePage(engine, marker);
+      // The deadline is fired by hand: a real 50 ms budget raced against a real
+      // Postgres refresh lost on a loaded shard and failed the first call.
       const slow = { now: false };
+      const deadlines: number[] = [];
       const l = createOpenClawCoreLane({
         timeoutMs: 50,
-        fetcher: async (_s, memo) => {
-          if (slow.now) await new Promise(r => setTimeout(r, 200));
-          return refreshCoreFromEngine(engine, 'default', memo);
+        later: (ms, fire) => {
+          deadlines.push(ms);
+          if (slow.now) fire();
         },
+        fetcher: (_s, memo) => slow.now ? new Promise<never>(() => {}) : refreshCoreFromEngine(engine, 'default', memo),
       });
       expect((await l.additions({ sessionId: 's', messages: [] })).join('\n')).toContain(marker);
       slow.now = true;
       expect((await l.additions({ sessionId: 's', messages: [] })).join('\n')).not.toContain(marker);
+      expect(deadlines).toEqual([50, 50]);
     });
 
     test('the serve coreOnly arm answers unchanged for a matching identity and a fresh block after a transition', async () => {

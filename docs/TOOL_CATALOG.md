@@ -79,7 +79,7 @@ Every non-localOnly operation on the MCP surface: 149 tools across 25 areas. **S
 
 | Tool | Description | Scope | Starter | Gate |
 |---|---|---|---|---|
-| `get_ingest_log` | Recent ingestion log entries. | read | yes |  |
+| `get_ingest_log` | Recent ingestion log entries: what was already imported, and when. | read | yes |  |
 | `log_ingest` | Record one ingestion event (source type, reference, pages updated, summary) in the brain's ingest log. | write |  |  |
 
 ## insights
@@ -120,7 +120,7 @@ Every non-localOnly operation on the MCP surface: 149 tools across 25 areas. **S
 | `find_orphans` | Find disconnected pages. | read |  |  |
 | `get_backlinks` | Links to a page; group:"page" pages by referrer, newest first. | read | yes |  |
 | `get_links` | List a page's outgoing links (typed edges to other pages). | read |  |  |
-| `list_link_sources` | Link provenances in the brain (e.g. | read | yes |  |
+| `list_link_sources` | Link provenances (e.g. | read | yes |  |
 | `remove_link` | Remove a link between two pages (optionally only one link_type or link_source). | write |  |  |
 | `traverse_graph` | Walk the link graph from a page. | read | yes |  |
 | `wanted_pages` | Link targets that have no page yet, most-referenced first: each was written as a link but its page does not exist, so no edge exists. | read |  |  |
@@ -179,7 +179,7 @@ Every non-localOnly operation on the MCP surface: 149 tools across 25 areas. **S
 | `get_write_request` | Read your write's receipt by request_id (after write_pending or a lost reply). | write | yes |  |
 | `list_page_purges` | Owner-only (`gbrain pages purges list`). | admin |  |  |
 | `list_pages` | List pages with filters. | read | yes |  |
-| `list_write_requests` | List your write receipts in one source, newest first. | write | yes |  |
+| `list_write_requests` | List your write receipts in one source, newest first, for a lost request_id. | write | yes |  |
 | `put_page` | Complete content REPLACES the whole page: read get_page include_content:true; send its revision as expected_revision. | write | yes |  |
 | `put_pages` | Write up to 50 complete Markdown pages (8 MB total) in one call; use instead of put_page for more than 3 pages. | write |  |  |
 | `put_raw_data` | Store a raw provider payload (API response JSON) alongside a page, keyed by source. | write |  |  |
@@ -278,5 +278,5 @@ Every non-localOnly operation on the MCP surface: 149 tools across 25 areas. **S
 | Tool | Description | Scope | Starter | Gate |
 |---|---|---|---|---|
 | `add_timeline_entry` | Append a dated entry to a page timeline. | write | yes |  |
-| `get_timeline` | Get timeline entries for a page, optionally filtered by date window | read |  |  |
+| `get_timeline` | Get timeline entries for a page, optionally filtered by date window. | read |  |  |
 

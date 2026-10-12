@@ -11,6 +11,7 @@
 # file is a one-line edit: insert its path in sorted order. Shards balance
 # other Postgres lane runs. The unit, serial and slow lanes unset
 # themselves from scripts/postgres-arm-weights.json.
+test/activation-unbound-rooted-6449.test.ts
 test/alias-source-cascade-5094.test.ts
 test/attribution-backfill-history.test.ts
 test/behavior-change-notice.test.ts
@@ -32,6 +33,7 @@ test/extract-endpoint-revision.serial.test.ts
 test/extract-entities-managed.test.ts
 test/extract-timeline-from-meetings-managed.test.ts
 test/fence-repair-receipts.test.ts
+test/frontmatter-reserved-keys-6454.test.ts
 test/graduation-copy.test.ts
 test/graduation-digest.test.ts
 test/graduation-drain.test.ts
@@ -104,6 +106,7 @@ test/persistence-sync-fence-holds.test.ts
 test/persistence-sync-holds.test.ts
 test/persistence-write-stall.test.ts
 test/persistence-writer-fences.test.ts
+test/physical-root-birth-tolerance-6501.test.ts
 test/purge-fact.test.ts
 test/purge-global-marker.test.ts
 test/remediation-manual-only.test.ts
@@ -111,6 +114,7 @@ test/repair-embedding-effects.test.ts
 test/repair-failed-writes-conflict-6429.test.ts
 test/repair-failed-writes-drift-w411.test.ts
 test/repair-fences.test.ts
+test/repair-frontmatter-keys-sweep-6454.test.ts
 test/repair-frontmatter.test.ts
 test/scripts/test-stress-postgres.test.ts
 test/shared-content-freshness.test.ts
@@ -126,6 +130,8 @@ test/sync-drain-inpass-stall.test.ts
 test/sync-drain-write-capacity.test.ts
 test/sync-frontmatter-recovery.test.ts
 test/sync-frontmatter-slug-conflict.test.ts
+test/sync-full-cursor-slices-6349.test.ts
+test/sync-full-untracked-import-5459.test.ts
 test/sync-group-member-order.test.ts
 test/sync-legacy-holds.test.ts
 test/sync-staged-catchup.test.ts

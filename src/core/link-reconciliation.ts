@@ -274,10 +274,22 @@ export function makeLinkSourceResolver(pageSlug: string, pageSourceId: string,
   };
 }
 
-export function capturedLinkEndpoints(links: LinkBatchInput[], metadata: ReadonlyMap<string, Pick<LinkPageMetadata, 'slug' | 'source_id' | 'knowledge_revision'>>) {
+/**
+ * Endpoint fences for one origin's link batch: every endpoint at the revision
+ * the resolver census captured. The source-qualified `origin`, when given, is
+ * left out (#6474): its body and type came from the snapshot whose revision
+ * `expectedRevision` already fences at publication, so fencing it again at
+ * the older census revision would defer a page rewritten between the census
+ * and its own read even though the run extracted its live body. A page with
+ * the same slug in another source is still fenced. This is the one place the
+ * rule lives; the managed preparation and both DB walks call it.
+ */
+export function capturedLinkEndpoints(links: LinkBatchInput[], metadata: ReadonlyMap<string, Pick<LinkPageMetadata, 'slug' | 'source_id' | 'knowledge_revision'>>,
+  origin?: { slug: string; sourceId: string }) {
   const keys = new Set(links.flatMap(link => [
     `${link.from_source_id ?? 'default'}\0${link.from_slug}`, `${link.to_source_id ?? 'default'}\0${link.to_slug}`,
   ]));
+  if (origin) keys.delete(`${origin.sourceId}\0${origin.slug}`);
   return [...keys].map(key => {
     const endpoint = metadata.get(key);
     if (!endpoint) throw new Error('A derived link endpoint was not captured during type resolution');

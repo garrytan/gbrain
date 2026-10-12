@@ -77,9 +77,9 @@ const get_health: Operation = {
     // degrades the field, never the health call.
     let migrations: unknown;
     try {
-      const { migrationLedgerSummary } = await import('../migration-ledger.ts');
+      const { declinedMigrations, migrationLedgerSummary } = await import('../migration-ledger.ts');
       const { VERSION } = await import('../../version.ts');
-      migrations = migrationLedgerSummary(VERSION);
+      migrations = migrationLedgerSummary(VERSION, await declinedMigrations(ctx.engine));
     } catch {
       migrations = { error: 'ledger_unreadable' };
     }

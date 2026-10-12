@@ -113,6 +113,13 @@ Every hold and error has three fields, from one table
 | `invalid_params` | systemic | none | yes | always |
 <!-- sync-fault-table:end -->
 
+A `cancelled` error whose group was released by a lane fault (`lock_timeout`
+or `statement_timeout` on a parallel publish lane) also carries that fault as
+`last_error.detail`, and the cancelled rows keep it as their `blocked_reason`
+(`lane_lock_timeout`, `lane_statement_timeout`) and in the cancel message.
+The verdict is the same retry; the detail says the database, not the page,
+ended the group.
+
 An unknown code is systemic and human: `gbrain errors <code>` explains it
 offline, `gbrain doctor --json` says what the brain thinks.
 

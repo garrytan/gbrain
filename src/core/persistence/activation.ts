@@ -4,7 +4,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { Action } from '../agent-output.ts';
 import { opError, OperationError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
-import { acquireWorktree, getWorktreeBinding, type WorktreeBinding } from './ownership.ts';
+import { acquireWorktree, getWorktreeBinding, readManagedMode, type WorktreeBinding } from './ownership.ts';
 import { localHostId, existingLocalHostId, persistenceHome, registerLocalWriter } from './identity.ts';
 import { nativeLockCapability, tryAcquireNativeLock, type NativeLockHandle } from './native-lock.ts';
 import { managedFilesystemDatastorePath, refreshManagedFilesystemRoots } from './filesystem-guard.ts';
@@ -16,6 +16,8 @@ import { deleteLockRowExact } from '../db-lock.ts';
 import { catalogueError } from '../error-catalogue.ts';
 import { isConnectorSourceKind } from './connector-identity.ts';
 import { gitDurabilityState } from './git-durability-policy.ts';
+import { writeThroughConfigured } from './switches.ts';
+import { DATABASE_ONLY_SOURCES_KEY, unboundBindCommand } from './unbound-source.ts';
 
 export interface ActivationReport {
   enabled: boolean;
@@ -31,6 +33,14 @@ export interface ActivationReport {
    * until `gbrain sources writer git-durability <source> --enable` runs.
    */
   git_durability?: Array<{ source_id: string; state: 'on' | 'off' | 'unknown'; enable_command: string | null }>;
+  /**
+   * #6449: rooted, non-connector sources with no canonical owner on a brain whose `sync.write_through` is off. They are
+   * database-only (page writes publish to the database with `databaseOnlyReason: disabled_by_config`, `writer status`
+   * reports `database_only`), so activation lists them instead of refusing and records the list in
+   * `persistence.database_only_sources` (a PGLite write to one never runs the automatic first-write claim); claiming one
+   * later is a deliberate `writer claim`, and `gbrain sync` on one refuses `owner_unavailable` naming that claim.
+   */
+  database_only_sources?: string[];
   /** #5514: `activated: false` with `enabled: true` says why, so a no-op is not read as a silent failure. */
   reason?: 'already_enabled';
   why?: string;
@@ -67,13 +77,26 @@ function sourcePathMissing(source: SourceRoot, claimedRoot: string | null): Oper
   error.detail = 'source_path_missing';
   return error;
 }
-async function validatedBindings(engine: BrainEngine, sources: SourceRoot[], hostId: string | null, lock = false): Promise<WorktreeBinding[]> {
+interface ValidatedSources { bindings: WorktreeBinding[]; databaseOnly: string[] }
+/** #6449: a rooted source with no owner on a write_through=true brain; the claim is the fix, database-only mode the alternative. */
+function unboundRootedSource(source: SourceRoot): OperationError {
+  return opError('writer_registration_required', `Source '${source.id}' needs an active canonical owner before activation.`,
+    `Source '${source.id}' has a checkout path (${source.root}) but no canonical owner, and sync.write_through is on, so activation stopped and nothing changed. `
+    + `Either bind it on the brain host (ask the user first; preview with gbrain sources writer claim ${source.id} --path ${source.root} --dry-run --json, then ${unboundBindCommand(source.id, source.root)}), `
+    + `or make the brain database-only with gbrain config set sync.write_through false, after which activation lists the source under database_only_sources and page writes publish to the database only. ${WRITER_INSPECTION_HINT}`,
+    { fix: writerStatusFix(`Shows source ${source.id}'s binding state (database_only, claim_required) and admin_state, read-only.`, source.id) });
+}
+async function validatedBindings(engine: BrainEngine, sources: SourceRoot[], hostId: string | null, writeThrough: boolean, lock = false): Promise<ValidatedSources> {
   const bindings: WorktreeBinding[] = [];
+  const databaseOnly: string[] = [];
   for (const source of sources) {
     let binding = await getWorktreeBinding(engine, source.id, hostId);
     if ((!source.root || source.connector) && !binding) continue;
     if (!binding && !source.connector && !existsSync(resolve(source.root!))) throw sourcePathMissing(source, null);
-    if (binding && lock) {
+    // #6449: onboarding already reports this source database_only; activation agrees instead of demanding a claim.
+    if (!binding && !writeThrough) { databaseOnly.push(source.id); continue; }
+    if (!binding) throw unboundRootedSource(source);
+    if (lock) {
       await engine.executeRaw('SELECT id FROM persistence_worktrees WHERE id=$1::uuid FOR SHARE', [binding.worktree_id]);
       binding = await getWorktreeBinding(engine, source.id, hostId);
     }
@@ -99,7 +122,7 @@ async function validatedBindings(engine: BrainEngine, sources: SourceRoot[], hos
     }
     bindings.push(binding);
   }
-  return bindings;
+  return { bindings, databaseOnly };
 }
 
 /** Explicit coordinated-upgrade boundary. Refusal records become durable before enabled does. */
@@ -118,15 +141,16 @@ export async function activatePersistence(engine: BrainEngine, opts: { confirmQu
       { fix: writerStatusFix('Shows whether managed persistence is now enabled and which owners are active, read-only.') });
   }
   await probe.release();
-  const [brain] = await engine.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1');
-  if (brain?.enabled && opts.expectedState === undefined) {
+  if (await readManagedMode(engine) && opts.expectedState === undefined) {
     const [count] = await engine.executeRaw<{ count: number }>(`SELECT COUNT(*)::integer AS count FROM persistence_source_bindings b
       JOIN sources s ON s.id=b.source_id AND s.incarnation=b.source_incarnation WHERE NOT s.archived`);
     return { enabled: true, activated: false, filesystem_sources: count.count, native_lock: native, ...ALREADY_ENABLED };
   }
   const hostId = opts.dryRun ? existingLocalHostId() : localHostId();
   const sources = await configuredSources(engine);
-  const initial = await validatedBindings(engine, sources, hostId);
+  const writeThrough = writeThroughConfigured(await engine.getConfig('sync.write_through'));
+  const { bindings: initial, databaseOnly } = await validatedBindings(engine, sources, hostId, writeThrough);
+  const databaseOnlyListing = databaseOnly.length ? { database_only_sources: databaseOnly } : {};
   let driftAudit: ActivationReport['drift_audit'];
   if (opts.dryRun) {
     const { auditCanonicalSource } = await import('./reconcile-audit.ts');
@@ -154,14 +178,15 @@ export async function activatePersistence(engine: BrainEngine, opts: { confirmQu
     return await engine.transaction(async tx => {
       await tx.executeRaw("SELECT set_config('lock_timeout','2000ms',true),set_config('synchronous_commit','on',true)");
       await assertWriterAdminState(tx, opts.expectedState);
-      const [current] = await tx.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1 FOR UPDATE');
+      const current = await readManagedMode(tx, { lock: 'update' });
       await assertWriterAdminUnlocked(tx);
-      if (current?.enabled) return { enabled: true, activated: false, filesystem_sources: initial.length, native_lock: native, ...ALREADY_ENABLED };
+      if (current) return { enabled: true, activated: false, filesystem_sources: initial.length, native_lock: native, ...ALREADY_ENABLED };
       const currentSources = await configuredSources(tx, true);
-      const bindings = await validatedBindings(tx, currentSources, hostId, true);
+      const currentWriteThrough = writeThroughConfigured(await tx.getConfig('sync.write_through'));
+      const { bindings, databaseOnly: currentDatabaseOnly } = await validatedBindings(tx, currentSources, hostId, currentWriteThrough, true);
       const identity = (rows: WorktreeBinding[]) => JSON.stringify(rows.map(row => [row.source_id,row.source_incarnation,row.worktree_id,row.owner_host_id,
         String(row.owner_epoch),String(row.topology_generation),row.relative_path,row.local_path,row.coordination_path]));
-      if (identity(bindings) !== identity(initial) || JSON.stringify(currentSources) !== JSON.stringify(sources)) {
+      if (identity(bindings) !== identity(initial) || JSON.stringify(currentSources) !== JSON.stringify(sources) || JSON.stringify(currentDatabaseOnly) !== JSON.stringify(databaseOnly)) {
         throw opError('source_changed', 'Source ownership changed during activation; inspect writer status and retry.',
           'Sources or their owners changed while activation ran, so it rolled back and nothing was activated. Inspect the writer status, then rerun gbrain sources writer activate --confirm-quiesced --dry-run before activating again.',
           { fix: writerStatusFix('Shows the current sources, owners and registrations, read-only.') });
@@ -174,17 +199,20 @@ export async function activatePersistence(engine: BrainEngine, opts: { confirmQu
       if (legacyLocks.some(row => !opts.cleanupDeadLocalLocks || row.liveness !== 'dead_eligible')) throw quiescence();
       if ((await tx.executeRaw(`SELECT id FROM persistence_requests WHERE state IN ('queued','running','recovering') OR recovery IS NOT NULL LIMIT 1`)).length
         || (await tx.executeRaw('SELECT id FROM persistence_effects WHERE recovery IS NOT NULL LIMIT 1')).length) throw await notQuiescedError(tx, quiescence().message, { queuedEffects: false });
-      if (opts.dryRun) return { enabled: false, activated: false, filesystem_sources: bindings.length, native_lock: native, legacy_locks: legacyLocks, drift_audit: driftAudit, git_durability: gitDurabilityListing(bindings) };
+      if (opts.dryRun) return { enabled: false, activated: false, filesystem_sources: bindings.length, native_lock: native, legacy_locks: legacyLocks, drift_audit: driftAudit, git_durability: gitDurabilityListing(bindings), ...databaseOnlyListing };
       for (const row of legacyLocks) {
         if (!(await deleteLockRowExact(tx, row.id, row.holder_pid, row.acquisition_token)).deleted) throw quiescence();
       }
       await registerLocalWriter(tx, 'cli');
       await registerLocalWriter(tx, 'stdio');
       await tx.executeRaw('UPDATE persistence_brain SET enabled=true,activated_at=COALESCE(activated_at,now()),mode_epoch=mode_epoch+1 WHERE singleton=1');
+      // #6449: the sources accepted without an owner; a PGLite write to one of them never runs the automatic first-write claim.
+      if (currentDatabaseOnly.length) await tx.setConfig(DATABASE_ONLY_SOURCES_KEY, JSON.stringify(currentDatabaseOnly));
+      else await tx.unsetConfig(DATABASE_ONLY_SOURCES_KEY);
       // Any fsync/marker failure rolls back enabled=true. A conservative stale
       // refusal record after rollback is safe and cannot grant writer authority.
       await refreshManagedFilesystemRoots(tx, managedFilesystemDatastorePath(engine));
-      return { enabled: true, activated: true, filesystem_sources: bindings.length, native_lock: native, legacy_locks: legacyLocks, git_durability: gitDurabilityListing(bindings) };
+      return { enabled: true, activated: true, filesystem_sources: bindings.length, native_lock: native, legacy_locks: legacyLocks, git_durability: gitDurabilityListing(bindings), ...databaseOnlyListing };
     });
   } finally { for (const lock of locks.reverse()) await lock.release(); }
 }

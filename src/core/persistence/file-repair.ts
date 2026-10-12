@@ -48,7 +48,7 @@ import { ownerImportTrust, ownerSourceGateInput } from '../trust/channel.ts';
 import { ContentSanityBlockError } from '../content-sanity.ts';
 import { loadImportSanityConfig, type ContentRefusal, type ImportSanityConfig } from '../import-screen.ts';
 import { loadActivePackForEngine } from '../schema-pack/engine-resolution.ts';
-import { parseMarkdown, resolveParsedSubtype, type ParseOpts } from '../markdown.ts';
+import { comparableFrontmatter, parseMarkdown, resolveParsedSubtype, type ParseOpts } from '../markdown.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
 import { opError, type OperationContext } from '../ops/contract.ts';
 import { readFix, trustedCliRequired } from '../ops/op-fix.ts';
@@ -179,7 +179,7 @@ export function fileSha256(path: string): string {
 
 /** The canonical page fields a publication stores; what the preview hash binds besides the bytes. */
 export function canonicalRepairFields(page: Pick<ParsedPage, 'type' | 'title' | 'compiled_truth' | 'timeline' | 'frontmatter'>, tags: string[]) {
-  return { type: page.type, title: page.title, body: page.compiled_truth, timeline: page.timeline ?? '', frontmatter: page.frontmatter, tags: [...new Set(tags)].sort() };
+  return { type: page.type, title: page.title, body: page.compiled_truth, timeline: page.timeline ?? '', frontmatter: comparableFrontmatter(page.frontmatter), tags: [...new Set(tags)].sort() };
 }
 
 export interface RepairPublicationInput {

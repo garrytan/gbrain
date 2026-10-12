@@ -29,6 +29,7 @@ The resolved provider + dimensions get persisted to `~/.gbrain/config.json` atom
 | `google` | `GOOGLE_GENERATIVE_AI_API_KEY` | 768 | 0.025 | no | no |
 | `azure-openai` | `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT` | 1536 | 0.13 | no | no |
 | `minimax` | `MINIMAX_API_KEY` | 1536 | 0.07 | no | no |
+| `mistral` | `MISTRAL_API_KEY` | 1024 | 0.10 | no | no |
 | `dashscope` | `DASHSCOPE_API_KEY` | 1024 | varies | no | no |
 | `zhipu` | `ZHIPUAI_API_KEY` | 1024 | varies | no | no |
 | `ollama` | (none — runs locally) | 768 | 0 | yes | no |
@@ -118,6 +119,8 @@ Set `GOOGLE_GENERATIVE_AI_API_KEY` (the AI Studio public API key). Models: `gemi
 
 GCP service-account / Vertex AI auth (Vertex ADC) is not supported; only the AI Studio API key path is wired.
 
+`gemini-embedding-001` takes at most 2,048 tokens per input and the endpoint truncates longer inputs silently (`autoTruncate` defaults on), which embeds a lossy vector rather than failing. gbrain declares the cap so chunks on `-001` are capped at 1,228 estimated tokens and split instead (see [Per-input token caps](#per-input-token-caps)). `gemini-embedding-2`'s per-input limit is not declared yet.
+
 ### OpenRouter
 
 Single OpenAI-compatible API for fan-out to OpenAI, Anthropic, Google, DeepSeek, Meta Llama, Qwen, and dozens of other hosted providers. One key, many models. Set `OPENROUTER_API_KEY` or `openrouter_api_key` in `~/.gbrain/config.json`, then use `openrouter:<provider>/<model>` (e.g. `openrouter:openai/gpt-5.2`, `openrouter:anthropic/claude-sonnet-4.6`).
@@ -140,6 +143,12 @@ Unlike vanilla OpenAI, Azure uses `api-key:` header (not `Authorization: Bearer`
 
 Models: `text-embedding-3-large`, `text-embedding-3-small`, `text-embedding-ada-002` (your Azure deployment must serve the requested model).
 
+### Mistral AI
+
+Set `MISTRAL_API_KEY`. Model: `mistral-embed` (fixed 1024 dims; the API rejects any dimension parameter, so leave `--embedding-dimensions` at 1024). Chat and expansion run on the same key (`mistral:mistral-large-latest`, `mistral:mistral-small-latest`; unpriced in gbrain's tables, so a user cost cap needs `gbrain pricing set`), so a brain can keep embed + expansion + chat on one provider.
+
+Region: `api.mistral.ai` (the default) is EU-hosted by default, but Mistral's terms allow a request to be served outside the EU unless your organization disables transfers; the default endpoint carries no regional-inference assurance. Inference pinned to the EU is Mistral's opt-in regional endpoint, billed at 1.1x list price: `gbrain config set provider_base_urls.mistral https://api.eu.mistral.ai/v1`, then verify with `gbrain config get provider_base_urls.mistral`. gbrain does not switch to it for you, and ships no separate `mistral-eu` recipe.
+
 ### MiniMax (海螺AI)
 
 Set `MINIMAX_API_KEY`. Optional `MINIMAX_GROUP_ID` for org-scoped accounts. Model: `embo-01` (1536 dims).
@@ -148,13 +157,17 @@ MiniMax's API takes a `type: 'db' | 'query'` field for asymmetric retrieval. gbr
 
 ### DashScope (Alibaba)
 
-Set `DASHSCOPE_API_KEY`. International endpoint at `dashscope-intl.aliyuncs.com` by default; override `provider_base_urls.dashscope` for the China endpoint. Models: `text-embedding-v3` (current; Matryoshka 64-1024 dims), `text-embedding-v2`.
+Set `DASHSCOPE_API_KEY`. International endpoint at `dashscope-intl.aliyuncs.com` by default; override `provider_base_urls.dashscope` for the China endpoint. Models: `text-embedding-v3` (current; Matryoshka 64-1024 dims), `text-embedding-v2`, `text-embedding-v1`.
 
 CJK-dominant content tokenizes denser than OpenAI tiktoken; gbrain declares `chars_per_token: 2` so the batch pre-split leaves headroom.
+
+Per-input caps are declared (see [Per-input token caps](#per-input-token-caps)): `text-embedding-v1` / `v2` take at most 2,048 tokens per input (one over-length item fails the whole request with a 400), `v3` takes 8,192. New chunks on v1/v2 are capped at 1,228 estimated tokens instead of 2,000; a brain chunked before this declaration is split on its next `gbrain embed` / `embed --stale` pass and the split pieces re-embed.
 
 ### Zhipu AI (BigModel)
 
 Set `ZHIPUAI_API_KEY`. Models: `embedding-3` (current; Matryoshka 256-2048 dims), `embedding-2`. The default is 1024 (HNSW-compatible). The 2048-dim option works but falls into the exact-scan branch (see Voyage 4 Large note above).
+
+Per-input caps are declared: `embedding-3` takes at most 3,072 tokens per string (chunks capped at 1,843 estimated tokens), `embedding-2` 512 (chunks capped at 307). See [Per-input token caps](#per-input-token-caps).
 
 ### Ollama (local)
 
@@ -222,6 +235,12 @@ Three numbers matter:
 3. **HNSW cap**: pgvector's HNSW index supports up to 2000 dims. Brains above that fall back to exact vector scans (slower but correct; gbrain handles the SQL automatically via `chunkEmbeddingIndexSql` in `src/core/vector-index.ts`).
 
 For most users: **stay at 1024 or 1536**. Bigger isn't better below the noise floor; smaller saves disk + RAM with marginal recall loss on Matryoshka providers.
+
+## Per-input token caps
+
+Some hosted encoders reject (or silently truncate) any SINGLE input over a per-input token limit, far below their batch budget. A recipe declares the documented limit per model (`max_input_tokens`), and the chunker caps new chunks at `floor(limit × 0.6)` estimated tokens, never above the 2,000-token default, splitting rather than truncating; `gbrain embed` and `embed --stale` split already-stored chunks the same way before sending them. Declared today: NVIDIA `nvidia/nv-embedqa-e5-v5` 512; Zhipu `embedding-2` 512, `embedding-3` 3,072; DashScope `text-embedding-v1` / `v2` 2,048, `v3` 8,192; Google `gemini-embedding-001` 2,048; OpenAI `text-embedding-3-*` 8,191; Mistral `mistral-embed` 8,192 (the last three are above the default chunk cap, so chunking is unchanged). `GBRAIN_MAX_CHUNK_TOKENS` overrides the resolved cap for a model no recipe declares.
+
+When a model declares no cap and the provider answers a single input with an over-length 400 (`input length exceeds the context length`, `exceeds maximum allowed token size N`, `Range of input length should be [1, N]`, …), the embed pass derives a smaller cap from the failure (the limit the message names × 0.6, otherwise half the largest failed chunk's estimate), keeps it for that model for the rest of the process, and splits the failing page at once; the pieces embed on the next pass, and later pages are split before their first request. The descent is finite: three attempts per page per process and never below 128 tokens, after which the failure is reported with the fix (`GBRAIN_MAX_CHUNK_TOKENS=<limit>`, a recipe `max_input_tokens` entry, or `embed_skip` on the page). A model whose cap IS declared gets no derived cap: the declaration is what to correct. Unrelated 400s (bad key, unknown model) and batch-level token errors never rewrite a chunk.
 
 ## Bulk-embed failure knobs
 

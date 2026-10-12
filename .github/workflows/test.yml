@@ -214,6 +214,11 @@ jobs:
       # 0x42") in its private-IPC test right after the native lock probe; the
       # crash is Bun's, tracked in #6462, and the #5332 bound it exercised is
       # covered by the forced probe inside postgres-disconnect-bounded.
+      # Upstream: oven-sh/bun#40023 ("Windows: dispatch libuv events from the
+      # event loop, not from inside libuv callbacks") is the fix for the
+      # class: on Windows a socket or pipe closed during a nested tick is
+      # freed while the outer libuv dispatch still holds it. Re-try the file
+      # on this row once a Bun release carries that change.
       - name: Teardown bounds that used to park the Windows unit run (#5332)
         run: bun test --timeout 120000 test/postgres-disconnect-bounded.test.ts
       - name: Backup archive round trip on this host (#5312)
@@ -318,6 +323,19 @@ jobs:
             test/fixtures/pglite-snapshot.version
           key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/*.ts', 'src/core/audit/redact-connection-info.ts', 'src/core/engine-sql/bootstrap.ts', 'src/core/schema-migrations/**', 'src/core/ai/defaults.ts', 'src/core/company-brain/receipt-schema.ts', 'src/core/entities/resolve.ts', 'src/core/facts/withdrawal-schema.ts', 'src/core/facts/relink-schema.ts', 'src/core/google/*.ts', 'src/core/grants/*.ts', 'src/core/minions/tools/brain-allowlist.ts', 'src/core/ops/contract.ts', 'src/core/page-state/*schema.ts', 'src/core/persistence/*.ts', 'src/core/schema-pack/link-inference.ts', 'src/core/schema-pack/redos-guard.ts', 'src/core/search/alias-normalize.ts', 'src/core/search/private-visibility.ts', 'src/core/search/projection-statistics.ts', 'src/core/search/relational-intent.ts', 'src/core/shared-skills/*schema*.ts', 'src/core/ai/decide/schema.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts', 'src/core/facts/purge-schema.ts', 'src/core/facts/fts-index.ts', 'src/core/eligibility/generation-schema.ts', 'src/core/trust/schema.ts', 'src/core/trust/tier.ts', 'src/core/trust/allow-rules.ts', 'src/core/write-gate-schema.ts', 'src/core/questions/schema.ts', 'src/core/questions/identity.ts', 'src/core/questions/auto-think-migration.ts', 'src/core/loops/loops-schema.ts', 'src/core/postgres-engine/schema-lock-timeout.ts') }}
       - run: bun install --frozen-lockfile
+      # #6056: typecheck is the slowest verify check and ran cold on every
+      # job. `bun run typecheck` is incremental against this tsbuildinfo, so
+      # a restored one from an earlier run lets tsc recheck only what changed.
+      # Rolling key: every run saves under its own SHA and the next run
+      # restores the newest one for the same bun.lock + tsconfig.json
+      # (a dependency or compiler-option change starts cold). After
+      # `bun install`, which (re)creates node_modules.
+      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: node_modules/.cache/gbrain-typecheck.tsbuildinfo
+          key: tsbuildinfo-${{ runner.os }}-${{ hashFiles('bun.lock', 'tsconfig.json') }}-${{ github.sha }}
+          restore-keys: |
+            tsbuildinfo-${{ runner.os }}-${{ hashFiles('bun.lock', 'tsconfig.json') }}-
       # check:schema-migration-order compares new schema migrations with
       # origin/master's latest version; a depth-1 fetch of the ref is enough.
       - run: git fetch --no-tags --depth=1 origin +refs/heads/master:refs/remotes/origin/master

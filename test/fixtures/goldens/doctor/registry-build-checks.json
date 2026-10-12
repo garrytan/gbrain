@@ -474,6 +474,10 @@
         "name": "ontology_facts_fenced"
       },
       {
+        "category": "ops",
+        "name": "stale_frontmatter_keys"
+      },
+      {
         "category": "brain",
         "name": "extraction_date_grounding"
       },

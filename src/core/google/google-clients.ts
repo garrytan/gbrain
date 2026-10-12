@@ -161,6 +161,7 @@ export class GoogleApiClient {
           detail?.['@type'] === 'type.googleapis.com/google.rpc.ErrorInfo' && detail.reason === 'EXPIRED_SYNC_TOKEN',
         )) || /^Sync token (?:is )?expired\b/i.test(body.error?.message ?? '');
         if (expired) throw new GoogleCursorExpiredError(res.status, url);
+        throw new GoogleSyncTokenRejectedError(url, body.error?.message ?? 'no detail');
       }
       throw new CredentialError('upstream', `: HTTP ${res.status} on ${apiHint} (${body.error?.message ?? 'no detail'})`);
     }
@@ -205,6 +206,23 @@ export class GoogleCursorExpiredError extends Error {
     super(`Google cursor expired (HTTP ${status}) on ${url}`);
     this.name = 'GoogleCursorExpiredError';
   }
+}
+
+/**
+ * #6324: People answered a syncToken request with a 400 that is NOT the typed
+ * expiry. The People API requires every other parameter of an incremental
+ * request to match the call that minted the token, so a token minted under a
+ * different `personFields` lands here. Still an upstream `CredentialError`
+ * for every caller that does not own a contacts cursor; the contacts sweep
+ * treats it as cursor-invalid and re-lists once.
+ */
+export class GoogleSyncTokenRejectedError extends CredentialError {
+  constructor(url: string, detail: string) {
+    super('upstream', `: HTTP 400 on people (${detail})`);
+    this.name = 'GoogleSyncTokenRejectedError';
+    this.url = url;
+  }
+  readonly url: string;
 }
 
 // ── Gmail ────────────────────────────────────────────────────────────────────
@@ -590,9 +608,34 @@ interface RawPerson {
   resourceName: string;
   names?: Array<{ displayName?: string; metadata?: { primary?: boolean } }>;
   emailAddresses?: Array<{ value?: string }>;
+  phoneNumbers?: Array<{ value?: string; canonicalForm?: string }>;
   organizations?: Array<{ name?: string; title?: string; metadata?: { primary?: boolean } }>;
+  memberships?: Array<{ contactGroupMembership?: { contactGroupResourceName?: string } }>;
   metadata?: { deleted?: boolean };
 }
+
+interface RawContactGroup {
+  resourceName?: string;
+  name?: string;
+  formattedName?: string;
+  groupType?: string;
+}
+
+/**
+ * #6324: the People field mask every contacts request carries. A syncToken is
+ * only valid for requests with the parameters that minted it, so the sweep
+ * records this string next to the token (`contacts_person_fields`) and
+ * re-lists when it changes. Change it here and nowhere else.
+ */
+export const CONTACT_PERSON_FIELDS = 'names,emailAddresses,organizations,phoneNumbers,memberships';
+
+/** Google's built-in groups (`contactGroups/myContacts`, `starred`, …) say nothing a page should carry. */
+const SYSTEM_CONTACT_GROUPS = new Set(
+  ['all', 'myContacts', 'starred', 'blocked', 'chatBuddies', 'friends', 'family', 'coworkers'].map((id) => `contactGroups/${id}`),
+);
+
+/** Bounded directory walk: 1000 groups a page, ten pages; past that the result is explicitly incomplete. */
+const CONTACT_GROUP_PAGES = 10;
 
 export class PeopleClient extends GoogleApiClient {
   /** Incremental with syncToken; full otherwise. 410 → GoogleCursorExpiredError. */
@@ -604,7 +647,7 @@ export class PeopleClient extends GoogleApiClient {
     const raw = await this.drainPages<RawPerson>(
       (t) => {
         const params = new URLSearchParams({
-          personFields: 'names,emailAddresses,organizations',
+          personFields: CONTACT_PERSON_FIELDS,
           pageSize: '200',
           requestSyncToken: 'true',
         });
@@ -631,11 +674,49 @@ export class PeopleClient extends GoogleApiClient {
         emails: (p.emailAddresses ?? [])
           .map((e) => (e.value ?? '').trim().toLowerCase())
           .filter((e) => e.includes('@')),
+        phones: [...new Set((p.phoneNumbers ?? [])
+          .map((n) => (n.canonicalForm ?? n.value ?? '').trim())
+          .filter((n) => n.length > 0))],
         organization: primaryOrg?.name ?? null,
         title: primaryOrg?.title ?? null,
+        groups: [...new Set((p.memberships ?? [])
+          .map((m) => m.contactGroupMembership?.contactGroupResourceName ?? '')
+          .filter((g) => g.startsWith('contactGroups/') && !SYSTEM_CONTACT_GROUPS.has(g)))]
+          .map((id) => ({ id, name: null })),
         deleted: p.metadata?.deleted ?? false,
       };
     });
     return { contacts, nextSyncToken };
+  }
+
+  /**
+   * #6324: the account's user-created contact groups, resource name → display
+   * name. `complete` is false when the directory has more pages than the
+   * bounded walk read; the caller keeps raw ids for whatever is missing
+   * instead of treating one page as the whole directory.
+   */
+  async listContactGroups(opts: { signal?: AbortSignal } = {}): Promise<{ names: Record<string, string>; complete: boolean }> {
+    let morePages = false;
+    const raw = await this.drainPages<RawContactGroup>(
+      (t) => {
+        const params = new URLSearchParams({ pageSize: '1000', groupFields: 'name,groupType' });
+        if (t) params.set('pageToken', t);
+        return `${PEOPLE_BASE}/contactGroups?${params.toString()}`;
+      },
+      (body) => {
+        const nextPageToken = (body.nextPageToken as string | undefined) ?? null;
+        morePages = nextPageToken !== null;
+        return { items: (body.contactGroups as RawContactGroup[] | undefined) ?? [], nextPageToken };
+      },
+      'people',
+      { ...opts, maxPages: CONTACT_GROUP_PAGES, partialOk: true },
+    );
+    const names: Record<string, string> = {};
+    for (const g of raw) {
+      if (!g.resourceName || g.groupType === 'SYSTEM_CONTACT_GROUP' || SYSTEM_CONTACT_GROUPS.has(g.resourceName)) continue;
+      const name = (g.formattedName ?? g.name ?? '').trim();
+      if (name) names[g.resourceName] = name;
+    }
+    return { names, complete: !morePages };
   }
 }

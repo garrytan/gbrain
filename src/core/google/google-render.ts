@@ -343,9 +343,18 @@ export function renderCalendarEventPage(ev: CalendarEventData): RenderedPage | n
 
 // ── Person page (contacts) ───────────────────────────────────────────────────
 
+/**
+ * #6324: the page a contact with neither a name nor an email lives at, keyed
+ * on its id (never on phone digits). The tombstone path lists it as a delete
+ * candidate because the tombstone itself carries no phones.
+ */
+export function contactIdSlug(resourceName: string, dir: string = DEFAULT_CONTACTS_DIR): string {
+  return `${dir}/contact-${sha8(resourceName)}`;
+}
+
 export function personSlugFromContact(c: ContactData, disambiguate = false, dir: string = DEFAULT_CONTACTS_DIR): string | null {
   const base = c.displayName ?? c.emails[0]?.split('@')[0] ?? null;
-  if (!base) return null;
+  if (!base) return c.phones.length > 0 ? contactIdSlug(c.resourceName, dir) : null;
   const slug = base
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
@@ -366,18 +375,23 @@ export function personSlugFromContact(c: ContactData, disambiguate = false, dir:
  */
 export function renderPersonPage(c: ContactData, disambiguate = false, dir: string = DEFAULT_CONTACTS_DIR): RenderedPage | null {
   const slug = personSlugFromContact(c, disambiguate, dir);
-  if (!slug || c.emails.length === 0) return null;
-  const name = c.displayName ?? c.emails[0];
+  if (!slug || (c.emails.length === 0 && c.phones.length === 0)) return null;
+  const name = c.displayName ?? c.emails[0] ?? c.phones[0];
+  // Phones are exact identifiers (`phones:`), not aliases: a digit string as
+  // an alias would pollute mention matching.
   const aliases = [...new Set([...c.emails, ...(c.displayName ? [c.displayName] : [])])];
+  const groups = c.groups.map((g) => g.name ?? g.id);
   const fm: string[] = [
     '---',
     `type: person`,
     `title: ${yamlStr(name)}`,
     `aliases: ${yamlList(aliases)}`,
     `emails: ${yamlList(c.emails)}`,
+    ...(c.phones.length > 0 ? [`phones: ${yamlList(c.phones)}`] : []),
     `google_contact_id: ${yamlStr(c.resourceName)}`,
     ...(c.organization ? [`company: ${yamlStr(c.organization)}`] : []),
     ...(c.title ? [`role: ${yamlStr(c.title)}`] : []),
+    ...(groups.length > 0 ? [`groups: ${yamlList(groups)}`] : []),
     '---',
   ];
   const body = [
@@ -386,7 +400,7 @@ export function renderPersonPage(c: ContactData, disambiguate = false, dir: stri
     '',
     [
       c.title && c.organization ? `${c.title} at ${c.organization}.` : c.organization ? `Works at ${c.organization}.` : null,
-      `Contact: ${c.emails.join(', ')}.`,
+      `Contact: ${[...c.emails, ...c.phones].join(', ')}.`,
       `[Source: Google Contacts]`,
     ]
       .filter(Boolean)

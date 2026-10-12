@@ -170,7 +170,7 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
   if (p.replaces !== undefined && p.replaces !== null) {
     // Fail fast on an invalid target; the coordinator re-checks it under the row lock before publishing.
     await decideReplacement(ctx.engine, sourceId, factIntent, Number(p.replaces),
-      { pageSlug: slug, remote: ctx.remote !== false, excludePrivate: await resolveExcludePrivatePages(ctx.engine, ctx.remote) });
+      { pageSlug: slug, remote: ctx.remote !== false, excludePrivate: await resolveExcludePrivatePages(ctx.engine, ctx.remote), slugPrefixes: authority.slugPrefixes });
   }
   await assertFactNotWithdrawn(ctx.engine, sourceId, factIntent, { excludePrivate: await resolveExcludePrivatePages(ctx.engine, ctx.remote) });
   const row = await admitWrite(ctx.engine, { principal, operation: 'remember', sourceId, sourceIncarnation: source.incarnation,

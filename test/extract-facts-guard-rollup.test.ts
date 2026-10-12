@@ -25,6 +25,7 @@ function mkEngine(legacyCount: number): { calls: CapturedCall[]; engine: BrainEn
     async executeRaw(sql: string, params: unknown[] = []) {
       calls.push({ sql: sql.trim().replace(/\s+/g, ' '), params });
       if (/COUNT\(\*\) AS n/.test(sql)) return [{ n: String(legacyCount) }];
+      if (sql.includes('FROM persistence_brain')) return [{ enabled: false }]; // #6482: the strict mode reader needs one well-formed unmanaged row.
       return [];
     },
     async getAllSlugs() { return []; },

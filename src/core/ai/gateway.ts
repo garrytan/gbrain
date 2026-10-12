@@ -37,6 +37,7 @@ import { DEFAULT_CHARS_PER_TOKEN, DEFAULT_SAFETY_FACTOR, embedRequestMaxInputTok
 export { splitByTokenBudget, capBatchItems, NO_BATCH_CAP_SUB_BATCH_ITEMS } from './embed-batch-plan.ts';
 import { BudgetTracker, type BudgetReservation } from '../budget/budget-tracker.ts';
 import { failedCallUsage, recordOnTracker } from './budget-record.ts';
+import { estimateChatInputTokens } from './chat-input-estimate.ts';
 import { chatWithFallback, normalizeChatFallbackChain } from './chat-fallback.ts';
 import { applyThinkingOff, thinkingOffMaxOutputTokens } from './thinking-off.ts';
 import type {
@@ -62,6 +63,7 @@ import type { BrainEngine } from '../engine.ts';
 import { dimsProviderOptions } from './dims.ts';
 import { hasAnthropicKey, stashGatewayAnthropicKeyFromEnv } from './anthropic-key.ts';
 import { AIConfigError, AITransientError, isStructuredOutputRejection, isUnbilledEmbeddingRejection, normalizeAIError } from './errors.ts';
+import { embeddingModelNotFoundHint, gatewayModelNotFoundHint } from './model-not-found-hint.ts';
 import { fitMatryoshkaPrefix, isEmbeddingZeroNormError, screenAlignedEmbeddings, screenEmbeddings, sendableEmbeddingInputs } from './embedding-guard.ts';
 import { getProviderCapabilities } from './capabilities.ts';
 import { runGuardrails, hasGuardrails, type GuardrailHook } from '../guardrails.ts';
@@ -1805,7 +1807,7 @@ async function embedSubBatch(
       };
     }
     reportEmbeddingAuthFailure(recipe, err);
-    throw normalizeAIError(err, `embed(${recipe.id}:${modelId})`, redactKeys);
+    throw normalizeAIError(err, `embed(${recipe.id}:${modelId})`, redactKeys, embeddingModelNotFoundHint());
   }
 }
 
@@ -2639,7 +2641,7 @@ export async function expand(query: string): Promise<string[]> {
   } catch (err) {
     if (isAIInvocationPolicyError(err)) throw err;
     // Expansion is best-effort: on failure, fall back to the original query alone.
-    const normalized = normalizeAIError(err, 'expand', redactKeys);
+    const normalized = normalizeAIError(err, `expand(${_config?.expansion_model ?? ''})`, redactKeys, gatewayModelNotFoundHint('expansion', _config?.expansion_model ?? ''));
     if (normalized instanceof AIConfigError) {
       console.warn(`[ai.gateway] expansion disabled: ${normalized.message}`);
     }
@@ -2757,23 +2759,6 @@ export function getCurrentBudgetTracker(): BudgetTracker | null {
   return __budgetStore.getStore() ?? null;
 }
 
-/** Internal helper: estimate input tokens from messages + system. Heuristic only
- * (~4 chars/token); cap math is best-effort because we pre-flight reservation
- * before the SDK has counted anything. */
-function estimateChatInputTokens(opts: { system?: string; messages?: Array<{ content?: unknown }> }): number {
-  let chars = (opts.system ?? '').length;
-  for (const m of opts.messages ?? []) {
-    if (typeof m.content === 'string') chars += m.content.length;
-    else if (Array.isArray(m.content)) {
-      for (const block of m.content) {
-        const t = (block as { text?: unknown }).text;
-        if (typeof t === 'string') chars += t.length;
-      }
-    }
-  }
-  return Math.ceil(chars / 4);
-}
-
 // ---- Chat (commit 1) ----
 
 /**
@@ -2803,7 +2788,10 @@ export type ChatRole = 'system' | 'user' | 'assistant' | 'tool';
  * on turn 2 without this: `chat()` previously never captured the part at all.
  */
 export type ChatBlock =
-  | { type: 'text'; text: string; providerMetadata?: Record<string, unknown> }
+  // `cache: true` (PR #6341): an explicit prompt-cache breakpoint after this block, so a
+  // single-turn caller's stable USER prefix (page-summary's title + document) caches. Honoured
+  // only when the call derives a cache-control value; other routes see a plain text block.
+  | { type: 'text'; text: string; cache?: true; providerMetadata?: Record<string, unknown> }
   | { type: 'reasoning'; text: string; providerMetadata?: Record<string, unknown> }
   | { type: 'tool-call'; toolCallId: string; toolName: string; input: unknown; providerMetadata?: Record<string, unknown> }
   | { type: 'tool-result'; toolCallId: string; toolName: string; output: unknown; isError?: boolean; providerMetadata?: Record<string, unknown> };
@@ -2936,7 +2924,10 @@ function ensureToolCallId(id: unknown, toolName: string): string {
   return `glmfix-${toolName}-${randomUUID()}`;
 }
 
-export function toModelMessages(messages: ChatMessage[]): unknown[] {
+export function toModelMessages(
+  messages: ChatMessage[],
+  cacheControl?: { type: 'ephemeral'; ttl?: '5m' | '1h' },
+): unknown[] {
   return messages.map((m) => {
     if (typeof m.content === 'string') return { role: m.role, content: m.content };
     const blocks = m.content;
@@ -2973,10 +2964,13 @@ export function toModelMessages(messages: ChatMessage[]): unknown[] {
           // Gemini 3.x thoughtSignature, OpenAI reasoning-item id) — attached
           // only when captured.
           if (b.type === 'text') {
+            const providerOptions = b.cache && cacheControl
+              ? { ...b.providerMetadata, anthropic: { ...(b.providerMetadata?.anthropic as Record<string, unknown> | undefined), cacheControl } }
+              : b.providerMetadata;
             return {
               type: 'text' as const,
               text: b.text,
-              ...(b.providerMetadata ? { providerOptions: b.providerMetadata } : {}),
+              ...(providerOptions ? { providerOptions } : {}),
             };
           }
           if (b.type === 'reasoning') {
@@ -3730,7 +3724,7 @@ async function chatAdmitted(opts: ChatOpts, admitted: {
   const generate = (out: typeof output) => guardedGeneration(modelStr, _generateTextTransport, {
     model,
     system: systemParam,
-    messages: toModelMessages(repairToolPairing(opts.messages)) as any,
+    messages: toModelMessages(repairToolPairing(opts.messages), cacheControlValue) as any,
     tools: opts.tools && opts.tools.length > 0 ? tools : undefined,
     maxOutputTokens,
     ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
@@ -3840,7 +3834,7 @@ async function chatAdmitted(opts: ChatOpts, admitted: {
     // Pessimistic fallback (A3 amended): when err.usage isn't there, charge
     // the worst-case ceiling — better to overcount on failure than under.
     _recordBudget(failedCallUsage(err, { inputTokens: estimatedInputTokens, outputTokens: maxOutputTokens }));
-    throw normalizeAIError(err, `chat(${recipe.id}:${modelId})`, redactKeys);
+    throw normalizeAIError(err, `chat(${recipe.id}:${modelId})`, redactKeys, gatewayModelNotFoundHint('chat', modelStr));
   }
 }
 
@@ -3963,7 +3957,7 @@ export type TurnPermit =
   | (() => Promise<void> | void)
   | { release: () => Promise<void> | void; signal?: AbortSignal };
 
-export type ToolLoopStopReason = 'end' | 'length' | 'max_turns' | 'refusal' | 'content_filter' | 'aborted' | 'unrecoverable';
+export type ToolLoopStopReason = 'end' | 'length' | 'max_turns' | 'refusal' | 'content_filter' | 'aborted' | 'unrecoverable' | 'empty_response';
 
 export interface ToolLoopResult {
   finalText: string;
@@ -4097,8 +4091,9 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
       // #4088: an output-cap hit is NOT a clean finish. Folding 'length' into
       // 'end' made truncated zero-tool-call runs indistinguishable from the
       // model choosing to stop — the exact honesty bug #2778 fixed on the
-      // direct Anthropic path.
-      stopReason = chatResult.stopReason === 'length' ? 'length' : 'end';
+      // direct Anthropic path. #6448: a clean stop with no text (refusal
+      // body, thinking-only turn) is 'empty_response', not 'end'.
+      stopReason = chatResult.stopReason === 'length' ? 'length' : chatResult.text.trim() === '' ? 'empty_response' : 'end';
       finalText = chatResult.text;
       break;
     }

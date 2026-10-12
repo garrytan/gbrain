@@ -36,10 +36,13 @@ describe('spawnDetachedPush env handoff', () => {
 });
 
 describe('tryExecAsync env handoff', () => {
-  test('the git exec wrapper passes the (quarantined) process.env explicitly', () => {
+  test('the git exec wrapper passes the (quarantined) process.env explicitly, through gitChildEnv() (#4992)', () => {
     const start = SRC.indexOf('function tryExecAsync(');
     expect(start).toBeGreaterThan(-1);
     const body = SRC.slice(start, SRC.indexOf('\n}\n', start));
-    expect(body).toMatch(/execFile\([\s\S]*?\{[^}]*env:\s*process\.env[^}]*\}/);
+    // gitChildEnv() copies process.env at call time (after the quarantine deletions) minus Git's
+    // repository-locating variables, so the child sees the deletions and `git -C` works on the workspace.
+    expect(body).toMatch(/execFile\([\s\S]*?\{[^}]*env:\s*gitChildEnv\(\)[^}]*\}/);
+    expect(SRC).toMatch(/import \{[^}]*\bgitChildEnv\b[^}]*\} from '\.\.\/core\/git-env\.ts'/);
   });
 });

@@ -95,7 +95,7 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   // `replaces`: the caller names the fact this one replaces (checked; the cosine rule does not apply).
   const replaces = p.replaces !== undefined && p.replaces !== null ? Number(p.replaces) : null;
   const replace = (e: BrainEngine, target: number, lock: boolean) =>
-    decideReplacement(e, row.source_id, input, target, { pageSlug: row.slug, remote: row.authority.remote === true, lock, excludePrivate });
+    decideReplacement(e, row.source_id, input, target, { pageSlug: row.slug, remote: row.authority.remote === true, lock, excludePrivate, slugPrefixes: row.authority.slugPrefixes });
   const decide = async (e: BrainEngine, lock = false) => {
     if (replaces !== null) return replace(e, replaces, lock);
     // The same claim saved earlier without an entity is this fact unlinked: linking it supersedes that copy,

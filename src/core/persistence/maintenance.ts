@@ -6,6 +6,7 @@ import { assertManagedFilesystemWrite } from './filesystem-guard.ts';
 import { opError } from '../ops/contract.ts';
 import type { Action } from '../agent-output.ts';
 import type { SqlEngine } from './model.ts';
+import { readManagedMode } from './ownership.ts';
 import { DEFAULT_TARGET_URL_ENV, planArgv } from './graduation-errors.ts';
 
 // Every facts-family bulk writer now publishes through the coordinator on a
@@ -53,8 +54,7 @@ function engineMigrationFix(m: EngineMigrationSide, why: string): Action {
 
 /** Refuse unsupported multi-stage writers before providers, files or git change. */
 export async function assertUnmanagedCanonicalWriter(engine: SqlEngine, operation: string, opts: { migration?: EngineMigrationSide } = {}): Promise<void> {
-  const rows = await engine.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1');
-  if (!rows?.[0]?.enabled) return;
+  if (!await readManagedMode(engine)) return;
   const message = `${operation} cannot mutate a managed brain through the legacy writer.`;
   const why = 'This brain is managed: every write goes through its writer coordinator, which the legacy writer bypasses.';
   if (opts.migration) {

@@ -21,6 +21,13 @@ export interface ParsedCitation {
   page_slug: string;
   row_num: number | null;     // null = page-level citation, set = take citation
   citation_index: number;     // 1-based order in the body
+  /**
+   * #5461: the source the cited page was gathered from (highest-ranked gathered
+   * page with this slug); `null` when the slug was in no gather stream (the
+   * result also warns CITATION_NOT_IN_GATHER). Stamped by runThink; absent on
+   * citations straight out of the parser.
+   */
+  source_id?: string | null;
 }
 
 /**

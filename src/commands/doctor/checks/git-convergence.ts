@@ -21,6 +21,7 @@ import type { Check } from '../../doctor.ts';
 import { parseSourceConfig } from '../../../core/sources-load.ts';
 import { isConnectorSourceKind } from '../../../core/persistence/connector-identity.ts';
 import { isPhysicalRootMetadata } from '../../../core/persistence/root-metadata.ts';
+import { isManagedFilesystemPath } from '../../../core/persistence/filesystem-guard.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 import { doctorVerify } from '../check-fix.ts';
 
@@ -99,8 +100,12 @@ export async function gitConvergenceCheck(engine: BrainEngine, now = Date.now())
   const lines = bad.map(r => `${r.root}${r.source_ids.length ? ` (${r.source_ids.join(', ')})` : ''}: `
     + [r.ahead ? `${r.ahead} commit(s) not on the upstream since ${r.oldest_unpushed_at}` : '', r.dirty && r.oldest_dirty_at ? `${r.dirty} uncommitted change(s), oldest from ${r.oldest_dirty_at}` : '']
       .filter(Boolean).join('; '));
+  // #5808 (#5606 residue): a managed canonical worktree has no bulk push; its owner pushes page writes and the operator pushes the rest.
+  const remedy = bad.some(r => isManagedFilesystemPath(r.root))
+    ? 'Commit and push them: on a managed canonical worktree the persistence owner commits and pushes page writes (gbrain sources writer status <source> --json shows parked pushes; gbrain sources writer git-durability <source> --enable turns them on), and files that are not pages are committed and pushed with plain git in the checkout, never pulled or rebased; elsewhere gbrain sources push --path <root> for a bootstrap workspace, or git push in the checkout'
+    : 'Commit and push them (gbrain sources push --path <root> for a bootstrap workspace, or git push in the checkout)';
   return { name: 'git_convergence', status: bad.some(r => r.status === 'fail') ? 'fail' : 'warn', details,
-    message: `Git checkouts have not converged with their upstream: ${lines.join(' | ')}. Commit and push them (gbrain sources push --path <root> for a bootstrap workspace, or git push in the checkout); this compares with the last fetched upstream and does not fetch.` };
+    message: `Git checkouts have not converged with their upstream: ${lines.join(' | ')}. ${remedy}; this compares with the last fetched upstream and does not fetch.` };
 }
 
 /**

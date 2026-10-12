@@ -3,8 +3,9 @@ import { opError, OperationError } from '../ops/contract.ts';
 import type { SqlEngine, WriteRequest } from './model.ts';
 
 /**
- * #5254: a Postgres page write to a filesystem source with no canonical owner.
- * Refused by default; `persistence.unbound_write=database_only` lets every
+ * #5254: a Postgres page write to a filesystem source with no canonical owner
+ * (#6449: also a PGLite write to a source activation listed database-only,
+ * where the automatic first-write claim is off). Refused by default; `persistence.unbound_write=database_only` lets every
  * page mutation (#5393) write a page with no recorded canonical file to the
  * database only. Those pages
  * carry `pages.database_only_reason='unbound_source'` so writes and sync after
@@ -18,6 +19,21 @@ export const UNBOUND_PUBLICATION_MESSAGE = 'The source was bound, or the page ga
 export const CONNECTOR_BOUND_HINT = 'Nothing was written. Read the page again and submit the write with a new request_id; the bound source publishes it to its canonical file.';
 export const CONNECTOR_BOUND_MESSAGE = 'The connector source gained a canonical owner after this database-only write was accepted.';
 export const UNBOUND_COLLISION_MESSAGE = 'A database-only page written while its source was unbound already uses this slug.';
+
+/**
+ * #6449: the rooted sources `writer activate` accepted without an owner because
+ * `sync.write_through` was off (activation.ts writes the list, deactivation
+ * clears it). A PGLite page write to one of them never runs the automatic
+ * first-write claim, so turning `sync.write_through` back on refuses with the
+ * claim named instead of starting to publish files into an unreviewed checkout.
+ */
+export const DATABASE_ONLY_SOURCES_KEY = 'persistence.database_only_sources';
+export async function readDatabaseOnlyActivatedSources(engine: Pick<BrainEngine, 'getConfig'>): Promise<string[]> {
+  try {
+    const parsed: unknown = JSON.parse(await engine.getConfig(DATABASE_ONLY_SOURCES_KEY) ?? '[]');
+    return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : [];
+  } catch { return []; }
+}
 
 export function parseUnboundWriteValue(value: string): UnboundWritePolicy {
   if ((UNBOUND_WRITE_VALUES as readonly string[]).includes(value)) return value as UnboundWritePolicy;

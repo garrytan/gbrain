@@ -60,6 +60,7 @@ function buildMockEngine(opts: {
     },
     async executeRaw<T>(sql: string, params?: unknown[]): Promise<T[]> {
       captured.push({ sql, params: params ?? [] });
+      if (sql.includes('FROM persistence_brain')) return [{ enabled: false } as unknown as T]; // #6482: the strict mode reader needs one well-formed unmanaged row.
       // Narrow candidate-page projection (replaces listPages in the phase).
       if (sql.includes('SELECT slug, source_id, compiled_truth')) {
         return opts.pages.map((p) => ({

@@ -46,7 +46,10 @@ Isolation model:
   later (or one carrying a bespoke scope) is denied until it is explicitly
   fenced and added to `CLIENT_FENCED_WRITE_OPS` (`src/core/operations.ts`).
   `think` is allow-listed because remote callers cannot persist from it;
-  `submit_agent` because it enforces this same column itself.
+  `submit_agent` because it enforces this same column itself; `remember`
+  (#5913) because it fences the one slug it writes and confines `replaces` to
+  the caller's entity. `forget`/`forget_fact` are not: a withdrawal's write set
+  reaches pages the fenced slug does not name.
 - **Indirect write paths are gated too, not just the ops.** `put_page`'s
   facts backstop would otherwise extract entities from the page body and
   write fact rows (and a `## Facts` fence on git-backed sources) onto

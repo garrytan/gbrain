@@ -52,6 +52,10 @@ export const openai: Recipe = {
   touchpoints: {
     embedding: {
       models: ['text-embedding-3-large', 'text-embedding-3-small'],
+      // [R13] audit: documented 8,191-token per-input limit. Above the
+      // 2000-token default chunk cap, so chunking is unchanged; it bounds the
+      // per-request reservation and names the cap for the heal pass.
+      max_input_tokens: { 'text-embedding-3-large': 8191, 'text-embedding-3-small': 8191 },
       default_dims: 1536,
       dims_options: [256, 512, 768, 1024, 1536, 3072],
       cost_per_1m_tokens_usd: 0.13,

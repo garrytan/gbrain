@@ -30,7 +30,7 @@ import { assertPurgeParams } from './purge-params.ts';
 import type { Principal, WriteRequest } from './model.ts';
 import { normalizeSubagentPageInput, undeclaredPageTypeWarning, type PageTypeWarning } from './page-input.ts';
 import { assertKnowledgePublicationAllowed } from '../shared-skills/knowledge-guard.ts';
-import { isUnboundSourcePage, readUnboundWritePolicy, unboundSourceError } from './unbound-source.ts';
+import { isUnboundSourcePage, readDatabaseOnlyActivatedSources, readUnboundWritePolicy, unboundSourceError } from './unbound-source.ts';
 import { colonSlugWindowsRefusal, isWindowsColonTarget } from './native-file-target.ts';
 import { publishesDatabaseOnly } from './page-prepare.ts';
 import { cachedPreadmitBrain, dropPreadmitCache, preadmitReads, preadmitRecheckFailed } from './preadmit-cache.ts';
@@ -363,7 +363,10 @@ export async function preparePageAdmission(ctx: OperationContext,
   // (connector_database): a page write never claims it or refuses as unbound.
   if (writeThrough && root && !binding && isConnectorSourceKind(source.kind)) authority.databaseOnlyReason = 'connector_database';
   else if (writeThrough && root && !binding) {
-    if (ctx.engine.kind === 'pglite') binding = await claimWorktree(ctx.engine, sourceId, root, undefined, undefined, { automatic: true });
+    // #6449: a source activation listed database-only (sync.write_through was off) is never claimed by a flip of that
+    // setting: the write refuses with the claim named (or stays database-only under persistence.unbound_write), as on Postgres.
+    const databaseOnlyActivated = ctx.engine.kind === 'pglite' && (await readDatabaseOnlyActivatedSources(ctx.engine)).includes(sourceId);
+    if (ctx.engine.kind === 'pglite' && !databaseOnlyActivated) binding = await claimWorktree(ctx.engine, sourceId, root, undefined, undefined, { automatic: true });
     else {
       // #5393: the opt-in covers every page mutation whose target has no
       // recorded canonical file; a revert is also judged on the version it writes.

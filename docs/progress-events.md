@@ -146,7 +146,7 @@ Stable phase names:
   passed — a cold start can take 5–20s, so the heartbeat is the only sign of
   life)
 - `orphans.scan`
-- `embed.pages`
+- `embed.pages` (for `embed --stale` the unit is stale chunks since #5968: `total` is the census, grown by heal splits and re-entries so `done <= total` always; other embed paths tick per page)
 - `extract.links_fs`, `extract.timeline_fs`, `extract.links_db`, `extract.timeline_db`
 - `import.files`
 - `sync.deletes`, `sync.renames`, `sync.imports`

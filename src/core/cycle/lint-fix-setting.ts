@@ -11,6 +11,19 @@ export async function cycleLintFixEnabled(engine?: BrainEngine | null): Promise<
   return !/^\s*(false|0|off|no)\s*$/i.test(await engine?.getConfig('cycle.lint_fix').catch(() => null) ?? '');
 }
 
+export const CYCLE_LINT_ENABLED_KEY = 'cycle.lint.enabled';
+
+/**
+ * `cycle.lint.enabled` (default on): the off switch for the cycle's lint
+ * phase. Only an explicit falsy value skips the phase (the `cycle.lint_fix`
+ * parse); unset, a truthy value and a config read failure keep it on.
+ * `gbrain dream --phase lint --once` bypasses it for one run; `gbrain lint`
+ * never reads it. Contributed by @dovstern (#6369).
+ */
+export async function cycleLintPhaseEnabled(engine?: BrainEngine | null): Promise<boolean> {
+  return !/^\s*(false|0|off|no)\s*$/i.test(await engine?.getConfig(CYCLE_LINT_ENABLED_KEY).catch(() => null) ?? '');
+}
+
 export const CYCLE_LINT_EXCLUDE_KEY = 'cycle.lint_exclude';
 
 /**

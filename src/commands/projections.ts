@@ -47,6 +47,9 @@ export function projectionFailureNextAction(failure: ProjectionRebuildFailure): 
   if (failure.reason.startsWith('This page kind requires its source importer')) {
     return `re-import it from its source: \`gbrain sync --source ${failure.source_id}\``;
   }
+  if (failure.reason.startsWith('revision_conflict:')) {
+    return 'the page changed while it was being rebuilt; it stays queued at its new revision and `gbrain projections drain` rebuilds it on its next run';
+  }
   return 'run `gbrain doctor`; the page stays queued and `gbrain projections drain` tries it again on its next run';
 }
 

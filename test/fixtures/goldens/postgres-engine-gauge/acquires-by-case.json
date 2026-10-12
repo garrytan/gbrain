@@ -35,6 +35,7 @@
     "countStaleChunks#signature+sourceId": {
       "raw": 1
     },
+    "countStaleFrontmatterKeyPages#default": {},
     "countStalePagesForExtraction#attendance-blocked+sourceId": {},
     "countStalePagesForExtraction#attendance-exclude": {},
     "countStalePagesForExtraction#default": {},
@@ -84,8 +85,10 @@
     "getCalibrationCurve#default": {},
     "getCalibrationCurve#sourceId": {},
     "getCalleesOf#bareFallback": {},
+    "getCalleesOf#chunkId": {},
     "getCalleesOf#default": {},
     "getCalleesOf#sourceId": {},
+    "getCallersOf#chunkId": {},
     "getCallersOf#default": {},
     "getCallersOf#sourceId": {},
     "getChunkWindows#default": {},
@@ -239,6 +242,7 @@
     "listStaleChunks#updated_desc+sourceId+cursor": {
       "raw": 1
     },
+    "listStaleFrontmatterKeyPages#default": {},
     "listStalePagesForExtraction#afterPageId+versionTs+sourceId": {},
     "listStalePagesForExtraction#default": {},
     "listStaleTakes#default": {},
@@ -344,6 +348,7 @@
     "softDeletePage#default": {},
     "softDeletePage#sourceId": {},
     "softDeletePages#default": {},
+    "stripStaleFrontmatterKeys#default": {},
     "sumStaleChunkChars#default": {
       "raw": 1
     },

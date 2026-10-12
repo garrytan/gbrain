@@ -23,6 +23,7 @@ import type {
 } from '../src/core/creds/vault.ts';
 import {
   CalendarClient,
+  CONTACT_PERSON_FIELDS,
   extractCalendarMethod,
   GmailClient,
   GoogleApiClient,
@@ -991,7 +992,7 @@ describe('PeopleClient', () => {
 
   test('listConnections requests personFields and normalizes contacts', async () => {
     const h = makeHarness((u) => {
-      expect(u.searchParams.get('personFields')).toBe('names,emailAddresses,organizations');
+      expect(u.searchParams.get('personFields')).toBe(CONTACT_PERSON_FIELDS);
       expect(u.searchParams.get('requestSyncToken')).toBe('true');
       return json({
         connections: [
@@ -1017,8 +1018,10 @@ describe('PeopleClient', () => {
       resourceName: 'people/c000000001',
       displayName: 'Alice Example', // primary name wins
       emails: ['alice@example.com'], // trimmed, lowercased, non-addresses dropped
+      phones: [],
       organization: 'Acme Example',
       title: 'Engineer',
+      groups: [],
       deleted: false,
     });
     expect(contacts[1].deleted).toBe(true);

@@ -11,6 +11,13 @@
  * a stable order and the cursor after the last committed item is stored in
  * `op_checkpoints` under a fingerprint of (kind, brain, sources): a rerun with
  * the same scope resumes after it, and a finished scan clears it.
+ *
+ * An item whose apply refuses `invalid_params` or `source_changed` is a
+ * per-item verdict, not a run failure: it is recorded in `failed[]`, left as
+ * it was, and the loop continues without a cursor write for it. A later
+ * success writes a higher cursor, so a resumed run does not retry it; the next
+ * full scan (a run with no stored cursor, which every completed run leaves
+ * behind) does, the same way a `revision_conflict` item is retried.
  */
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
@@ -23,9 +30,10 @@ import { getWriteRequest } from '../persistence/journal.ts';
 import { initializeLocalPersistence, requestPrincipalForContext } from '../persistence/page-mutations.ts';
 import { lookupEmbeddingPrice, estimateCostFromChars } from '../embedding-pricing.ts';
 import { shellQuote, type Action } from '../agent-output.ts';
+import { redactConnectionInfo } from '../audit/redact-connection-info.ts';
 import type { RepairKindSpec } from './registry.ts';
 
-export const REPAIR_KINDS = ['timeline', 'visibility', 'safe-chunks', 'contextual-mode', 'connector-checkpoints', 'request-indexes', 'connector-fences', 'take-supersession', 'orphan-bindings', 'embedding-effects', 'attribution-backfill', 'planner-stats', 'google-file-modes', 'stale-atoms', 'extractor-facts', 'conversation-labels', 'captured-facts', 'loop-facts', 'ontology-facts', 'orphan-children', 'failed-writes', 'frontmatter', 'fences', 'slug-conflicts', 'timeline-comments', 'managed-sync-orphans'] as const;
+export const REPAIR_KINDS = ['timeline', 'visibility', 'safe-chunks', 'contextual-mode', 'connector-checkpoints', 'request-indexes', 'connector-fences', 'take-supersession', 'orphan-bindings', 'embedding-effects', 'attribution-backfill', 'planner-stats', 'google-file-modes', 'stale-atoms', 'extractor-facts', 'conversation-labels', 'captured-facts', 'loop-facts', 'ontology-facts', 'orphan-children', 'failed-writes', 'frontmatter', 'fences', 'slug-conflicts', 'timeline-comments', 'managed-sync-orphans', 'frontmatter-keys'] as const;
 export type RepairKind = typeof REPAIR_KINDS[number];
 
 export interface RepairScope { brain_id: string; source_ids: string[] }
@@ -114,6 +122,12 @@ export interface RepairHandler {
 export interface RepairItemOutcome { applied: boolean; outcome: string; reason?: string; detail?: Record<string, unknown>; llm_usd?: number;
   stop?: { reason: string; message: string; fix?: Action } }
 
+/** Refusal codes that are one item's verdict: the item is recorded in `failed[]` and the run goes on. */
+export const REPAIR_ITEM_FAILURE_CODES: ReadonlySet<string> = new Set(['invalid_params', 'source_changed']);
+
+/** An item whose apply refused with a per-item code; its page, file and rows are exactly as before. The next full scan retries it. */
+export interface RepairFailedItem { item: string; source_id: string; slug: string; reason: string; message: string; retry: 'next_full_scan' }
+
 export interface RepairResult {
   kind: RepairKind;
   mode: 'dry_run' | 'apply';
@@ -131,6 +145,8 @@ export interface RepairResult {
   resumed_from: RepairCursor | null;
   applied: number;
   skipped: number;
+  /** Items refused per item (`REPAIR_ITEM_FAILURE_CODES`) and left unchanged; `complete` still means every pending item was attempted. */
+  failed: RepairFailedItem[];
   complete: boolean;
   stopped?: { reason: string; message: string; fix?: Action };
   apply_command: string;
@@ -274,7 +290,7 @@ export async function runRepair(ctx: OperationContext, handler: RepairHandler, s
         : pending.some(item => item.llm_usd !== undefined) ? pending.reduce((sum, item) => sum + (item.llm_usd ?? 0), 0) : plan.llm.usd,
       llm_cap_remaining_usd: llmLeft(0) } : {}) },
     capacity: counters.map(({ scope: key, resource, used, limit, stop_at }) => ({ scope: key, resource, used, limit, stop_at })),
-    resumed_from: resumed, applied: 0, skipped: 0, complete: false, ...(plan.warnings?.length ? { warnings: plan.warnings } : {}),
+    resumed_from: resumed, applied: 0, skipped: 0, failed: [], complete: false, ...(plan.warnings?.length ? { warnings: plan.warnings } : {}),
     apply_command: `gbrain repair ${handler.kind}${opts.sourceFlag ? ` --source ${opts.sourceFlag}` : ''}${(opts.applyArgs ?? []).map(arg => ` ${arg}`).join('')}`
       + `${[...(opts.only ?? []).flatMap(path => ['--only', path]), ...(opts.skip ?? []).flatMap(path => ['--skip', path]),
         ...(opts.slugs ?? []).flatMap(slug => ['--slug', slug])].map(arg => ` ${shellQuote([arg])}`).join('')}`
@@ -344,6 +360,17 @@ export async function runRepair(ctx: OperationContext, handler: RepairHandler, s
     } catch (error) {
       // A page edited since planning is left for the next full scan.
       if (error instanceof OperationError && error.code === 'revision_conflict') { result.skipped++; continue; }
+      // A per-item refusal: recorded, nothing written, no cursor for it; the next full scan retries it (PR #6459).
+      if (error instanceof OperationError && REPAIR_ITEM_FAILURE_CODES.has(error.code)) {
+        const message = redactConnectionInfo(error.message);
+        const failedItem = `${item.source_id}:${item.slug}`;
+        result.failed.push({ item: failedItem, source_id: item.source_id, slug: item.slug, reason: error.code, message, retry: 'next_full_scan' });
+        result.outcomes = { ...result.outcomes, failed: (result.outcomes?.failed ?? 0) + 1 };
+        if ((result.outcome_items ??= []).length < (handler.outcomeItemsLimit ?? SAMPLE * 2)) {
+          result.outcome_items.push({ item: failedItem, outcome: 'failed', reason: error.code, detail: { message } });
+        }
+        continue;
+      }
       if (error instanceof OperationError && error.code === 'write_pending') {
         result.stopped = { reason: 'write_pending', message: `The repair of ${item.source_id}:${item.slug} was accepted and is still pending publication. `
           + `Rerun \`${result.apply_command}\` to resume; the same request is replayed.` };

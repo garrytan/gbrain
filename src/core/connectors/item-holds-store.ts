@@ -23,6 +23,7 @@ import type { BrainEngine } from '../engine.ts';
 import { digest } from '../persistence/digest.ts';
 import { connectorCheckpointKey, connectorIdentity, isConnectorSourceKind, type ConnectorKind } from '../persistence/connector-identity.ts';
 import { connectorStateKey } from '../persistence/connector-state.ts';
+import { readManagedMode } from '../persistence/managed-mode.ts';
 import { heldItems, type ItemHoldRecord } from './item-holds.ts';
 
 export const HOLD_RETRY_OP = 'connector-hold-retry';
@@ -32,9 +33,8 @@ type Exec = Pick<BrainEngine, 'executeRaw'>;
 export interface ConnectorSourceRow { id: string; incarnation: string; local_path: string | null; config: Record<string, unknown> }
 
 export async function managedBrain(engine: Exec): Promise<boolean> {
-  // A failed mode query propagates: guessing "unmanaged" would read a stale state file and report no holds.
-  const [brain] = await engine.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1');
-  return brain?.enabled === true;
+  // A failed or impossible mode read propagates: guessing "unmanaged" would read a stale state file and report no holds.
+  return readManagedMode(engine);
 }
 
 /** The classic-mode state file of a connector source, or null when it has no state directory. */

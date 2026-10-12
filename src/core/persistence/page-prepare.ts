@@ -10,7 +10,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { Page, PageVersion } from '../types.ts';
 import { importFromContent, verifyPageReadable, type ParsedPage } from '../import-file.ts';
-import { frontmatterHoldMessageWithoutKeys, parseMarkdown, resolveParsedSubtype, serializePageToMarkdown, resolveSourceLocalFilePath, type ParseOpts } from '../markdown.ts';
+import { comparableFrontmatter, frontmatterHoldMessageWithoutKeys, parseMarkdown, resolveParsedSubtype, serializePageToMarkdown, resolveSourceLocalFilePath, type ParseOpts } from '../markdown.ts';
 import { OperationError, opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { isOpPageSlug } from '../ops/context.ts';
@@ -82,10 +82,14 @@ function pageRefusal(code: RegistryCode, message: string, row: WriteRequest, cau
       : ownerStatusFix(row.source_id)) });
 }
 
-/** The parser trims titles, so a stored title differing only in surrounding whitespace is not drift (#5635). */
+/**
+ * The parser trims titles, so a stored title differing only in surrounding whitespace is not drift (#5635), and it
+ * never carries `type`/`title`/`tags`/`slug` into the frontmatter object, so a stored copy of one (#6454: older
+ * imports kept them) is compared through `comparableFrontmatter` on both sides, never as drift.
+ */
 function canonical(page: Pick<Page, 'type' | 'title' | 'compiled_truth' | 'timeline' | 'frontmatter'>, tags: string[]) {
   return { type: page.type, title: page.title.trim(), compiled_truth: page.compiled_truth, timeline: page.timeline ?? '',
-    frontmatter: page.frontmatter, tags: [...new Set(tags)].sort() };
+    frontmatter: comparableFrontmatter(page.frontmatter), tags: [...new Set(tags)].sort() };
 }
 interface CanonicalProvenance { source_kind: string; ingested_via: string; ingested_at: string; }
 /** Canonical stamps belong to the first write, never to a later preparation attempt. */

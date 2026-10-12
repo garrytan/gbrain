@@ -25,7 +25,7 @@
  * collapse to the newest row, which carries every entity slug of its group.
  */
 
-import type { BrainEngine, FactAttribution, FactRow } from '../engine.ts';
+import type { BrainEngine, FactAttribution, FactRow, FactVisibility } from '../engine.ts';
 import { corpusFileSessionId } from '../context/corpus-segments.ts';
 import { writeHeartbeat } from '../context/hook-heartbeat.ts';
 import { normalizeAlias } from '../search/alias-normalize.ts';
@@ -83,6 +83,29 @@ export type CosineVerdict = 'duplicate' | 'near_duplicate' | 'distinct';
 export function cosineVerdict(source: string | null | undefined, score: number, claim: string, existing: string, explicitThreshold: number | null): CosineVerdict {
   if (!isCaptureLane(source)) return explicitThreshold !== null && score >= explicitThreshold ? 'duplicate' : 'distinct';
   return score >= NEAR_DUPLICATE_THRESHOLD && !claimsDiverge(claim, existing) ? 'near_duplicate' : 'distinct';
+}
+
+/** #6333 shadow floor: same-page rewordings sit at cosine 0.86–0.93 (lane C), under every calibrated dedup threshold. */
+export const SAME_PAGE_REWORDING_THRESHOLD = 0.85;
+
+/**
+ * #6333 [UC2] shadow predicate, never a drop: would the deterministic rule
+ * "same source-qualified provenance (lane + session + visibility), cosine at
+ * or above SAME_PAGE_REWORDING_THRESHOLD, no diverging guard token" have
+ * treated `claim` as a duplicate of `existing`? The backstop counts it as
+ * `would_dedup_same_page` on explicit lanes only. Measured false positives
+ * (Lisbon→Porto, approved→rejected, email→phone, all invisible to
+ * claimsDiverge) are why the rule measures and does not act.
+ */
+export function wouldDedupSamePage(
+  ctx: { source: string | null | undefined; sessionId: string | null | undefined; visibility: FactVisibility },
+  existing: { source: string; source_session: string | null; visibility: FactVisibility; fact: string },
+  score: number,
+  claim: string,
+): boolean {
+  if (!ctx.source || !ctx.sessionId || isCaptureLane(ctx.source)) return false;
+  if (existing.source !== ctx.source || existing.source_session !== ctx.sessionId || existing.visibility !== ctx.visibility) return false;
+  return score >= SAME_PAGE_REWORDING_THRESHOLD && !claimsDiverge(claim, existing.fact);
 }
 
 function nameKey(text: string): string {

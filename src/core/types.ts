@@ -330,6 +330,14 @@ export interface PageFilters {
    */
   updatedAfterKeyset?: { updatedAt: string; slug: string };
   /**
+   * Slug keyset cursor: `WHERE p.slug > slugAfter`, paired with `sort: 'slug'`.
+   * Single-source contract (#6500): slug is a total order only inside one
+   * `sourceId`, so a federated listing (`sourceIds`) keeps offset paging.
+   * Resume from the last row's slug; rows touched or deleted mid-walk shift
+   * nothing, unlike OFFSET over a tie cluster.
+   */
+  slugAfter?: string;
+  /**
    * Prefix-match filter on slug. Implemented as `WHERE slug LIKE prefix || '%'`
    * in both engines so it uses the (source_id, slug) UNIQUE constraint's btree
    * index for efficient range scans on large brains. Used by storage-tiering
@@ -337,11 +345,6 @@ export interface PageFilters {
    * queries to a tier directory without loading every page into memory.
    */
   slugPrefix?: string;
-  /** Exclusive slug cursor for a single-source walk; pair with sort: 'slug'.
-   * Unlike updated_at or OFFSET, it is unaffected by writes to earlier pages.
-   * Not a federated cursor: slugs are unique only within one source.
-   */
-  slugAfter?: string;
   /**
    * v0.26.5: include soft-deleted pages (rows with `deleted_at IS NOT NULL`).
    * Default false: hides soft-deleted pages from `list_pages` so agents see the
@@ -425,7 +428,11 @@ export interface GetPageOpts extends PageReadScope {
 
 /** v0.29: literal ORDER BY fragments for the PageFilters.sort enum. Whitelisted. */
 export const PAGE_SORT_SQL: Record<NonNullable<PageFilters['sort']>, string> = {
-  updated_desc: 'p.updated_at DESC',
+  // #6500: the same tiebreakers as updated_asc, so a tie cluster (bulk
+  // imports stamp one now() across a transaction) lists deterministically.
+  // OFFSET over it is still unstable under timestamp-changing writes; walk
+  // a source by `sort: 'slug'` + `slugAfter` when every page must be seen once.
+  updated_desc: 'p.updated_at DESC, p.slug DESC, p.source_id DESC, p.id DESC',
   // v0.45.7: slug tiebreaker makes updated_asc a TOTAL order, so keyset
   // pagination (updatedAfterKeyset) can page deterministically through a
   // cluster of pages sharing one updated_at (bulk syncs stamp identical

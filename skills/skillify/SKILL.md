@@ -287,21 +287,29 @@ gbrain eval cross-modal \
   --output skills/<slug>/SKILL.md
 ```
 
-The command runs 3 frontier models from 3 different providers in parallel,
+The command runs 3 judge models (frontier models from 3 different providers) in parallel,
 scores the OUTPUT against the TASK on the given dimensions (default: 5
 standard dimensions when `--dimensions` is omitted), and writes a receipt
 under `~/.gbrain/.gbrain/eval-receipts/<slug>-<sha8>.json` (the sha-8 binds
 the receipt to the current SKILL.md content — re-running after edits writes a
 new receipt, so every iteration leaves its own baseline).
 
-**Default models** (override per slot via `--slot-a-model`, `--slot-b-model`,
-`--slot-c-model`):
+**Judge models** resolve per slot, in this order:
 
-| Slot | Default | Provider |
-|------|---------|----------|
-| A | `openai:gpt-5.2` | OpenAI |
-| B | `anthropic:claude-opus-4-7` | Anthropic |
-| C | `deepseek:deepseek-v4-pro` | DeepSeek |
+| Slot | 1. flag | 2. brain config key | 3. fallback |
+|------|---------|---------------------|-------------|
+| A | `--slot-a-model <provider:model>` | `models.eval.cross_modal.slot_a` | gbrain's shipped default for slot A |
+| B | `--slot-b-model <provider:model>` | `models.eval.cross_modal.slot_b` | gbrain's shipped default for slot B |
+| C | `--slot-c-model <provider:model>` | `models.eval.cross_modal.slot_c` | gbrain's shipped default for slot C |
+
+The brain config keys are the same ones the nightly quality probe reads, so
+pin them once (`gbrain config set models.eval.cross_modal.slot_a
+<provider:model>`) and every run — CLI or probe — judges with the same
+panel. `gbrain models` shows the panel the probe resolves. The shipped
+defaults are three current frontier models from three providers; they move
+with gbrain releases, so do not copy literal ids into a skill — a slot whose
+default provider has no key here is substituted with the configured chat
+model (#4636) and the receipt records the model that actually judged.
 
 **These MUST be frontier models from DIFFERENT providers.** Using a single
 provider's family or budget models defeats the purpose — different families
@@ -361,9 +369,11 @@ gbrain providers test    # see what's configured
 gbrain config            # set keys
 ```
 
-Or set env vars: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
-`GOOGLE_GENERATIVE_AI_API_KEY`, `TOGETHER_API_KEY`, etc. The gateway reads
-from `~/.gbrain/config.json` plus `process.env`.
+Each slot needs a key for its provider: `gbrain providers test --model
+<provider:model>` says whether a slot's model is reachable, and `gbrain
+providers env <provider>` names the env var or `<vendor>_api_key` config key
+that recipe reads (`~/.gbrain/config.json` plus `process.env`). Pin the slots
+to providers you have keys for instead of acquiring keys for the defaults.
 
 ### Cost expectations
 
@@ -526,10 +536,11 @@ Phase 2: Write SKILL.md + extract script to scripts/summarize-pr.ts
 Phase 2.5: Declare eval_contract — goal: reviewer-ready PR summary;
   dimensions: file_coverage, test_plan, specificity;
   hard-fail: any fabricated claim about the diff
-Phase 3: Cross-modal eval cycle 1 (dimensions from the contract) →
-  gpt-5.2: file_coverage=6, test_plan=4, specificity=5 → "misses file-level diffs"
-  claude-opus-4-7: file_coverage=7, test_plan=5, specificity=5 → "no test plan in summary"
-  deepseek-v4-pro: file_coverage=6, test_plan=5, specificity=5 → "template feels generic"
+Phase 3: Cross-modal eval cycle 1 (dimensions from the contract; slots from
+  models.eval.cross_modal.slot_*) →
+  slot A (<provider-1 model>): file_coverage=6, test_plan=4, specificity=5 → "misses file-level diffs"
+  slot B (<provider-2 model>): file_coverage=7, test_plan=5, specificity=5 → "no test plan in summary"
+  slot C (<provider-3 model>): file_coverage=6, test_plan=5, specificity=5 → "template feels generic"
   Aggregate: file_coverage=6.3 FAIL, test_plan=4.7 FAIL
   Top improvements: add file-level changes, include test plan, use PR context
   → Apply fixes → Cycle 2: file_coverage=8, test_plan=7.5, specificity=7 → PASS

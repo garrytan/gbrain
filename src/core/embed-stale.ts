@@ -25,6 +25,7 @@ import type { Chunk, ChunkInput } from './types.ts';
 import { embedBatchWithBackoff, restampIfDemotedToTitleTier } from './embed-retry.ts';
 import { wrapChunkTextsForStoredMode } from './embedding-context.ts';
 import { healOversizedPageChunks, healedChunksToStaleRows } from './embed-oversize-heal.ts';
+import { healAndReportOverLength } from './embed-overlength-heal.ts';
 import { invalidateStaleSignatureEmbeddingsGuarded, splitEmbeddingSignature, currentSpaceChunkPredicate } from './embedding-invalidation.ts';
 import {
   resolveActiveEmbeddingColumnFromEngine,
@@ -599,6 +600,7 @@ export async function embedStaleForSource(
             e instanceof Error ? e.message : String(e)
           }\n`,
         );
+        await healAndReportOverLength(engine, slug, keySourceId, e, stale.map(c => c.chunk_text), line => process.stderr.write(`${line}\n`));
       }
     }
 

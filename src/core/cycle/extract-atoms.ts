@@ -77,7 +77,7 @@ import type { MaintenanceWriteWait } from '../persistence/maintenance-wait.ts';
 import { connectorAtomExclusionSql } from './connector-atoms.ts';
 import { resolveExtractAtomsCostGate, resolveEmbedModelForCostGate, settleExtractAtomsCostGate } from './extract-atoms-cost-gate.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
-import { classifyRunStop, upsertExtractRollup } from '../extract/rollup-writer.ts';
+import { classifyRunStop, providerHaltReason, upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { abortableSleep } from '../retry.ts';
 import { throwIfAborted } from '../abort-check.ts';
 import { createHash } from 'crypto';
@@ -155,11 +155,13 @@ const PAGE_SCAN_STATE_EXCLUSION_SQL = `AND NOT EXISTS (
 )`;
 
 /**
- * Pure allowlist policy: the legacy floor UNION the pack's `extractable: true`
- * types, MINUS synthesis outputs. Exported for unit tests; keep I/O-free.
+ * Pure allowlist policy: the legacy floor (minus floor types the pack declares not extractable, #5756: the floor
+ * covers only types the pack is silent about) UNION the pack's `extractable: true` types, MINUS synthesis outputs.
+ * Exported for unit tests; keep I/O-free.
  */
-export function unionExtractableTypes(packExtractable: Iterable<string>): string[] {
+export function unionExtractableTypes(packExtractable: Iterable<string>, packExcluded: Iterable<string> = []): string[] {
   const types = new Set<string>(LEGACY_EXTRACTABLE_TYPES);
+  for (const t of packExcluded) types.delete(t);
   for (const t of packExtractable) types.add(t);
   for (const t of SYNTHESIS_OUTPUT_TYPES) types.delete(t);
   return [...types];
@@ -173,17 +175,17 @@ export function unionExtractableTypes(packExtractable: Iterable<string>): string
  * back to the legacy floor.
  */
 async function resolveExtractableTypes(): Promise<string[]> {
-  let packExtractable: Iterable<string> = [];
+  let packExtractable: Iterable<string> = [], packExcluded: Iterable<string> = [];
   try {
     const { loadConfig } = await import('../config.ts');
     const { loadActivePack } = await import('../schema-pack/load-active.ts');
-    const { extractableTypesFromPack } = await import('../schema-pack/extractable.ts');
+    const { extractableTypesFromPack, nonExtractableTypesFromPack } = await import('../schema-pack/extractable.ts');
     const resolved = await loadActivePack({ cfg: loadConfig(), remote: false });
-    packExtractable = extractableTypesFromPack(resolved.manifest);
+    packExtractable = extractableTypesFromPack(resolved.manifest); packExcluded = nonExtractableTypesFromPack(resolved.manifest);
   } catch {
     // Pack unavailable (test seams, bootstrap) — legacy floor only.
   }
-  return unionExtractableTypes(packExtractable);
+  return unionExtractableTypes(packExtractable, packExcluded);
 }
 
 export interface ExtractAtomsOpts {
@@ -1419,7 +1421,7 @@ export async function runPhaseExtractAtoms(
       kind: 'atoms',
       source_id: sourceId,
       cost_delta: estimatedSpendUsd,
-      ...classifyRunStop({ deadline_hit: stoppedEarly, error: hardFailureCount > 0 }),
+      ...classifyRunStop({ deadline_hit: stoppedEarly, error: hardFailureCount > 0 ? providerHaltReason(abortedGlobalError) ?? 'item_error' : false }),
     });
   }
 

@@ -28,7 +28,8 @@ function mockEngine(): BrainEngine {
       if (prop === 'getPage') return (slug: string) => Promise.resolve(pages.get(slug) ?? null);
       if (prop === 'putPage') return async (slug: string, page: unknown) => { pages.set(slug, page); return page; };
       if (prop === 'transaction') return async (fn: (tx: BrainEngine) => Promise<unknown>) => fn(engine);
-      return () => Promise.resolve(prop === 'executeRaw' ? [] : null);
+      // #6482: the strict mode reader needs one well-formed unmanaged row.
+      return (sql?: unknown) => Promise.resolve(prop === 'executeRaw' ? (String(sql).includes('FROM persistence_brain') ? [{ enabled: false }] : []) : null);
     },
   }) as unknown as BrainEngine;
   return engine;

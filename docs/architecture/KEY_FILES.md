@@ -3,23 +3,23 @@
 Read a file's entry before editing it. This page routes to bounded subsystem
 references; **do not load the whole directory**.
 
-Find a path locally, then read its entry and surrounding contract:
+Find a path's entry and its surrounding contract:
 
 ```bash
 rg -n -F 'src/core/ops/pages.ts' docs/architecture/key-files/
 ```
 
 Ranges use each entry's first path; an entry can document several
-files. Search is the fallback when a path crosses subsystems.
+files. Search when a path crosses subsystems.
 Edit the subsystem entry, not this page, when behavior changes.
 Keep entries current-state: history belongs in `CHANGELOG.md` and Git.
 Where a new storage method, migration, doctor check, command, route or sync
 phase goes: [CONTRIBUTING.md](../../CONTRIBUTING.md#where-does-my-change-go).
-A branch written before refactor wave 1 follows the generated
+A branch from before refactor wave 1 follows the generated
 [porting guide](wave-1-porting.md) ([JSON map](wave-1-moves.json)).
-`scripts/check-key-files-current-state.sh` checks each subsystem for history,
-duplicate entries and size growth. Split a growing subsystem and link it
-here rather than raising the cap.
+`scripts/check-key-files-current-state.sh` guards each subsystem against
+history, duplicate entries and size growth. Split a growing subsystem and
+link it here rather than raising the cap.
 
 | Subsystem | Entry range / scope |
 |---|---|
@@ -30,7 +30,8 @@ here rather than raising the cap.
 | [Commands (1/6)](key-files/commands-1.md) | `src/commands/agent-logs.ts` through `src/commands/db-repair.ts` |
 | [Commands (2/6)](key-files/commands-2.md) | `src/commands/doctor.ts` and `src/commands/doctor/` |
 | [Commands (2/6, continued)](key-files/commands-2-continued.md) | `doctor/checks/routing-federation.ts`, `git-convergence.ts`, `dream-retriage.ts` to `embed.ts` |
-| [Commands (3/6)](key-files/commands-3.md) | `src/commands/engine-status.ts` through `src/commands/frontmatter-install-hook.ts` |
+| [Commands (3/6)](key-files/commands-3.md) | `src/commands/engine-status.ts` through `src/commands/extract-timeline-db.ts` |
+| [Commands (3/6, continued)](key-files/commands-3-continued.md) | `src/commands/features.ts` through `src/commands/frontmatter-install-hook.ts` |
 | [Commands (4/6)](key-files/commands-4.md) | `src/commands/frontmatter.ts` through `src/commands/pglite-repair.ts` |
 | [Commands (4/6, continued)](key-files/commands-4-continued.md) | `src/commands/protocol.ts` through `src/commands/reindex-search-vector.ts`, `init-mode-picker.ts`, `src/core/embedding-migration-cli.ts` |
 | [Commands (5/6)](key-files/commands-5.md) | `src/commands/reindex.ts` through `src/commands/storage.ts` |
@@ -51,7 +52,8 @@ here rather than raising the cap.
 | [Core Search (2/2)](key-files/core-search-2.md) | `src/core/search/rerank.ts` through `src/core/search/vector-pool.ts`, the relational arm and multi-hop chain modules, `hub-dampening.ts` |
 | [Core Services (1/3)](key-files/core-services-1.md) | `src/core/advisor/{types,run,render,recommended-set,history,apply,collect-*}.ts` through `src/core/connectors/` |
 | [Core Services (1/3, continued)](key-files/core-services-1-continued.md) | `src/core/context/` through `src/core/context/ipc-path.ts` |
-| [Core Services (2/3)](key-files/core-services-2.md) | `src/core/conversation-parser/` through `src/core/progressive-batch/`, except `src/core/persistence/` |
+| [Core Services (2/3)](key-files/core-services-2.md) | `src/core/conversation-parser/` through `src/core/ops/sources.ts`, except `src/core/persistence/` |
+| [Core Services (2/3, continued)](key-files/core-services-2-continued.md) | `src/core/page-state/` and `src/core/progressive-batch/` |
 | [Core Services (3/3)](key-files/core-services-3.md) | `src/core/think/index.ts` through `src/core/verbs/usage-log.ts` |
 | [Core Utilities (1/2)](key-files/core-utilities-1.md) | `src/core/archive-crawler-config.ts` through `src/core/remediation-checkpoint.ts`; [`cycle.ts`](key-files/core-cycle-primitive.md) |
 | [Core Utilities (2/2)](key-files/core-utilities-2.md) | `src/core/repair/` through `src/core/verbs.ts` |
@@ -83,27 +85,3 @@ here rather than raising the cap.
 | [Workspace push and backup coverage](key-files/workspace-push-and-backup.md) | Workspace push, hook push backstops, backup verdicts |
 | [Ambient capture consent gate](key-files/ambient-capture.md) | `memory.auto_writeback` capture lanes |
 | [Quarantine](key-files/quarantine.md) | Gate-marker strip; quarantined pages in facts, reads, writes |
-
-## BrainBench — in a sibling repo
-
-See [BrainBench — in a sibling repo](key-files/brainbench.md).
-
-## Hindsight calibration (key files cluster)
-
-See [Hindsight calibration](key-files/hindsight.md).
-
-## Schema packs: mutation surface (key files cluster)
-
-See [Schema packs: mutation surface](key-files/schema-mutation.md).
-
-## Agent bootstrap cluster (the paste-in desktop-agent install)
-
-See [Agent bootstrap cluster (the paste-in desktop-agent install)](key-files/agent-bootstrap.md).
-
-## Google connector + open-loop engine (key files cluster)
-
-See [Google connector + open-loop engine](key-files/google-and-loops.md).
-
-## Always-loaded core memory (key files cluster)
-
-See [Always-loaded core memory](key-files/core-memory.md).

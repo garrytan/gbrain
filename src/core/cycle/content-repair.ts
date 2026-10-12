@@ -95,9 +95,9 @@ export async function runContentRepairPhase(engine: BrainEngine | null, opts: Co
   const byKind = Object.fromEntries(lane.results.map(result => {
     const held = heldByReason(result);
     const v = result.verification as { oldest_hold_at?: string | null } | undefined;
-    return [result.kind, { mode: result.mode, candidates: result.affected, repaired: result.repaired ?? result.applied, outcomes: result.outcomes ?? {}, held_by_reason: held,
+    return [result.kind, { mode: result.mode, candidates: result.affected, repaired: result.repaired ?? result.applied, failed: result.failed.length, outcomes: result.outcomes ?? {}, held_by_reason: held,
       llm_usd: result.cost.llm_usd ?? null, complete: result.complete, stopped_reason: result.stopped?.reason ?? null, oldest_hold_at: v?.oldest_hold_at ?? null }];
-  })) as Record<string, { mode: string; candidates: number; repaired: number; outcomes: Record<string, number>; held_by_reason: Record<string, number>; llm_usd: number | null; complete: boolean;
+  })) as Record<string, { mode: string; candidates: number; repaired: number; failed: number; outcomes: Record<string, number>; held_by_reason: Record<string, number>; llm_usd: number | null; complete: boolean;
     stopped_reason: string | null; oldest_hold_at: string | null }>;
   const kindsRun = Object.values(byKind);
   const candidates = kindsRun.reduce((sum, k) => sum + k.candidates, 0);
@@ -110,6 +110,7 @@ export async function runContentRepairPhase(engine: BrainEngine | null, opts: Co
   const oldestHoldAgeHours = oldest ? Math.max(0, Math.round((now() - Date.parse(oldest)) / 3_600_000)) : null;
   const hardStop = lane.stopped.find(stop => stop.reason !== 'time_budget');
   const timeStop = lane.stopped.find(stop => stop.reason === 'time_budget');
+  const failed = lane.failed.length;
   const usd = `$${lane.cost.llm_usd.toFixed(4)}`;
   const parts = [
     lane.mode === 'dry_run' ? `dry run: ${candidates} content candidate(s) planned across ${lane.kinds.join(', ')}, nothing written`
@@ -121,16 +122,17 @@ export async function runContentRepairPhase(engine: BrainEngine | null, opts: Co
   const notes = [
     timeStop ? `Stopped at the phase time budget (${Math.round(timeBudgetMs / 1000)} s) in ${timeStop.kind}; the next maintenance run resumes.` : '',
     hardStop ? `Stopped (${hardStop.kind}: ${hardStop.reason}): ${hardStop.message}` : '',
+    failed ? `${failed} item(s) refused and left unchanged (first: ${lane.failed[0]!.kind} ${lane.failed[0]!.item}, ${lane.failed[0]!.reason}); the next full scan retries them.` : '',
     needsHuman ? `${needsHuman} wait for a person: gbrain sync status --source <id> --json names each with its paragraph.` : '',
   ].filter(Boolean);
   const fix = hardStop ? hardStop.fix ?? previewFix('A lane kind stopped; the preview shows each kind\'s plan on the brain host.')
     : needsHuman ? previewFix('Some holds wait for a person; the preview names each with its exact next step.') : undefined;
   return {
     ...base,
-    status: hardStop ? 'warn' : 'ok',
+    status: hardStop || failed ? 'warn' : 'ok',
     summary: [`${parts}.`, ...notes].join(' '),
     details: {
-      mode: lane.mode, kinds: lane.kinds, candidates, repaired, held_by_reason: heldTotals, by_kind: byKind,
+      mode: lane.mode, kinds: lane.kinds, candidates, repaired, failed, held_by_reason: heldTotals, by_kind: byKind,
       llm_usd: lane.cost.llm_usd, oldest_hold_at: oldest, oldest_hold_age_hours: oldestHoldAgeHours,
       complete: lane.results.every(result => result.complete), time_budget_ms: timeBudgetMs, stopped_reason: hardStop?.reason ?? timeStop?.reason ?? null,
       ...(lane.stopped.length ? { stopped: lane.stopped } : {}), ...(fix ? { fix } : {}),

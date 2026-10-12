@@ -149,6 +149,8 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
   private nextDelayMs: number | undefined;
   private topologyRetryAfter = new Map<string, number>();
   private idleLane: { conn: ReservedConnection; release: () => Promise<void> } | undefined;
+  /** #6352 (P4.6): the one lane reservation in flight; concurrent callers await it instead of reserving again. */
+  private idleLanePending: Promise<ReservedConnection | undefined> | undefined;
   private idleLaneRetryAt = 0;
   /** Phase 4.4: a single write is publishing or admitting on the idle lane's connection. */
   private laneInUse = false;
@@ -325,34 +327,45 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
    */
   private async acquireIdleLane(signal?: AbortSignal, forPublication = false): Promise<ReservedConnection | undefined> {
     if (this.idleLane) return this.idleLane.conn;
-    if (this.engine.kind !== 'postgres' || this.stopping || Date.now() < this.idleLaneRetryAt) return undefined;
-    const pool = (this.engine as { getPoolDiagnostics?: () => { poolMax: number | null; tracked: Record<string, number> } | null }).getPoolDiagnostics?.();
-    // Only reserve from an otherwise idle pool: a saturated pool falls back to a cancellable pooled probe.
-    // A single write's publication (Phase 4.4) also reserves it while at least two other connections stay free.
-    const inUse = Object.values(pool?.tracked ?? {}).reduce((sum, count) => sum + Math.max(0, count), 0);
-    if (!pool?.poolMax || pool.poolMax < 3 || (forPublication ? pool.poolMax - inUse < 3 : inUse > 0)) return undefined;
+    if (!this.idleLanePending) {
+      if (this.engine.kind !== 'postgres' || this.stopping || Date.now() < this.idleLaneRetryAt) return undefined;
+      const pool = (this.engine as { getPoolDiagnostics?: () => { poolMax: number | null; tracked: Record<string, number> } | null }).getPoolDiagnostics?.();
+      // Only reserve from an otherwise idle pool: a saturated pool falls back to a cancellable pooled probe.
+      // A single write's publication (Phase 4.4) also reserves it while at least two other connections stay free.
+      const inUse = Object.values(pool?.tracked ?? {}).reduce((sum, count) => sum + Math.max(0, count), 0);
+      if (!pool?.poolMax || pool.poolMax < 3 || (forPublication ? pool.poolMax - inUse < 3 : inUse > 0)) return undefined;
+      // #6352 (P4.6) single flight: a second caller (the probe beside a single write's publication) joins the one
+      // reservation in flight instead of reserving a second connection nobody would track or release.
+      this.idleLanePending = this.reserveIdleLane().finally(() => { this.idleLanePending = undefined; });
+    }
+    const aborted = Promise.withResolvers<undefined>();
+    const onAbort = () => aborted.resolve(undefined);
+    if (signal?.aborted) onAbort(); else signal?.addEventListener('abort', onAbort, { once: true });
+    // An aborted caller falls back to a pooled probe; the reservation stays tracked as the lane and is released by
+    // releaseIdleLane (or stop), never left to a resolver nobody holds.
+    try { return await Promise.race([this.idleLanePending, aborted.promise]); }
+    finally { signal?.removeEventListener('abort', onAbort); }
+  }
+  /** Reserves the lane; the lane is tracked the moment the connection arrives, or released at once when the consumer is stopping. */
+  private async reserveIdleLane(): Promise<ReservedConnection | undefined> {
     const held = Promise.withResolvers<void>();
     const reserved = Promise.withResolvers<ReservedConnection>();
     const done = this.engine.withReservedConnection(async conn => { reserved.resolve(conn); await held.promise; }, { route: 'ordinary' })
       .catch(error => { reserved.reject(error); });
-    const aborted = Promise.withResolvers<undefined>();
-    const onAbort = () => aborted.resolve(undefined);
-    if (signal?.aborted) onAbort(); else signal?.addEventListener('abort', onAbort, { once: true });
     try {
-      const conn = await Promise.race([reserved.promise, aborted.promise]);
-      if (!conn) {
-        reserved.promise.then(() => held.resolve(), () => {});
-        return undefined;
-      }
-      this.idleLane = { conn, release: async () => { held.resolve(); await done; } };
+      const conn = await reserved.promise;
+      const lane = { conn, release: async () => { held.resolve(); await done; } };
+      if (this.stopping) { await lane.release(); return undefined; }
+      this.idleLane = lane;
       return conn;
     } catch {
       this.idleLaneRetryAt = Date.now() + 60_000;
       return undefined;
-    } finally { signal?.removeEventListener('abort', onAbort); }
+    }
   }
   private async releaseIdleLane(): Promise<void> {
     if (this.laneInUse) return;
+    await this.idleLanePending;
     const lane = this.idleLane;
     this.idleLane = undefined;
     await lane?.release();

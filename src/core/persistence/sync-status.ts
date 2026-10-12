@@ -34,6 +34,7 @@ import { CONTENT_REPAIR_KINDS, contentHoldDisposition, runContentLane, type Cont
 import { resolveRepairScope, type RepairKind, type RepairResult } from '../repair/core.ts';
 import type { RepairKindSpec } from '../repair/registry.ts';
 import { headCommittedBytes } from './sync-page-fault.ts';
+import { laneFaultInMessage } from './sync-window.ts';
 import { drainEstimate } from './sync-drain.ts';
 import { resolveManagedSyncContext } from './sync-discovery.ts';
 
@@ -50,6 +51,7 @@ export interface SyncStatusHold extends SyncFaultVerdict {
 
 export interface SyncStatusError extends SyncFaultVerdict {
   code: string;
+  detail?: string;
   message: string;
   slug?: string;
   path?: string;
@@ -126,8 +128,9 @@ export async function readSyncStatus(engine: BrainEngine, sourceId: string): Pro
   const repairable = records.filter(record => contentHoldDisposition(record, auto).action === 'repair').length;
   const failures = (await readManagedSyncFailures(engine, [sourceId])).filter(failure => failure.code !== 'sync_incomplete');
   const failure = failures[0];
-  const lastError: SyncStatusError | null = failure ? { code: failure.code, message: failure.message, path: failure.path, phase: failure.phase, first_seen: failure.first_seen, attempts: failure.attempts,
-    ...(failure.request_id ? { request_id: failure.request_id } : {}), ...classifySyncFault({ code: failure.code, message: failure.message }) } : null;
+  const laneFault = failure?.code === 'cancelled' ? laneFaultInMessage(failure.message) : null;
+  const lastError: SyncStatusError | null = failure ? { code: failure.code, ...(laneFault ? { detail: laneFault } : {}), message: failure.message, path: failure.path, phase: failure.phase, first_seen: failure.first_seen, attempts: failure.attempts,
+    ...(failure.request_id ? { request_id: failure.request_id } : {}), ...classifySyncFault({ code: failure.code, detail: laneFault, message: failure.message }) } : null;
   const unfinished = !!header && !header.done;
   const remaining = header ? Math.max(0, Number(header.total) - Number(header.index)) : null;
   const p = header?.progress;

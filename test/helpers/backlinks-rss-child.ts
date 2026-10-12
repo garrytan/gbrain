@@ -3,10 +3,12 @@
  * argv: <corpusRoot> <nonTargetMiB>. Builds the corpus if the root is empty
  * (50 fixed `people/`/`companies/` targets, non-target pages of ~1 MiB each
  * with one sparse ref apiece), runs findBacklinkGaps, prints one JSON line:
- * { gaps, rss_before_mb, rss_peak_mb, delta_peak_mb, heap_retained_mb, largest_file_mb }:
- * the RSS peak is read right after the scan (what the OOM killer sees; RSS
- * never shrinks back), the heap delta after a forced GC is what the scan
- * actually kept alive.
+ * { gaps, rss_before_mb, rss_after_scan_mb, rss_delta_mb, heap_retained_mb, largest_file_mb }:
+ * the RSS is read right after the scan (what the OOM killer sees; RSS never
+ * shrinks back, but this is a point reading, not a true peak), the heap delta
+ * after a forced GC is what the scan actually kept alive. The RSS reading is
+ * mostly garbage JSC has not collected yet, and JSC sizes that allowance from
+ * the machine's RAM, so the parent pins `BUN_JSC_forceRAMSize` (#6494).
  */
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -37,11 +39,11 @@ if (!existsSync(join(root, 'people')) || readdirSync(join(root, 'records')).leng
 Bun.gc(true);
 const before = process.memoryUsage();
 const gaps = findBacklinkGaps(root);
-const peak = process.memoryUsage().rss;
+const afterScan = process.memoryUsage().rss;
 Bun.gc(true);
 const after = process.memoryUsage();
 const mb = (n: number) => Math.round(n / (1024 * 1024));
 console.log(JSON.stringify({
-  gaps: gaps.length, rss_before_mb: mb(before.rss), rss_peak_mb: mb(peak),
-  delta_peak_mb: mb(peak - before.rss), heap_retained_mb: mb(after.heapUsed - before.heapUsed), largest_file_mb: FILE_MIB,
+  gaps: gaps.length, rss_before_mb: mb(before.rss), rss_after_scan_mb: mb(afterScan),
+  rss_delta_mb: mb(afterScan - before.rss), heap_retained_mb: mb(after.heapUsed - before.heapUsed), largest_file_mb: FILE_MIB,
 }));

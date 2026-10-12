@@ -18,6 +18,7 @@ import { runDecideUnpacked } from '../../core/ai/decide/unpacked.ts';
 import { estimateContextTokens, planBatches } from '../../core/ai/decide/pack.ts';
 import { lookupModel, marginFor, policyFingerprint } from '../../core/ai/decide/policy.ts';
 import { refusalLine } from '../../core/ai/decide/outcomes.ts';
+import { REFERENCE_CALIBRATIONS } from '../../core/ai/decide/reference-calibrations.ts';
 import { toWireQuestion } from '../../core/ai/decide/providers/typesafe.ts';
 import { SLOT_SPECS } from '../../core/ai/decide/slots.ts';
 import { getCalibration, insertCalibration, listCalibrations, setCalibrationRetired, storeQualification } from '../../core/ai/decide/store.ts';
@@ -225,8 +226,17 @@ async function cmdCalibrations(engine: BrainEngine, args: string[]): Promise<num
     }
     return 0;
   }
-  const id = Number(String(args[1] ?? '').replace(/^local:/, ''));
-  if (!Number.isInteger(id) || id <= 0) { console.error(`Usage: gbrain decide calibrations ${action} <id>`); return 1; }
+  const raw = String(args[1] ?? '');
+  if (action === 'adopt' && raw.startsWith('ref:')) {
+    const ref = REFERENCE_CALIBRATIONS.find((r) => `ref:${r.id}` === raw);
+    if (!ref) { console.error(`reference calibration ${raw} not found in this build (gbrain decide calibrations list shows local ones; shipped references appear in gbrain decide status)`); return 1; }
+    await engine.setConfig(`decide.slots.${ref.slot}.calibration`, raw);
+    resetDecideSearchCache();
+    console.log(`${ref.slot} (${ref.call_site}) now uses ${raw} (threshold ${ref.threshold.toFixed(3)} for ${ref.model_resolved}).`);
+    return 0;
+  }
+  const id = Number(raw.replace(/^local:/, ''));
+  if (!Number.isInteger(id) || id <= 0) { console.error(`Usage: gbrain decide calibrations ${action} <id>  (adopt also takes ref:<id>)`); return 1; }
   const row = await getCalibration(engine, id);
   if (!row) { console.error(`calibration local:${id} not found`); return 1; }
   if (action === 'adopt') {

@@ -113,6 +113,7 @@ test/decide/retrieval-think.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HO
 test/decide/review-duplicate-kinds.serial.test.ts	global-state	global-state: replaces the process-wide gateway decide transport (__setDecideTransportForTests) and gateway config
 test/decide/review-withdraw.serial.test.ts	global-state	global-state: replaces the process-wide gateway decide and embed transports (__setDecideTransportForTests, __setEmbedTransportForTests) and gateway config
 test/decide/search-slots.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)
+test/decide/newer-ref-hint-6497.serial.test.ts	global-state	global-state: patches process stdout/stderr/console
 test/decide/status-no-entity.serial.test.ts	global-state	global-state: patches process stdout/stderr/console
 test/decide/triage-slot.serial.test.ts	global-state	global-state: process-wide test seams __setDecideTransportForTests, __setChatTransportForTests, __resetDecideStoreForTests; configureGateway changes the process-wide AI gateway
 test/decide/turn-context-s6.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)
@@ -142,6 +143,7 @@ test/embed-exit-code-3037.serial.test.ts	global-state	global-state: binds local 
 test/embed-input-type-wire.serial.test.ts	global-state	global-state: configureGateway changes the process-wide AI gateway
 test/embed-lock-skipped.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)
 test/embed-max-usd-metered.serial.test.ts	global-state	global-state: configureGateway and __setEmbedTransportForTests change the process-wide AI gateway; replaces globalThis.fetch for the Voyage multimodal stub
+test/embed-overlength-drain.serial.test.ts	R2	R2: mock.module(src/core/embedding.ts) fake embedder; R1: mutates process.env (GBRAIN_MAX_CHUNK_TOKENS)
 test/embed-null-signature-warning-5527.serial.test.ts	global-state	global-state: process-wide test seams __setEmbedTransportForTests; configureGateway changes the process-wide AI gateway; spyOn console.error
 test/embed-oversize-heal-drain.serial.test.ts	R2	R2: mock.module(../src/core/embedding.ts) replaces modules for every file in the process
 test/embed-partial-failure-3037.serial.test.ts	R2	R2: mock.module(../src/core/embedding.ts) replaces modules for every file in the process
@@ -389,3 +391,6 @@ test/write-path-zero-llm.serial.test.ts	R1	R1: mutates process.env (ANTHROPIC_AP
 test/writeback-nudge.serial.test.ts	global-state	global-state: patches process stdout/stderr/console
 test/writeback-review-fixes.serial.test.ts	global-state	global-state: process-wide test seams __resetCheckpointHarvestForTests; patches process stdout/stderr/console
 test/hook-push-banner-superseded.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, GBRAIN_BACKUP_CHECK)
+test/spawn-seam-batch1-4992.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, GIT_DIR) and spies on node:child_process
+test/divergence-safe-pull-5429.serial.test.ts	R1	R1: mutates process.env (GBRAIN_GIT_ALLOW_FILE_TRANSPORT) and spies on node:child_process
+test/embed-stale-progress-5968.serial.test.ts	R1	R1: mutates process.env (GBRAIN_MAX_CHUNK_TOKENS)

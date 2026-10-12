@@ -39,7 +39,7 @@ export async function runRepairContentCommand(engine: BrainEngine, args: RepairC
   const paidKinds = lane.kinds.filter(kind => repairMaySpend(repairSpec(kind), args.noEmbed));
   if (args.json) {
     console.log(JSON.stringify({ lane: 'content', scope, mode: lane.mode, kinds: lane.kinds, results: lane.results.map(result => ({ ...result, paid: paidKinds.includes(result.kind) })),
-      preview_hashes: lane.preview_hashes, cost: lane.cost, stopped: lane.stopped, paid_kinds: paidKinds, apply_command: lane.apply_command }, null, 2));
+      preview_hashes: lane.preview_hashes, cost: lane.cost, stopped: lane.stopped, failed: lane.failed, paid_kinds: paidKinds, apply_command: lane.apply_command }, null, 2));
   } else {
     console.log(`Scope: brain ${scope.brain_id}; sources ${scope.source_ids.join(', ') || '(none)'}; lane content (${lane.kinds.join(', ')})`);
     for (const result of lane.results) console.log(renderRepairResult(result, { diff: args.diff }));
@@ -47,7 +47,8 @@ export async function runRepairContentCommand(engine: BrainEngine, args: RepairC
     console.log(`Lane: paid model ${lane.mode === 'apply' ? `$${lane.cost.llm_usd.toFixed(4)} spent` : `~$${lane.cost.llm_usd.toFixed(4)}`}`
       + `${lane.cost.llm_allowance_remaining_usd === null ? '' : ` ($${lane.cost.llm_allowance_remaining_usd.toFixed(4)} left of this run's --max-usd)`}; preview hashes: ${hashes}`);
     for (const stop of lane.stopped) console.log(`  ${stop.kind} STOPPED (${stop.reason}): ${stop.message}`);
+    if (lane.failed.length) console.log(`  ${lane.failed.length} item(s) refused and left unchanged (${lane.failed.map(f => `${f.kind} ${f.item}`).join(', ')}); the next full scan retries them.`);
     if (lane.mode === 'dry_run') console.log(`  apply: ${lane.apply_command}`);
   }
-  if (lane.stopped.length) setCliExitVerdict(1);
+  if (lane.stopped.length || lane.failed.length) setCliExitVerdict(1);
 }

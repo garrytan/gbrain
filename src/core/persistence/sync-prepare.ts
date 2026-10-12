@@ -40,6 +40,7 @@ import { checkpointRetryCommand, findIncompleteSyncReceipt } from './checkpoint-
 import { frontmatterSlugConflictMessage } from './verb-errors.ts';
 import { chunkerStamp } from '../chunkers/code.ts';
 import { clearGitHold, countGitHolds, recordSyncImportProvenance } from './sync-holds.ts';
+import { clearSyncSlice, writeSyncSlice, type SyncSliceState } from './sync-slices.ts';
 import { readPagePurgeTombstones } from './page-purge.ts';
 import { fenceWhere } from '../fence-repair/refusal.ts';
 import { fencesNormalizeEnabled } from '../fence-repair/config.ts';
@@ -67,6 +68,8 @@ export interface SyncIntent extends Record<string, unknown> {
   repoPath?: string;
   /** #5522: another cursor of this source imported entries of this run, so the source may already sit at the target. */
   overtaken?: boolean;
+  /** #6349 (P4.4) checkpoint only: this run was one path slice of its target; `last_commit` advances only with `done`. */
+  slice?: SyncSliceState;
   /** #5988: the run's discovery time; committing this entry clears the path's hold unless a newer run wrote it. */
   holdObservedAt?: string;
   /** #5988 checkpoint only: held paths that left the source (excluded); their holds clear when the run checkpoints. */
@@ -303,6 +306,15 @@ async function resolveSyncOrigin(engine: BrainEngine, row: WriteRequest, p: Sync
  * Its validation also accepts this run's cursor with nothing pending; the waiver transaction then requires exactly that
  * cursor (run, index, nothing pending) under its lock.
  */
+/**
+ * #6349 (P4.4): a slice short of its target's end leaves `last_commit` where it was (the caller binds `from` back) and
+ * records where the next slice starts, in the checkpoint's transaction; the last slice clears the record.
+ */
+async function recordSliceCursor(tx: BrainEngine, row: WriteRequest, p: { syncOptions?: SyncCursorOptions; slice?: SyncSliceState }, settled: boolean): Promise<void> {
+  if (!p.syncOptions) return;
+  if (settled) await clearSyncSlice(tx, row.source_id, row.source_incarnation, p.syncOptions);
+  else await writeSyncSlice(tx, row.source_id, row.source_incarnation, p.syncOptions, p.slice!);
+}
 export async function prepareManagedSyncMutation(unbounded: BrainEngine, row: WriteRequest, _config: GBrainConfig, clock?: ClaimPhaseClock,
   screening?: { unsaved: true }): Promise<PreparedMutation> {
   const engine = boundedReads(unbounded, clock);
@@ -402,15 +414,17 @@ export async function prepareManagedSyncMutation(unbounded: BrainEngine, row: Wr
       `Page request ${incomplete} of this sync run is still open or needs recovery, so checkpoint request ${row.request_id} of ${row.source_id} did not commit. `
         + `Inspect request ${incomplete} and let it finish; do not resubmit it. Then run: ${checkpointRetryCommand({ sourceId: row.source_id, processingOptions: p.processingOptions, syncOptions: p.syncOptions, repoPath: p.repoPath })}`,
       { fix: syncInspectFix(row, incomplete, false) });
+    const settled = !p.slice || p.slice.done;
     // #5522: an overtaken run accepts a source another cursor already checkpointed at this exact target.
     const changed = await tx.executeRaw(`UPDATE sources SET last_commit=$3,last_sync_at=now(),config=jsonb_set(${SOURCE_CONFIG_OBJECT_SQL},'{slug_root_mode}',to_jsonb($5::text)),
       newest_content_at=(SELECT MAX(updated_at) FROM pages WHERE source_id=$1 AND deleted_at IS NULL)
       WHERE id=$1 AND incarnation=$2::uuid AND (last_commit IS NOT DISTINCT FROM $4 OR ($6::boolean AND last_commit=$3))
-      AND (config->>'slug_root_mode' IS NULL OR config->>'slug_root_mode'=$5) RETURNING id`, [row.source_id, row.source_incarnation, p.target, p.from, p.slugMode, p.overtaken === true]);
+      AND (config->>'slug_root_mode' IS NULL OR config->>'slug_root_mode'=$5) RETURNING id`, [row.source_id, row.source_incarnation, settled ? p.target : p.from, p.from, p.slugMode, p.overtaken === true]);
     if (!changed.length) throw syncPublicationRefusal('revision_conflict', 'The source checkpoint changed during this sync.', row, p,
       `Another sync moved the commit checkpoint of ${row.source_id} while this run published.`);
+    await recordSliceCursor(tx, row, p, settled);
     // #5566: a full walk re-chunked every stale page, so acknowledge the chunker version as the legacy gate does.
-    if (p.from === null || p.syncOptions?.full === true) await tx.executeRaw('UPDATE sources SET chunker_version=$2 WHERE id=$1', [row.source_id, chunkerStamp()]);
+    if (settled && (p.from === null || p.syncOptions?.full === true)) await tx.executeRaw('UPDATE sources SET chunker_version=$2 WHERE id=$1', [row.source_id, chunkerStamp()]);
     await tx.executeRaw("UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,done}','true'::jsonb),updated_at=now() WHERE op='managed-sync' AND fingerprint=$1", [p.cursorKey]);
     for (const path of p.releasedHolds ?? []) await releaseHold(tx, path);
     return { status: 'synced', source_id: row.source_id, committed_pages: p.total };
@@ -591,7 +605,7 @@ export async function prepareManagedSyncMutation(unbounded: BrainEngine, row: Wr
         },
         () => releaseHold(tx),
         async () => { if (final) await recordSyncImportProvenance(tx, { source_id: row.source_id, incarnation: row.source_incarnation, page_id: Number(final.page.id), origin: p.sourcePath!,
-          raw_sha256: sha256(p.content!), ...(p.blobOid ? { blob_oid: p.blobOid } : {}), gbrain_version: VERSION, ...(recovery?.length ? { recovery } : {}) }); },
+          raw_sha256: sha256(p.content!), ...(p.blobOid ? { blob_oid: p.blobOid } : {}), working: p.working === true, gbrain_version: VERSION, ...(recovery?.length ? { recovery } : {}) }); },
       ]);
       preparedImport.postimage = final;
       return { status: moved ? 'renamed' : applied.noop ? 'skipped' : snapshot ? 'updated' : 'created', slug: row.slug, source_id: row.source_id,

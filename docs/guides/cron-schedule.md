@@ -166,6 +166,15 @@ per-transcript synthesis subagents. The dials:
   Pages that already existed are checked only on the sentences this run
   added. The off switch is the incident escape hatch; telemetry lands in
   `details.synthesis.quote_verify`.
+- `cycle.propose_takes.types` (default unset = every page type) — a JSON array
+  of page types the `propose_takes` phase may scan, for example
+  `gbrain config set cycle.propose_takes.types '["meeting","analysis"]'`.
+  Pages of other types (machine-written lanes, `note` scratch pages) are
+  never sent to the model, so the phase spends only on the lanes you name.
+  The built-in exclusions (receipts, atoms, the dream cycle's own output)
+  still apply; a value that is not a JSON array is ignored with one stderr
+  line and the phase scans every type. Note that a page with no `type` has
+  no type to match, so it is excluded whenever the list is set.
 - `dream.synthesize.attribution_rules` and `dream.propose_takes.attribution_rules`
   (default off) — extra prompt rules from #5425: keep who proposed what and
   later corrections explicit; an assistant-authored judgment is not the

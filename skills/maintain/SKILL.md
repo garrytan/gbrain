@@ -290,6 +290,9 @@ gbrain dream --json                                   # CycleReport JSON
 `git add` / `commit` / `push`. Either commit yourself or let `gbrain autopilot`
 handle it.
 Parses `- **YYYY-MM-DD** | Source — Summary` and `### YYYY-MM-DD — Title` formats.
+The `Source — Summary` dash may be an em dash, an en dash or a spaced hyphen (` - `);
+a colon (`Source: Summary`) is prose, so the row keeps `source: markdown` and the
+whole text as its summary.
 Note: extracted entries improve structured queries (`gbrain timeline`), not vector search.
 
 ### Autopilot check

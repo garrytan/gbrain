@@ -12,6 +12,7 @@ import { isValidSourceId } from '../core/source-id.ts';
 import { parseGoogleSourceConfig, runGoogleAttachmentBackfill } from '../core/google/google-source.ts';
 import type { FetchImpl } from '../core/google/google-clients.ts';
 import { managedSyncAuthority } from '../core/persistence/sync-authority.ts';
+import { readManagedMode } from '../core/persistence/ownership.ts';
 import { connectorCheckpointKey, connectorIdentity } from '../core/persistence/connector-identity.ts';
 import type { GoogleSourceState } from '../core/google/types.ts';
 import { isCredentialError } from '../core/creds/errors.ts';
@@ -108,8 +109,7 @@ export async function runGoogleAttachments(args: string[], connected?: BrainEngi
           `Source ${parsed.sourceId} is missing, archived, or not a Google source in brain ${brain}. List the sources and pass the active Google one with --source.`,
           { fix: readFix(`Lists brain ${brain}'s sources with their kinds.`, { argv: ['gbrain', 'sources', 'list', '--brain', brain, '--json'] }) });
       }
-      const [mode] = await engine.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1');
-      if (!mode?.enabled) {
+      if (!await readManagedMode(engine)) {
         throw opError('writer_coordinator_required', 'Attachment repair requires already-enabled managed persistence.',
           `Brain ${brain} does not run managed persistence, and this repair never enables it. Ordinary ingestion of source ${parsed.sourceId} keeps working; enabling managed persistence is a separate decision for the user.`,
           { fix: readFix(`Shows brain ${brain}'s persistence and writer state.`, { argv: ['gbrain', 'doctor', '--brain', brain, '--json'] }) });

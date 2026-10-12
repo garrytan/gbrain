@@ -18,7 +18,7 @@ import { authorizeStoredRequest, authorizeWrite } from './authority.ts';
 import { materializeTimeline, prepareCanonicalProjections } from './canonical-projections.ts';
 import { digest, sha256 } from './digest.ts';
 import { admitWriteInTransaction, assertReplayIntent, getWriteRequest, getWriteRequestById, intentDigest, receiptFor } from './journal.ts';
-import { acquireWorktree, containsPath, getWorktreeBinding, probeWorktreeWriter, type WorktreeBinding } from './ownership.ts';
+import { acquireWorktree, containsPath, getWorktreeBinding, probeWorktreeWriter, readManagedMode, type WorktreeBinding } from './ownership.ts';
 import { localHostId } from './identity.ts';
 import { assertPersistenceAccepting, startPersistenceConsumer, waitForWrite, writeResponse } from './service.ts';
 import { maintenancePublishWaitMs } from './maintenance-wait.ts';
@@ -209,8 +209,7 @@ async function connectorFileTarget(engine: BrainEngine, row: Pick<WriteRequest, 
 
 export async function beginConnectorSync(engine: BrainEngine, sourceId: string, connector: ConnectorKind,
   suppliedConfig: unknown, opts: SyncOpts & { resetCheckpoint?: boolean }, lease?: ConnectorLease): Promise<ManagedConnectorSync | null> {
-  const [brain] = await engine.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1');
-  if (!brain?.enabled) return null;
+  if (!await readManagedMode(engine)) return null;
   assertPersistenceAccepting(engine);
   validateManagedSyncOptions(opts);
   if (opts.dryRun || opts.skipFailed || opts.srcSubpath || opts.exclude?.length || opts.includeHidden?.length ||
@@ -258,8 +257,7 @@ export async function beginConnectorSync(engine: BrainEngine, sourceId: string, 
 export async function withConnectorSync<T>(engine: BrainEngine, sourceId: string, connector: ConnectorKind,
   config: unknown, opts: SyncOpts & { resetCheckpoint?: boolean }, work: (session: ManagedConnectorSync | null, opts: SyncOpts) => Promise<T>,
   onPending?: (result: T | null, session: ManagedConnectorSync) => T): Promise<T> {
-  const [brain] = await engine.executeRaw<{ enabled: boolean }>('SELECT enabled FROM persistence_brain WHERE singleton=1');
-  if (!brain?.enabled) {
+  if (!await readManagedMode(engine)) {
     if (opts.resetCheckpoint) throw new OperationError('invalid_params', '--reset-checkpoint applies to managed connector sources.',
       `This brain does not use managed persistence; re-walk this connector with: gbrain sync --source ${sourceId} --full`);
     // A preview never opens the autopilot dispatch gate (#5673).

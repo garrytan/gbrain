@@ -101,8 +101,14 @@ const ROW_BYTES = 4096;
 /** One embedding dimension as JSON text ("-0.012345678901234567,"). */
 const DIMENSION_BYTES = 24;
 
-/** Request error codes that fail the same way on every retry. */
-const DETERMINISTIC_CODES = new Set(['invalid_params', 'permission_denied', 'request_too_large', 'payload_too_large']);
+/**
+ * Request error codes that fail the same way on every retry. `invalid_params`
+ * is not one (#6500): the envelope validator refuses a batch that names a page
+ * twice, which is the run's fault, never a member's, so the stored entries
+ * resubmit (de-duplicated) and MAX_GENERATION_ATTEMPTS bounds a genuinely
+ * malformed envelope.
+ */
+const DETERMINISTIC_CODES = new Set(['permission_denied', 'request_too_large', 'payload_too_large']);
 /** Retryable codes whose stored entries are stale: the next attempt extracts again. */
 const REEXTRACT_CODES = new Set(['embedding_configuration', 'revision_conflict', 'page_identity_changed', 'page_not_found']);
 const OUTCOME_SOURCES = new Set([TERMINAL_AUDIT_SOURCE, NON_EXTRACTABLE_AUDIT_SOURCE]);
@@ -202,11 +208,16 @@ export async function loadGenerationIndex(engine: BrainEngine, authority: Mainte
   [authority.writer.principal.kind, authority.writer.principal.id, authority.writer.sourceId, ANCHOR_SLUG]);
   const index = new Map<string, GenerationHistory>();
   for (const row of rows) {
-    for (const member of row.members ?? []) {
-      const history = index.get(member.generation) ?? { pending: null, failed: [] };
-      if (!isTerminal(row as unknown as WriteRequest)) history.pending = { id: row.id, attempt: Number(member.attempt) };
-      else history.failed.push({ id: row.id, requestId: row.request_id, code: row.error_code ?? row.state, attempt: Number(member.attempt) });
-      index.set(member.generation, history);
+    // One history entry per DISTINCT request (#6500): an envelope that listed a
+    // generation several times failed once, not once per member, so it counts
+    // once toward MAX_GENERATION_ATTEMPTS; the member attempt is the largest.
+    const attempts = new Map<string, number>();
+    for (const member of row.members ?? []) attempts.set(member.generation, Math.max(attempts.get(member.generation) ?? 0, Number(member.attempt)));
+    for (const [generation, attempt] of attempts) {
+      const history = index.get(generation) ?? { pending: null, failed: [] };
+      if (!isTerminal(row as unknown as WriteRequest)) history.pending = { id: row.id, attempt };
+      else history.failed.push({ id: row.id, requestId: row.request_id, code: row.error_code ?? row.state, attempt });
+      index.set(generation, history);
     }
   }
   return index;
@@ -538,6 +549,8 @@ const RUN_STOPPING = new WeakSet<object>();
 export interface ManagedRunCounters {
   pages_processed: number; pages_marked_non_extractable: number; pages_skipped_too_large: number; pages_failed: number;
   orphan_facts_cleaned: number; facts_inserted: number; pages_pending?: number; pages_blocked?: number;
+  /** Pages the run listed more than once and extracted once (#6500). */
+  pages_skipped_duplicate_listing?: number;
 }
 
 interface ManagedRunState {
@@ -667,6 +680,20 @@ export async function enqueueManagedPage(state: ManagedRunState, snapshot: PageS
 
 async function enqueueEntry(state: ManagedRunState, entry: ConversationPageEntry): Promise<void> {
   const m = state.managed!;
+  // De-dup before the byte-cap flush (#6500): the envelope validator refuses a
+  // batch naming a page twice. The same generation is the same frozen rows, so
+  // the newcomer is dropped; a different generation means the page moved
+  // between the two reads, so the earlier entry publishes first (apply skips it
+  // as stale) and the newcomer opens the next batch.
+  const held = m.batch.find(e => e.slug === entry.slug);
+  if (held) {
+    if (held.generation === entry.generation) {
+      state.result.pages_skipped_duplicate_listing = (state.result.pages_skipped_duplicate_listing ?? 0) + 1;
+      log(`${entry.slug}: already frozen in this run's batch at the same generation; the second listing is dropped`);
+      return;
+    }
+    await flushManagedBatch(state);
+  }
   const bytes = jsonBytes(entry);
   const cap = Math.min(batchCaps.bytes, await conversationIntentByteLimit(m.engine) - 65_536);
   if (m.batch.length && m.bytes + bytes > cap) await flushManagedBatch(state);

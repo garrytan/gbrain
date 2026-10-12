@@ -69,6 +69,7 @@ export function printManagedSyncNotes(result: SyncResult, write: (line: string) 
   for (const refusal of result.fileRefusals ?? []) {
     write(`  Refused ${refusal.code}: ${refusal.message} ${refusal.suggestion} (${refusal.docs})`);
   }
+  if (result.working_tree_kept) write(`  ${result.working_tree_kept} page(s) whose file is in the working tree but not in Git were kept (imported from the working tree, or import provenance unknown); delete the file, or commit it, to change that.`);
   const skips = result.legacySkips;
   if (skips?.contextualMode) write(`  ${skips.contextualMode} legacy file(s) skipped because they parse to the same page but have no contextual retrieval mode, which a skipped import cannot stamp; to stamp it: gbrain repair contextual-mode`);
   if (skips?.canonicalBytes) write(`  ${skips.canonicalBytes} legacy file(s) skipped because they parse to the same page but their bytes are not what gbrain reads back (for example, not valid UTF-8); re-save them as UTF-8 to publish them exactly.`);

@@ -860,6 +860,7 @@ export async function runExtractFacts(
         cost_delta: 0,
         round_completed_delta: 0,
         halt_delta: 1,
+        halt_reason: 'integrity_guard',
       });
     }
   }
@@ -1134,7 +1135,7 @@ export async function runExtractFacts(
       kind: 'facts.fence',
       source_id: sourceId,
       cost_delta: 0,
-      ...classifyRunStop({ error: result.pagesFailed > 0 }),
+      ...classifyRunStop({ error: result.pagesFailed > 0 ? 'item_error' : false }),
     });
   }
 

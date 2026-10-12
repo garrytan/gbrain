@@ -34,6 +34,7 @@ import { ownedContentFreshness } from '../../../core/shared-skills/content-fresh
 import { connectorAuthorities } from '../../../core/persistence/connector-authority.ts';
 import { parseSourceConfig } from '../../../core/sources-load.ts';
 import { checkError } from '../check-fix.ts';
+import { haltReasonsWithUnknown, readRecordedHaltReasons7d, topHaltReason } from '../../../core/extract/rollup-writer.ts';
 
 /** Local aliases; the shared warn-once memo lives in core so it can't fork per module. */
 const _resolveEnvNumber = resolveEnvNumber;
@@ -1050,6 +1051,8 @@ export async function computeExtractHealthCheck(
       if (!/expected_limit_count/i.test(msg)) throw err;
       rows = await engine.executeRaw<RollupRow>(rollupQuery(false), []);
     }
+    // #5495: recorded halt reasons per kind over the same 7 days (migration v239).
+    const recordedReasons = await readRecordedHaltReasons7d(engine);
 
     if (rows.length === 0) {
       return {
@@ -1072,6 +1075,9 @@ export async function computeExtractHealthCheck(
       round_completed_count: number;
       expected_limit_count: number;
       halt_rate: number;
+      /** #5495: 7-day halts per reason, `unknown` for halts no reason was recorded for. */
+      halt_reasons: Record<string, number>;
+      top_halt_reason: string | null;
       last_updated_at: string | null;
       last_halt_age_days: number | null;
     };
@@ -1085,6 +1091,7 @@ export async function computeExtractHealthCheck(
       // not self-imposed capacity limits. A backlog-bigger-than-budget brain
       // whose every run banks progress and stops at the cap reads 0%.
       const total = halts + completed + expectedLimits;
+      const haltReasons = haltReasonsWithUnknown(halts, recordedReasons.get(r.kind) ?? {});
       return {
         kind: r.kind,
         cost_7d_usd: Number(r.cost_7d_usd) || 0,
@@ -1094,6 +1101,8 @@ export async function computeExtractHealthCheck(
         round_completed_count: completed,
         expected_limit_count: expectedLimits,
         halt_rate: total > 0 ? halts / total : 0,
+        halt_reasons: haltReasons,
+        top_halt_reason: topHaltReason(haltReasons)?.reason ?? null,
         last_updated_at: r.last_updated_at
           ? new Date(r.last_updated_at).toISOString()
           : null,
@@ -1126,7 +1135,9 @@ export async function computeExtractHealthCheck(
         .map(k => {
           const ageDays = k.last_halt_age_days;
           const ageSuffix = ageDays === null ? '' : ageDays <= 0 ? ', last halt today' : `, last halt ${ageDays}d ago`;
-          return `${k.kind}=${(k.halt_rate * 100).toFixed(1)}%${ageSuffix}`;
+          const top = topHaltReason(k.halt_reasons);
+          const reasonSuffix = top ? ` (top reason: ${top.reason} ×${top.count})` : '';
+          return `${k.kind}=${(k.halt_rate * 100).toFixed(1)}%${ageSuffix}${reasonSuffix}`;
         })
         .join(', ');
       return {

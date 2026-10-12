@@ -35,10 +35,10 @@ import type { BrainEngine } from '../engine.ts';
 import { OperationError } from '../ops/contract.ts';
 import { authorizeStoredRequest, storedAuthorizationReads } from './authority.ts';
 import { localHostId } from './identity.ts';
-import { acquireWorktree, acquireWorktreeShared, getWorktreeBinding, guardOwnership, joinWorktreeLease } from './ownership.ts';
+import { acquireWorktree, acquireWorktreeShared, getWorktreeBinding, guardOwnership, joinWorktreeLease, MANAGED_MODE_SQL } from './ownership.ts';
 import { isLockOpenFailure, type NativeLockHandle } from './native-lock.ts';
 import { awaitLaneBegin, awaitLaneTurn, LaneAbort, laneApplyBegin, laneClaimed, laneFinished, lanePolicy, stepDownLanes, type LaneState } from './sync-lanes.ts';
-import { cancelRows, windowPredecessor } from './sync-window.ts';
+import { cancelRows, laneFaultBlockedReason, laneFaultCancelMessage, windowPredecessor } from './sync-window.ts';
 import { clearResolvedRecoveries, completeWrite, ENSURE_COUNTERS_SQL, getWriteRequestById, LOCK_COUNTERS_SQL, markDispatched, markRecovering, prepareRecoveries,
   foregroundPriority, independentGroup, publicationGroupKey, reclaimReleasedWrite, releaseUnpublishedClaim, renewGroupClaims } from './journal.ts';
 import { principalKey, requestPrincipal, type FileRecoveryRecord, type WriteRequest } from './model.ts';
@@ -147,7 +147,7 @@ const STABLE_IN_PREPARATION = new Set([
   'SELECT lane,revoked_at,grant_ceiling FROM persistence_local_writers WHERE id=$1::uuid',
   'SELECT s.source_id,s.source_incarnation,s.worktree_id,s.relative_path, s.topology_generation::text AS topology_generation,w.owner_host_id,w.owner_epoch::text AS owner_epoch,w.state, h.local_path,h.coordination_path FROM persistence_source_bindings s JOIN persistence_worktrees w ON w.id=s.worktree_id LEFT JOIN persistence_host_bindings h ON h.worktree_id=w.id AND h.host_id=$2::uuid WHERE s.source_id=$1',
   'SELECT local_path FROM sources WHERE id=$1',
-  'SELECT enabled FROM persistence_brain WHERE singleton=1',
+  MANAGED_MODE_SQL,
   "SELECT to_regclass('shared_skill_packs') IS NOT NULL AS present",
   'SELECT p.source_id,p.source_incarnation,s.local_path AS source_root, h.local_path AS worktree_root,b.relative_path FROM shared_skill_packs p JOIN sources s ON s.id=p.source_id AND s.incarnation=p.source_incarnation LEFT JOIN persistence_source_bindings b ON b.source_id=p.source_id AND b.source_incarnation=p.source_incarnation LEFT JOIN persistence_host_bindings h ON h.worktree_id=b.worktree_id AND h.host_id=$1::uuid',
   'SELECT id, name, local_path, last_commit, last_sync_at, config, created_at, contextual_retrieval_mode, trust_frontmatter_overrides FROM sources WHERE id = $1',
@@ -440,7 +440,10 @@ function groupFailure(error: unknown): GroupFailure {
  */
 async function laneFallback(engine: BrainEngine, rows: WriteRequest[], reason: GroupFailure | undefined, run: GroupExecution): Promise<boolean | null> {
   if (run.lane) run.lane.fallbacks++;
-  if (reason === 'lock_timeout' || reason === 'statement_timeout') stepDownLanes(rows[0]!.worktree_id!, `${reason} on a lane group`);
+  // #6402 residual (P4.3): a server fault on the lane group is kept on the rows it releases or cancels (`blocked_reason`
+  // `lane_<fault>`, the cancel message), so the ledger and `claimedHeadOrder` name it instead of a generic wait.
+  const laneFault = reason === 'lock_timeout' || reason === 'statement_timeout' ? reason : null;
+  if (laneFault) stepDownLanes(rows[0]!.worktree_id!, `${reason} on a lane group`);
   const after = windowPredecessor(rows[0]!);
   const prior = after ? await engine.executeRaw<{ state: string }>('SELECT state FROM persistence_requests WHERE principal_kind=$1 AND principal_id=$2 AND request_id=$3::uuid',
     [rows[0]!.principal_kind, rows[0]!.principal_id, after]).then(found => found[0]?.state ?? null) : 'committed';
@@ -448,10 +451,10 @@ async function laneFallback(engine: BrainEngine, rows: WriteRequest[], reason: G
   // claimed again as a lane head; publishing its members one at a time would hold the lanes back.
   if (prior === 'committed' && reason !== 'busy') return null;
   if (prior !== null && ['failed', 'conflict', 'cancelled'].includes(prior)) {
-    for (const done of await cancelRows(engine, rows)) run.settled(done);
+    for (const done of await cancelRows(engine, rows, laneFault ? laneFaultCancelMessage(laneFault) : undefined)) run.settled(done);
     return true;
   }
-  for (const row of rows) await releaseUnpublishedClaim(engine, row, 'group_member_waiting');
+  for (const row of rows) await releaseUnpublishedClaim(engine, row, laneFault ? laneFaultBlockedReason(laneFault) : 'group_member_waiting');
   return false;
 }
 

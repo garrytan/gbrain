@@ -308,9 +308,9 @@ describe('mutation-time deletion race reclassification (#4109)', () => {
       },
       // DB-only brain: no source local_path / repo_path, so the timeline
       // write-through takes its handled:false path and the op falls through
-      // to the insert.
-      async executeRaw() {
-        return [];
+      // to the insert. #6482: the strict mode reader needs one well-formed unmanaged row.
+      async executeRaw(sql: string) {
+        return sql.includes('FROM persistence_brain') ? [{ enabled: false }] : [];
       },
       async getConfig() {
         return null;
@@ -374,7 +374,7 @@ describe('mutation-time deletion race reclassification (#4109)', () => {
       async addLink() {
         throw new PageMissingError('addLink', 'to', 'topics/race-restored', WRITE_SRC);
       },
-      async executeRaw() { return []; }, // explicitly unmanaged fixture
+      async executeRaw(sql: string) { return sql.includes('FROM persistence_brain') ? [{ enabled: false }] : []; }, // explicitly unmanaged fixture (#6482: one well-formed row)
     } as unknown as BrainEngine;
     const result = await dispatchToolCall(eng, 'add_link', {
       from: 'topics/race-from',

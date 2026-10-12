@@ -203,24 +203,56 @@ const ITERATORS: ReadonlyMap<string, RegExp> = new Map(WRITE_GATE_PATTERNS.map(p
  * `scan` (a prefix of the window) from offset `from` (bounded by its length), so padding with
  * rejected matches cannot hide a real one; contexts read the whole window.
  */
-function matchesInContext(p: WriteGatePattern, window: string, atTextStart: boolean, from: number, scan: string): boolean {
+function matchesInContext(p: WriteGatePattern, window: string, atTextStart: boolean, from: number, scan: string, work: WriteGateWork | undefined): boolean {
   const rx = ITERATORS.get(p.name)!;
   rx.lastIndex = from;
+  if (work) { work.regexCalls++; work.scannedChars += scan.length - from; }
   for (let m = rx.exec(scan); m; m = rx.exec(scan)) {
     const at = m.index;
     // Resume one character later, not at the match end: a rejected match can overlap the one that holds.
     rx.lastIndex = at + 1;
+    if (work) work.regexCalls += p.negatable ? 2 : 1;
     if (p.negatable && NEGATED_BEFORE_RE.test(window.slice(Math.max(0, at - 10), at))) continue;
     if (!p.preceded) return true;
     // The text start counts as a line start for `preceded` (a pattern may require one).
     const before = at > MAX_PRECEDING_CHARS ? window.slice(at - MAX_PRECEDING_CHARS, at) : `${atTextStart ? '\n' : ''}${window.slice(0, at)}`;
+    if (work) work.regexCalls++;
     const context = p.preceded.exec(before);
     if (context && !context.groups?.neg) return true;
   }
   return false;
 }
 
-type Detector = (fields: ReadonlyArray<readonly [WriteGateField, string]>) => WriteGateHit[];
+/**
+ * Deterministic work the detector did for one assessment (#6490), counted at
+ * the sites that do it: input units of the normalization and anchor passes,
+ * windows cut, pattern attempts past the prefilter, regex executions and the
+ * characters those executions were allowed to search. A caller that passes an
+ * accumulator to `assessPageForGate` gets the counts for that assessment only;
+ * nothing is kept between calls. The perf test pins these per corpus, so a lost
+ * prefilter, a widened scan range, a repeated normalization pass or a costly
+ * pattern fails on every machine, independent of wall time.
+ */
+export interface WriteGateWork {
+  /** Characters handed to `normalizeForGate` (0 when the text needed none). */
+  normalizedChars: number;
+  /** Characters the anchor pass walked (one pass per field, two when normalization re-ran it). */
+  anchorScanChars: number;
+  /** Windows cut over all fields. */
+  windows: number;
+  /** Pattern checks that passed the anchor prefilter and reached a regex search. */
+  patternChecks: number;
+  /** Regex executions: pattern searches, negation look-behinds and `preceded` context checks. */
+  regexCalls: number;
+  /** Characters the pattern searches were allowed to scan (range end minus start, or the whole window). */
+  scannedChars: number;
+}
+
+export function createWriteGateWork(): WriteGateWork {
+  return { normalizedChars: 0, anchorScanChars: 0, windows: 0, patternChecks: 0, regexCalls: 0, scannedChars: 0 };
+}
+
+type Detector = (fields: ReadonlyArray<readonly [WriteGateField, string]>, work?: WriteGateWork) => WriteGateHit[];
 
 /** FNV-1a over a lowercased ASCII word; collisions only widen the prefilter (the regex still decides). */
 function wordHash(word: string): number {
@@ -331,14 +363,19 @@ interface WindowScan { text: string; window: string; start: number; at: number[]
  * the window cut at its end, moved past word characters so the cut reads like the text there. Same
  * result as searching the whole window, which it does when the ranges would cover most of it anyway.
  */
-function matchesInWindow(p: WriteGatePattern, i: number, s: WindowScan): boolean {
+function matchesInWindow(p: WriteGatePattern, i: number, s: WindowScan, work: WriteGateWork | undefined): boolean {
   const { window, start, text } = s;
   const context = p.negatable || p.preceded;
   const reach = REACH[i]!;
   const len = window.length;
+  if (work) work.patternChecks++;
   let anchors = 0;
   if (reach) for (const k of PATTERN_KEYS[i]!.anchors) anchors += s.present[k]!;
-  if (!reach || anchors * 2 * reach >= len) return context ? matchesInContext(p, window, start === 0, 0, window) : p.rx.test(window);
+  if (!reach || anchors * 2 * reach >= len) {
+    if (context) return matchesInContext(p, window, start === 0, 0, window, work);
+    if (work) { work.regexCalls++; work.scannedChars += len; }
+    return p.rx.test(window);
+  }
   const own = OWN_ANCHOR[i]!;
   ranges.length = 0;
   // The open range is [lo, hi); anchor ends come in order, so a range only ever grows to the right.
@@ -360,21 +397,27 @@ function matchesInWindow(p: WriteGatePattern, i: number, s: WindowScan): boolean
     let to = ranges[r + 1]!;
     while (to < len && REGEX_WORD[window.charCodeAt(to)]) to++;
     const scan = to === len ? window : window.slice(0, to);
-    if (context) { if (matchesInContext(p, window, start === 0, ranges[r]!, scan)) return true; continue; }
+    if (context) { if (matchesInContext(p, window, start === 0, ranges[r]!, scan, work)) return true; continue; }
     rx.lastIndex = ranges[r]!;
+    if (work) { work.regexCalls++; work.scannedChars += to - ranges[r]!; }
     if (rx.test(scan)) return true;
   }
   return false;
 }
 
 /** Pure detector: every (family, pattern, field) the pattern table finds in the fields. */
-export function detectInstructionLike(fields: ReadonlyArray<readonly [WriteGateField, string]>): WriteGateHit[] {
+export function detectInstructionLike(fields: ReadonlyArray<readonly [WriteGateField, string]>, work?: WriteGateWork): WriteGateHit[] {
   const hits: WriteGateHit[] = [];
   for (const [field, raw] of fields) {
     if (!raw) continue;
     let text = raw;
+    if (work) work.anchorScanChars += text.length;
     let occ = anchorOccurrences(text);
-    if (occ.needsNormalizing) { text = normalizeForGate(raw); occ = anchorOccurrences(text); }
+    if (occ.needsNormalizing) {
+      text = normalizeForGate(raw);
+      if (work) { work.normalizedChars += raw.length; work.anchorScanChars += text.length; }
+      occ = anchorOccurrences(text);
+    }
     const found = new Set<string>();
     // Anchor counts over the occurrences in (start, end]: windows only move forward, so each occurrence
     // is added once and removed once instead of every overlapping window rebuilding its key set.
@@ -392,11 +435,12 @@ export function detectInstructionLike(fields: ReadonlyArray<readonly [WriteGateF
       s.window = text.slice(start, end);
       s.left = left;
       s.entered = entered;
+      if (work) work.windows++;
       for (let i = 0; i < WRITE_GATE_PATTERNS.length; i++) {
         const p = WRITE_GATE_PATTERNS[i]!;
         const keys = PATTERN_KEYS[i]!;
         if (found.has(p.name) || !hasAny(keys.anchors, present) || (keys.requires && !hasAny(keys.requires, present))) continue;
-        if (!matchesInWindow(p, i, s)) continue;
+        if (!matchesInWindow(p, i, s, work)) continue;
         found.add(p.name);
         hits.push({ family: p.family, pattern: p.name, field });
       }
@@ -420,8 +464,8 @@ function hashFields(fields: ReadonlyArray<readonly [WriteGateField, string]>): s
   return h.digest('hex');
 }
 
-/** Assess raw fields for a write at `input.tier` under `cfg`. Never throws. */
-export function assessWriteGate(fields: ReadonlyArray<readonly [WriteGateField, string | null | undefined]>, input: WriteGateInput, cfg: WriteGateConfig): WriteGateAssessment {
+/** Assess raw fields for a write at `input.tier` under `cfg`. Never throws. `work`, when given, accumulates this assessment's detector work (#6490). */
+export function assessWriteGate(fields: ReadonlyArray<readonly [WriteGateField, string | null | undefined]>, input: WriteGateInput, cfg: WriteGateConfig, work?: WriteGateWork): WriteGateAssessment {
   const present = fields.filter((f): f is readonly [WriteGateField, string] => typeof f[1] === 'string' && f[1].length > 0);
   const scanned = [...present, ...originFields(input.origin)];
   const base = { tier: input.tier, detectorVersion: WRITE_GATE_DETECTOR_VERSION };
@@ -429,7 +473,7 @@ export function assessWriteGate(fields: ReadonlyArray<readonly [WriteGateField, 
   const external = input.tier === 'external_untrusted';
   let hits: WriteGateHit[];
   try {
-    hits = detector(scanned);
+    hits = detector(scanned, work);
   } catch {
     return { ...base, verdict: external ? 'quarantine' : 'allow', ran: true, families: [], hits: [], detectorError: true, contentHash: hashFields(scanned) };
   }
@@ -465,13 +509,13 @@ export function frontmatterText(frontmatter: Record<string, unknown> | null | un
 
 export function assessPageForGate(
   page: { title?: string | null; compiled_truth: string; timeline?: string | null; frontmatter?: Record<string, unknown> | null },
-  input: WriteGateInput, cfg: WriteGateConfig,
+  input: WriteGateInput, cfg: WriteGateConfig, work?: WriteGateWork,
 ): WriteGateAssessment {
   return assessWriteGate([
     ['title', page.title],
     ['body', stripManagedFenceRows(`${page.compiled_truth}\n\n${page.timeline ?? ''}`)],
     ['frontmatter', frontmatterText(page.frontmatter)],
-  ], input, cfg);
+  ], input, cfg, work);
 }
 
 /**

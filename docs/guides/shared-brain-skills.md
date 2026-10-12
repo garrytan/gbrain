@@ -386,6 +386,34 @@ with `joined`, `refresh_pending`, `delivery_reported`, `source_changed`, or
 delivery only; every row remains native-unverified. Unknown or disconnected
 installations are not proven migrated by that inventory.
 
+### Decline the migration for the whole brain
+
+**Say to your agent:** *"We are not adopting shared skills on this brain; stop
+the v0.53.0 migration from running on every upgrade."* The agent runs
+
+```bash
+gbrain config set shared_skills.migration.enabled false
+```
+
+The key is brain-level database config, so it applies to every machine that
+uses that database. From then on `gbrain apply-migrations` (including the
+`bun install` postinstall, `gbrain upgrade` and `gbrain post-upgrade`) skips
+v0.53.0 entirely: no inventory, no `shared_skills.migration.v1*` config
+writes, and the applied-migration re-check does not run. `gbrain
+apply-migrations --list` and `--dry-run` show it as `declined` with the key,
+`gbrain doctor` reports `minions_migration` ok with `declined: ['0.53.0']`,
+and `get_health.migrations.declined` lists it. An explicit `gbrain
+apply-migrations --migration 0.53.0` refuses with `migration_declined` (exit
+3) and the command that turns it back on instead of overriding the owner's
+choice from one machine. To adopt shared skills later:
+
+```bash
+gbrain config set shared_skills.migration.enabled true
+gbrain apply-migrations --yes
+```
+
+Per-source opt-outs (next section) still apply once the migration runs.
+
 ## Choose which sources adopt shared skills
 
 **Say to your agent:** *"Stop the shared-skills migration from touching the

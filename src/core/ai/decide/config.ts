@@ -12,6 +12,8 @@
  * slot's consent keys. Eval runs never get key defaults; their arms say
  * exactly which slots are on.
  */
+import { parsePricingOverrides } from '../../budget/budget-tracker.ts';
+import type { PricingOverrides } from '../../budget/reservation-cost.ts';
 import { recommendedSlots } from './reference-calibrations.ts';
 import { SLOT_SPECS } from './slots.ts';
 import { DECIDE_SLOTS, EVIDENCE_CLASSES, type DecideMode, type DecideSlot, type EvidenceClass } from './types.ts';
@@ -43,8 +45,15 @@ const sourceList: Validator = (v) => {
 };
 const calibrationRef: Validator = (v) => /^(local:\d+|ref:[a-z0-9._:-]+)$/i.test(v) ? null : 'must be local:<id> or ref:<id>';
 
+/**
+ * `typesafe:<model>` accepts any model id a gateway or self-hosted Jev may
+ * publish (#5980: `typesafe:oc/jev-1.13-free`): one or more of
+ * `[a-z0-9._@/-]`, starting alphanumeric, no whitespace and no second colon.
+ * An id with no shipped tariff is admitted here and refused at call time
+ * (`unpriced_model`) until `gbrain pricing set` registers its price.
+ */
 export function isValidProvider(v: string): boolean {
-  return v === 'none' || /^typesafe:jev-[a-z0-9.-]+$/i.test(v) || /^llm:[a-z0-9-]+:.+$/i.test(v);
+  return v === 'none' || /^typesafe:[a-z0-9][a-z0-9._@/-]*$/i.test(v) || /^llm:[a-z0-9-]+:.+$/i.test(v);
 }
 
 const GLOBAL_KEYS: Record<string, Validator> = {
@@ -141,6 +150,8 @@ export interface DecideConfig {
   slots: Record<DecideSlot, DecideSlotConfig>;
   /** GBRAIN_DECIDE_SLOTS eval override, honored only when the caller opts in. */
   evalOverride?: string;
+  /** Operator prices (`pricing.overrides`, written by `gbrain pricing set`): the only way an id without a shipped tariff runs. */
+  pricingOverrides?: PricingOverrides;
 }
 
 const num = (raw: string | undefined, fallbackValue: number, validator: Validator): number =>
@@ -216,6 +227,7 @@ export function readDecideConfig(snapshot: Record<string, string | undefined> | 
     if (raw && sourceList(raw) === null) denySources = JSON.parse(raw);
   } catch { /* invalid stored value: no denials beyond the private rule */ }
   const fb = get('decide.egress_fallback');
+  const pricingOverrides = parsePricingOverrides(get('pricing.overrides'));
   return {
     provider: providerValue,
     egressFallback: fb && fallback(fb) === null ? fb : 'none',
@@ -234,6 +246,7 @@ export function readDecideConfig(snapshot: Record<string, string | undefined> | 
     intentWaitMs: num(get('decide.slots.intent.wait_ms'), 250, GLOBAL_KEYS['decide.slots.intent.wait_ms']!),
     slots,
     ...(evalSlots ? { evalOverride: evalSlots } : {}),
+    ...(pricingOverrides ? { pricingOverrides } : {}),
   };
 }
 

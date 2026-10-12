@@ -118,6 +118,25 @@ This distinction is load-bearing. Treating a provider outage as a successful
 zero-fact response would make a transient failure durable and permanently hide
 the page from later runs.
 
+### Bounded windows (#6267)
+
+Every eligible turn reaches the extractor. A gap-separated group with at
+least two messages is eligible; inside it, windows close at 30 messages or
+when the rendered text (header included) would exceed 6,500 characters, and
+the next turn opens a new window. A turn that cannot fit alone is split at
+sentence boundaries with its speaker and timestamp repeated on every piece.
+Nothing is clipped: an unrepresentable header fails the page before any
+model call or prior-fact cleanup, and a window rendered over budget is a
+bug that surfaces as a page failure, never as a silent cut. A dense page
+therefore takes more extractor calls than before, under the same cost cap.
+
+Pages stamped complete by an earlier release saw clipped input, and their
+outcome stays valid because the page did not change. To re-extract them
+run `gbrain extract-conversation-facts --source <id> --slug <slug> --force`
+(or `--force` without `--slug` for the whole source, after a `--dry-run`
+preview of the window count); this spends model calls, so it is the
+operator's decision.
+
 ## Non-extractable authority
 
 A non-extractable marker is written only when all of the following are true:

@@ -82,6 +82,9 @@ export function writeFailureDiagnostic(code: string, message?: string | null): {
     return { reason: 'source_changed', message: 'A canonical source input or binding changed; the write was refused.',
       suggestion: 'Inspect the source on its existing owner. For file/database drift, preview gbrain sources reconcile <source> <slug> --brain <brain> --preview. Do not change ownership or permissions to bypass this guard.' };
   }
+  // #6501: a checkout recreated (or drifted beyond the birth tolerance) at its recorded path; the #5914 relocated-root self-transfer is the exit.
+  if (code === 'recovery_required' && message?.startsWith('The checkout directory at the recorded root is not the one this owner stamped')) return { reason: 'physical_root_directory_changed', message,
+    suggestion: 'On the brain host, gbrain sources writer status <source> --json shows the filled commands: gbrain sources writer transfer prepare <source> --self-transfer --confirm-relocated-root, then transfer accept <source> --path <root> --expected-epoch <epoch> --manifest <digest from prepare> --self-transfer --confirm-relocated-root (each with its admin intent). Retry the original write with the same request_id afterwards; never remove the ownership markers.' };
   if (code === 'owner_unavailable' && message === UNBOUND_PUBLICATION_MESSAGE) return { reason: 'unbound_source', message,
     suggestion: 'Read the page again and submit the write with a new request_id; a bound source publishes it to its canonical file.' };
   if (code === 'owner_unavailable') return { reason: code, message: 'The accepted source owner is unavailable or changed.',

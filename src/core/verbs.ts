@@ -372,11 +372,13 @@ const synthesize: Operation = {
         return {
           answer: result.extractive.answer,
           sources: result.extractive.citations.map(c => c.page_slug),
+          citations: sourceQualifiedCitations(result.extractive.citations),
           gaps: result.gaps,
           cost,
           synthesis_status: 'extractive_fallback',
           pages_gathered: result.pagesGathered,
           takes_gathered: result.takesGathered,
+          evidence_truncated: result.evidence_truncated ?? false,
           warnings: result.warnings,
           ...feedbackMeta,
           protocol_version: MEMORY_VERBS_VERSION,
@@ -394,11 +396,13 @@ const synthesize: Operation = {
       answer: result.answer,
       ...(result.answer_raw !== undefined ? { answer_raw: result.answer_raw, quote_check: result.quote_check, unverified_quotes: result.unverified_quotes } : {}),
       sources: result.citations.map(c => c.page_slug),
+      citations: sourceQualifiedCitations(result.citations),
       gaps: result.gaps,
       cost,
       synthesis_status: 'ok',
       pages_gathered: result.pagesGathered,
       takes_gathered: result.takesGathered,
+      evidence_truncated: result.evidence_truncated ?? false,
       warnings: result.warnings,
       ...feedbackMeta,
       protocol_version: MEMORY_VERBS_VERSION,
@@ -406,6 +410,11 @@ const synthesize: Operation = {
   },
   cliHints: { name: 'synthesize', positional: ['question'] },
 };
+
+/** #5461: `sources[]` stays slugs (frozen); `citations[]` is the same list, source-qualified. */
+function sourceQualifiedCitations(citations: Array<{ page_slug: string; row_num: number | null; source_id?: string | null }>) {
+  return citations.map(c => ({ slug: c.page_slug, source_id: c.source_id ?? null, row_num: c.row_num }));
+}
 
 // ─── forget ──────────────────────────────────────────────────────────────────
 
@@ -730,6 +739,17 @@ export const RESPONSE_SCHEMAS: Record<VerbName, Record<string, unknown>> = {
       pages_gathered: { type: 'integer', description: 'Pages retrieved by the gather phase behind this answer.' },
       takes_gathered: { type: 'integer', description: 'Takes retrieved by the gather phase behind this answer.' },
       warnings: { type: 'array', items: { type: 'string' }, description: 'Machine-stable pipeline warning codes (e.g. LLM_OUTPUT_NOT_JSON, LLM_CALL_FAILED: <class> where <class> is timeout | rate_limited | network | provider_error).' },
+      // #5461 additive: the pages budget is configurable and soft; callers learn when evidence was cut and which source each cited page came from.
+      evidence_truncated: { type: 'boolean', description: 'true when at least one gathered page reached the model as a cut excerpt (think.pages_budget_chars / think.excerpt_ceiling_chars, both soft bounds).' },
+      citations: {
+        type: 'array',
+        description: 'sources[] with provenance, same order and length: the gathered source each cited slug came from (null when the model cited a slug outside the gather).',
+        items: {
+          type: 'object',
+          required: ['slug', 'source_id'],
+          properties: { slug: { type: 'string' }, source_id: { type: ['string', 'null'] }, row_num: { type: ['integer', 'null'] } },
+        },
+      },
     },
   },
   forget: {

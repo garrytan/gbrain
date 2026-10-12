@@ -114,7 +114,7 @@ export interface DecideResult {
 export type DecideFailureReason =
   | 'timeout' | 'rate_limited' | 'provider_error' | 'malformed_response' | 'mixed_model'
   | 'budget_exhausted' | 'no_key' | 'no_provider' | 'pinned_model_unavailable' | 'payload_too_large'
-  | 'egress' | 'late' | 'llm_capability';
+  | 'egress' | 'late' | 'llm_capability' | 'unpriced_model';
 
 export class DecideError extends Error {
   reason: DecideFailureReason;

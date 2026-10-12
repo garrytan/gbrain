@@ -22,6 +22,7 @@ import { hybridSearch } from '../search/hybrid.ts';
 import { INTERNAL_BREADTH_SEARCH_OPTS } from '../search/internal-breadth.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import type { Page, SearchResult } from '../types.ts';
+import { DEFAULT_PAGES_BUDGET, PAGES_BLOCK_EXCERPT_FLOOR_CHARS, type PagesBudget } from './pages-budget.ts';
 import { filterPagesToWindow, type TemporalWindow } from './temporal-window.ts';
 import { pageContentDate } from './temporal-context.ts';
 import { sanitizeQueryForPrompt } from '../search/expansion.ts';
@@ -587,17 +588,17 @@ export function selectRelevantExcerptDetailed(
  * budget-aware: `min(ceiling, totalBudget / pageCount)` with the caller's
  * `floor` as the guaranteed minimum, so a big gather never collapses each
  * page below the floor, and a small gather delivers each page in a much
- * larger (often complete) window instead of wasting the budget.
+ * larger (often complete) window instead of wasting the budget. The total
+ * is therefore a SOFT bound (40 pages × the 600 floor = 24 000 at the
+ * 12 000 default). #5461: `budget` comes from `think.pages_budget_chars` /
+ * `think.excerpt_ceiling_chars` (pages-budget.ts); the defaults are the
+ * historical constants.
  */
-const PAGES_BLOCK_TOTAL_BUDGET_CHARS = 12_000;
-const PAGES_BLOCK_EXCERPT_CEILING_CHARS = 2_400;
-
-/** Budget-aware per-page excerpt length for the pages block (#4510). */
-export function pagesBlockExcerptLen(pageCount: number, floor = 600): number {
+export function pagesBlockExcerptLen(pageCount: number, floor = PAGES_BLOCK_EXCERPT_FLOOR_CHARS, budget: PagesBudget = DEFAULT_PAGES_BUDGET): number {
   if (pageCount <= 0) return floor;
   return Math.max(floor, Math.min(
-    PAGES_BLOCK_EXCERPT_CEILING_CHARS,
-    Math.floor(PAGES_BLOCK_TOTAL_BUDGET_CHARS / pageCount),
+    budget.ceilingChars,
+    Math.floor(budget.totalChars / pageCount),
   ));
 }
 
@@ -623,7 +624,22 @@ export function renderPagesBlock(
   query = '',
   opts: { verbatim?: boolean | ((p: SearchResult) => boolean); verbatimLen?: number; timeZone?: string } = {},
 ): string {
-  return pages.map((p, idx) => {
+  return renderPagesBlockDetailed(pages, excerptLen, query, opts).text;
+}
+
+/**
+ * `renderPagesBlock` plus `truncated`: true when any page was shown in part
+ * (an excerpt cut at either end, or a verbatim block over its cap). #5461:
+ * the think result reports it as `evidence_truncated`.
+ */
+export function renderPagesBlockDetailed(
+  pages: SearchResult[],
+  excerptLen = 600,
+  query = '',
+  opts: { verbatim?: boolean | ((p: SearchResult) => boolean); verbatimLen?: number; timeZone?: string } = {},
+): { text: string; truncated: boolean } {
+  let truncated = false;
+  const text = pages.map((p, idx) => {
     const day = pageContentDate(p, opts.timeZone ?? 'UTC');
     const dateAttr = day ? ` date="${day}"` : '';
     const page = p as unknown as {
@@ -643,7 +659,9 @@ export function renderPagesBlock(
     // Evidence delivery: the block was already budgeted and cut around its
     // hits; render it whole (capped only by excerptLen).
     if (typeof opts.verbatim === 'function' ? opts.verbatim(p) : opts.verbatim) {
-      return `<page slug="${slug}" rank="${idx + 1}"${dateAttr}${trustAttr}>\n${flag}${content.slice(0, opts.verbatimLen ?? excerptLen)}\n</page>`;
+      const cap = opts.verbatimLen ?? excerptLen;
+      if (content.length > cap || (p as { delivered?: { truncated?: boolean } }).delivered?.truncated === true) truncated = true;
+      return `<page slug="${slug}" rank="${idx + 1}"${dateAttr}${trustAttr}>\n${flag}${content.slice(0, cap)}\n</page>`;
     }
     const excerpt = selectRelevantExcerptDetailed(
       content,
@@ -651,12 +669,14 @@ export function renderPagesBlock(
       excerptLen,
       `${title} ${slugIdentity}`,
     );
+    if (excerpt.truncatedStart || excerpt.truncatedEnd) truncated = true;
     const body =
       (excerpt.truncatedStart ? `${EXCERPT_CUT_START_MARKER}\n` : '') +
       excerpt.text +
       (excerpt.truncatedEnd ? `\n${EXCERPT_CUT_END_MARKER}` : '');
     return `<page slug="${slug}" rank="${idx + 1}"${dateAttr}${trustAttr}>\n${flag}${body}\n</page>`;
   }).join('\n\n');
+  return { text, truncated };
 }
 
 /** One line naming the typed links that put a chain row in the context (slugs and link types only). */
