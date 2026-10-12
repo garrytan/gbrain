@@ -149,7 +149,19 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
     if (target.fixes.length) fencesNormalized = { fences_normalized: pageFencesNormalized({ sourceId: row.source_id, slug: row.slug, fixes: target.fixes,
       writer: row.principal_kind, path: snapshot.page.source_path ?? null, remote: row.authority.remote }) };
     // #6385 R12: an entity fence that does not parse cleanly refuses typed instead of losing the rows it skipped.
+    // Local patch 2026-10-12 (NineClaws): put_page stores the body WITHOUT the facts
+    // fence, so compiled_truth can show no rows while fence-numbered facts for this
+    // page exist in the DB; numbering from the fence alone then collides on
+    // idx_facts_fence_key and the insert returns 0 ids (storage_error: the new
+    // canonical fact row was not indexed), so every remember on such a page fails.
+    // Number from the greater of the fence and the DB, like fence-write's row hint.
+    const fenceMaxRow = Math.max(0, ...parseFactsFence(target.page.compiled_truth ?? '').facts.map(f => f.rowNum));
+    const dbMaxRow = Number((await engine.executeRaw<{ max_row_num: number | string | null }>(
+      'SELECT MAX(row_num) AS max_row_num FROM facts WHERE source_id = $1 AND source_markdown_slug = $2',
+      [row.source_id, row.slug]))[0]?.max_row_num ?? 0) || 0;
+    const nextRowNum = Math.max(fenceMaxRow, dbMaxRow) + 1;
     const appended = refuseUnparsedRewrite(target.page, row.slug, row.source_id, () => upsertFactRow(target.page.compiled_truth, {
+      rowNum: nextRowNum,
       claim: input.fact, kind: input.kind, visibility: input.visibility, confidence: 1, notability: 'medium', validFrom: formatFenceDate(validFrom),
       validUntil: validUntil ? formatFenceDate(validUntil) : undefined, source: fact.source, context }));
     rowNum = appended.rowNum;
