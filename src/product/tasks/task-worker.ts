@@ -9,7 +9,7 @@ import { resolveDreamPresetPhases, resolveDreamRelationOptions, resolveBrainDir 
 import { runQuickMaintenance, combineQuickMaintenanceReports, resolveQuickMaintenancePhases } from '../../core/quick-maintenance.ts';
 import { ALL_PHASES } from '../../core/cycle.ts';
 import { chooseCaptureModel, configuredCnyPrices, storedPrice } from '../../core/cycle/capture-entities.ts';
-import { DEFAULT_ENTITY_CAPTURE_MAX_INPUT_TOKENS, DEFAULT_ENTITY_CAPTURE_MAX_OUTPUT_TOKENS, readEntityCaptureCostCap, readTokenCap } from '../../core/cycle/entity-capture-budget.ts';
+import { readEntityCaptureCostCap } from '../../core/cycle/entity-capture-budget.ts';
 import { splitProviderModelId } from '../../core/model-id.ts';
 import { maintenanceFailure } from './maintenance-orchestration.ts';
 import { fetchSource, loadAllSources, parseSourceConfig } from '../../core/sources-load.ts';
@@ -167,8 +167,6 @@ async function runDreamTask(engine: BrainEngine, input: Extract<ProductTask, { t
         const outputPrice = storedPrice(await engine.getConfig('dream.entity_capture.price.output_cny_per_million')) ?? cardPrices.output;
         const costCap = readEntityCaptureCostCap(await engine.getConfig('dream.entity_capture.cost_cap_cny'));
         captureEntityBudget = {
-          maxInputTokens: Math.max(0, readTokenCap(await engine.getConfig('dream.entity_capture.max_input_tokens'), DEFAULT_ENTITY_CAPTURE_MAX_INPUT_TOKENS) - inputTokens),
-          maxOutputTokens: Math.max(0, readTokenCap(await engine.getConfig('dream.entity_capture.max_output_tokens'), DEFAULT_ENTITY_CAPTURE_MAX_OUTPUT_TOKENS) - outputTokens),
           costCapCny: costCap === null || inputPrice === null || outputPrice === null ? costCap : Math.max(0, costCap - (inputTokens * inputPrice + outputTokens * outputPrice) / 1_000_000),
         };
       }

@@ -18,8 +18,6 @@ import { alignCapturedEntityGraph } from './entity-graph-align.ts';
 import { lineGrammarOptions } from '../line-grammar.ts';
 import { locateIngestSkillsDir, readIngestContract, pruneEntityIngestLinks,ingestAbortKind } from '../pmbrain-adapters/entity-ingest-workflow.ts';
 import {
-  DEFAULT_ENTITY_CAPTURE_MAX_INPUT_TOKENS,
-  DEFAULT_ENTITY_CAPTURE_MAX_OUTPUT_TOKENS,
   ENTITY_CAPTURE_CANDIDATE_LIMIT,
   type CaptureEntityBrief,
   type CaptureModelChoice,
@@ -548,10 +546,6 @@ export async function runPhaseCaptureEntities(
   const initialRepair=await repairCaptureRelations(engine,opts,initialMentions.processedSlugs);
   const budgetOpt = opts.budget;
   const batchSize = Math.max(1, opts.batchSize ?? ENTITY_CAPTURE_PAGE_BUDGET);
-  const maxInputTokens = budgetOpt?.maxInputTokens
-    ?? readTokenCap(await engine.getConfig('dream.entity_capture.max_input_tokens'), DEFAULT_ENTITY_CAPTURE_MAX_INPUT_TOKENS);
-  const maxOutputTokens = budgetOpt?.maxOutputTokens
-    ?? readTokenCap(await engine.getConfig('dream.entity_capture.max_output_tokens'), DEFAULT_ENTITY_CAPTURE_MAX_OUTPUT_TOKENS);
   const costCapCny = budgetOpt && 'costCapCny' in budgetOpt
     ? budgetOpt.costCapCny ?? null
     : readEntityCaptureCostCap(await engine.getConfig('dream.entity_capture.cost_cap_cny'));
@@ -625,7 +619,6 @@ export async function runPhaseCaptureEntities(
   const unresolvedReferences:unknown[]=[];
   let inputTokens = 0;
   let outputTokens = 0;
-  let usageKnown = false;
   let usageMissing = false;
   let knownCost = ollama ? 0 : 0;
   let sawPricedUsage = ollama;
@@ -640,7 +633,7 @@ export async function runPhaseCaptureEntities(
   let fatalFailure=false;
   const pageFailures:Array<{slug:string;sourceId:string;reason:string;stage:string;kind:CaptureStopReason;input_tokens:number;output_tokens:number;input_limit:number;output_limit:number;model_output_limit:number|null;turn_timeout_ms:number;job_timeout_ms:number}>=[];
   let failureReason: CaptureStopReason = 'failure';
-  let budgetStop: 'tokens' | 'cost' | null = null;
+  let budgetStop: 'document_tokens' | 'document_turns' | 'cost' | null = null;
   const failedPageSlugs = new Set<string>();
   const verifiedChildIds:number[]=[];
   const rememberRelationError = (error: unknown) => {
@@ -663,11 +656,6 @@ export async function runPhaseCaptureEntities(
     }
   };
   const stopState = () => captureBudgetStop({
-    inputTokens,
-    outputTokens,
-    maxInputTokens,
-    maxOutputTokens,
-    usageKnown,
     costCny: ollama ? 0 : (sawPricedUsage ? knownCost : null),
     costCapCny: ollama ? null : costCapCny,
   });
@@ -702,7 +690,7 @@ export async function runPhaseCaptureEntities(
             entity.sourceId === chunk.sourceId || entity.sourceId === 'default',
           ), { limit: ENTITY_CAPTURE_CANDIDATE_LIMIT, sourceId: chunk.sourceId });
           const baseKey = entityCaptureIdempotencyKey(chunk, chunk.chunkIndex, chunk.chunkBody);
-          if(documentTurns>=maxDocumentTurns){budgetStop='tokens';modelError='本资料达到模型轮数上限，未完成分块可续跑';break;}
+          if(documentTurns>=maxDocumentTurns){budgetStop='document_turns';modelError='本资料达到模型轮数上限，未完成分块可续跑';break;}
           const idempotencyKey = await retryableKey(engine, baseKey, nonce);
           const acknowledged=await acknowledgedIngestEntities(engine,chunk,entityIndex);
           const data: SubagentHandlerData = {
@@ -715,8 +703,8 @@ export async function runPhaseCaptureEntities(
             system: readIngestContract(skillsDir),
             ingest_context: {slug:chunk.slug,sourceId:chunk.sourceId,body:chunk.body,chunkBody:chunk.chunkBody,acknowledged:acknowledged.map(entity=>`${entity.sourceId}:${entity.slug}`)},
             usage_limits: {
-              input: Math.max(0,Math.min(maxInputTokens-inputTokens,maxDocumentInput-documentInput)),
-              output: Math.max(0,Math.min(maxOutputTokens-outputTokens,maxDocumentOutput-documentOutput)),
+              input: Math.max(0,maxDocumentInput-documentInput),
+              output: Math.max(0,maxDocumentOutput-documentOutput),
               cost_cny: ollama || costCapCny==null ? null : Math.max(0,costCapCny-knownCost),
               input_price: inputPrice,output_price:outputPrice,
             },
@@ -791,7 +779,6 @@ export async function runPhaseCaptureEntities(
           });
           if (!usage.present) usageMissing = true;
           else {
-            usageKnown = true;
             inputTokens += usage.input;
             outputTokens += usage.output;
             documentInput+=usage.input;documentOutput+=usage.output;
@@ -813,7 +800,7 @@ export async function runPhaseCaptureEntities(
             failedPageSlugs.add(chunk.slug);
             failureStop = true;
             fatalFailure=true;
-            if(job.error_text?.includes('ingest_budget_tokens')){budgetStop='tokens';failureStop=pageFailures.length>0;}
+            if(job.error_text?.includes('ingest_budget_tokens')){budgetStop='document_tokens';failureStop=pageFailures.length>0;}
             if(job.error_text?.includes('ingest_budget_cost')){budgetStop='cost';failureStop=pageFailures.length>0;}
             modelError = job.error_text ?? `实体识别子任务 ${job.id} 未通过 ingest 读回验收（${result?.stop_reason??job.status}）`;
             if (/\bingest[ _]/i.test(modelError) || job.status === 'completed') failureReason = 'ingest_validation';
@@ -891,11 +878,7 @@ export async function runPhaseCaptureEntities(
       : await countCaptureLinkGaps(engine, recognized,[...sourceRefs.values()]);
     const linkedEntities = gaps.linked;
     const costCny = ollama ? 0 : (sawPricedUsage ? Number(knownCost.toFixed(6)) : null);
-    const stopReason: CaptureStopReason = relationError?'relation_failure':budgetStop === 'tokens'
-        ? 'tokens'
-        : budgetStop === 'cost'
-          ? 'cost'
-          : failureStop?failureReason:'completed';
+    const stopReason: CaptureStopReason = relationError?'relation_failure':budgetStop??(failureStop?failureReason:'completed');
     const cleanStatus: PhaseResult['status'] = failureStop
       ? (writtenSlugs.length > 0 || pagesProcessed > 0 ? 'warn' : 'fail')
       : pagesRemaining>0 ? 'warn' : 'ok';
@@ -950,8 +933,8 @@ export async function runPhaseCaptureEntities(
       document_max_turns:maxDocumentTurns,
       document_max_input_tokens:maxDocumentInput,
       document_max_output_tokens:maxDocumentOutput,
-      max_input_tokens:maxInputTokens,
-      max_output_tokens:maxOutputTokens,
+      max_input_tokens:null,
+      max_output_tokens:null,
       model_output_limit:modelOutputLimit??null,
       turn_timeout_ms:turnTimeoutMs,
       job_timeout_ms:configuredJobTimeout,

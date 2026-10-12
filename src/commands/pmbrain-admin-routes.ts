@@ -948,16 +948,12 @@ export function registerPmbrainAdminRoutes(options: PmbrainAdminRouteOptions): {
   });
 
   const entityCaptureBudgetView = async () => {
-    const { readEntityCaptureCostCap, readTokenCap, DEFAULT_ENTITY_CAPTURE_MAX_INPUT_TOKENS, DEFAULT_ENTITY_CAPTURE_MAX_OUTPUT_TOKENS } = await import('../core/cycle/entity-capture-budget.ts');
-    const [cap, input, output] = await Promise.all([
-      engine.getConfig('dream.entity_capture.cost_cap_cny'),
-      engine.getConfig('dream.entity_capture.max_input_tokens'),
-      engine.getConfig('dream.entity_capture.max_output_tokens'),
-    ]);
+    const { readEntityCaptureCostCap } = await import('../core/cycle/entity-capture-budget.ts');
+    const cap = await engine.getConfig('dream.entity_capture.cost_cap_cny');
     return {
       costCapCny: readEntityCaptureCostCap(cap),
-      maxInputTokens: readTokenCap(input, DEFAULT_ENTITY_CAPTURE_MAX_INPUT_TOKENS),
-      maxOutputTokens: readTokenCap(output, DEFAULT_ENTITY_CAPTURE_MAX_OUTPUT_TOKENS),
+      maxInputTokens: null,
+      maxOutputTokens: null,
     };
   };
 

@@ -218,6 +218,44 @@ test('长文尾部按源文档分块，页数不会让这一篇停在半截', as
   expect(prompts.every(prompt => prompt.includes('notes/long'))).toBe(true);
 }, 60_000);
 
+test('跨页累计超过旧默认输入输出额度仍全部处理，保留用量、原文和完成断点',async()=>{
+  const originals=new Map<string,string>();
+  for(let i=0;i<12;i++){
+    const slug=`notes/cumulative-${String(i).padStart(2,'0')}`;const body=`第${i}份原始资料，团队评审本月的交付和风险。`;
+    originals.set(slug,body);await note(slug,body);
+  }
+  await engine.setConfig('dream.entity_capture.cost_cap_cny','unlimited');
+  let calls=0;
+  const result=await runPhaseCaptureEntities(engine,{sourceId:'vault',handler:async ctx=>{
+    calls++;expect(ctx.data.usage_limits).toMatchObject({input:120000,output:20000});
+    return {ingest_verified:true,tokens:{in:90000,out:18000}};
+  }});
+  expect(result.status,result.summary).toBe('ok');expect(calls).toBe(12);
+  expect(result.details.input_tokens).toBe(1_080_000);expect(result.details.output_tokens).toBe(216_000);
+  expect(result.details.pages_processed).toBe(12);expect(result.details.pages_remaining).toBe(0);
+  expect(result.details.stop_reason).toBe('completed');expect(result.details.budget_stop).toBeNull();
+  expect(result.details.max_input_tokens).toBeNull();expect(result.details.max_output_tokens).toBeNull();
+  for(const [slug,body] of originals)expect((await engine.getPage(slug,{sourceId:'vault'}))?.compiled_truth).toBe(body);
+  const next=await runPhaseCaptureEntities(engine,{sourceId:'vault',handler:async()=>{calls++;throw new Error('已完成资料不应再次调用模型');}});
+  expect(next.status,next.summary).toBe('ok');expect(calls).toBe(12);expect(next.details.chunks_submitted).toBe(0);
+},60000);
+
+test('单份资料的 Token 和轮数保护明确区分，不再误报整轮累计额度',async()=>{
+  await note('notes/document-tokens','这份资料用于验证单页调用保护及失败信息。');
+  const limited=await runPhaseCaptureEntities(engine,{sourceId:'vault',handler:async()=>{throw new UnrecoverableError('ingest_budget_tokens: document token limit');}});
+  expect(limited.details.stop_reason).toBe('document_tokens');
+  expect(limited.summary).toContain('单份资料 Token 预算到上限');
+  await resetPgliteState(engine as PGLiteEngine);
+  await engine.executeRaw("INSERT INTO sources(id,name) VALUES('vault','Vault')");
+  await engine.setConfig('version','130');
+  await engine.setConfig('models.dream.synthesize','anthropic:claude-sonnet-4-6');
+  await note('notes/document-turns','长文分块中的实体识别应保留完成断点。'.repeat(1000));
+  let calls=0;
+  const turns=await runPhaseCaptureEntities(engine,{sourceId:'vault',handler:async()=>{calls++;return {ingest_verified:true,turns_count:6,tokens:{in:10,out:5}};}});
+  expect(calls).toBe(1);expect(turns.details.stop_reason).toBe('document_turns');
+  expect(turns.summary).toContain('单份资料达到模型调用轮数上限');
+},60000);
+
 test('费用到上限后停止新的模型请求，已完成结果保留，任务不失败', async () => {
   await note('notes/a', '第一篇资料足够长，用来识别实体。');
   await note('notes/b', '第二篇资料足够长，用来识别实体。');
@@ -253,7 +291,7 @@ test('费用到上限后停止新的模型请求，已完成结果保留，任�
   expect(Number(people[0]?.n)).toBe(1);
 }, 60_000);
 
-test('Ollama 不记人民币，没有价格时改按 Token 停，没有用量时继续处理完', async () => {
+test('Ollama 不记人民币，未知价格或缺用量继续处理，旧累计配置和调用参数不再限制', async () => {
   for (const slug of ['notes/a', 'notes/b', 'notes/c']) {
     await note(slug, `${slug} 的正文足够参与实体识别。`);
   }
@@ -285,6 +323,8 @@ test('Ollama 不记人民币，没有价格时改按 Token 停，没有用量时
     await note(slug, `${slug} 的正文足够参与实体识别。`);
   }
   let tokenCalls = 0;
+  await engine.setConfig('dream.entity_capture.max_input_tokens','1');
+  await engine.setConfig('dream.entity_capture.max_output_tokens','1');
   const tokens = await runPhaseCaptureEntities(engine, {
     sourceId: 'vault',
     budget: {
@@ -300,9 +340,12 @@ test('Ollama 不记人民币，没有价格时改按 Token 停，没有用量时
       return { ingest_verified:true, tokens: { in: 1000, out: 10 } };
     },
   });
-  expect(tokens.status).toBe('warn');
-  expect(tokenCalls).toBe(2);
-  expect(tokens.details.budget_stop).toBe('tokens');
+  expect(tokens.status,tokens.summary).toBe('ok');
+  expect(tokenCalls).toBe(3);
+  expect(tokens.details.budget_stop).toBeNull();
+  expect(tokens.details.stop_reason).toBe('completed');
+  expect(tokens.details.input_tokens).toBe(3000);expect(tokens.details.output_tokens).toBe(30);
+  expect(tokens.summary).not.toContain('按 Token 限制');
   expect(tokens.details.cost_cny).toBeNull();
 
   await resetPgliteState(engine as PGLiteEngine);
