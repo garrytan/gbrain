@@ -2,6 +2,19 @@
 
 Cross-cutting quality rules for all brain-writing skills.
 
+## Excerpts and summaries
+
+Keep Markdown structure separate from excerpt text. Under `## Summary`, put
+speaker labels on their own `###` line, then a blank line and the excerpt.
+Never flatten `## Assistant` (or another role heading) together with a
+message into a single heading. Check generated pages with `gbrain lint`
+before publishing; `chat-summary-heading` identifies this legacy shape on
+valid `type: source` pages labeled `**Source:** ChatGPT Export` or
+`**Source:** Claude Export`, and
+`--fix` repairs its empty role section without rewriting the excerpt.
+Raw conversation imports preserve the transcript and follow
+[conversation-archive](../conversation-archive/SKILL.md); they are not summary pages.
+
 ## Citations (MANDATORY)
 
 Every fact written to a brain page must carry an inline `[Source: ...]` citation.

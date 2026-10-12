@@ -10,6 +10,16 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.181.0] - 2026-10-12
+
+### Fixed
+
+- Date-format documentation and filename examples no longer appear as unfinished dates in `gbrain lint`. Actual unfilled dates in metadata, citations and timeline entries remain visible, including on a line containing a valid example.
+- `gbrain lint --fix` can repair legacy ChatGPT/Claude export summaries whose speaker and excerpt were flattened into one empty heading. The repair preserves the excerpt's words and nests its speaker under Summary. Ordinary notes and raw transcripts keep their headings.
+- Brain-writing conventions now require separate speaker headings and excerpt paragraphs, with a lint check before publishing generated pages.
+
+To take advantage of v0.60.181.0: upgrade GBrain, then run `gbrain lint <brain-directory> --fix` to repair affected legacy summaries.
+
 ## [0.60.180.0] - 2026-10-12
 
 **When `remember` refuses a forgotten claim, the refusal now says when and how widely it was forgotten.** An agent that re-saves a claim the user forgot gets `fact_withdrawn` as before, and the refusal now carries `withdrawn: { at, subject, visibility }`, where `subject` is the entity the claim was forgotten for or `all_entities`. The agent can tell the user "you asked me to forget that on <date>" instead of retrying. The object rides the immediate refusal, the batch item error, the failed write receipt and `get_write_request`. It covers the exact claim only, the message, code and suggestion are unchanged, and nothing is ever restored.

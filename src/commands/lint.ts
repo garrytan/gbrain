@@ -48,6 +48,7 @@ import { readFix } from '../core/ops/op-fix.ts';
 import { ERROR_CATALOGUE } from '../core/error-catalogue.ts';
 import { cliRenderContext, docsUrl, renderAction, toAgentError, type RenderedAction } from '../core/agent-output.ts';
 import type { ParseOpts } from '../core/markdown.ts';
+import { findChatSummaryHeadings, hasPlaceholderDate } from './lint-formatting.ts';
 
 export interface LintIssue {
   file: string;
@@ -222,8 +223,10 @@ export function lintContent(content: string, filePath: string, opts: LintContent
   // is not a page with an unfilled one. stripCodeBlocks masks fenced blocks
   // and inline spans in place, so line numbers stay exact.
   const prose = stripCodeBlocks(content).split('\n');
+  const frontmatterLines = LEADING_FRONTMATTER.exec(content)?.[0].split('\n').length ?? 0;
   for (let i = 0; i < lines.length; i++) {
-    if (prose[i].match(/\bYYYY-MM-DD\b/) || prose[i].match(/\bXX-XX\b/) || prose[i].match(/\b\d{4}-XX-XX\b/)) {
+    const inFrontmatter = i < frontmatterLines - 1;
+    if (hasPlaceholderDate(inFrontmatter ? lines[i] : prose[i], inFrontmatter)) {
       issues.push({
         file: filePath, line: i + 1, rule: 'placeholder-date',
         message: `Placeholder date found: ${lines[i].trim().slice(0, 60)}`,
@@ -303,9 +306,16 @@ export function lintContent(content: string, filePath: string, opts: LintContent
   // section); the body and title are read from the original at the same
   // offsets, so a section whose body is only a code block is not empty.
   const masked = prose.join('\n');
+  const chatHeadings = findChatSummaryHeadings(content);
+  for (const heading of chatHeadings) {
+    issues.push({ file: filePath, line: heading.line, rule: 'chat-summary-heading',
+      message: 'Chat excerpt flattened into an empty role heading after Summary', fixable: true });
+  }
+  const chatSections = new Set(chatHeadings.flatMap(h => [h.start, h.roleStart]));
   const sectionPattern = /^##\s+(.+)$/gm;
   let sectionMatch;
   while ((sectionMatch = sectionPattern.exec(masked)) !== null) {
+    if (chatSections.has(sectionMatch.index)) continue; // the fixable chat rule covers both empty sections
     const sectionStart = sectionMatch.index + sectionMatch[0].length;
     const nextSection = masked.indexOf('\n## ', sectionStart);
     const sectionBody = content.slice(sectionStart, nextSection > 0 ? nextSection : undefined).trim();
@@ -430,6 +440,11 @@ export function fixContent(content: string): string {
   // Fix wrapping code fences
   fixed = fixed.replace(/^```(?:markdown|md)\s*\n/, '');
   fixed = fixed.replace(/\n```\s*$/, '');
+
+  // Apply backwards so offsets stay valid, preserving each excerpt verbatim.
+  for (const heading of findChatSummaryHeadings(fixed).reverse()) {
+    fixed = fixed.slice(0, heading.start) + heading.replacement + fixed.slice(heading.end);
+  }
 
   // Clean up excessive blank lines left by fixes
   fixed = fixed.replace(/\n{3,}/g, '\n\n');

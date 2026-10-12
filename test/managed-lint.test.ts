@@ -121,6 +121,27 @@ test('managed lint dry-run reports the fixable issue and admits nothing', async 
   });
 }, 30_000);
 
+test('Dream lint repairs a collapsed export summary through the coordinator exactly once', async () => {
+  await fixture(async (engine, sourceId, root) => {
+    const slug = 'sources/chat-summary';
+    const excerpt = 'Preserve `date: YYYY-MM-DD` and [[concepts/example]] exactly.';
+    const prefix = '**Source:** ChatGPT Export\n\n';
+    const body = prefix + `## Summary\n## Assistant ${excerpt}\n\n## Entities\n\nNone.\n`;
+    const expected = prefix + `## Summary\n\n### Assistant\n\n${excerpt}\n\n## Entities\n\nNone.\n`;
+    await seed(engine, sourceId, slug, `---\ntitle: Chat summary\ntype: source\ncreated: 2026-10-12\n---\n\n${body}`);
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    const before = await requests(engine, sourceId);
+    const result = await runPhaseLint(root, false, engine, undefined, sourceId);
+    expect(result.status).toBe('ok');
+    const snapshot = (await engine.readPageSnapshot(slug, { sourceId }))!;
+    expect(snapshot.page.compiled_truth.trim()).toBe(expected.trim());
+    expect(readFileSync(join(root, `${slug}.md`), 'utf8')).toContain(expected.trim());
+    expect(await requests(engine, sourceId)).toBe(before + 1);
+    expect((await runPhaseLint(root, false, engine, undefined, sourceId)).status).toBe('ok');
+    expect(await requests(engine, sourceId)).toBe(before + 1);
+  });
+}, 30_000);
+
 test('managed lint leaves a file with no indexed page pending instead of writing the worktree', async () => {
   await fixture(async (engine, sourceId, root) => {
     await seed(engine, sourceId);
