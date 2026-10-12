@@ -34,6 +34,7 @@ let sequence = 0;
 const pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
 let abort = new AbortController();
 let ownerJobId: number | null = null;
+let ownerToken:string|undefined;
 const send = (message: TaskWorkerMessage) => parentPort!.postMessage(message);
 let importFile: string | undefined;
 let constrained=false;
@@ -274,6 +275,19 @@ async function execute(task: ProductTask, kind: BrainEngine['kind']) {
     }
     send({ type: 'result', result });
     return;
+  } else if (task.type === 'memory') {
+    send({type:'progress',phases:['memory']});send({type:'progress',event:{phase:'memory',event:'start'}});
+    const { runWorkbenchMemoryTask } = await import('../workbench/memory');
+    const synthEnabled=await engine.getConfig('dream.synthesize.enabled');
+    const synthConfigured=synthEnabled==='true'||synthEnabled!=='false'&&!!await engine.getConfig('dream.synthesize.session_corpus_dir');
+    result = await runWorkbenchMemoryTask(engine, task.input, abort.signal, { ownerJobId,ownerToken,organize:synthConfigured?async(path,sourceId)=>{
+      const report=await runDreamTask(engine,{phase:'synthesize',input:path,sourceId});
+      const failure=maintenanceFailure(report);
+      if(failure)throw new Error(failure);
+      if(report.reason==='cycle_already_running')throw new Error('当前 Source 正在整理，记忆事实已保留，请稍后继续整理');
+      return report;
+    }:undefined });
+    send({type:'progress',event:{phase:'memory',event:'finish'}});
   } else if (task.type === 'import') {
     const input = task.input;
     send({ type: 'progress', phases: input.noEmbed ? ['collect', 'process', 'write'] : ['collect', 'process', 'vector', 'write'] });
@@ -373,6 +387,7 @@ parentPort!.on('message', message => {
     pending.clear();
   } else if (message.type === 'start') {
     ownerJobId = Number.isSafeInteger(message.ownerJobId) ? message.ownerJobId : null;
+    ownerToken=typeof message.ownerToken==='string'?message.ownerToken:undefined;
     constrained=message.constrained===true;
     abort = new AbortController();
     importFile = undefined;

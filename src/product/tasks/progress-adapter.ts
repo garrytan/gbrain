@@ -1,6 +1,7 @@
 import { taskName, type TaskProductProgress } from '../../../shared/task-progress.ts';
 
 const labels: Record<string, string> = {
+  memory: '提炼对话记忆',
   collect: '读取资料清单', process: '读取与解析资料', vector: '生成向量', write: '写入知识库',
   check: '检查知识', sync: '同步资料', relations: '建立知识关联', embed: '更新搜索索引', finish: '完成检查',
   synthesize: '理解新增知识', extract_atoms: '提炼长期知识', patterns: '发现知识模式',

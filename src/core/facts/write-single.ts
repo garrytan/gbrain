@@ -29,6 +29,14 @@ export interface SingleFactInput {
   validUntil?: Date | null;
   sessionId?: string | null;
   confidence?: number;
+  validFrom?: Date;
+  context?: string;
+  notability?: NewFact['notability'];
+  embedding?: Float32Array | null;
+  exactDedup?: boolean;
+  supersedeId?: number;
+  canWrite?: (engine?: BrainEngine) => Promise<boolean>;
+  databaseOnly?: boolean;
 }
 
 export interface SingleFactResult {
@@ -41,6 +49,20 @@ export interface SingleFactResult {
 }
 
 export async function writeSingleFact(
+  engine: BrainEngine,
+  sourceId: string,
+  input: SingleFactInput,
+): Promise<SingleFactResult> {
+  if (!input.exactDedup) return writeSingleFactCore(engine, sourceId, input);
+  return engine.transaction(async tx => {
+    await tx.executeRaw('SELECT pg_advisory_xact_lock(hashtext($1))', [`native-fact:${sourceId}:${input.kind ?? 'fact'}:${input.visibility ?? 'private'}:${collapse(input.fact)}`]);
+    const result=await writeSingleFactCore(tx, sourceId, input);
+    if(input.canWrite&&!await input.canWrite(tx))throw new Error('记忆写入已停止：配置关闭、会话版本改变或任务已中断');
+    return result;
+  });
+}
+
+async function writeSingleFactCore(
   engine: BrainEngine,
   sourceId: string,
   input: SingleFactInput,
@@ -58,10 +80,20 @@ export async function writeSingleFact(
   const resolvedSlug = input.entity
     ? ((await resolveEntitySlug(engine, sourceId, input.entity)) ?? input.entity)
     : null;
+  if (input.exactDedup) {
+    const rows = await engine.executeRaw<{ id: number; valid_until: Date | null }>(
+      `SELECT id, valid_until FROM facts WHERE source_id=$1 AND entity_slug IS NOT DISTINCT FROM $2 AND kind=$3 AND visibility=$4
+       AND lower(regexp_replace(trim(fact),'[[:space:]]+',' ','g'))=lower(regexp_replace(trim($5::text),'[[:space:]]+',' ','g'))
+       AND expired_at IS NULL AND (valid_until IS NULL OR valid_until>now()) AND (valid_until IS NULL)=($6::timestamptz IS NULL) ORDER BY id LIMIT 1`,
+      [sourceId, resolvedSlug, kind, visibility, factText, validUntil],
+    );
+    if (rows.length) return { id: Number(rows[0].id), status: 'duplicate', entity_slug: resolvedSlug, valid_until: rows[0].valid_until ? new Date(rows[0].valid_until) : null, degraded_dedup: !isAvailable('embedding') };
+  }
 
   let embedding: Float32Array | null = null;
   let degradedDedup = false;
-  if (isAvailable('embedding')) {
+  if (input.embedding !== undefined) {embedding = input.embedding;degradedDedup=embedding===null;}
+  else if (isAvailable('embedding')) {
     try {
       embedding = await embedOne(factText);
     } catch {
@@ -71,7 +103,7 @@ export async function writeSingleFact(
     degradedDedup = true;
   }
 
-  let supersedeId: number | null = null;
+  let supersedeId: number | null = input.supersedeId ?? null;
   if (resolvedSlug && embedding) {
     const candidates = await engine.findCandidateDuplicates(sourceId, resolvedSlug, factText, {
       embedding,
@@ -79,7 +111,9 @@ export async function writeSingleFact(
     });
     let top: (typeof candidates)[number] | null = null;
     let topScore = -1;
+    const scopedIds=input.exactDedup&&candidates.length?new Set((await engine.executeRaw<{id:number}>(`SELECT id FROM facts WHERE id=ANY($1::bigint[]) AND source_id=$2 AND kind=$3 AND visibility=$4 AND expired_at IS NULL AND (valid_until IS NULL OR valid_until>now()) AND (valid_until IS NULL)=($5::timestamptz IS NULL)`,[candidates.map(row=>row.id),sourceId,kind,visibility,validUntil])).map(row=>Number(row.id))):null;
     for (const c of candidates) {
+      if(scopedIds&&!scopedIds.has(c.id))continue;
       if (!c.embedding) continue;
       const s = cosineSimilarity(embedding, c.embedding);
       if (s > topScore) {
@@ -111,12 +145,16 @@ export async function writeSingleFact(
     source: input.provenance,
     source_session: input.sessionId ?? null,
     confidence: input.confidence ?? 1.0,
+    valid_from: input.validFrom,
+    context: input.context ?? null,
+    notability: input.notability ?? 'medium',
     valid_until: validUntil,
     embedding,
   };
 
-  const localPath = resolvedSlug ? await lookupSourceLocalPath(engine, sourceId) : null;
+  const localPath = resolvedSlug && !input.databaseOnly ? await lookupSourceLocalPath(engine, sourceId) : null;
   const fenceable = resolvedSlug !== null && localPath !== null;
+  if (input.canWrite && !await input.canWrite(engine)) throw new Error('记忆写入已停止：配置关闭、会话版本改变或任务已中断');
 
   if (fenceable) {
     const result = await writeFactsToFence(
@@ -126,12 +164,12 @@ export async function writeSingleFact(
         {
           fact: factText,
           kind,
-          notability: 'medium',
+          notability: input.notability ?? 'medium',
           source: input.provenance,
-          context: null,
+          context: input.context ?? null,
           visibility,
           confidence: input.confidence ?? 1.0,
-          validFrom: new Date(),
+          validFrom: input.validFrom ?? new Date(),
           validUntil,
           embedding,
           sessionId: input.sessionId ?? null,

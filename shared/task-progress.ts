@@ -49,6 +49,7 @@ export interface TaskProductProgress {
 }
 
 export function taskName(kind: string): string {
+  if (kind === 'conversation_memory') return '对话记忆沉淀';
   if (kind === 'import_path') return '导入资料';
   if (kind.includes('quick')) return '快速维护';
   if (kind.includes('meeting')) return '会议整理';

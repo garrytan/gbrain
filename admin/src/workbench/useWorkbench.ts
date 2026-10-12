@@ -3,6 +3,7 @@ import { defaultAssistant, type KnowledgeAssistantSettings, type WorkbenchConver
 import { filePayload } from './composer-attachments';
 import { CHAT_MODEL_DEFAULT_KEY, CHAT_MODEL_EVENT, CHAT_MODEL_KEY, rememberChatModel, rememberedChatModel } from './chat-model';
 import { productFetch } from '../lib/product-fetch';
+import {useProductTasks} from '../product/TaskActivity';
 
 type ConversationRow = Omit<WorkbenchConversation, 'messages'> & { messageCount: number; running: boolean };
 export async function workbenchRequest<T>(path: string, body?: unknown, method = body === undefined ? 'GET' : 'POST'): Promise<T> {
@@ -102,21 +103,24 @@ export function useWorkbench({ serviceReady = true, databaseReady = true }: { se
     return () => { cancelled = true; mounted.current = false; window.removeEventListener('pmbrain:models-updated', refreshModels); window.removeEventListener('focus', refreshModels); window.removeEventListener('hashchange', refreshModels); document.removeEventListener('visibilitychange', onVisible); window.removeEventListener(CHAT_MODEL_EVENT, onRemembered); window.removeEventListener('storage', onStorage); };
   }, [serviceReady]);
   const running = conversation?.messages.some(message => message.status === 'running') ?? false;
+  const tasks=useProductTasks();
+  const memoryTaskActive=tasks.rows.some(run=>['queued','running'].includes(run.status)&&conversation?.messages.some(message=>message.memory?.taskId===run.id));
+  const memoryPending=conversation?.messages.some(message=>message.memory&&['pending','queued','running'].includes(message.memory.status))??false;
   useEffect(() => {
-    if (!running || !conversation) return;
+    if ((!running&&!memoryPending&&!memoryTaskActive) || !conversation) return;
     const id = conversation.id; let stopped = false; let timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
       try {
         const next = await workbenchRequest<WorkbenchConversation>(`/conversations/${id}?lite=1`);
         if (stopped || active.current !== id) return;
         setConversation(current => mergePolledConversation(current, next));
-        if (next.messages.some(m => m.status === 'running')) timer = setTimeout(poll, 200);
+        if (memoryTaskActive||next.messages.some(m => m.status === 'running'||(m.memory&&['pending','queued','running'].includes(m.memory.status)))) timer = setTimeout(poll, next.messages.some(m=>m.status==='running')?200:1000);
         else await refresh();
       } catch (reason) { if (!stopped) { setError(reason instanceof Error ? reason.message : String(reason)); timer = setTimeout(poll, 2500); } }
     };
     timer = setTimeout(poll, 150);
     return () => { stopped = true; clearTimeout(timer); };
-  }, [conversation?.id, running]);
+  }, [conversation?.id, running, memoryPending,memoryTaskActive]);
   const select = async (id?: string) => {
     active.current = id; setConversation(undefined); setError('');
     if (!id) return;

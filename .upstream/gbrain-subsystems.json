@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "reviewed_at": "2026-10-12",
-  "product_version": "1.4.58",
+  "reviewed_at": "2026-10-13",
+  "product_version": "1.4.59",
   "subsystem": "entity-relations",
   "status": "release-blocked-pending-package-acceptance",
   "upstream": {
@@ -18,7 +18,8 @@
     "wanted-link persistence",
     "complete ingest, filing and quality contracts; durable shared Minion Agent tools and receipts",
     "evidence-backed entity/source relationships and final graph reconciliation",
-    "Reasoning output headroom, bounded truncation retry, endpoint option rejection and durable restricted JSON ingest"
+    "Reasoning output headroom, bounded truncation retry, endpoint option rejection and durable restricted JSON ingest",
+    "Authorized native Workbench memory adapter; optional transient classification, source-bound exact dedup and DB-only fact write preserving original materials"
   ],
   "integrations": [
     "src/core/pglite-engine.ts",
@@ -592,7 +593,7 @@
       "path": "src/core/ai/gateway.ts",
       "upstream_path": "src/core/ai/gateway.ts",
       "mode": "adapted",
-      "sha256": "e79a38c1ff3392eac2afc4364a47ce27acbbeb4a02cf8e84220eb6550a4af837",
+      "sha256": "3eb4b1b9c2e5e276405c61e1fd8d0aff055d3ed17073ad665b398000fea6d878",
       "upstream_sha256": "622b81db5282117c6e2b32b566e2e35c36117400d416051011dbcc0e8e9c565f"
     },
     {
@@ -606,7 +607,7 @@
       "path": "src/core/facts/extract.ts",
       "upstream_path": "src/core/facts/extract.ts",
       "mode": "adapted",
-      "sha256": "3cf6b3e978210e3e5f79a558f8f6e748e577c68beb46a38d6a6064851105d033",
+      "sha256": "858a640cd5ab46c91acdb81ce708b163c0b0962f74a38eba5f7383820337bd28",
       "upstream_sha256": "1e9a5aec6a3f4c7ad159687d4d6f934519c29687a71ef757272971909da17978"
     },
     {
@@ -615,6 +616,20 @@
       "mode": "adapted",
       "sha256": "050256b42b7fb49452be6606cd0f4f7996a8b0c919de4d02d16a39e74f73d047",
       "upstream_sha256": "d0f3a747b615808b92be26486b7842e7cbc509724f273484d25de78a4c85127a"
+    },
+    {
+      "path": "src/core/facts/write-single.ts",
+      "upstream_path": "src/core/facts/write-single.ts",
+      "mode": "adapted",
+      "sha256": "cf4036fe5391758d1bd1885f1e8402a6c360f390f86089cdefc5187c34d5c5a3",
+      "upstream_sha256": "1ed9011cecaab1354fe8e0968374f7b02dba9040b5741bccf9c499c2437791dc"
+    },
+    {
+      "path": "src/core/facts/writeback-gate.ts",
+      "upstream_path": "src/core/facts/writeback-gate.ts",
+      "mode": "adapted",
+      "sha256": "477c11ff0e8e674a9b4857125a59ab80b95b7ab01387fc859b0616df67255d89",
+      "upstream_sha256": "8974e3585d8f9fece557b8724b4a621259bbe18e121f7b6855d61c7dafd1bd6d"
     }
   ],
   "migration_namespace": {

@@ -1,5 +1,20 @@
-export interface WorkbenchCitation { sourceId: string | null; slug: string; title: string; snippet: string }
+export interface WorkbenchCitation { sourceId: string | null; slug: string; title: string; snippet: string; kind?: 'memory'; factId?: number; conversationId?: string; messageId?: string; memoryHash?: string }
+export interface WorkbenchMemory {
+  sourceId: string;
+  hash: string;
+  capturedAt: string;
+  mode: 'off' | 'salient' | 'all';
+  visibility: 'world' | 'private';
+  ttl: string;
+  status: 'off' | 'held' | 'pending' | 'queued' | 'running' | 'complete' | 'failed' | 'superseded';
+  taskId?: string;
+  factIds?: number[];
+  completedParts?: number[];
+  error?: string;
+  epoch?: string;
+}
 import type {ChatRequestEvent} from '../src/core/ai/chat-request-runtime';
+import { isValidSourceId } from '../src/core/source-id';
 export interface WorkbenchToolCall {
   id: string;
   name: string;
@@ -58,6 +73,7 @@ export interface WorkbenchMessage {
   attachmentSupplement?: string;
   stopReason?: 'end' | 'length' | 'other';
   toolCalls?: WorkbenchToolCall[];
+  memory?: WorkbenchMemory;
 }
 export interface WorkbenchConversation {
   id: string;
@@ -69,6 +85,8 @@ export interface WorkbenchConversation {
   messages: WorkbenchMessage[];
   summary?: string;
   summaryUntil?: string;
+  sourceId?: string;
+  revisions?: Array<{ id: string; createdAt: string; reason: 'edit' | 'retry'; messages: WorkbenchMessage[] }>;
 }
 export interface WorkbenchModel { id: string; name: string; contextWindow?: number; vision?: boolean }
 export const FALLBACK_CONTEXT_TOKENS = 32_000;
@@ -82,6 +100,8 @@ export interface KnowledgeAssistantSettings {
   knowledge: boolean;
   temperature: number | null;
   context: ContextPolicy;
+  memorySourceId?: string;
+  memoryWriteback?: { mode: 'off' | 'salient' | 'all'; ttl: string };
 }
 export function defaultAssistant(): KnowledgeAssistantSettings {
   return {
@@ -92,6 +112,7 @@ export function defaultAssistant(): KnowledgeAssistantSettings {
     model: '',
     knowledge: true,
     temperature: null,
+    memorySourceId: 'default',
     context: { maxMessages: 24, threshold: 0.8, summaryModel: '' },
   };
 }
@@ -116,13 +137,15 @@ export function normalizeAssistant(input: unknown): KnowledgeAssistantSettings {
   const summaryModel = String(context.summaryModel ?? '').trim();
   if (summaryModel.length > 200) throw new Error('请选择摘要模型');
   let temperature: number | null = null;
+  const memorySourceId = String(raw.memorySourceId ?? 'default').trim();
+  if (!isValidSourceId(memorySourceId)) throw new Error('请选择有效的记忆知识来源');
   if (raw.temperature !== null && raw.temperature !== undefined && raw.temperature !== '') {
     const value = Number(raw.temperature);
     if (!Number.isFinite(value) || value < 0 || value > 2) throw new Error('温度需在 0 到 2 之间');
     temperature = Math.round(value * 10) / 10;
   }
   return {
-    name, emoji, description, systemPrompt, model, knowledge: raw.knowledge !== false, temperature,
+    name, emoji, description, systemPrompt, model, knowledge: raw.knowledge !== false, temperature, memorySourceId,
     context: { maxMessages, threshold: Math.round(threshold * 100) / 100, summaryModel },
   };
 }

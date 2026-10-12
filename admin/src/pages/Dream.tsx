@@ -1681,6 +1681,7 @@ function busyRunTitle(kind: string): string {
     return '知识整理';
   }
   if (kind === 'import_path') return '文件导入';
+  if (kind === 'conversation_memory') return '对话记忆沉淀';
   if (kind === 'embed_stale') return '重新向量化';
   if (kind === 'sync_all') return '知识源同步';
   return kind;

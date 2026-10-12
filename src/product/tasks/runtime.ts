@@ -27,6 +27,10 @@ import { recordSyncedGitFile, commitQuickMaintenanceSource } from './synced-git.
 import type { SyncResult } from '../../commands/sync.ts';
 import { claimMaintenanceCapture, maintenanceFailure } from './maintenance-orchestration.ts';
 import { TaskResourceGuard, PRODUCT_QUEUE_CAPACITY, type TaskResourceOptions } from './resource-guard.ts';
+import { WorkbenchMemoryCoordinator, memoryVersion, type WorkbenchMemoryTask } from '../workbench/memory';
+import { WorkbenchStore } from '../workbench/store';
+import { resolveWritebackConfig } from '../../core/facts/writeback-config';
+import { loadConfigFileOnly } from '../../core/config';
 
 export const PRODUCT_TASK_QUEUE = 'pmbrain-product';
 const TASK_NAME = 'pmbrain-product-task';
@@ -93,6 +97,16 @@ export class ProductTaskRuntime {
   private localPressure=false;
   private externalPressure=false;
   private reclaiming:Promise<void>|null=null;
+  private workbenchMemory?: WorkbenchMemoryCoordinator;
+  attachWorkbenchMemory(store: WorkbenchStore) {
+    this.workbenchMemory?.close();
+    this.workbenchMemory = new WorkbenchMemoryCoordinator(this.engine, store, (input, key) => this.submitMemory(input, key), id => this.getRun(id));
+    this.workbenchMemory.start();
+    return this.workbenchMemory;
+  }
+  async submitMemory(input: WorkbenchMemoryTask, key?: string): Promise<ConsoleRun> {
+    return this.submit({ type: 'memory', input }, 'conversation_memory', key, 'scheduled');
+  }
 
   constructor(private engine: BrainEngine, resourceOptions:TaskResourceOptions={}) {
     this.resources=new TaskResourceGuard(resourceOptions);
@@ -146,6 +160,8 @@ export class ProductTaskRuntime {
   async start(): Promise<void> {
     if (this.loop) return;
     await this.queue.ensureSchema();
+    await this.engine.executeRaw(`UPDATE minion_jobs SET status='waiting',lock_token=NULL,lock_until=NULL,error_text=NULL,updated_at=now()
+      WHERE queue=$1 AND data->'task'->>'type'='memory' AND ((status='paused' AND data->>'resumeOnRestart'='true') OR (status='active' AND ($2::boolean OR lock_until<=now())))`, [PRODUCT_TASK_QUEUE,this.engine.kind==='pglite']);
     await this.engine.executeRaw(`UPDATE minion_jobs AS child SET parent_job_id=parent.id
       FROM minion_jobs AS parent WHERE child.queue=$1 AND child.parent_job_id IS NULL
       AND child.data->>'sessionId'=parent.id::text AND parent.queue=$2`,[SYNC_FILE_QUEUE,PRODUCT_TASK_QUEUE]);
@@ -405,6 +421,12 @@ export class ProductTaskRuntime {
     if (task.type === 'dream') return this.submitDream(task.input);
     if (task.type === 'sync') return this.submitSync();
     if (task.type === 'embed') return this.submitEmbed(task.input);
+    if (task.type === 'memory') {
+      await this.executions.get(Number(id.slice(5)))?.done;
+      await this.engine.executeRaw(`UPDATE minion_jobs SET status='waiting',result=NULL,error_text=NULL,lock_token=NULL,lock_until=NULL,delay_until=NULL,finished_at=NULL,data=data-'resourceStopReason',updated_at=now()
+        WHERE id=$1 AND status IN ('paused','cancelled','failed','dead')`,[Number(id.slice(5))]);
+      return this.getRun(id);
+    }
     throw new Error('文件任务请通过快速维护继续');
   }
 
@@ -435,7 +457,7 @@ export class ProductTaskRuntime {
       const counts = await this.fileQueue.counts(context.id);
       if (counts.total > 0) record.progress = { ...(record.progress as Progress ?? {}), product: { ...toRun(record).product!, syncFiles: counts } };
     }
-    if (record.attempts_started > 1 && structuredTask.type !== 'sync-file' && !(structuredTask.type === 'dream' && structuredTask.input.preset === 'quick' && !structuredTask.input.dryRun)) throw new Error('任务执行曾中断，结果不确定，请查看已完成内容后手动继续');
+    if (record.attempts_started > 1 && structuredTask.type !== 'sync-file' && structuredTask.type !== 'memory' && !(structuredTask.type === 'dream' && structuredTask.input.preset === 'quick' && !structuredTask.input.dryRun)) throw new Error('任务执行曾中断，结果不确定，请查看已完成内容后手动继续');
     let progress = (record.progress ?? {}) as Progress;
     const adapter = new TaskProgressAdapter(String(record.data.kind), toRun(record).product);
     let activity:import('../../../shared/task-progress.ts').SyncFileActivity|undefined=structuredTask.type==='sync-file'?{
@@ -473,7 +495,12 @@ export class ProductTaskRuntime {
       progress.files = [...(progress.files ?? []), file].slice(-100);
       await persist();
     }, structuredTask.type === 'sync-file', structuredTask.type === 'sync-file' ? structuredTask.input : undefined,this.resources,
-    structuredTask.type === 'sync-file' ? Number(record.data.sessionId) : context.id);
+    structuredTask.type === 'sync-file' ? Number(record.data.sessionId) : context.id,structuredTask.type==='memory'&&!structuredTask.input.retire?async tx=>{
+      const wb=await resolveWritebackConfig(tx,loadConfigFileOnly());
+      const input=structuredTask.input;const message=new WorkbenchStore(input.root).get(input.conversationId).messages.find(row=>row.id===input.messageId);
+      const sources=await tx.executeRaw('SELECT id FROM sources WHERE id=$1 AND archived=false FOR SHARE',[input.sourceId]);
+      if(!wb.enabled||!sources.length||message?.memory?.hash!==input.hash||memoryVersion(message)!==input.hash||(wb.visibility==='private'&&message.memory.visibility==='world'))throw new Error('自动记忆已关闭、来源或会话已改变，任务停止写入');
+    }:undefined);
     const workerPath = /\/(?:~BUN|\$bunfs)\//.test(decodeURIComponent(import.meta.url))
       ? './product/tasks/task-worker.ts'
       : new URL(import.meta.url.endsWith('.ts') ? './task-worker.ts' : './task-worker.js', import.meta.url);
@@ -624,7 +651,7 @@ export class ProductTaskRuntime {
       }
     });
     flush = setInterval(() => void persist().catch(settleReject), 1000);
-    thread.postMessage({ type: 'start', kind: this.engine.kind, task: record.data.task, ownerJobId: context.id, constrained:this.localPressure||this.externalPressure });
+    thread.postMessage({ type: 'start', kind: this.engine.kind, task: record.data.task, ownerJobId: context.id, ownerToken:record.lock_token, constrained:this.localPressure||this.externalPressure });
     try {
       const outcome = await finished;
       if (structuredTask.type === 'dream' && outcome !== MINION_DEFERRED && (outcome as { reason?: string })?.reason === 'cycle_already_running') return this.deferMaintenance(record);
@@ -748,6 +775,7 @@ export class ProductTaskRuntime {
   }
 
   async close(): Promise<void> {
+    this.workbenchMemory?.close();
     this.stopped = true;
     if(this.resourceTimer)clearInterval(this.resourceTimer);
     if(this.idleTimer)clearTimeout(this.idleTimer);
@@ -758,7 +786,7 @@ export class ProductTaskRuntime {
     this.worker.stop();
     this.fileWorker.stop();
     const resume = this.engine.executeRaw(`UPDATE minion_jobs SET data = jsonb_set(data, '{resumeOnRestart}', 'true'::jsonb)
-      WHERE queue = $1 AND data->'task'->'input'->>'preset' = 'quick' AND status IN ('active','waiting-children')`, [PRODUCT_TASK_QUEUE]);
+      WHERE queue = $1 AND (data->'task'->'input'->>'preset' = 'quick' OR data->'task'->>'type'='memory') AND status IN ('active','waiting-children')`, [PRODUCT_TASK_QUEUE]);
     const interrupted = [...this.executions.keys()];
     for (const execution of this.executions.values()) execution.cancel('service_shutdown: 本地服务关闭');
     const drained = Promise.all([resume, Promise.allSettled([...this.executions.values()].map(execution => execution.done))]);

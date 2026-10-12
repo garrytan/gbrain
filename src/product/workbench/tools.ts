@@ -7,6 +7,7 @@ import type { WorkbenchAnswerInput } from './service';
 import { RequestContext, ToolResultBudget, trimToolOutput } from './context-runtime';
 import {assistantRequestPolicy,requestStage} from './request';
 import {normalizeToolText,toolTextPreview,modelAnswerText} from '../../core/ai/tool-text';
+import { workbenchMemoryTools, nativeMemoryHandlers, type WorkbenchNative } from './memory-tools';
 export { chatMessageTokens } from './context-runtime';
 
 export const KNOWLEDGE_TOOLS: ChatToolDef[] = [
@@ -29,10 +30,12 @@ export async function runWorkbenchTools(input: WorkbenchAnswerInput & {
   budget: number;
   citations: WorkbenchCitation[];
   context: RequestContext;
+  native?: WorkbenchNative;
 }) {
   const { signal, citations } = input;
   const allowed = new Map(citations.filter(item => item.sourceId).map(item => [JSON.stringify([item.sourceId, item.slug]), item]));
   const calls = new Map<string, WorkbenchToolCall>();
+  const reads = new Map<string,string>();
   let allocation = new ToolResultBudget(0, []); let requestTokens = 0; let requestCount = 0;
   let composed = ''; let segment = ''; let turnPrefix='';let answeredModel = input.model;
   const publish = (call: WorkbenchToolCall) => { input.onTool?.({ ...call }); };
@@ -68,18 +71,21 @@ export async function runWorkbenchTools(input: WorkbenchAnswerInput & {
       const body = `${page.compiled_truth}\n${page.timeline}`; const from = Number(offset);
       if (from >= body.length && from !== 0) throw new Error('读取位置超出资料正文范围');
       const excerpt = body.slice(from, from + 6000);
-      return trimToolOutput({ citation: citations.findIndex(item => item.sourceId === sourceId && item.slug === slug) + 1, source_id: sourceId, slug, title: known.title, content: excerpt, offset: from, nextOffset: from + excerpt.length < body.length ? from + excerpt.length : null, truncated: from + excerpt.length < body.length }, cap);
+      if(page.content_hash)reads.set(JSON.stringify([sourceId,slug]),page.content_hash);
+      return trimToolOutput({ citation: citations.findIndex(item => item.sourceId === sourceId && item.slug === slug) + 1, source_id: sourceId, slug, title: known.title, revision:page.content_hash, content: excerpt, offset: from, nextOffset: from + excerpt.length < body.length ? from + excerpt.length : null, truncated: from + excerpt.length < body.length }, cap);
     } }],
   ]);
+  if(input.native&&input.sourceId&&input.conversationId)for(const [name,handler] of nativeMemoryHandlers(input.engine,input.sourceId,input.conversationId,input.native,row=>{let index=citations.findIndex(item=>item.kind==='memory'&&item.factId===row.factId&&item.sourceId===row.sourceId);if(index<0){index=citations.length;citations.push(row);}return index+1;},reads))handlers.set(name,handler);
+  const tools=[...(input.knowledge?KNOWLEDGE_TOOLS:[]),...(input.native?workbenchMemoryTools(input.messages.filter(row=>row.role==='user').at(-1)?.text??'',input.knowledge):[])];
   let history = input.history;
   let stopReason: 'end' | 'length' | 'other' = 'end';
   while (requestCount < 8) {
     segment = '';
-    const result = await input.loop({ model: input.model, system: input.system, initialMessages: history, tools: KNOWLEDGE_TOOLS, toolHandlers: handlers, toolConcurrency: 4, maxTurns: 8 - requestCount, maxTokens: input.context.outputTokens, abortSignal: signal, temperature: input.temperature, reportLengthStop: true, recordUnknownTools: true,
+    const result = await input.loop({ model: input.model, system: input.system, initialMessages: history, tools, toolHandlers: handlers, toolConcurrency: 4, maxTurns: 8 - requestCount, maxTokens: input.context.outputTokens, abortSignal: signal, temperature: input.temperature, reportLengthStop: true, recordUnknownTools: true,
       preserveHistory:true,disableReasoning:true,finalizeOnLastTurn:true,finalPrompt:'本轮资料收集已结束。现在直接根据已获得的资料给出有引用的中文回答；证据不足的部分明确说明，不再调用工具，不编造资料。',
       parseToolText:normalizeToolText,toolTextPreview,
       validateCompletion:async(_text,canContinue)=>{
-        if(!canContinue||citations.length)return null;
+        if(!input.knowledge||!canContinue||citations.length||[...calls.values()].some(call=>call.status==='complete'&&!['knowledge_search','knowledge_read'].includes(call.name)))return null;
         const searches=[...calls.values()].filter(call=>call.name==='knowledge_search'&&call.status==='complete');
         const correction=!searches.length?'首次整句预检索为空。请先调用 knowledge_search 检索精炼关键词；不能仅凭首次预检索就断言没有相关资料。':!searches.some(call=>{const query=JSON.parse(call.input).query;return typeof query==='string'&&query.trim().length<=24&&!/\s/.test(query.trim());})?'多词检索均未命中。请先用单独的人物名、项目名或一个主题关键词再调用一次 knowledge_search；query 不含空格，保留用户使用的中文名称，不组合经历、兴趣等多个条件。':null;
         if(correction){composed=turnPrefix;segment='';input.onReplace?.(composed,answeredModel);}
@@ -104,13 +110,13 @@ export async function runWorkbenchTools(input: WorkbenchAnswerInput & {
         signal.throwIfAborted(); answeredModel = model;
         turnPrefix=composed;
         const text = blocks.filter((block): block is Extract<ChatBlock, { type: 'text' }> => block.type === 'text').map(block => block.text).join('');
-        if(!blocks.some(block=>block.type==='tool-call')&&(citations.length||[...calls.values()].some(call=>call.name==='knowledge_search')))composed+=text;
+        if(!blocks.some(block=>block.type==='tool-call')&&(!input.knowledge||citations.length||[...calls.values()].some(call=>call.status==='complete')))composed+=text;
         segment = ''; input.onReplace?.(composed, model);
         input.context.observeUsage(usage.input_tokens);
         allocation = input.context.allocate(requestTokens, blocks);
       },
       onToolCallStart: async (_turn, _message, _ordinal, name, raw) => {
-        signal.throwIfAborted(); const id = randomUUID(); const call: WorkbenchToolCall = { id, name, input: JSON.stringify(raw ?? null).slice(0, 2400), status: 'running', startedAt: new Date().toISOString() };
+        signal.throwIfAborted(); const id = randomUUID(); const call: WorkbenchToolCall = { id, name, input: JSON.stringify(raw ?? null), status: 'running', startedAt: new Date().toISOString() };
         calls.set(id, call); input.progress(name === 'knowledge_search' ? '正在搜索知识' : '正在读取资料'); publish(call); return { gbrainToolUseId: id };
       },
       onToolCallComplete: async (id, output) => { signal.throwIfAborted(); const call = calls.get(id)!; call.status = 'complete'; call.output = JSON.stringify(output); call.completedAt = new Date().toISOString(); publish(call); },
@@ -127,5 +133,5 @@ export async function runWorkbenchTools(input: WorkbenchAnswerInput & {
     if (result.stopReason === 'max_turns') throw new Error('知识工具已达到本轮调用上限，请继续提问。');
     stopReason = result.stopReason === 'end' ? 'end' : 'other'; break;
   }
-  return { text: modelAnswerText(composed + segment), model: answeredModel, citations, knowledge: citations.length ? 'used' as const : 'none' as const, stopReason };
+  return { text: modelAnswerText(composed + segment), model: answeredModel, citations, knowledge: citations.length ? 'used' as const : input.knowledge?'none' as const:'off' as const, stopReason };
 }
