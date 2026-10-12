@@ -337,6 +337,11 @@ export interface PageFilters {
    * queries to a tier directory without loading every page into memory.
    */
   slugPrefix?: string;
+  /** Exclusive slug cursor for a single-source walk; pair with sort: 'slug'.
+   * Unlike updated_at or OFFSET, it is unaffected by writes to earlier pages.
+   * Not a federated cursor: slugs are unique only within one source.
+   */
+  slugAfter?: string;
   /**
    * v0.26.5: include soft-deleted pages (rows with `deleted_at IS NOT NULL`).
    * Default false: hides soft-deleted pages from `list_pages` so agents see the

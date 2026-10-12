@@ -90,6 +90,68 @@ async function requests(engine: BrainEngine) {
 for (const backend of testBackends()) {
   const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;
 
+  test(`${backend}: slug keysets drain timestamp ties without crossing type, source or deletion fences`, async () => {
+    const slugs = Array.from({ length: 23 }, (_, i) => `meetings/tied-${String(i).padStart(2, '0')}`);
+    await managedBrain(async ({ engine }) => {
+      const seen: string[] = [];
+      let slugAfter: string | undefined;
+      while (true) {
+        const batch = await engine.listPages({ sourceId: 'default', type: 'meeting', sort: 'slug', slugAfter, limit: 10 });
+        if (!batch.length) break;
+        seen.push(...batch.map(page => page.slug));
+        slugAfter = batch.at(-1)!.slug;
+      }
+      expect(seen).toEqual(slugs);
+    }, { databaseUrl, setup: async ({ engine }) => {
+      await engine.executeRaw("INSERT INTO sources (id, name) VALUES ('other', 'Other')");
+      const page = { type: 'meeting' as const, title: 'Tied', compiled_truth: transcript(), timeline: '', frontmatter: {} };
+      for (const slug of [...slugs].reverse()) await engine.putPage(slug, page);
+      await engine.putPage(slugs[0]!, page, { sourceId: 'other' });
+      await engine.putPage('meetings/tied-other-type', { ...page, type: 'person' });
+      await engine.putPage('meetings/tied-deleted', page);
+      await engine.softDeletePage('meetings/tied-deleted', { sourceId: 'default' });
+      await engine.executeRaw("UPDATE pages SET updated_at='2026-09-28T12:00:00Z'");
+    } });
+  }, 120_000);
+
+  test(`${backend}: corpus enumeration visits each page once when an unvisited page moves ahead of the cursor`, async () => {
+    await managedBrain(async brain => {
+      const { engine } = brain;
+      const slugs = Array.from({ length: 13 }, (_, i) => `meetings/walk-${String(i).padStart(2, '0')}`);
+      for (const slug of [...slugs].reverse()) await putPage(brain, transcript(` ${slug}`), slug);
+      // The oldest page starts outside the first ten-page batch. Editing it
+      // during extraction puts it ahead of updated_desc's OFFSET cursor.
+      const oldest = (await engine.listPages({ sourceId: 'default', type: 'meeting', sort: 'updated_asc', limit: 1 }))[0]!.slug;
+      const visited: string[] = [];
+      const result = await runExtractConversationFactsCore(engine, {
+        sourceId: 'default', types: ['meeting'], force: true, sleepMs: 0, overrideDisabled: true,
+        extractor: async ({ turnText }) => {
+          visited.push(slugs.find(slug => turnText.includes(slug))!);
+          if (visited.length === 1) await putPage(brain, transcript(` ${oldest} edited`), oldest);
+          // Empty facts still produce a durable terminal outcome in the batch.
+          return [];
+        },
+      });
+      expect([...visited].sort()).toEqual(slugs);
+      expect(result).toMatchObject({ pages_processed: slugs.length, pages_failed: 0 });
+      expect(await requests(engine)).toEqual([{ state: 'committed', error_code: null }]);
+      for (const slug of slugs) expect(await factsOf(engine, slug)).toEqual(['EXTRACTION_COMPLETE']);
+    }, { databaseUrl });
+  }, 120_000);
+
+  test(`${backend}: repeated explicit selectors cannot poison a managed batch`, async () => {
+    await managedBrain(async brain => {
+      await putPage(brain, transcript());
+      const other = 'meetings/unique-selector';
+      await putPage(brain, transcript(' Other page.'), other);
+      const calls = { n: 0 };
+      const result = await extract(brain.engine, calls, { force: true, slugs: [SLUG, SLUG, other, other] });
+      expect(calls.n).toBe(2);
+      expect(result).toMatchObject({ pages_processed: 2, pages_failed: 0 });
+      expect(await requests(brain.engine)).toEqual([{ state: 'committed', error_code: null }]);
+    }, { databaseUrl });
+  }, 120_000);
+
   test(`${backend}: a transcript's facts and outcome commit in one receipted request; the frozen batch round-trips through JSONB`, async () => {
     await managedBrain(async brain => {
       const { engine } = brain;

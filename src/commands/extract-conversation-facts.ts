@@ -1492,7 +1492,7 @@ export async function runExtractConversationFactsCore(
       // Batch mode is selected by the PRESENCE of the selector: an empty
       // list means "process exactly these zero pages" (a no-op), never a
       // fall-through to full-corpus enumeration and its LLM spend.
-      for (const slug of opts.slugs) {
+      for (const slug of new Set(opts.slugs)) {
         if (signal?.aborted) throw new Error('aborted');
         const page = await engine.getPage(slug, { sourceId });
         if (!page) {
@@ -1525,15 +1525,15 @@ export async function runExtractConversationFactsCore(
 
       await processPageWithLock(page);
     } else {
-      // Multi-page enumeration: paginate per-type at small batch size to
-      // bound memory (Eng-v2 C8 — 10 × 25MB = 250MB worst case).
+      // Bounded slug keysets (10 × 25MB) avoid OFFSET duplicate/omission
+      // races when extraction or concurrent edits bump pages' updated_at.
       // v0.41.15.0 (D9): inner per-page loop replaced with runSlidingPool
       // so parallel workers can claim pages from the batch. The pool
       // honors AbortSignal at each claim boundary and threads
       // BudgetExhausted abort (D13) automatically.
       let processedPagesCount = 0;
       pageLoop: for (const type of concreteTypes) {
-        let offset = 0;
+        let slugAfter: string | undefined;
         // eslint-disable-next-line no-constant-condition
         while (true) {
           if (signal?.aborted) throw new Error('aborted');
@@ -1543,7 +1543,7 @@ export async function runExtractConversationFactsCore(
             type,
             sourceId,
             limit: PAGE_LIST_BATCH,
-            offset,
+            sort: 'slug', slugAfter,
           });
           if (batch.length === 0) break;
 
@@ -1595,7 +1595,7 @@ export async function runExtractConversationFactsCore(
           for (const failure of poolResult.failures) recordPageFailure(result, sourceId, failure.label, failure.error);
 
           processedPagesCount += claimable.length;
-          offset += batch.length;
+          slugAfter = batch[batch.length - 1]!.slug;
           if (batch.length < PAGE_LIST_BATCH) break;
 
           // Persist checkpoint between batches so a crash mid-walk
