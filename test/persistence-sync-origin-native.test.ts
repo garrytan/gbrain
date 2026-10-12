@@ -98,10 +98,12 @@ test('native writer manifest hashes Unicode Git paths without rewriting their ke
   mkdirSync(join(root, 'r\u00e9sum\u00e9'));
   writeFileSync(join(root, path), content);
   git.commitAll('Add synthetic Unicode path');
-  const first = worktreeManifest(root, { withFiles: true });
+  // Transfer/rebind verifiers use the recorded scope. Explicitly select Git
+  // here so Windows drive/root spelling detection cannot bypass trackedBytes.
+  const first = worktreeManifest(root, { scope: 'git', withFiles: true });
   expect(first).toMatchObject({ scope: 'git', file_count: 1 });
   expect(first.files).toEqual({ [path]: sha256(content) });
-  expect(worktreeManifest(root).digest).toBe(first.digest);
+  expect(worktreeManifest(root, { scope: 'git' }).digest).toBe(first.digest);
 });
 
 test('origin comparison is Windows-specific and never case-folds POSIX identity', () => {
