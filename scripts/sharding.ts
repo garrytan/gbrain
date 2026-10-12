@@ -24,6 +24,15 @@
  *     Uses lane-specific weights. --fallback-on-error warns and uses uniform
  *     weights if the advisory file is malformed (serial runner compatibility).
  *
+ *   bun run scripts/sharding.ts --sum [--weights <path>]
+ *     Read-only diagnostic: reads an already-partitioned file list from
+ *     stdin and prints its predicted weight (the same per-file weights and
+ *     p75 fallback `partition` uses) as one line, e.g.
+ *     `predicted 412.3s over 401 files (37 unweighted at p75 1.2s)`.
+ *     test-shard.sh prints it beside its "(LPT-balanced)" line so a shard
+ *     whose measured time is far above the prediction points at the runner
+ *     or a process-wide slowdown, not at the partition.
+ *
  * Exit codes:
  *   0   success
  *   1   internal error (e.g., malformed weights JSON)
@@ -218,6 +227,32 @@ export function imbalanceRatio(shards: string[][], weights: WeightMap, fallback:
   return max / min;
 }
 
+/**
+ * Predicted weight of an already-partitioned file list: the sum of each
+ * file's mined weight, with the same p75 fallback `partition` assigns to
+ * files absent from the map. Read-only over the weights.
+ */
+export function predictedWeight(
+  files: string[],
+  weights: WeightMap,
+): { totalMs: number; files: number; unweighted: number; fallbackMs: number } {
+  let fallbackMs = computeQuantile(Array.from(weights.values()), 0.75);
+  if (fallbackMs === 0) fallbackMs = 1;
+  let totalMs = 0;
+  let unweighted = 0;
+  for (const f of files) {
+    const w = weights.get(f);
+    if (w === undefined) unweighted++;
+    totalMs += w ?? fallbackMs;
+  }
+  return { totalMs, files: files.length, unweighted, fallbackMs };
+}
+
+export function formatPredictedWeight(p: ReturnType<typeof predictedWeight>): string {
+  const s = (ms: number) => `${(ms / 1000).toFixed(1)}s`;
+  return `predicted ${s(p.totalMs)} over ${p.files} files (${p.unweighted} unweighted at p75 ${s(p.fallbackMs)})`;
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // CLI
 // ──────────────────────────────────────────────────────────────────────────
@@ -241,17 +276,36 @@ async function main(): Promise<number> {
   const positional: string[] = [];
   let weightsPath: string | undefined;
   let fallbackOnError = false;
+  let sumOnly = false;
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
     if (arg === "--weights" && argv[i + 1] && !argv[i + 1]!.startsWith("--")) weightsPath = argv[++i];
     else if (arg === "--fallback-on-error") fallbackOnError = true;
+    else if (arg === "--sum") sumOnly = true;
     else if (arg.startsWith("--")) {
       console.error(`error: unknown or incomplete option ${arg}`);
       return 2;
     } else positional.push(arg);
   }
+  if (sumOnly) {
+    if (positional.length !== 0) {
+      console.error("usage: bun run scripts/sharding.ts --sum [--weights PATH]  (reads the shard's file list from stdin)");
+      return 2;
+    }
+    let weights: WeightMap;
+    try {
+      weights = loadWeights(weightsPath);
+    } catch (e) {
+      console.error(`${fallbackOnError ? "warning" : "error"}: ${e instanceof Error ? e.message : String(e)}`);
+      if (!fallbackOnError) return 1;
+      weights = new Map();
+    }
+    process.stdout.write(`${formatPredictedWeight(predictedWeight(await readStdinLines(), weights))}\n`);
+    return 0;
+  }
   if (positional.length !== 2) {
     console.error("usage: bun run scripts/sharding.ts <shard-index> <total-shards> [--weights PATH] [--fallback-on-error]");
+    console.error("       bun run scripts/sharding.ts --sum [--weights PATH]");
     console.error("       (reads file list from stdin, one path per line)");
     return 2;
   }
