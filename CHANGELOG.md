@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [0.60.184.0] - 2026-10-12
+## [0.60.185.0] - 2026-10-12
 
 **`gbrain core <subcommand> --help` prints the core usage instead of crashing without a brain (#6521).**
 
@@ -24,13 +24,27 @@ identifiers and attribution are available in the pre-removal Git revision
 |---|---|
 | `gbrain core <list\|show\|status\|add\|remove\|diff\|ack\|init\|suggest> --help` (and `-h`) | Prints the core usage and exits 0 with no brain configured, instead of an internal error or a missing-argument error. |
 
-## To take advantage of v0.60.184.0
+## To take advantage of v0.60.185.0
 
 Nothing to migrate. Check it on a machine with no brain:
 
 ```bash
 gbrain core list --help
 ```
+
+## [0.60.184.0] - 2026-10-12
+
+**Unit and serial CI shards are packed from clean timings again.** CI splits each test lane across several machines using the recorded run time of every test file. The unit timings recorded before v0.60.183.0 carried a cold-boot penalty: three test files cleared the PGLite snapshot for every file after them in the same shard, so those files looked several minutes slower than they are. This release re-measures the unit and serial lanes from the first green master run after that fix. No product behaviour changes.
+
+### Itemized changes
+
+| Lane | Files with no recorded time, before | After | Bound | Source run |
+|---|---|---|---|---|
+| Unit | 75 of 3251 (2.3%) | 8 of 3251 (0.2%) | 5% | Test 38299951863 |
+| Serial | 7 of 392 (1.8%) | 0 of 392 (0.0%) | 10% | Test 38299951863 |
+| E2E | 14 of 565 (2.5%) | unchanged | 10% | not re-mined; no newer green full-profile run |
+
+- `scripts/test-weights.json` and `scripts/serial-weights.json`, plus their `.metadata.json` provenance files, are re-mined with `bun run weights:mine` from master Test run 38299951863, where every `test (N)` and `serial-tests` job passed. `GITHUB_EVENT_NAME=schedule bun scripts/check-weight-coverage.ts` reports OK with no dead entries.
 
 ## [0.60.183.0] - 2026-10-12
 
