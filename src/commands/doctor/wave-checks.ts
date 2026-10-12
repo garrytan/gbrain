@@ -93,6 +93,13 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     run: async (engine, scope) => (await import('./checks/credential-projection.ts')).credentialProjectionPendingCheck(engine, scope.sourceIds),
   },
   {
+    id: 'redaction_projection_pending', resolution: 'operator', registration: 'wave',
+    count: d => Number(d.pending ?? 0),
+    impact: 'Chunks, embeddings and evidence were cut with a different redaction class list than the policy names, so matching pages carry the old projection',
+    instruction: 'Run `gbrain config set redaction.projection_classes <classes>` on the brain host (re-seals without provider calls), then `gbrain embed --stale`.',
+    run: async (engine) => (await import('./checks/redaction-projection.ts')).redactionProjectionPendingCheck(engine),
+  },
+  {
     id: 'connector_checkpoints', resolution: 'repair', registration: 'wave',
     count: d => Number(d.count ?? 0),
     impact: 'Some connector checkpoint rows can no longer be loaded by any connector source',

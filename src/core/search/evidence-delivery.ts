@@ -31,7 +31,7 @@ import { currentTextProjectionFilter, safeChunksFilter, requiresSafeChunks } fro
 import { resolveExcludePrivatePages } from './private-visibility.ts';
 import { safeSplitIndex } from '../text-safe.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
-import { credentialSafeProjection } from '../credential-projection.ts';
+import { retrievalTextProjection } from '../credential-projection.ts';
 import { loadFenceChunkOverlay, markFenceChunk, splitFenceOverlay, type FenceChunkOverlay } from '../eligibility/fence-overlay.ts';
 import { stripChunkHeader } from '../chunkers/code.ts';
 import { OperationError } from '../ops/contract.ts';
@@ -580,9 +580,9 @@ export function pageEvidenceText(page: { compiled_truth: string; timeline: strin
   // out, rows below the page tier after the truth under their trust marker, the way the marked chunks hold them).
   const ownTruth = splitFenceOverlay(page.compiled_truth ?? '', page.fenceOverlay);
   const ownTimeline = splitFenceOverlay(page.timeline ?? '', page.fenceOverlay);
-  const truth = [credentialSafeProjection(sanitizeRemoteBody(ownTruth.main)), ...[...ownTruth.lowTier, ...(includeTimeline ? ownTimeline.lowTier : [])]
-    .map(({ tier, unconfirmed, body }) => markFenceChunk(tier, credentialSafeProjection(sanitizeRemoteBody(body)), unconfirmed))].join('\n\n');
-  const timeline = includeTimeline ? credentialSafeProjection(sanitizeRemoteBody(ownTimeline.main)) : '';
+  const truth = [retrievalTextProjection(sanitizeRemoteBody(ownTruth.main)), ...[...ownTruth.lowTier, ...(includeTimeline ? ownTimeline.lowTier : [])]
+    .map(({ tier, unconfirmed, body }) => markFenceChunk(tier, retrievalTextProjection(sanitizeRemoteBody(body)), unconfirmed))].join('\n\n');
+  const timeline = includeTimeline ? retrievalTextProjection(sanitizeRemoteBody(ownTimeline.main)) : '';
   if (!timeline.trim()) return { text: truth, timelineAt: -1 };
   return { text: truth + TIMELINE_SEPARATOR + timeline, timelineAt: truth.length + TIMELINE_SEPARATOR.length };
 }

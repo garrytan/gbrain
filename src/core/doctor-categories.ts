@@ -69,6 +69,7 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'trust_scan',
   'trust_sources_unclaimed',
   'credential_projection_pending',
+  'redaction_projection_pending',
   'derived_visibility',
   'extractor_facts_expired',
   'loop_facts_drift',

@@ -85,6 +85,7 @@
       "  [OK] derived_visibility: Every extracted atom and synthesized concept carries an explicit visibility no looser than its origin.",
       "  [OK] safe_index_pending: Every re-sealable page is at the safe-chunk index version.",
       "  [OK] credential_projection_pending: No page waits for the credential-safe re-chunk.",
+      "  [OK] redaction_projection_pending: No redaction projection class is set; chunks carry the stored text (private keys excepted).",
       "  [OK] connector_checkpoints: No orphan connector checkpoint rows older than 7 days.",
       "  [OK] persistence_request_indexes: Managed sync request indexes are valid.",
       "  [OK] persistence_request_growth: 6 request row(s); no scope exhausts its lifetime request IDs within 90 days at its last-7-day rate.",

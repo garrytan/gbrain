@@ -616,7 +616,7 @@ to your files or database.
 | Memory relay at compaction | The receipt and relay are skipped for that compaction window only; the checkpoint is kept. A content-free line (`reason: secret_scan_refused`, pattern, fingerprint, hint) goes to `~/.gbrain/integrations/hooks/heartbeat.jsonl`. | Nothing to run; the next window is scanned again. Remove the value from the transcript source if it keeps recurring. |
 | Retrieval output | The value is replaced with `<REDACTED:pattern>`; everything else in the result is unchanged. | Nothing. Read the page on the brain host if you need the value (see what stays raw below). |
 | Page reads | Not redacted. | See [what stays raw by design](#what-stays-raw-by-design). |
-| Configured providers | Not redacted yet. | See [what stays raw by design](#what-stays-raw-by-design). |
+| Configured providers | Raw unless `redaction.egress_classes` names a class (below). | See [redaction policy](#redaction-policy-opt-in) and [what stays raw by design](#what-stays-raw-by-design). |
 
 An allowlist entry stops pushes and compiled context from refusing a
 finding. It does not turn off retrieval redaction: search and recall still
@@ -773,6 +773,28 @@ shape and withheld it. The agent should tell the user that, name the
 pattern, and point to the brain host for the value. It should not retry
 other operations to get around it.
 
+### Redaction policy (opt-in)
+
+Four `gbrain config set` keys extend the scanner to two more pattern classes
+and to the places the table above leaves raw. Every key defaults to off, so a
+brain with none of them set behaves exactly as described above.
+
+Classes: `credential` (every rule above), `identifier` (SSN, NPI, DEA,
+Medicare MBI, MRN, labelled date of birth, member/policy/group ids — each with
+a check digit or a context word, so a bare digit run is never one) and
+`contact` (email, phone with separators). Diagnosis codes and bare IP
+addresses are content, not identifiers, and are not scanned.
+
+| Key | Values | Effect |
+| --- | --- | --- |
+| `redaction.projection_classes` | class list, or `none` | Chunks, embeddings and delivered evidence are cut from a copy with each claimed span replaced by its token. Stored pages and raw page reads are unchanged. Setting the key re-chunks the pages that match under the old or the new list on the brain host (no provider calls); run `gbrain embed --stale` afterwards. `gbrain doctor` reports `redaction_projection_pending` until the re-seal has run. |
+| `redaction.egress_classes` | class list, or `none` | Text sent to a configured provider — embedding inputs, the reranker's query and documents, the expansion query, chat system prompt, messages, tool inputs and tool results — is redacted before the request leaves. Audio and image bytes are not scanned; the transcript or OCR text they produce enters as a page and is covered like any other. A guardrail provider registered on the observe-only seam still sees the raw text. |
+| `redaction.on_write` | `off`, `facts`, `all` | A page written at an untrusted trust tier (`agent_written`, `unknown`, `external_untrusted`: remote `put_page`, captures, connector imports) is stored with the claimed spans replaced. `facts` touches only rows inside ```facts fences; `all` covers title, body and timeline. Owner-tier writes and local imports keep today's behaviour. The write receipt lists each redaction as pattern + fingerprint, never the value. |
+| `redaction.on_write_classes` | class list | Which classes the on-write splice applies. Default `credential`. |
+
+Lists are comma-separated (`identifier,contact`). A value with an unknown
+class is refused and nothing is written.
+
 ### What stays raw by design
 
 - **Page reads.** `get_page`, `fetch`, `get_chunks`, `get_raw_data` and
@@ -780,10 +802,11 @@ other operations to get around it.
   requests for a page and are governed by page visibility, not redaction.
   Installed skill files (`get_skill`, `get_skill_asset`, the skill catalog
   operations) and admin job operations are raw too.
-- **Configured providers.** The embedding provider at import, a hosted
-  reranker, and `synthesize`/`think` generation still receive stored text
-  unredacted, except private keys, which chunks never contain. Redaction covers what callers receive, not what gbrain sends
-  to a model provider you configured.
+- **Configured providers.** Unless `redaction.egress_classes` is set, the
+  embedding provider at import, a hosted reranker, and `synthesize`/`think`
+  generation receive stored text unredacted, except private keys, which
+  chunks never contain. With it set, provider-bound text is redacted for the
+  named classes; image and audio bytes are still sent as they are.
 - **Your files and database.** Redaction never edits stored content. If a
   real credential reached the brain, rotate it, then follow
   ["If a secret reached the brain"](../../SECURITY.md#if-a-secret-reached-the-brain).

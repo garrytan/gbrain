@@ -835,6 +835,19 @@
           {
             "category": "brain",
             "details": {
+              "count": "exact",
+              "pending": 0,
+              "policy_classes": [],
+              "sealed_classes": [],
+              "truncated": false
+            },
+            "message": "No redaction projection class is set; chunks carry the stored text (private keys excepted).",
+            "name": "redaction_projection_pending",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
               "checkpoints": 0,
               "count": 0,
               "docs": "docs/guides/repair.md#connector-checkpoints",
@@ -3909,6 +3922,19 @@
             },
             "message": "No page waits for the credential-safe re-chunk.",
             "name": "credential_projection_pending",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "count": "exact",
+              "pending": 0,
+              "policy_classes": [],
+              "sealed_classes": [],
+              "truncated": false
+            },
+            "message": "No redaction projection class is set; chunks carry the stored text (private keys excepted).",
+            "name": "redaction_projection_pending",
             "status": "ok"
           },
           {

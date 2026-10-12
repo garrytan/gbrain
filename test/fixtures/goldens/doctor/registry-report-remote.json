@@ -207,6 +207,10 @@
       },
       {
         "category": "brain",
+        "name": "redaction_projection_pending"
+      },
+      {
+        "category": "brain",
         "name": "connector_checkpoints"
       },
       {

@@ -404,7 +404,9 @@ async function setConfigWithDecideHooks(engine: BrainEngine, key: string, value:
   }
   if (key.startsWith('persistence.')) await (await import('./config/preparation-keys.ts')).refuseInvalidPreparationValue(engine, key, value);
   if (key.startsWith('facts.')) await (await import('./config/facts-values.ts')).refuseInvalidFactsConfigValue(key, value);
+  if (key.startsWith('redaction.')) (await import('./config/redaction-values.ts')).refuseInvalidRedactionValue(key, value);
   await engine.setConfig(key, value);
+  if (key.startsWith('redaction.')) await (await import('./config/redaction-values.ts')).resealAfterRedactionChange(engine, key);
   if (key === 'auto_chronicle') await acknowledgeAutoChronicle(engine, value);
   if (!key.startsWith('decide.slots.')) return;
   try {
