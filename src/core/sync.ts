@@ -270,8 +270,9 @@ export function isMarkdownFilePath(path: string): boolean {
   return path.endsWith('.md') || path.endsWith('.mdx');
 }
 
-function isMultimodalEnabled(): boolean {
-  return process.env.GBRAIN_EMBEDDING_MULTIMODAL === 'true';
+/** The image side of the brain is on: the sync walker admits images, managed sync imports them (#6529) and `embed --stale` sweeps them. */
+export function isMultimodalEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.GBRAIN_EMBEDDING_MULTIMODAL === 'true';
 }
 
 function isAllowedByStrategy(path: string, strategy: SyncStrategy): boolean {

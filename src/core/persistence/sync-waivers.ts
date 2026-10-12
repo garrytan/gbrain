@@ -13,6 +13,7 @@ import { startClaimPhase } from './claim-phase.ts';
 import { inspectUnchanged, screeningRequest, type NoopKernelWaiver } from './noop-kernel.ts';
 import { validateSyncAuthority, type SyncAuthority } from './sync-authority.ts';
 import { readSyncFile, syncRawHash } from './sync-discovery.ts';
+import { isImageFilePath } from '../sync.ts';
 import { getWorktreeBinding } from './ownership.ts';
 import { assertSyncPageOrigin, syncOriginScope } from './sync-origin.ts';
 import { faultPoint } from './fault-points.ts';
@@ -257,6 +258,8 @@ export async function unchangedSyncImport(engine: BrainEngine, cursor: WaiverCur
   frozenSnapshot?: PageSnapshot | null): Promise<NoopKernelWaiver[] | null> {
   const intent = pending.intent;
   if (intent.kind !== 'managed_sync_import' || intent.renameFrom || pending.pageId === null || typeof intent.path !== 'string' || typeof intent.content !== 'string') return null;
+  // #6529: an image's preparation is provider work; its hash no-op is decided under the admitted request instead.
+  if (isImageFilePath(intent.path)) return null;
   try {
     const snapshot = frozenSnapshot !== undefined ? frozenSnapshot : await engine.readPageSnapshot(pending.slug, { sourceId: cursor.sourceId, includeDeleted: true });
     const row = screeningRequest({ source_id: cursor.sourceId, source_incarnation: cursor.incarnation, slug: pending.slug, page_id: pending.pageId,

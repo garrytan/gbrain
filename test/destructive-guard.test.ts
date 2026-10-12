@@ -35,8 +35,19 @@ import {
 } from '../src/core/destructive-guard.ts';
 
 // Tier 3 opt-out — these tests need the cold-init schema path so the v33
-// migration columns exist on the brain under test.
-delete process.env.GBRAIN_PGLITE_SNAPSHOT;
+// migration columns exist on the brain under test. Unset for this file's
+// tests and restore afterwards: a CI shard runs hundreds of files in ONE bun
+// process (scripts/test-shard.sh), so a module-scope delete would cold-boot
+// every later engine in the shard (check:test-env-opt-ins pins this shape).
+let savedSnapshot: string | undefined;
+beforeAll(() => {
+  savedSnapshot = process.env.GBRAIN_PGLITE_SNAPSHOT;
+  delete process.env.GBRAIN_PGLITE_SNAPSHOT;
+});
+afterAll(() => {
+  if (savedSnapshot === undefined) delete process.env.GBRAIN_PGLITE_SNAPSHOT;
+  else process.env.GBRAIN_PGLITE_SNAPSHOT = savedSnapshot;
+});
 
 async function setupBrain(): Promise<PGLiteEngine> {
   const engine = new PGLiteEngine();

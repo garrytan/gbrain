@@ -8,6 +8,26 @@ export const CAPTURE_EVENT_PARAMS: Record<string, ParamDef> = {
   kind: { type: 'string', description: 'Event kind.' },
   depth: { type: 'string', description: 'Event depth page to link.' },
 };
+/**
+ * #6524: the provenance the trusted local CLI stamps on its own captures
+ * (`capture-cli`, `stdin` / `cli-positional`; a `--file` capture sends
+ * `local_file` and the owner resolves its origin). `gbrain capture` has sent
+ * these since #5622, and a running `gbrain serve` (IPC owner) or a thin client
+ * reaches the op through dispatch, whose unknown-parameter check (#5970)
+ * rejects every undeclared key on a write. Declared so dispatch admits them;
+ * page-mutations.ts still replaces a remote caller's values with the
+ * server-stamped `mcp:capture`, so the trust posture is unchanged. Full
+ * surface only, like `content_origin`: the starter list keeps its size budget
+ * (test/mcp-schema-budget.test.ts) and agents never set these.
+ */
+export const CAPTURE_CLI_PROVENANCE_PARAMS: Record<string, ParamDef> = {
+  source_kind: { type: 'string', required: false, fullSurfaceOnly: true,
+    description: 'Trusted local CLI provenance (capture-cli); a remote caller\'s value is replaced by the server-stamped mcp:capture.' },
+  source_uri: { type: 'string', required: false, fullSurfaceOnly: true,
+    description: 'Trusted local CLI provenance (stdin, cli-positional); a remote caller\'s value is replaced by the server-stamped mcp:capture.' },
+  ingested_via: { type: 'string', required: false, fullSurfaceOnly: true,
+    description: 'Trusted local CLI provenance (capture-cli); a remote caller\'s value is replaced by the server-stamped mcp:capture.' },
+};
 import { WRITE_REQUEST_STATES, WRITE_HEALTH_REASONS, WRITE_HEALTH_ASSESSMENTS, WRITE_HEALTH_ACTIONS } from './types.ts';
 
 /** Leaf definitions: safe to import while the frozen verb registry is evaluating.

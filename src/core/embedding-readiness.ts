@@ -2,6 +2,7 @@ import type { BrainEngine } from './engine.ts';
 import { readProjectionSnapshot, queuePageProjection, preparePageProjection, installPageProjection } from './page-state/projections.ts';
 import { quoteIdentifier, resolveActiveEmbeddingColumnFromEngine } from './search/embedding-column.ts';
 import { QUARANTINE_FILTER_FRAGMENT } from './quarantine.ts';
+import { isMultimodalEnabled } from './sync.ts';
 
 export async function countArchivedEmbeddingWork(engine: BrainEngine, opts: { sourceId?: string; signature?: string; includeNullSignature?: boolean; includeUnsealed?: boolean } = {}, activeColumn?: string | null): Promise<number> {
   const column = activeColumn === undefined ? (await resolveActiveEmbeddingColumnFromEngine(engine)).name : activeColumn;
@@ -68,7 +69,9 @@ export async function reportBlockedProjections(engine: BrainEngine, opts: Projec
   const sourceArg = opts.sourceId ? ` --source ${opts.sourceId}` : '';
   samples.push(`${blocked} page(s) still need a text projection, so their chunks were not embedded (${named.map(page => `${page.source_id}:${page.slug}`).join(', ')}${more}); every other stale chunk was embedded. `
     + (pages.some(page => page.page_kind !== 'markdown' && page.page_kind !== 'code')
-      ? `Image and media pages are rebuilt only by their importer: run gbrain embed --stale --images${sourceArg} (needs GBRAIN_EMBEDDING_MULTIMODAL=true) or gbrain sync --full${sourceArg}. ` : '')
+      ? isMultimodalEnabled()
+        ? `Image and media pages are rebuilt only by their importer; this run's image sweep (images: missing_samples) could not rebuild these: restore their source files, then run gbrain embed --stale${sourceArg} again. `
+        : `Image and media pages are rebuilt only by their importer: set GBRAIN_EMBEDDING_MULTIMODAL=true so gbrain embed --stale${sourceArg} sweeps them (or run gbrain embed --stale --images${sourceArg}), or run gbrain sync --full${sourceArg}. ` : '')
     + 'Rerun gbrain embed --stale to retry bounded projection recovery.');
   return new Set(pages.map(page => `${page.source_id}::${page.slug}`));
 }

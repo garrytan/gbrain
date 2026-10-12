@@ -35,9 +35,14 @@ export function readTreeBlobs(gitRoot: string, target: string, gitPaths: string[
   return out;
 }
 
-/** Decoded blob contents by id, read through `git cat-file --batch` in bounded chunks. */
+/** Decoded (UTF-8) blob contents by id, read through `git cat-file --batch` in bounded chunks. */
 export function readBlobContents(gitRoot: string, blobs: TreeBlob[]): Map<string, string> {
-  const out = new Map<string, string>();
+  return new Map([...readBlobBytes(gitRoot, blobs)].map(([oid, bytes]) => [oid, bytes.toString('utf8')]));
+}
+
+/** #6529: the raw bytes of blobs by id (an image import keeps its bytes), read through `git cat-file --batch` in bounded chunks. */
+export function readBlobBytes(gitRoot: string, blobs: TreeBlob[]): Map<string, Buffer> {
+  const out = new Map<string, Buffer>();
   const pending = [...new Map(blobs.filter(blob => blob.size <= SYNC_READ_BOUND).map(blob => [blob.oid, blob])).values()];
   while (pending.length) {
     const chunk: TreeBlob[] = [];
@@ -50,7 +55,7 @@ export function readBlobContents(gitRoot: string, blobs: TreeBlob[]): Map<string
       const [oid, kind, size] = output.subarray(offset, newline).toString('utf8').split(' ');
       if (kind === 'missing' || size === undefined) { offset = newline + 1; continue; }
       const start = newline + 1, end = start + Number(size);
-      out.set(oid!, output.subarray(start, end).toString('utf8'));
+      out.set(oid!, Buffer.from(output.subarray(start, end)));
       offset = end + 1;
     }
   }
@@ -71,7 +76,7 @@ const COMMIT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
  * replaces the window.
  */
 let pinned: PinnedWindow | null = null;
-interface PinnedWindow { gitRoot: string; target: string; paths: string[]; blobs: Map<string, TreeBlob | null>; slices: number[] | null; loaded: Array<{ slice: number; contents: Map<string, string> }> }
+interface PinnedWindow { gitRoot: string; target: string; paths: string[]; blobs: Map<string, TreeBlob | null>; slices: number[] | null; loaded: Array<{ slice: number; contents: Map<string, Buffer> }> }
 let pinnedWindowSize = PINNED_WINDOW;
 /** Test seam: replace the pinned window size (0 reads every entry alone, as before windows; null restores it); returns the restore function. */
 export function __setPinnedWindowForTests(size: number | null): () => void {
@@ -126,6 +131,11 @@ export function readPinnedBlob(gitRoot: string, target: string, gitPath: string,
  * slices stay loaded, so reads in any order cost one process per slice.
  */
 export function readPinnedContent(gitRoot: string, target: string, gitPath: string, upcoming: () => string[]): string | null {
+  return readPinnedBytes(gitRoot, target, gitPath, upcoming)?.toString('utf8') ?? null;
+}
+
+/** #6529: `readPinnedContent` before decoding: the raw bytes of the pinned blob (an image import), or null when the window cannot answer. */
+export function readPinnedBytes(gitRoot: string, target: string, gitPath: string, upcoming: () => string[]): Buffer | null {
   if (!pinnedWindowSize || !COMMIT_ID.test(target)) return null;
   const window = pinnedWindow(gitRoot, target, gitPath, upcoming);
   const blob = window?.blobs.get(gitPath);
@@ -137,7 +147,7 @@ export function readPinnedContent(gitRoot: string, target: string, gitPath: stri
   if (!loaded) {
     const blobs = window.paths.slice(starts[slice], starts[slice + 1] ?? window.paths.length).map(path => window.blobs.get(path))
       .filter((next): next is TreeBlob => !!next && next.size <= SYNC_READ_BOUND);
-    try { loaded = { slice, contents: readBlobContents(gitRoot, blobs) }; } catch { return null; }
+    try { loaded = { slice, contents: readBlobBytes(gitRoot, blobs) }; } catch { return null; }
     window.loaded = [...window.loaded, loaded].slice(-PINNED_SLICES_KEPT);
   }
   return loaded.contents.get(blob.oid) ?? null;

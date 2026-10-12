@@ -316,7 +316,7 @@ test/scripts/serial-files.test.ts	scripts/serial-files.tsv (serial lane manifest
 test/scripts/stress-gate.test.ts	docs anchors	1	readFileSync
 test/scripts/stress-gate.test.ts	gate plan	5	readFileSync
 test/scripts/stress-plan.test.ts	execution profiles	3	readFileSync
-test/scripts/test-env-opt-ins-guard.test.ts	check-test-env-opt-ins	2	readFileSync
+test/scripts/test-env-opt-ins-guard.test.ts	check-test-env-opt-ins	5	readFileSync
 test/scripts/test-shard.slow.test.ts	test-shard.sh — LPT balance contract	5	readFileSync
 test/scripts/test-shard.slow.test.ts	test-shard.sh — exclusion contract	7	readFileSync
 test/search/graph-signals-wire-integration.test.ts	v0.40.4 — source-grep regression guard	1	source-surface-helper

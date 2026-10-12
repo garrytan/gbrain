@@ -7021,7 +7021,7 @@ Every hold and error has three fields, from one table
 | `file_too_large` | page | none | yes | always |
 | `content_rejected` | page | none | yes | always |
 | `parser_regression` | page | upgrade | yes | always: a gbrain bug |
-| `managed_image_sync_unsupported` | page | none | no | never: images stay held by design |
+| `managed_image_sync_unsupported` | page | none | no | never: images stay held while multimodal embedding is off |
 | `revision_conflict` | page | retry | no | the same path fails again after a rerun |
 | `page_identity_changed` | page | retry | no | the same path fails again after a rerun |
 | `pinned_git_worktree_conflict` | page | retry | no | the same path fails again after a rerun |

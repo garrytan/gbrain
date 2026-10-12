@@ -576,12 +576,13 @@ replaying the embedded schema + all migrations when the env var
 `run-unit-parallel.sh`, `test-shard.sh`, `run-slow-tests.sh`,
 `run-serial-tests.sh`, `run-verify-parallel.sh`, and `run-e2e.sh` (which
 re-exports the path as ABSOLUTE — its tests spawn CLI children with varying
-cwd); `scripts/ci-local.sh` calls the builder directly. The helper builds/refreshes the snapshot and
-exports the env var, no-ops on `GBRAIN_NO_SNAPSHOT=1` or an already-inherited
-path, and is non-fatal on build failure — tests fall back to cold init, with
-a one-line "active" echo so a silent fallback stays visible in CI logs.
-Measured effect: ~3.5x per PGLite-booting file (a cold boot replays every
-migration, ~3.1s each on a CI shard). Properties:
+cwd); `scripts/ci-local.sh` calls the builder directly. The helper builds or
+refreshes the snapshot and exports the env var, no-ops on
+`GBRAIN_NO_SNAPSHOT=1` or an inherited path, and is non-fatal on build
+failure: tests fall back to cold init, with a one-line "active" echo so a
+silent fallback stays visible in CI logs. Measured effect: ~3.5x per
+PGLite-booting file (a cold boot replays every migration, ~3.1s each in CI).
+Properties:
 
 - **Idempotent.** A hash short-circuit exits in ~40ms when the snapshot is
   fresh, and REBUILDS a stale one. The hash covers the raw file bytes of the
@@ -1260,29 +1261,27 @@ there even though they pass on Linux and macOS.
 
 ### CI vs local: intentionally divergent file sets
 
-- **CI matrix** (`.github/workflows/test.yml`) runs `scripts/test-shard.sh` across 8 shards partitioned by weight-aware LPT bin-packing (`scripts/sharding.ts`; unweighted files get the p75 weight) and includes `*.slow.test.ts` files without a dedicated job (`eval-longmemeval-e2e.slow.test.ts` runs inside the shards; entity-resolve-perf, entity-card-perf, export-scale and brainbench-e2e have dedicated jobs, and the `reconcile-crash-*.slow.test.ts` files runs only in persistence-validation) plus keyless-allowlisted `evals/**/*.test.ts` (`test/scripts/evals-collection.test.ts`). Shards keep planned file order (`test-shard.sh --dry-run-list <i> 8`). Every Bun job activates the PGLite schema snapshot (built in-runner, cached across jobs with the runner's hash check authoritative). Serial files run across four `serial-tests` workers via `bun run test:serial`; `verify` and the BrainBench memory-conformance gate (`scripts/ci-brainbench-gate.sh`, compared against `evals/brainbench/baselines/main.json`) have their own jobs, all aggregated by `test-status`. `e2e.yml` aggregates through `e2e-status`, with jsonb-parity gating Tier 2's token spend; scheduled runs also require the full-corpus lanes. Both aggregates reject failures, cancellations and unexpected skips, and successful test results are never reused. CI is the ground truth for "did everything pass."
+- **CI matrix** (`.github/workflows/test.yml`) runs `scripts/test-shard.sh` across 8 shards partitioned by weight-aware LPT bin-packing (`scripts/sharding.ts`; unweighted files get the p75 weight) and includes `*.slow.test.ts` files without a dedicated job (`eval-longmemeval-e2e.slow.test.ts` runs inside the shards; entity-resolve-perf, entity-card-perf, export-scale and brainbench-e2e have dedicated jobs, and the `reconcile-crash-*.slow.test.ts` files runs only in persistence-validation) plus keyless-allowlisted `evals/**/*.test.ts` (`test/scripts/evals-collection.test.ts`). Shards keep planned file order (`test-shard.sh --dry-run-list <i> 8`) and print their predicted weight (`sharding.ts --sum`). Every Bun job activates the PGLite schema snapshot (built in-runner, cached across jobs; the runner's hash check is authoritative). Serial files run across four `serial-tests` workers via `bun run test:serial`; `verify` and the BrainBench memory-conformance gate (`scripts/ci-brainbench-gate.sh`, compared against `evals/brainbench/baselines/main.json`) have their own jobs, all aggregated by `test-status`. `e2e.yml` aggregates through `e2e-status`, with jsonb-parity gating Tier 2's token spend; scheduled runs also require the full-corpus lanes. Both aggregates reject failures, cancellations and unexpected skips, and successful test results are never reused. CI is the ground truth for "did everything pass."
 - **Local fast loop** (`scripts/run-unit-shard.sh` via the parallel wrapper) uses the same weighted partitioner as CI and EXCLUDES `*.slow.test.ts` AND `*.serial.test.ts`. Each shard runs its complete ordered selection with a fresh Bun process per file, without adding workers. Later groups still run after failures; missing summaries or file-completion evidence fail the shard. Local trades coverage for inner-loop speed; CI catches what local skips.
 
-This divergence is intentional; the two scripts solve different problems.
 `test/scripts/run-unit-shard.test.ts` pins what the local loop includes, and
 that no unit file spawning the CLI through `test/helpers/cli-spawn.ts` pins a
 per-test timeout below the bunfig default (an explicit `test(name, fn, N)`
 overrides `--timeout`, so `GBRAIN_TEST_TIMEOUT_MULTIPLIER` never reaches it).
 `test/scripts/run-unit-parallel.test.ts` pins memory-adaptive concurrency, the
-rescue pass and operator-interrupt teardown (Ctrl-C kills every shard
-descendant).
+rescue pass and operator-interrupt teardown (Ctrl-C kills every descendant).
 
 ### Coverage lanes and gates
 
 Line coverage is opt-in via `COVERAGE_DIR`: when set, the shell lanes
 (`scripts/test-shard.sh`, `scripts/run-serial-tests.sh`, `scripts/run-e2e.sh`)
-pass `--coverage --coverage-reporter=lcov` to Bun; when unset, the exec line is
-byte-identical to a non-coverage run. Every Bun process gets its own coverage
+pass `--coverage --coverage-reporter=lcov` to Bun; when unset, the exec line
+matches a non-coverage run. Every Bun process gets its own coverage
 directory (`$COVERAGE_DIR/shard`, `serial-$idx`, `e2e-$idx`) because a reused
 directory silently overwrites `lcov.info`; the shard runner pins xargs to one
 batch so an argv overflow fails loudly. Each coverage invocation atomically
 creates its own `COVERAGE_DIR` and refuses an existing one, so a rerun needs a
-new path and cannot inherit or delete another run's output. A green lane writes
+new path and cannot inherit another run's output. A green lane writes
 `$COVERAGE_DIR/lane-manifest.json` (`{lane, sha, lcovCount, complete}`); a red
 run writes none, which merging treats as an incomplete lane. E2E lanes
 (`e2e-1` to `e2e-4`, or `e2e` unsharded) also write `executed-files.txt`, and
@@ -1540,15 +1539,17 @@ consumer suites:
 - `wait-for.ts` — `waitFor(predicate, {timeoutMs, intervalMs})` /
   `waitForValue`. Replaces fixed `setTimeout` sleeps: polls resolve as soon as
   the condition holds, and generous deadlines make slow-CI runs LESS flaky
-  than a tuned sleep, not more.
+  than a tuned sleep.
 - `with-snapshot.ts` — `withColdPglite(fn)`: per-TEST scoped
   `GBRAIN_PGLITE_SNAPSHOT` opt-out (save/delete/restore);
   `withSnapshotValue(value, fn)` is the general form (pin any snapshot path
-  for fn's scope; `undefined` = deleted). Use instead of a
-  file-level `delete process.env.GBRAIN_PGLITE_SNAPSHOT`, which forces every
-  engine in the file to cold-boot. Caution: a snapshot-restored engine does
-  not replay migrations on a later `initSchema()` after a version rewind —
-  rewind-arc tests need the cold path (see `test/bootstrap.test.ts`).
+  for fn's scope; `undefined` = deleted). A module-scope
+  `delete process.env.GBRAIN_PGLITE_SNAPSHOT` fails `check:test-env-opt-ins`
+  (the shard's one bun process keeps it for later files); a file-wide
+  opt-out deletes in `beforeAll`, restores in `afterAll`
+  (`test/bootstrap.test.ts`). Caution: a snapshot-restored engine does not
+  replay migrations on a later `initSchema()` after a version rewind —
+  rewind-arc tests need the cold path.
 - `reset-pglite.ts#resetPgliteStateNarrow(engine, tables)` — explicit-table
   truncate for hot loops (the full reset clears the whole catalog). The
   table list is REQUIRED — a default would silently under-truncate.

@@ -256,6 +256,36 @@ function printReceipt(result: CaptureResult, quiet: boolean, json: boolean): voi
   if (result.write_request) console.log(`  request_id:    ${result.write_request.request_id}`);
 }
 
+/**
+ * The `capture` operation parameters one CLI invocation submits, on every
+ * transport (direct handler, resident-owner IPC, thin-client HTTP). The
+ * provenance trio (`source_kind`, `source_uri`, `ingested_via`) is trusted
+ * local CLI provenance: the owner stores it for a local caller and replaces it
+ * with `mcp:capture` for a remote one (page-mutations.ts), so a thin client
+ * sends none of it. #6524: every key here is declared on the op, which the
+ * dispatch unknown-parameter check requires of a write
+ * (test/capture-cli-params-contract-6524.test.ts).
+ */
+function captureParams(parsed: RunOpts, content: string, precondition: Record<string, unknown>, thinClient: boolean): Record<string, unknown> {
+  return {
+    content,
+    ...precondition,
+    ...(parsed.slug ? { slug: parsed.slug } : {}),
+    ...(parsed.type ? { type: parsed.type } : {}),
+    ...(parsed.who ? { who: parsed.who } : {}),
+    ...(parsed.what ? { what: parsed.what } : {}),
+    ...(parsed.where ? { where: parsed.where } : {}),
+    ...(parsed.kind ? { kind: parsed.kind } : {}),
+    ...(parsed.depth ? { depth: parsed.depth } : {}),
+    ...(thinClient ? {} : {
+      source_kind: 'capture-cli',
+      // #5622: the owner maps a local file to its source-relative origin (or 'cli-file'); no file URI or home path is stored.
+      ...(parsed.filePath ? { local_file: resolve(parsed.filePath) } : { source_uri: parsed.stdin ? 'stdin' : 'cli-positional' }),
+      ingested_via: 'capture-cli',
+    }),
+  };
+}
+
 export async function runCapture(engine: BrainEngine | null, args: string[], options: { getEngine?: () => Promise<BrainEngine> } = {}): Promise<void> {
   const parsed = parseArgs(args);
   if ('help' in parsed) {
@@ -369,22 +399,7 @@ export async function runCapture(engine: BrainEngine | null, args: string[], opt
   try {
     const precondition = parseMutationPrecondition(parsed as unknown as Record<string, unknown>);
     requestId = precondition.request_id ?? randomUUID();
-    const params: Record<string, unknown> = {
-      content: rawBody,
-      ...precondition,
-      request_id: requestId,
-      ...(parsed.slug ? { slug: parsed.slug } : {}),
-      ...(parsed.type ? { type: parsed.type } : {}),
-      ...(parsed.who ? { who: parsed.who } : {}),
-      ...(parsed.what ? { what: parsed.what } : {}),
-      ...(parsed.where ? { where: parsed.where } : {}),
-      ...(parsed.kind ? { kind: parsed.kind } : {}),
-      ...(parsed.depth ? { depth: parsed.depth } : {}),
-      source_kind: 'capture-cli',
-      // #5622: the owner maps a local file to its source-relative origin (or 'cli-file'); no file URI or home path is stored.
-      ...(parsed.filePath ? isThinClient(cfg) ? {} : { local_file: resolve(parsed.filePath) } : { source_uri: parsed.stdin ? 'stdin' : 'cli-positional' }),
-      ingested_via: 'capture-cli',
-    };
+    const params = captureParams(parsed, rawBody, { ...precondition, request_id: requestId }, isThinClient(cfg));
     let result: Record<string, unknown>;
     if (isThinClient(cfg)) {
       const raw = await callRemoteTool(cfg!, 'capture', params, { timeoutMs: getCliOptions().timeoutMs ?? 30_000, writeWaitMs: currentCliWriteWait().waitMs });
@@ -461,6 +476,7 @@ export const __testing = {
   deriveTitle,
   explicitCaptureType,
   parseArgs,
+  captureParams,
   detectBinaryNullByte,
   detectBinarySignature,
   normalizeForHash,

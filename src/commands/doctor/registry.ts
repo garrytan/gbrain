@@ -79,6 +79,7 @@ import {
   salienceEntry,
 } from './checks/knowledge-health.ts';
 import { queueHealthEntry, indexAuditEntry, imageAssetsEntry } from './checks/queue-assets.ts';
+import { imageEmbeddingCoverageEntry } from './checks/image-embedding-coverage.ts';
 import { globalMaintenanceTimeoutsEntry } from './checks/global-maintenance-timeouts.ts';
 import { legacyJobAuthorityEntry } from './checks/legacy-job-authority.ts';
 import { legacyTokenGrantsEntry } from './checks/legacy-token-grants.ts';
@@ -173,6 +174,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   grantNewOpsEntry,
   indexAuditEntry,
   imageAssetsEntry,
+  imageEmbeddingCoverageEntry,
   syncFreshnessEntry,
   gitConvergenceEntry,
   decideHealthEntry,

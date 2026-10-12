@@ -1600,6 +1600,19 @@
           {
             "category": "brain",
             "details": {
+              "image_pages": 0,
+              "multimodal": false,
+              "null_source_path": 0,
+              "unsupported_holds": 0,
+              "without_image_vector": 0
+            },
+            "message": "No image pages indexed yet.",
+            "name": "image_embedding_coverage",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
               "stale_count": 1,
               "synced_recently_count": 1,
               "unchanged_count": 0,
@@ -4650,6 +4663,19 @@
             "category": "brain",
             "message": "OCR not in use (or no images ingested with OCR opt-in)",
             "name": "ocr_health",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "image_pages": 0,
+              "multimodal": false,
+              "null_source_path": 0,
+              "unsupported_holds": 0,
+              "without_image_vector": 0
+            },
+            "message": "No image pages indexed yet.",
+            "name": "image_embedding_coverage",
             "status": "ok"
           },
           {

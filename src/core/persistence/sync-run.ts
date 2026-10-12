@@ -14,7 +14,7 @@ import { isWriteCapacityWait, retryWriteAdmission } from './admission-retry.ts';
 import { assertPersistenceAccepting, awaitWrite, foregroundWriteCompletions, startPersistenceConsumer, type WriteWait } from './service.ts';
 import { assertSyncEntryOrigin, discoverManagedSync, resolveManagedSyncContext, readSyncFile, syncGit, type ManagedSyncContext, type SyncDiscovery } from './sync-discovery.ts';
 import { syncCursorOptions } from './sync-slices.ts';
-import { isImageFilePath } from '../sync.ts';
+import { isImageFilePath, isMultimodalEnabled } from '../sync.ts';
 import { assertSyncPageOrigin, sameSyncOrigin, syncOriginScope } from './sync-origin.ts';
 import { assertManagedSyncActive, assertSyncDispatchActive, managedSyncAuthority, validateSyncAuthority, validateManagedSyncOptions, syncProcessingOptions, SYNC_PROCESSING_KEYS, type SyncAuthority, type SyncProcessingOptions } from './sync-authority.ts';
 import { prepareManagedSyncMutation, type SyncCursorOptions, type SyncIntent } from './sync-prepare.ts';
@@ -43,7 +43,8 @@ import { laneApplyMsPerMember, lanePolicy, openLanes } from './sync-lanes.ts';
 import { isContentRefusal } from '../import-screen.ts';
 import { isRetryableConnError, isStatementTimeoutError } from '../retry-matcher.ts';
 import { SYNC_READ_BOUND, type TreeBlob } from './sync-blobs.ts';
-import { dryRunScreen, isSyncReadBound, loadSyncScreenRun, managedImageHold, pinnedBlob, pinnedContent, preparationStalledHold, prepareTimeFenceHold, screenFrozenImport, type HeldEntry, type SyncScreenRun } from './sync-screen.ts';
+import { dryRunScreen, heldImageEntry, isSyncReadBound, loadSyncScreenRun, oversizeHold, pinnedBlob, pinnedContent, pinnedImageBytes, preparationStalledHold, prepareTimeFenceHold, screenFrozenImport, type HeldEntry, type SyncScreenRun } from './sync-screen.ts';
+import { frozenImageIntent, sameImageBytes } from './sync-image.ts';
 import { fenceReceiptLocation } from '../fence-repair/refusal.ts';
 import { managedSyncWriteDiagnostic } from './sync-write-diagnostic.ts';
 import { fileChangedAfterAdmission, headCommittedBytes, originFaultHold, pageChangeProof, pageChangedHold, pinnedWorktreeConflict, receiptPageFaultHold, worktreeDirtyHold } from './sync-page-fault.ts';
@@ -318,14 +319,12 @@ async function freezeEntry(engine: BrainEngine, cursor: Cursor, key: string, ass
   // #5988: company-profile sources never hold; their approved manifest keeps refusing.
   const screening = entry?.action === 'import' && !cursor.companyPlan ? run.screen ?? null : null;
   let blob: TreeBlob | null = null, oversize: { size: number | null } | undefined;
+  // #6529: an image entry is frozen as its bytes (base64) for the coordinated image importer when multimodal embedding is on.
+  const image = !!entry && entry.action === 'import' && !cursor.companyPlan && isImageFilePath(entry.path);
+  let imageBytes: Buffer | null = null;
   if (entry) {
     assertSyncEntryOrigin(cursor, entry);
-    if (entry.action === 'import' && !cursor.companyPlan && isImageFilePath(entry.path)) {
-      const imageBlob = entry.working ? null : pinnedBlob(cursor, entry.path);
-      let bytes: Buffer | null = null;
-      if (!imageBlob) { try { bytes = readSyncFile(cursor.root, entry.path); } catch (error) { if (!isSyncReadBound(error)) throw error; } }
-      return { hold: managedImageHold(entry, bytes === null ? null : bytes.toString('utf8'), imageBlob) };
-    }
+    if (image && !isMultimodalEnabled()) return { hold: heldImageEntry(cursor, entry) };
     const originScope = syncOriginScope(cursor);
     // #5522: another cursor of this source may have imported this new file since enumeration.
     // #5984 G3: the page snapshot is read beside the origin check (they are independent reads of committed state).
@@ -343,12 +342,14 @@ async function freezeEntry(engine: BrainEngine, cursor: Cursor, key: string, ass
     let bytes: Buffer | null = null;
     try { bytes = readSyncFile(cursor.root, entry.path); }
     catch (error) { if (!screening || !isSyncReadBound(error)) throw error; oversize = { size: null }; }
-    if (screening && !entry.working) {
+    if ((screening || image) && !entry.working) {
       // #5988: an over-bound pinned blob is held by its size before its content is loaded.
       blob = pinnedBlob(cursor, entry.path);
       if (blob && blob.size > SYNC_READ_BOUND) oversize = { size: blob.size };
     }
     rawHash = bytes === null ? null : sha256(bytes);
+    if (image && oversize) return { hold: oversizeHold(entry, entry.slug!, entry.pageId ?? null, oversize.size, blob) };
+    if (image) imageBytes = pinnedImageBytes(cursor, entry);
     if (entry.action === 'import' && cursor.companyPlan) {
       const company = currentCompanyBrainSync(cursor.sourceId);
       const blob = company?.entries.get(entry.path);
@@ -357,15 +358,15 @@ async function freezeEntry(engine: BrainEngine, cursor: Cursor, key: string, ass
         `Source ${cursor.sourceId}'s approved company-brain content manifest no longer includes ${entry.path} for this run (its approval changed, or the file is no longer an included path), so nothing was imported for it. If the approval changed, inspect and approve the repository again first (gbrain sources inspect --help).`);
       content = (await readCommittedBlob(cursor.companyPlan.revision!, blob, cursor.companyPlan.limits)).toString('utf8');
       assertActive();
-    } else content = entry.action === 'import' && !oversize ? pinnedContent(cursor, entry) : null;
+    } else content = imageBytes ? frozenImageIntent(imageBytes).content : entry.action === 'import' && !oversize ? pinnedContent(cursor, entry) : null;
     // #6340: working-tree bytes that differ from the pinned blob but are committed at HEAD (a commit past the pin on a
     // live checkout) are imported as HEAD has them; the pin..HEAD diff later re-imports the same bytes as a no-op.
     // Uncommitted bytes keep the pinned content and reach the publication screen (idea from PR #6323).
-    if (entry.action === 'import' && !cursor.companyPlan && !entry.working && content !== null && rawHash !== null && rawHash !== sha256(content)) {
+    if (entry.action === 'import' && !cursor.companyPlan && !image && !entry.working && content !== null && rawHash !== null && rawHash !== sha256(content)) {
       const head = headCommittedBytes(cursor, entry.path);
       if (head && head.rawHash === rawHash) { content = head.content; blob = { oid: head.oid, size: bytes!.length }; }
     }
-    lineEndingOnly = bytes !== null && content !== null && bytes.equals(Buffer.from(bytes.toString('utf8'))) &&
+    lineEndingOnly = !image && bytes !== null && content !== null && bytes.equals(Buffer.from(bytes.toString('utf8'))) &&
       bytes.toString('utf8').replace(/\r\n/g, '\n') === content.replace(/\r\n/g, '\n');
     slug = entry.slug!; pageId = occupant?.page.id ?? entry.pageId ?? null; revision = occupant ? occupant.revision : entry.revision ?? null;
     frozenSnapshot = snapshot;
@@ -380,7 +381,7 @@ async function freezeEntry(engine: BrainEngine, cursor: Cursor, key: string, ass
       assertActive();
       return { hold: pageChangedHold(entry, slug, observedPageId ?? pageId, frozenIntent, { proof, revision: observedRevision, why }), overtaken: true };
     };
-    if (occupant && (content === null || !await sameContentAtOrigin(engine, cursor, entry, key, snapshot, content, rawHash, lineEndingOnly, run.signal))) {
+    if (occupant && (content === null || !(image ? sameImageBytes(imageBytes, occupant.page) : await sameContentAtOrigin(engine, cursor, entry, key, snapshot, content, rawHash, lineEndingOnly, run.signal)))) {
       if (holdsOn) return pageHold(`another run of this source imported page ${slug} from ${entry.path} with different content`, occupant.page.id, occupant.revision);
       throw syncRunRefusal('page_identity_changed', 'The imported origin no longer identifies exactly the accepted page.', retry,
         `Page ${slug} was imported from ${entry.path} by another run of source ${cursor.sourceId} with different content after this run enumerated it, so the run stopped before admitting it.`);
@@ -394,7 +395,7 @@ async function freezeEntry(engine: BrainEngine, cursor: Cursor, key: string, ass
       // The page moved but still holds exactly what this import carries: re-bind the entry to it (the waiver screen passes it).
       const rebind = entry.action === 'import' && !moved && !foreignOrigin && snapshot !== null && snapshot.page.deleted_at == null
         && (snapshot.page.id === pageId || pageId === null) && content !== null
-        && await sameContentAtOrigin(engine, cursor, entry, key, snapshot, content, rawHash, lineEndingOnly, run.signal);
+        && (image ? sameImageBytes(imageBytes, snapshot.page) : await sameContentAtOrigin(engine, cursor, entry, key, snapshot, content, rawHash, lineEndingOnly, run.signal));
       assertActive();
       if (!rebind) return pageHold(`page ${slug} was ${snapshot === null || snapshot.page.deleted_at != null ? 'deleted' : foreignOrigin ? 're-bound to another file' : 'edited'} in the database`,
         snapshot?.page.id ?? null, snapshot?.revision ?? null);
@@ -412,7 +413,7 @@ async function freezeEntry(engine: BrainEngine, cursor: Cursor, key: string, ass
           `Page ${moved.slug}, which ${entry.path} was renamed from, changed or was deleted after this sync enumerated it, so the run stopped before admitting the rename.`);
       }
     }
-    if (screening) {
+    if (screening && !image) {
       const hold = await screenFrozenImport(engine, { cursor, entry, slug, pageId, snapshot, content, rawHash, lineEndingOnly, blob, oversize,
         retryCommand: checkpointRetryCommand(retry) }, screening);
       assertActive();

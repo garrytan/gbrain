@@ -1874,6 +1874,8 @@ export async function importImageFile(
       if (opts.prepare) return opts.prepare({ slug: imageSlug, observedRevision: existing.knowledge_revision ?? null, noop: true,
         result: { slug: imageSlug, status: 'skipped', chunks: 0 }, validate: async () => {}, apply: async () => {} });
       await engine.transaction(tx => assertImportBase(tx, imageSlug, sourceOpts.sourceId, existing));
+      // #6529: an unchanged, complete image still records its origin (#4588's skip-path heal for images).
+      await refreshSourcePath(engine, imageSlug, sourceOpts.sourceId, relativePath, existing, null);
       return { slug: imageSlug, status: 'skipped', chunks: 0 };
     }
   }

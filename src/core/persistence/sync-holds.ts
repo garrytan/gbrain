@@ -43,6 +43,7 @@ import { fenceHoldFix, fenceHoldLocation, fencePreviewArgv, readFenceAutoRepair,
 import { contentHoldDocs, contentHoldFix } from '../content-repair/hold-fix.ts';
 import { STRUCTURED_WRITE_ADVICE, type FencesNormalized } from '../fence-repair/report.ts';
 import type { SyncRename } from './sync-discovery.ts';
+import { isMultimodalEnabled } from '../sync.ts';
 import { VERSION } from '../../version.ts';
 
 export const GIT_HOLD_OP = 'sync-hold';
@@ -387,10 +388,13 @@ export async function readGitHoldListing(engine: Exec, sourceIds: string[], limi
  * screened fences with an older version than this one. #6278: a
  * `preparation_stalled` hold re-screens when the gbrain version changed (the
  * stall was the owner's, not the file's); otherwise it waits for
- * `sources retry-held`.
+ * `sources retry-held`. #6529: a `managed_image_sync_unsupported` hold
+ * re-screens whenever multimodal embedding is on, since managed sync then
+ * imports the image instead of holding it.
  */
 export function holdRescreenDue(record: Pick<GitHoldRecord, 'code' | 'meta'>, retried: boolean): boolean {
   return retried || ['frontmatter_slug_conflict', 'file_too_large', 'rename_held', 'parser_regression'].includes(record.code)
+    || (record.code === 'managed_image_sync_unsupported' && isMultimodalEnabled())
     || record.meta.recovery_version < RECOVERY_VERSION
     || (record.code === 'invalid_fence' && (record.meta.fence_version ?? 0) < FENCE_VERSION)
     || (record.code === 'preparation_stalled' && record.meta.stall?.gbrain_version !== VERSION);
@@ -530,8 +534,8 @@ export function gitHoldFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'c
         why: 'The operator chose to reject external instruction-like content; changing that setting is a user decision. Editing the file and committing clears the hold on the next sync.' };
     case 'managed_image_sync_unsupported':
       return { argv: ['gbrain', 'config', 'get', 'sync.exclude'], consent: [], actor: 'user', requires_exclusive: false,
-        user_message: `Managed sync does not import images yet, so ${record.path} is held and the rest of source ${source} keeps syncing. Keeping images held is fine; to stop holding them, leave images out of the source with sync.exclude or turn off multimodal embedding.`,
-        why: 'Whether images stay in the source is the user\'s call. The hold clears when the file is deleted or excluded, and a held image is re-screened when it changes or on gbrain sources retry-held.',
+        user_message: `Multimodal embedding is off, so managed sync holds ${record.path} and the rest of source ${source} keeps syncing. Keeping images held is fine; to import them, set GBRAIN_EMBEDDING_MULTIMODAL=true for the gbrain process (image embeddings can cost money) and sync again; to stop holding them, leave images out of the source with sync.exclude.`,
+        why: 'Whether images are embedded is the user\'s call (it costs provider calls). With GBRAIN_EMBEDDING_MULTIMODAL=true the next sync imports every held image; the hold also clears when the file is deleted or excluded, and is re-screened when it changes or on gbrain sources retry-held.',
         verify: { argv: ['gbrain', 'sources', 'status', source, '--json'] } };
     case 'parser_regression':
       return { argv: ['gbrain', 'doctor', '--json'], consent: [], actor: 'user', requires_exclusive: false,
