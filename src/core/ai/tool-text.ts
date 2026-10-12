@@ -1,4 +1,4 @@
-import {stripReasoningBlocks} from '../llm-json';
+import {stripReasoningBlocks} from '../llm-json.ts';
 
 export function modelAnswerText(raw:string):string{
   if(!/<\/?(?:think|thinking)>/i.test(raw))return raw;

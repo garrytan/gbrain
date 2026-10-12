@@ -13,16 +13,22 @@ function execute(command:string,args:string[]):Promise<string>{
   return new Promise((resolve,reject)=>execFile(command,args,{windowsHide:true,timeout:4000,maxBuffer:512*1024},(error,stdout)=>error?reject(error):resolve(stdout)));
 }
 
+export function parseWindowsResourceSample(text:string):ResourceSample{
+  const sample=JSON.parse(text);
+  if(!sample||[sample.bytes,sample.availableBytes,sample.commitLimitBytes,sample.committedBytes].some(value=>typeof value!=='number'||!Number.isFinite(value)||value<0)
+    ||sample.commitLimitBytes===0||typeof sample.startedAt!=='string'||!Number.isFinite(Date.parse(sample.startedAt)))throw new Error('内存采样数据无效');
+  return {bytes:sample.bytes,availableBytes:sample.availableBytes,commitHeadroomBytes:Math.max(0,sample.commitLimitBytes-sample.committedBytes),startedAt:sample.startedAt};
+}
+
 export async function readSidecarResources(pid:number):Promise<ResourceSample|null>{
   if(!Number.isSafeInteger(pid)||pid<1)throw new Error('监控 PID 无效');
   try { process.kill(pid, 0); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === 'ESRCH') return null; throw error; }
   if(process.platform==='win32'){
-    const script=`$ErrorActionPreference='Stop'; $root=Get-Process -Id ${pid} -ErrorAction SilentlyContinue; if(!$root){exit 0}; $owned=[System.Collections.Generic.List[object]]::new(); $owned.Add($root); $ids=[System.Collections.Generic.HashSet[int]]::new(); [void]$ids.Add($root.Id); $bytes=[double]0; for($index=0; $index -lt $owned.Count; $index++){if($owned.Count -gt 128){throw 'Controlled process tree exceeds resource limit'}; $parent=$owned[$index]; $bytes += [double]$parent.PrivateMemorySize64; foreach($row in @(Get-CimInstance Win32_Process -Filter ('ParentProcessId='+$parent.Id) -Property ProcessId,CreationDate)){if(!$ids.Contains([int]$row.ProcessId) -and $row.CreationDate -ge $parent.StartTime){$child=Get-Process -Id $row.ProcessId -ErrorAction SilentlyContinue; if($child){[void]$ids.Add($child.Id); $owned.Add($child)}}}}; $memory=Get-CimInstance Win32_PerfRawData_PerfOS_Memory; @{bytes=$bytes; availableBytes=[double]$memory.AvailableBytes; commitHeadroomBytes=[double]$memory.CommitLimit-[double]$memory.CommittedBytes; startedAt=$root.StartTime.ToUniversalTime().ToString('o')} | ConvertTo-Json -Compress`;
+    const script=`$ErrorActionPreference='Stop'; $root=Get-Process -Id ${pid} -ErrorAction SilentlyContinue; if(!$root){exit 0}; $owned=[System.Collections.Generic.List[object]]::new(); $owned.Add($root); $ids=[System.Collections.Generic.HashSet[int]]::new(); [void]$ids.Add($root.Id); $bytes=[double]0; for($index=0; $index -lt $owned.Count; $index++){if($owned.Count -gt 128){throw 'Controlled process tree exceeds resource limit'}; $parent=$owned[$index]; $bytes += [double]$parent.PrivateMemorySize64; foreach($row in @(Get-CimInstance Win32_Process -Filter ('ParentProcessId='+$parent.Id) -Property ProcessId,CreationDate)){if(!$ids.Contains([int]$row.ProcessId) -and $row.CreationDate -ge $parent.StartTime){$child=Get-Process -Id $row.ProcessId -ErrorAction SilentlyContinue; if($child){[void]$ids.Add($child.Id); $owned.Add($child)}}}}; $memory=Get-CimInstance Win32_PerfRawData_PerfOS_Memory -Property AvailableBytes,CommitLimit,CommittedBytes; @{bytes=$bytes; availableBytes=$memory.AvailableBytes; commitLimitBytes=$memory.CommitLimit; committedBytes=$memory.CommittedBytes; startedAt=$root.StartTime.ToUniversalTime().ToString('o')} | ConvertTo-Json -Compress`;
     const text=await execute('powershell.exe',['-NoProfile','-NonInteractive','-Command',script]);
     if(!text.trim())return null;
-    const sample=JSON.parse(text) as ResourceSample;
-    if(!Number.isFinite(sample.bytes)||!Number.isFinite(sample.availableBytes)||!Number.isFinite(sample.commitHeadroomBytes))throw new Error('内存采样数据无效');
+    const sample=parseWindowsResourceSample(text);
     return {...sample,totalBytes:totalmem()};
   }
   const text=await execute('ps',['-e','-o','pid=,ppid=,rss=']);

@@ -1,6 +1,6 @@
 import {randomUUID} from 'node:crypto';
-import {modelAnswerText} from './tool-text';
-import {chatRequestFetch,IncompleteChatStream} from './chat-request-runtime';
+import {modelAnswerText} from './tool-text.ts';
+import {chatRequestFetch,IncompleteChatStream} from './chat-request-runtime.ts';
 
 export interface OllamaNativeToolCall { function: { name: string; arguments: Record<string, unknown> } }
 export interface OllamaNativeMessage {

@@ -1,5 +1,50 @@
 import { expect, test } from 'bun:test';
-import { SidecarResourceMonitor, resourcePressure, readSidecarResources } from '../src/main/sidecar/resource-monitor.js';
+import { SidecarResourceMonitor, resourcePressure, readSidecarResources, parseWindowsResourceSample } from '../src/main/sidecar/resource-monitor.js';
+
+const rawSample={bytes:100*1024**2,availableBytes:12*1024**3,commitLimitBytes:32*1024**3,committedBytes:16*1024**3,startedAt:new Date().toISOString()};
+function parseSample(value:unknown){return parseWindowsResourceSample(JSON.stringify(value));}
+
+test('缺失或异常的 Windows 计数器不能作为零余量，真实零余量仍触发保护',()=>{
+  for(const invalid of [
+    {...rawSample,availableBytes:null},
+    {...rawSample,commitLimitBytes:null},
+    {...rawSample,committedBytes:null},
+    {...rawSample,commitLimitBytes:0,committedBytes:0},
+    {...rawSample,availableBytes:-1},
+    {...rawSample,committedBytes:-1},
+    {...rawSample,availableBytes:'0'},
+    {...rawSample,bytes:null},
+    {...rawSample,commitLimitBytes:undefined},
+  ])expect(()=>parseSample(invalid)).toThrow('内存采样数据无效');
+  expect(resourcePressure(parseSample(rawSample))).toBeNull();
+  const exhausted=parseSample({...rawSample,committedBytes:rawSample.commitLimitBytes});
+  expect(exhausted.commitHeadroomBytes).toBe(0);
+  expect(resourcePressure(exhausted)).toContain('提交余量 0 MB');
+  expect(resourcePressure(parseSample({...rawSample,availableBytes:0}))).toContain('可用物理内存 0 MB');
+});
+
+test('Windows 采样缺失只记录诊断，下一次真实提交耗尽才停止后台任务并保留普通服务',async()=>{
+  let reads=0;let failures=0;const actions:string[]=[];const messages:string[]=[];
+  const monitor=new SidecarResourceMonitor(12345,async(message,_sample,action)=>{actions.push(action);messages.push(message);},{
+    intervalMs:10,read:async()=>parseSample(++reads===1?{...rawSample,committedBytes:null}:{...rawSample,committedBytes:rawSample.commitLimitBytes}),
+    onError:()=>{failures++;},
+  });
+  try{monitor.start();await Bun.sleep(80);}finally{monitor.stop();}
+  expect(failures).toBe(1);expect(actions).toEqual(['drain']);
+  expect(messages[0]).toContain('系统提交余量不足 256MB');
+  expect(messages[0]).toContain('可用物理内存 12288 MB');
+});
+
+test('当前 Windows 受控进程的真实采样包含有效物理和提交余量',async()=>{
+  if(process.platform!=='win32')return;
+  const sample=await readSidecarResources(process.pid);
+  expect(sample).not.toBeNull();
+  expect(sample!.bytes).toBeGreaterThan(0);
+  expect(sample!.availableBytes).toBeGreaterThanOrEqual(0);
+  expect(sample!.commitHeadroomBytes).toBeGreaterThanOrEqual(0);
+  expect(sample!.totalBytes).toBeGreaterThan(0);
+  expect(Number.isFinite(Date.parse(sample!.startedAt!))).toBe(true);
+},15000);
 
 test('受控进程正常退出后返回空采样，不误报为监控失败',async()=>{
   const child=Bun.spawn([process.execPath,'-e','process.exit(0)'],{stdout:'ignore',stderr:'ignore'});

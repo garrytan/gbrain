@@ -1,5 +1,20 @@
 # Bug 修复台账
 
+## 2026-10-12 PMBrain 1.4.56 Windows 内存保护误报与原因不清
+
+- 时间：2026-10-12
+- 版本号：PMBrain 1.4.56（统一产品版本，Schema 134 未变）
+- 标题：Windows 缺失计数器被当作零余量，资源保护无法区分物理内存和提交余量
+- 编程工具：Codex 大模型：GPT-6
+- 描述：用户反馈物理内存充足仍提示资源不足。现有保护取物理可用内存与系统提交余量的较小值，物理充足时提交余量仍可不足；Windows 脚本又将空计数器强转为 0，可能误停后台任务。截图没有实测值，不能确定现场究竟是哪种原因。本机复核空值强转为 0，但当前真实采样两项余量充足。
+- 修复：保留原始计数器值，在计算提交余量前校验缺失、类型、负值和无效提交上限；失败沿用诊断路径，继续采样。真实零余量仍保护，256MB 阈值、软压力降并发、后台停止和 30 秒持续耗尽的紧急退出流程不变。提示区分物理不足、提交不足及两项同时不足，显示实测余量和处理建议。
+- 是否完成：代码、定向回归、版本资源、当前源码页面、Windows runtime 和本地 CI 预演完成；准确新 SHA Actions 与安装包待用户提交打包后验收。
+- 最终结果：修复前新增回归 4 项失败、8 项通过；修复后资源与 Desktop 生命周期 31 项/125 断言通过，包含真实 Windows 当前进程采样、缺失计数器不停止、真实零余量保护、阈值边界、正常服务保留及持续耗尽退出。隔离 PGLite 原任务继续与正常工作集/软压力回归 2 项/20 断言通过。
+- 资源与界面：Admin/内嵌 47 个资源、Desktop 和 Sidecar 1.4.56 已构建。Root/Desktop 类型检查及 Windows Bun、Sidecar、Canvas、PGLite runtime 通过；导入路径相关请求/流/文本测试 32 项/2290 断言通过。当前源码隔离页面 3192 验证 v1.4.56、刷新后正常、未登录资源停止 401、已登录停止 202、普通服务健康 200，无页面脚本错误；Codex 页面展示返回 queued。证据 .codex/resource-1456 的 before.log、after-final.log、runtime-regression.log、import-regression-final.log、version-ui.json、pressure-examples.json、build-admin.log、build-desktop.log、build-sidecar.log、runtime-final.log。
+- 本地门禁：verify 40 项通过（默认八路、300 秒单项期限，206 秒结束）；CI 预演 235 项/564 断言通过并成功退出。统一版本及 git diff --check 通过，生成资源门禁重建后无漂移；证据 .codex/resource-1456/ci-preview.log。未用本地通过替代准确新 SHA 的远端验收。
+- Skill/插件与工作流：pmbrain-ci-governance、webapp-testing；codex-app-tools 用于依赖定位和当前源码页面展示，无子代理。规则与历史定位 → 截图对应触发链及 Microsoft 内存定义 → 采样缺陷与失败回归 → 最小校验和具体提示 → 生命周期及原任务恢复 → 版本资源、当前页面和本地门禁。
+- 与规划差异和边界：Desktop 类型检查先后发现 HEAD 已有五处扩展名缺失，顺带补齐三个 AI 文件的导入路径，未修改请求策略。没有修改数据库 Schema、正式任务、知识库、Wiki、原始资料、向量或系统分页设置；没有调整保护阈值、自动继续任务或关闭提交余量保护。未运行本地全量测试、Git 提交推送或 build:win；现场唯一触发原因仍待新版实测信息核验。
+
 ## 2026-10-11 PMBrain 1.4.55 CI 实体中断测试失败
 
 - 时间：2026-10-11

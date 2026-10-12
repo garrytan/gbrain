@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { EventEmitter } from 'node:events';
 import { createServer } from 'node:http';
 import { SidecarManager, classifySidecarStartupError } from '../src/main/sidecar-manager.js';
+import { memoryPressure } from '../../shared/memory-budget.js';
 
 const logger = { write() {}, close() {}, directory: '', filePath: '' } as any;
 
@@ -28,6 +29,20 @@ describe('desktop sidecar manager', () => {
     await (manager as any).stopForResourcePressure(child,'降低并发',{bytes:9*1024**3,totalBytes:32*1024**3,availableBytes:10*1024**3},'adjust');
     await (manager as any).stopForResourcePressure(child,'恢复',{bytes:3*1024**3,totalBytes:32*1024**3,availableBytes:10*1024**3},'adjust');
     expect(requests).toEqual([{action:'adjust',constrained:true},{action:'adjust',constrained:false}]);
+    expect((manager as any).child).toBe(child);expect((manager as any).stopping).toBe(false);
+  });
+  test('提交余量不足时保留具体原因，只停止后台任务，普通服务进程继续运行',async()=>{
+    const manager=new SidecarManager({packaged:false,appPath:'',resourcesPath:'',port:3131,bootstrapToken:'isolated-token',clientVersion:'1.4.56',logger});
+    const child=new EventEmitter() as any;child.pid=12345;child.exitCode=null;
+    (manager as any).child=child;const requests:any[]=[];
+    (manager as any).adminRequest=async(_path:string,init:RequestInit)=>{requests.push(JSON.parse(String(init.body)));};
+    (manager as any).terminateChild=()=>{throw new Error('后台保护不能终止普通服务');};
+    const sample={bytes:1024**3,totalBytes:32*1024**3,availableBytes:12*1024**3,commitHeadroomBytes:200*1024**2};
+    await (manager as any).stopForResourcePressure(child,memoryPressure(sample).reason,sample,'drain');
+    expect(requests).toHaveLength(1);
+    expect(requests[0].message).toContain('系统提交余量不足 256MB');
+    expect(requests[0].message).toContain('可用物理内存 12288 MB，提交余量 200 MB');
+    expect(requests[0].message).toContain('普通服务继续运行');
     expect((manager as any).child).toBe(child);expect((manager as any).stopping).toBe(false);
   });
   test('PGLite 数据库打开失败时立即停止，不连续重启多个 sidecar', async () => {
