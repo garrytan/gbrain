@@ -1,4 +1,5 @@
-import { privateKeySpans } from './secret-scan.ts';
+import { applyRedaction, planRedaction, privateKeySpans } from './secret-scan.ts';
+import { redactionPolicy } from './redaction-policy.ts';
 
 export const PRIVATE_KEY_PROJECTION_TOKEN = '<REDACTED:private_key_pem>';
 
@@ -28,4 +29,22 @@ export function credentialSafeProjection(text: string): string {
   }
   parts.push(text.slice(cursor));
   return parts.join('');
+}
+
+/**
+ * The retrieval text of a canonical body under the redaction policy: every
+ * private-key span as above, then — when `redaction.projection_classes` names
+ * any class — each span the scanner claims for those classes replaced by its
+ * `<REDACTED:pattern>` token. Chunkers and evidence delivery cut from this
+ * text, so chunks, embedding input and delivered evidence carry the tokens;
+ * the stored body and raw page reads are unchanged. With no classes set this
+ * is `credentialSafeProjection` exactly. Identifier values never span lines,
+ * so line counts are preserved as they are for keys.
+ */
+export function retrievalTextProjection(text: string): string {
+  const base = credentialSafeProjection(text);
+  const classes = redactionPolicy().projection;
+  if (classes.length === 0 || !base) return base;
+  const plan = planRedaction(base, { classes });
+  return plan.claimed.length === 0 ? base : applyRedaction(plan);
 }

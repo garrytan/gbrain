@@ -303,6 +303,7 @@ export const timelineHistoryEntry: DoctorEntry = {
     'derived_visibility',
     'safe_index_pending',
     'credential_projection_pending',
+    'redaction_projection_pending',
     'connector_checkpoints',
     'persistence_request_indexes',
     'persistence_request_growth',

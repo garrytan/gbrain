@@ -35,6 +35,7 @@ import type { FenceMessageLocation } from './fence-repair/reasons.ts';
 import { fenceIssuesWire, fenceStep, type FenceIssueWire } from './fence-repair/tier1.ts';
 import type { FenceCtx, FenceFix, FencePage, FenceReason } from './fence-repair/types.ts';
 import { effectiveVisibility } from './search/private-visibility.ts';
+import { applyOnWriteRedaction, type RedactionReceipt } from './redaction-on-write.ts';
 
 export const MAX_FILE_SIZE = 5_000_000; // 5MB
 
@@ -100,6 +101,8 @@ export interface ContentDisposition {
   flagReason?: 'markup_heavy' | 'oversized' | 'instruction_like';
   /** The write-gate assessment, when the caller passed `writeGate`. */
   gate: WriteGateAssessment | null;
+  /** `redaction.on_write` receipts (pattern + fingerprint per claimed span, never a value); absent when nothing was redacted. */
+  redacted?: RedactionReceipt[];
   /** Records the gate's flag/quarantine receipt for the written page inside the publication transaction. */
   persistReceipt: (tx: BrainEngine, page: { existed: boolean }) => Promise<void>;
 }
@@ -137,6 +140,10 @@ export async function settleContentDisposition(engine: BrainEngine, parsed: Pars
   let pageFlagged = false;
   let pageFlagReason: ContentDisposition['flagReason'];
   const sanityCfg = await loadImportSanityConfig(engine);
+  // Redaction seam (redaction-on-write.ts): the policy was published by the config snapshot the
+  // sanity-config load just read. After the guardrail hook (observers saw raw text), before every
+  // gate and the hash, so the stored body, its hash and its projections agree.
+  const redacted = applyOnWriteRedaction(parsed, ctx.writeGate?.tier);
   const sanityDisabled = sanityCfg.disabled;
   // Disposition for the high-confidence junk path: quarantine (hide) by
   // default, or reject (throw → sync-failure) when the operator opts in.
@@ -256,7 +263,7 @@ export async function settleContentDisposition(engine: BrainEngine, parsed: Pars
     }
   }
   return {
-    quarantined: pageQuarantined, flagged: pageFlagged, ...(pageFlagReason ? { flagReason: pageFlagReason } : {}), gate,
+    quarantined: pageQuarantined, flagged: pageFlagged, ...(pageFlagReason ? { flagReason: pageFlagReason } : {}), gate, ...(redacted.length ? { redacted } : {}),
     persistReceipt: async (tx, page) => {
       // A page created by this write has a fresh id, so no receipt can name it yet (#6007: no delete on create).
       if (gate?.ran && page.existed) await clearStalePageGateReceipts(tx, { slug, sourceId: sourceId ?? 'default', contentHash: gate.contentHash });

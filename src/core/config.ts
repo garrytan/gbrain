@@ -1603,6 +1603,11 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // #5575 write gate (local-only): quarantine|flag|reject|off and flag|off; read by import-screen.ts.
   'write_gate.external_mode',
   'write_gate.agent_mode',
+  // Redaction seam (DB plane; read by redaction-policy.ts via the config snapshot): class lists + on-write scope.
+  'redaction.projection_classes',
+  'redaction.egress_classes',
+  'redaction.on_write',
+  'redaction.on_write_classes',
   // #5575 read side (local-only): label|filter and suppress|allow; read by eligibility/policy.ts.
   'trust.read_policy',
   'trust.agent_activation',

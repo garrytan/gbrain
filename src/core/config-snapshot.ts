@@ -18,6 +18,8 @@
  * the next command exactly as before.
  */
 
+import { publishRedactionPolicy } from './redaction-policy.ts';
+
 /** The only thing config resolution needs from an engine. */
 export interface ConfigReader {
   getConfig(key: string): Promise<string | null | undefined>;
@@ -41,7 +43,12 @@ export async function loadConfigSnapshot(
 ): Promise<Record<string, string> | null> {
   if (!engine || typeof engine.getAllConfig !== 'function') return null;
   try {
-    return await engine.getAllConfig();
+    const rows = await engine.getAllConfig();
+    // The redaction policy (redaction-policy.ts) reads its DB-plane keys from
+    // whichever brain's config was read last: the chunkers are synchronous and
+    // hold no config handle, so this is their only source.
+    publishRedactionPolicy(rows);
+    return rows;
   } catch {
     return null;
   }

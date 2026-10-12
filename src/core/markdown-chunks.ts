@@ -3,7 +3,7 @@ import type { BrainEngine } from './engine.ts';
 import { chunkText } from './chunkers/recursive.ts';
 import { chunkCodeText, detectCodeLanguage } from './chunkers/code.ts';
 import { sanitizeRemoteBody } from './remote-body.ts';
-import { credentialSafeProjection } from './credential-projection.ts';
+import { retrievalTextProjection } from './credential-projection.ts';
 import { scanFencedBlocks, MAX_FENCES_PER_PAGE } from './fence-scan.ts';
 import { isEmbedSkipped } from './embed-skip.ts';
 import { isQuarantined } from './quarantine.ts';
@@ -64,7 +64,7 @@ async function extractFencedChunks(
   markdown: string,
   startChunkIndex: number,
 ): Promise<ChunkInput[]> {
-  markdown = credentialSafeProjection(sanitizeRemoteBody(markdown));
+  markdown = retrievalTextProjection(sanitizeRemoteBody(markdown));
   const out: ChunkInput[] = [];
   // Fast path: most pages (prose, tables, converted docs) contain no code
   // fence at all, so there is nothing for this function to extract — skip

@@ -24,7 +24,7 @@ import { countCJKAwareWords, isCJKDominant, wordStats, concatWordStats, wordCoun
 import { estimateEmbedTokens, fitsEmbedTokens, DEFAULT_MAX_CHUNK_TOKENS } from './token-estimate.ts';
 import { safeSplitIndex } from '../text-safe.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
-import { credentialSafeProjection } from '../credential-projection.ts';
+import { retrievalTextProjection } from '../credential-projection.ts';
 import { SAFE_FENCE_CHUNKER_VERSION } from '../search/safe-chunks.ts';
 
 /**
@@ -109,7 +109,7 @@ export function chunkText(text: string, opts?: ChunkOptions): TextChunk[] {
   // v0.32.2: also strip private facts (Codex R2-#1). World facts stay so
   // search retains its public-knowledge surface; private rows are filtered
   // out at the fence-row level via stripFactsFence({keepVisibility:['world']}).
-  const stripped = credentialSafeProjection(sanitizeRemoteBody(text));
+  const stripped = retrievalTextProjection(sanitizeRemoteBody(text));
   if (!stripped || stripped.trim().length === 0) return [];
 
   const wordCount = countWords(stripped);

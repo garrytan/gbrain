@@ -31,6 +31,7 @@
 import { existsSync, readFileSync, statSync } from 'fs';
 import { isAbsolute, join, relative, sep } from 'path';
 import { createHash } from 'crypto';
+import { CONTACT_PATTERNS, IDENTIFIER_CLASS_SINCE, IDENTIFIER_PATTERNS } from './identifier-patterns.ts';
 import {
   LABELED_CREDENTIAL_PATTERNS,
   ECHO_MIN_CHARS_LABELED,
@@ -87,6 +88,13 @@ export interface ScanOpts {
    * transcript audit only. Default false.
    */
   labeledCredentials?: boolean;
+  /**
+   * Pattern classes to run. Default `['credential']` (every rule above plus
+   * private keys). `identifier` and `contact` (`identifier-patterns.ts`) are
+   * opt-in per the redaction policy; a list without `credential` runs no
+   * credential rule and no private-key claim.
+   */
+  classes?: ReadonlyArray<'credential' | 'identifier' | 'contact'>;
 }
 
 /** Name of the per-workspace allowlist override file. */
@@ -694,14 +702,16 @@ function assignmentValueIsSecretShaped(value: string): boolean {
 }
 
 function compilePatterns(opts: ScanOpts): CompiledPattern[] {
-  const out: CompiledPattern[] = CORE_PATTERNS.map((p) => ({
+  const classes = opts.classes ?? ['credential'];
+  const core = [...(classes.includes('credential') ? CORE_PATTERNS : []), ...(classes.includes('identifier') ? IDENTIFIER_PATTERNS : []), ...(classes.includes('contact') ? CONTACT_PATTERNS : [])];
+  const out: CompiledPattern[] = core.map((p) => ({
     name: p.name,
-    // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp -- p.source is a compile-time literal from CORE_PATTERNS (never caller input); every pattern uses bounded quantifiers, pinned by test/secret-scan-perf.test.ts
+    // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp -- p.source is a compile-time literal from CORE_PATTERNS / identifier-patterns.ts (never caller input); every pattern uses bounded quantifiers, pinned by test/secret-scan-perf.test.ts + test/identifier-patterns.test.ts
     re: new RegExp(p.prebuilt ? p.source : `(^|[^A-Za-z0-9_])(${p.source})`, p.flags ?? 'g'),
     ...(p.precheck ? { precheck: p.precheck } : {}),
     ...(p.validate ? { validate: p.validate } : {}),
   }));
-  if (opts.highEntropy) {
+  if (opts.highEntropy && classes.includes('credential')) {
     // Group layout matches the core shape: group 1 = the keyword anchor
     // through the `=`/`:` (and opening quote), group 2 = value.
     for (const source of [ASSIGNMENT_QUOTED_SOURCE, ASSIGNMENT_UNQUOTED_SOURCE]) {
@@ -714,7 +724,7 @@ function compilePatterns(opts: ScanOpts): CompiledPattern[] {
       });
     }
   }
-  if (opts.labeledCredentials) {
+  if (opts.labeledCredentials && classes.includes('credential')) {
     for (const p of LABELED_CREDENTIAL_PATTERNS) {
       out.push({
         name: 'labeled_credential',
@@ -951,7 +961,7 @@ function scanInternal(text: string, opts: ScanOpts): RawHit[] {
   // PEM blocks first: their full-span value must be redacted before any
   // per-line replacement can touch the region (base64 bodies never match the
   // named patterns, so order is a belt-and-suspenders guarantee).
-  const pem = pemClaims(text);
+  const pem = (opts.classes ?? ['credential']).includes('credential') ? pemClaims(text) : [];
   const hits: RawHit[] = scanPemBlocks(text, pem);
   const lines = text.split('\n');
   // No per-line length cap, deliberately: a secret on a 1 MB minified line
@@ -1132,6 +1142,7 @@ function sha256Hex(value: string): string {
 const PATTERN_SINCE: ReadonlyMap<string, string> = new Map([
   ...CORE_PATTERNS.flatMap((p): Array<[string, string]> => (p.since ? [[p.name, p.since]] : [])),
   ['private_key_pem', SECURITY_WAVE_SINCE],
+  ...[...IDENTIFIER_PATTERNS, ...CONTACT_PATTERNS].map((p): [string, string] => [p.name, IDENTIFIER_CLASS_SINCE]),
 ]);
 
 /** The gbrain version that added or last changed `pattern`'s rule, if tracked. */

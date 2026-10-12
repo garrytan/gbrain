@@ -138,6 +138,8 @@ export interface ImportResult {
   /** Which flag tier fired, when `flagged` (`instruction_like`: the #5575 write gate). */
   flag_reason?: 'markup_heavy' | 'oversized' | 'instruction_like';
   gate?: WriteGateAssessment; // #5575: the write-gate assessment, when the caller passed writeGate
+  /** `redaction.on_write` receipts for this write (pattern + fingerprint per claimed span, never a value). */
+  redacted?: import('./redaction-on-write.ts').RedactionReceipt[];
   /** #5050: unchanged content below the safe-chunk fence was re-sealed; chunks left to embed. */
   resealed?: { pendingChunks: number; pendingChars: number };
   /**
@@ -847,7 +849,7 @@ export async function importFromContent(
   if (opts.prepare) return opts.prepare({
     slug, parsedPage, observedRevision: (existing as (typeof existing & { knowledge_revision?: string }) | null)?.knowledge_revision ?? null,
     noop: false, contentHash: hash, result: { slug, status: 'imported', chunks: chunks.length, parsedPage,
-      ...(pageQuarantined ? { quarantined: true } : {}), ...(pageFlagged ? { flagged: true, flag_reason: pageFlagReason } : {}), ...(disposition.gate ? { gate: disposition.gate } : {}), ...fences.fields },
+      ...(pageQuarantined ? { quarantined: true } : {}), ...(pageFlagged ? { flagged: true, flag_reason: pageFlagReason } : {}), ...(disposition.gate ? { gate: disposition.gate } : {}), ...(disposition.redacted ? { redacted: disposition.redacted } : {}), ...fences.fields },
     validate: tx => assertPreparedFactWithdrawals(tx, txOpts.sourceId, parsed.compiled_truth, parsed.timeline || '', slug),
     apply: applyPrepared,
   });
@@ -889,7 +891,7 @@ export async function importFromContent(
     chunks: chunks.length,
     parsedPage,
     ...(pageQuarantined ? { quarantined: true } : {}),
-    ...(pageFlagged ? { flagged: true, flag_reason: pageFlagReason } : {}),
+    ...(pageFlagged ? { flagged: true, flag_reason: pageFlagReason } : {}), ...(disposition.redacted ? { redacted: disposition.redacted } : {}),
     ...(typeWarning ? { type_warning: typeWarning } : {}),
     ...(embeddingDeferred ? { embedding_deferred: true } : {}), ...fences.fields,
   };

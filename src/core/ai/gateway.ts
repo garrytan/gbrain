@@ -67,6 +67,7 @@ import { embeddingModelNotFoundHint, gatewayModelNotFoundHint } from './model-no
 import { fitMatryoshkaPrefix, isEmbeddingZeroNormError, screenAlignedEmbeddings, screenEmbeddings, sendableEmbeddingInputs } from './embedding-guard.ts';
 import { getProviderCapabilities } from './capabilities.ts';
 import { runGuardrails, hasGuardrails, type GuardrailHook } from '../guardrails.ts';
+import { redactProviderMessages, redactProviderText, redactProviderTexts } from './provider-redaction.ts';
 import { loadConfig } from '../config.ts';
 import type { GBrainConfig } from '../config.ts';
 import { mergedProviderEnv } from './provider-env.ts';
@@ -1586,7 +1587,7 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
   const resolveTarget = opts?.embeddingModel ?? getEmbeddingModel();
   const tracker = __budgetStore.getStore() ?? null;
   const { model, recipe, modelId } = await resolveEmbeddingProvider(resolveTarget);
-  const truncated = truncateEmbedInputs(texts);
+  const truncated = truncateEmbedInputs(redactProviderTexts(texts, 'embed')); // redaction seam: egress policy, after the guardrail seam
 
   // Dim override (D10) — when caller passes `dimensions`, use it. Otherwise
   // fall back to the global cfg default. dimsProviderOptions throws a
@@ -2479,7 +2480,7 @@ export async function expand(query: string): Promise<string[]> {
     'Return ONLY the JSON object. Do NOT include the original query in the result.',
     'Each rewrite should emphasize different aspects, synonyms, or framings.',
     '',
-    `Query: ${query}`,
+    `Query: ${redactProviderText(query, 'expand')}`,
   ].join('\n');
 
   // #4121: expand() calls generateObject/generateText directly and never
@@ -3699,10 +3700,10 @@ async function chatAdmitted(opts: ChatOpts, admitted: {
   const systemParam = cacheControlValue && opts.system
     ? {
         role: 'system' as const,
-        content: opts.system,
+        content: redactProviderText(opts.system, 'chat_system'),
         providerOptions: { anthropic: { cacheControl: cacheControlValue } },
       }
-    : opts.system;
+    : redactProviderText(opts.system, 'chat_system');
 
   // #4863: schema-constrained decoding for openai-compatible backends that
   // honor json_schema. Gated on the recipe declaration so a backend that
@@ -3724,7 +3725,7 @@ async function chatAdmitted(opts: ChatOpts, admitted: {
   const generate = (out: typeof output) => guardedGeneration(modelStr, _generateTextTransport, {
     model,
     system: systemParam,
-    messages: toModelMessages(repairToolPairing(opts.messages), cacheControlValue) as any,
+    messages: toModelMessages(repairToolPairing(redactProviderMessages(opts.messages)), cacheControlValue) as any, // redaction seam: after the guardrail observe above
     tools: opts.tools && opts.tools.length > 0 ? tools : undefined,
     maxOutputTokens,
     ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
@@ -4287,6 +4288,7 @@ export async function rerank(input: RerankInput): Promise<RerankResult[]> {
     return [];
   }
 
+  input = { ...input, query: redactProviderText(input.query, 'rerank'), documents: redactProviderTexts(input.documents, 'rerank') }; // redaction seam (egress policy)
   const modelStr =
     input.model ??
     getRerankerModel() ??
