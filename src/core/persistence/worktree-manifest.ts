@@ -20,7 +20,7 @@
  * outside the root (including an index entry with a `..` segment) refuse with
  * `writer_manifest_unsafe` before anything is read.
  */
-import { lstatSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
+import { lstatSync, readdirSync, readFileSync, realpathSync, type Stats } from 'node:fs';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { opError } from '../ops/contract.ts';
 import { createProgress, type ProgressOptions } from '../progress.ts';
@@ -157,10 +157,29 @@ function trackedBytes(canonical: string, rel: string): Buffer | null {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT' || (error as NodeJS.ErrnoException).code === 'ENOTDIR') return null;
     throw error;
   }
-  if (real !== path || lstatSync(path).isSymbolicLink()) throw unsafe('The canonical checkout manifest requires a symlink-free checkout.',
+  const info = lstatSync(path);
+  if (info.isSymbolicLink() || (real !== path && !sameUnicodeFile(canonical, rel, path, real, info))) throw unsafe('The canonical checkout manifest requires a symlink-free checkout.',
     `${rel} in the checkout resolves through a symlink, so no manifest was recorded. Ask the user to replace the link with a real file or directory (or remove it), then run the step again.`);
-  if (!lstatSync(path).isFile()) return null;
+  if (!info.isFile()) return null;
   return readFileSync(path);
+}
+
+/** APFS can return NFD for an NFC Git path. String normalization alone is
+ * not a confinement proof: a symlink can have a canonically equivalent name,
+ * and on other filesystems both spellings can name different files. Check
+ * each component and require the actual same file before accepting the alias.
+ * Keep the ordinary byte-identical realpath fast path unchanged.
+ */
+function sameUnicodeFile(canonical: string, rel: string, path: string, real: string, info: Stats): boolean {
+  if (real.normalize('NFC') !== path.normalize('NFC')) return false;
+  let component = canonical;
+  for (const part of rel.split('/')) {
+    component = join(component, part);
+    if (lstatSync(component).isSymbolicLink()) return false;
+  }
+  const resolved = lstatSync(real);
+  return info.isFile() && resolved.isFile() && info.ino !== 0 &&
+    info.dev === resolved.dev && info.ino === resolved.ino;
 }
 
 /** Drops a legacy per-file map from a stored manifest, keeping every other field. */

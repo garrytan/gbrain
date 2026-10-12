@@ -12,6 +12,7 @@ import { importFromContent } from '../src/core/import-file.ts';
 import { serializePageToMarkdown } from '../src/core/markdown.ts';
 import { resolveSlugForPath } from '../src/core/sync.ts';
 import { claimWorktree, getWorktreeBinding } from '../src/core/persistence/ownership.ts';
+import { worktreeManifest } from '../src/core/persistence/worktree-manifest.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { prepareManagedSyncMutation, type SyncIntent } from '../src/core/persistence/sync-prepare.ts';
 import { assertDistinctSyncOrigins, syncOriginPath } from '../src/core/persistence/sync-origin.ts';
@@ -86,6 +87,22 @@ async function legacyDeletion(engine: BrainEngine, f: Awaited<ReturnType<typeof 
     authority: cursor.authority.writer, callerIntent: intent, intent });
   return { requestId, intent, cursor, entry };
 }
+
+// #6510: the native matrix exercises the real APFS Unicode spelling behavior,
+// complementing the deterministic realpath-spelling and symlink regressions.
+test('native writer manifest hashes Unicode Git paths without rewriting their keys', async () => {
+  const root = join(home, 'unicode-manifest'); mkdirSync(root);
+  const git = await makeGitFixture(root);
+  execFileSync('git', ['-C', root, 'config', 'core.precomposeunicode', 'true']);
+  const path = 'r\u00e9sum\u00e9/caf\u00e9.md';
+  mkdirSync(join(root, 'r\u00e9sum\u00e9'));
+  writeFileSync(join(root, path), content);
+  git.commitAll('Add synthetic Unicode path');
+  const first = worktreeManifest(root, { withFiles: true });
+  expect(first).toMatchObject({ scope: 'git', file_count: 1 });
+  expect(first.files).toEqual({ [path]: sha256(content) });
+  expect(worktreeManifest(root).digest).toBe(first.digest);
+});
 
 test('origin comparison is Windows-specific and never case-folds POSIX identity', () => {
   expect(syncOriginPath('notes\\example.md', 'win32')).toBe('notes/example.md');
