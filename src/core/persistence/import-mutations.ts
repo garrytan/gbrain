@@ -274,6 +274,9 @@ async function submitManagedImports(ctx: OperationContext, batch: string, params
 /** Runs the managed-import preparer on an unadmitted request; true only when the no-op kernel finds nothing to publish. */
 async function unchangedManagedImport(ctx: OperationContext, binding: WorktreeBinding, intent: ManagedImportIntent, snapshot: PageSnapshot | null): Promise<boolean> {
   if (!snapshot) return false;
+  // #6529: an image's preparation is provider work (OCR, the multimodal vector) unless its index is already complete, so the
+  // screen would pay for every incomplete image and the owner would pay again. The owner decides the hash no-op (one importer call).
+  if (isImageFilePath(intent.sourcePath)) return false;
   try {
     const authority = await submissionAuthority(ctx, 'put_page', binding.source_id, binding.source_incarnation, intent.slug);
     const row = screeningRequest({ source_id: binding.source_id, source_incarnation: binding.source_incarnation, slug: intent.slug,

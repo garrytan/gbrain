@@ -623,6 +623,10 @@
       },
       {
         "category": "brain",
+        "name": "image_embedding_coverage"
+      },
+      {
+        "category": "brain",
         "name": "sync_freshness"
       },
       {

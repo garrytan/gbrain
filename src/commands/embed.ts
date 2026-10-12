@@ -322,6 +322,8 @@ export interface EmbedResult {
    * misreporting embed failures.
    */
   lock_skipped?: boolean;
+  /** #6529: the image sweep a `--stale` run on a multimodal install made before its text drain (core/embed-stale-images.ts). */
+  images?: StaleImageSweepResult;
   /**
    * Set when the single-flight lock heartbeat discovered the lock was stolen
    * (refresh matched 0 rows) or kept erroring: mutual exclusion is gone, so
@@ -994,7 +996,9 @@ export async function runEmbed(engine: BrainEngine, args: string[], selectedConf
 
   if (costCap) opts.signal = costCap.signal;
   try {
-    const result = costCap ? await costCap.metered(() => runEmbedCore(engine, opts)) : await runEmbedCore(engine, opts);
+    // #6529: a multimodal install rebuilds its image pages first, inside the same cap (lazy: keeps import-file out of embed's graph).
+    const images = stale && slugsIdx < 0 ? await (await import('../core/embed-stale-images.ts')).runStaleImageSweepFirst(engine, { sourceId, dryRun, costCap }) : null;
+    const result = (await import('../core/embed-stale-images.ts')).foldImageSweep(costCap ? await costCap.metered(() => runEmbedCore(engine, opts)) : await runEmbedCore(engine, opts), images);
     if (progressDone !== null) progress.finish();
     const capped = costCap?.hit();
     if (capped) {

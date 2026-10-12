@@ -590,6 +590,24 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
         "type": "string",
         "description": "Event depth page to link."
       },
+      "source_kind": {
+        "type": "string",
+        "required": false,
+        "fullSurfaceOnly": true,
+        "description": "Trusted local CLI provenance (capture-cli); a remote caller's value is replaced by the server-stamped mcp:capture."
+      },
+      "source_uri": {
+        "type": "string",
+        "required": false,
+        "fullSurfaceOnly": true,
+        "description": "Trusted local CLI provenance (stdin, cli-positional); a remote caller's value is replaced by the server-stamped mcp:capture."
+      },
+      "ingested_via": {
+        "type": "string",
+        "required": false,
+        "fullSurfaceOnly": true,
+        "description": "Trusted local CLI provenance (capture-cli); a remote caller's value is replaced by the server-stamped mcp:capture."
+      },
       "content": {
         "type": "string",
         "required": true,

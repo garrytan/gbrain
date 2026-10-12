@@ -133,6 +133,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'extraction_date_grounding',
   'hidden_by_search_policy',
   'image_assets',
+  // #6529: image pages without an image vector, apart from text coverage (plus NULL source_path and held images).
+  'image_embedding_coverage',
   'integrity',
   'jsonb_integrity',
   // #4222 — near-empty entity pages that accreted huge edge counts (junk

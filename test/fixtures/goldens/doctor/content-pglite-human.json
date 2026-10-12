@@ -146,6 +146,7 @@
       "  [OK] grant_new_ops_available: Every active client and token can call the operations its scopes allow.",
       "  [OK] image_assets: No image assets indexed yet",
       "  [OK] ocr_health: OCR not in use (or no images ingested with OCR opt-in)",
+      "  [OK] image_embedding_coverage: No image pages indexed yet.",
       "  [FAIL] sync_freshness: Source 'notes' has never been synced. Run `gbrain sync --source <id> --no-pull` for each stale source. 1 writer-owned canonical content source(s): upstream sync is not applicable; see canonical_content_writes for publication status",
       "  [OK] canonical_content_writes: 1 writer-owned content source(s); no pending canonical publication or recovery.",
       "  [INFO] backup_coverage: Not urgent yet: the brain holds 5 page(s)+fact(s) and is under 7 days old (backup coaching starts at 25 items or 7 days). 2 knowledge asset(s) lack verified recovery: default (not_a_git_repo), notes (no git remote). A source repo with a pushed git remote restores its Markdown files only, never DB-only pages, facts, config or credentials. Run `gbrain backup status` for each asset's fix command.",

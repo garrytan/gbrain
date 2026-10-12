@@ -1,6 +1,6 @@
 import { pageMutationSource, submitPageMutation, validateMutationSlug } from '../persistence/page-mutations.ts';
 import { suffixedSlugDryRun } from '../persistence/suffixed-slug.ts';
-import { AGENT_CONTENT_PARAMS, PAGE_MUTATION_PARAMS, CAPTURE_EVENT_PARAMS, WRITE_WAIT_PARAM } from '../persistence/params.ts';
+import { AGENT_CONTENT_PARAMS, PAGE_MUTATION_PARAMS, CAPTURE_EVENT_PARAMS, CAPTURE_CLI_PROVENANCE_PARAMS, WRITE_WAIT_PARAM } from '../persistence/params.ts';
 import { assertPurgeParams } from '../persistence/purge-params.ts';
 /**
  * Page CRUD operation cluster — pure move from operations.ts (v0.46.x
@@ -648,7 +648,7 @@ const capture: Operation = {
   description: CAPTURE_DESCRIPTION,
   params: {
     ...AGENT_CONTENT_PARAMS,
-    ...CAPTURE_EVENT_PARAMS,
+    ...CAPTURE_EVENT_PARAMS, ...CAPTURE_CLI_PROVENANCE_PARAMS,
     content: { type: 'string', required: true, description: 'Markdown or text (not a file path).' },
     local_file: { type: 'string', description: 'Local CLI only.', required: false },
     slug: { type: 'string', required: false, description: 'Default inbox/<date>-<hash>.' },

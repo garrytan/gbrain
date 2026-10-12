@@ -13,7 +13,8 @@ import { importFromContent, importCodeFile, verifyPageReadable } from '../import
 import { screenImportContent, screenNormalized, type ContentRefusal, type ImportScreenResult, type ImportSanityConfig } from '../import-screen.ts';
 import { ContentSanityBlockError } from '../content-sanity.ts';
 import { parseMarkdown, resolveParsedSubtype, serializePageToMarkdown, type ParseOpts } from '../markdown.ts';
-import { resolveSlugForPath, slugifyPath, isCodeFilePath } from '../sync.ts';
+import { resolveSlugForPath, slugifyPath, isCodeFilePath, isImageFilePath } from '../sync.ts';
+import { prepareManagedSyncImage } from './sync-image.ts';
 import { SOURCE_CONFIG_OBJECT_SQL } from '../source-config-sql.ts';
 import { sameCanonicalImport } from '../page-state/import-guard.ts';
 import { assertPageRevision } from '../page-state/types.ts';
@@ -315,6 +316,39 @@ async function recordSliceCursor(tx: BrainEngine, row: WriteRequest, p: { syncOp
   if (settled) await clearSyncSlice(tx, row.source_id, row.source_incarnation, p.syncOptions);
   else await writeSyncSlice(tx, row.source_id, row.source_incarnation, p.syncOptions, p.slice!);
 }
+
+/** The code-file branch of `prepareManagedSyncMutation`: `importCodeFile` with `prepare`, text embedding deferred to `embed --stale` (the image branch is `sync-image.ts`). */
+async function prepareManagedSyncCode(engine: BrainEngine, row: WriteRequest, p: { content: string; sourcePath: string; rawHash: string | null; lineEndingOnly?: boolean; companyApproval: boolean },
+  ctx: { snapshot: Snapshot | null; validate: (tx: BrainEngine) => Promise<void>; releaseHold: (tx: BrainEngine) => Promise<void>; clock?: ClaimPhaseClock;
+    refuse: (code: RegistryCode, message: string, cause: string) => OperationError; contentRefusal: (refusal: ContentRefusal) => OperationError }): Promise<PreparedMutation> {
+  const { snapshot, validate, releaseHold, clock, refuse } = ctx;
+  if (p.companyApproval) throw refuse('profile_incompatible', 'Company source approval permits only committed Markdown content.',
+    `A company-brain source imports only committed Markdown, and ${row.slug} is a code file; remove it from the approved revision.`);
+  if (snapshot && !p.lineEndingOnly && p.rawHash !== sha256(p.content) && snapshot.page.compiled_truth !== p.content) {
+    throw refuse('source_changed', 'Newer code file bytes disagree with the pinned import.',
+      `The working tree holds newer bytes for ${row.slug} than the pinned import; sync did not overwrite them. Preserve the local edit and commit it.`);
+  }
+  const codeScreen = screenImportContent({ content: p.content, path: p.sourcePath });
+  if (codeScreen.status === 'refused') throw ctx.contentRefusal(codeScreen.refusal);
+  let prepared: PreparedContentImport | undefined;
+  enterClaimStep(clock, 'code_import', undefined, 'db');
+  const result = await importCodeFile(engine, p.sourcePath, p.content, { sourceId: row.source_id, noEmbed: true,
+    prepare: async value => { prepared = value; return value.result; } });
+  if (!prepared || prepared.slug !== row.slug) throw refuse('invalid_params', result.error ?? 'The code file identity could not be prepared.',
+    `The code file could not be prepared as page ${row.slug}.`);
+  const ready = prepared;
+  if (ready.observedRevision !== (snapshot?.revision ?? null)) throw refuse('revision_conflict', 'The code page changed during preparation.',
+    `Page ${row.slug} changed while this sync was being prepared.`);
+  return { observedRevision: ready.observedRevision, trust: await ownerImportTrust(engine, row, null, p.sourcePath),
+    validate: async tx => { await validate(tx); await ready.validate(tx); },
+    noop: ready.noop, deferEmbedding: true, apply: async tx => {
+    await ready.apply(tx);
+    await releaseHold(tx);
+    return { status: ready.noop ? 'skipped' : snapshot ? 'updated' : 'created', slug: row.slug, source_id: row.source_id,
+      chunks: result.chunks, noop: ready.noop, imported_file: true };
+  } };
+}
+
 /**
  * Whether the import must rewrite its file with `canonicalFile` (its sanitized form). Working-tree bytes that are the
  * pinned bytes (or differ only by line endings) take the write; bytes that already are the canonical file need none
@@ -468,33 +502,14 @@ export async function prepareManagedSyncMutation(unbounded: BrainEngine, row: Wr
     } };
   if (typeof p.content !== 'string' || typeof p.sourcePath !== 'string' || typeof p.path !== 'string') throw syncPublicationRefusal('storage_error', 'The frozen import content is missing.', row, p,
     'The stored intent has no frozen file content to import.');
-  if (isCodeFilePath(p.sourcePath)) {
-    if (p.companyApproval) throw syncPublicationRefusal('profile_incompatible', 'Company source approval permits only committed Markdown content.', row, p,
-      `A company-brain source imports only committed Markdown, and ${row.slug} is a code file; remove it from the approved revision.`);
-    if (snapshot && !p.lineEndingOnly && p.rawHash !== sha256(p.content) && snapshot.page.compiled_truth !== p.content) {
-      throw syncPublicationRefusal('source_changed', 'Newer code file bytes disagree with the pinned import.', row, p,
-        `The working tree holds newer bytes for ${row.slug} than the pinned import; sync did not overwrite them. Preserve the local edit and commit it.`);
-    }
-    const codeScreen = screenImportContent({ content: p.content, path: p.sourcePath });
-    if (codeScreen.status === 'refused') throw syncContentRefusal(codeScreen.refusal, row, p);
-    let prepared: PreparedContentImport | undefined;
-    enterClaimStep(clock, 'code_import', undefined, 'db');
-    const result = await importCodeFile(engine, p.sourcePath, p.content, { ...source, noEmbed: true,
-      prepare: async value => { prepared = value; return value.result; } });
-    if (!prepared || prepared.slug !== row.slug) throw syncPublicationRefusal('invalid_params', result.error ?? 'The code file identity could not be prepared.', row, p,
-      `The code file could not be prepared as page ${row.slug}.`);
-    const ready = prepared;
-    if (ready.observedRevision !== (snapshot?.revision ?? null)) throw syncPublicationRefusal('revision_conflict', 'The code page changed during preparation.', row, p,
-      `Page ${row.slug} changed while this sync was being prepared.`);
-    return { observedRevision: ready.observedRevision, trust: await ownerImportTrust(engine, row, null, p.sourcePath),
-      validate: async tx => { await validate(tx); await ready.validate(tx); },
-      noop: ready.noop, deferEmbedding: true, apply: async tx => {
-      await ready.apply(tx);
-      await releaseHold(tx);
-      return { status: ready.noop ? 'skipped' : snapshot ? 'updated' : 'created', slug: row.slug, source_id: row.source_id,
-        chunks: result.chunks, noop: ready.noop, imported_file: true };
-    } };
+  // #6529: an image entry (frozen as base64 bytes) takes the coordinated image importer; its text embedding waits for embed --stale.
+  if (isImageFilePath(p.sourcePath)) {
+    return prepareManagedSyncImage(engine, row, { content: p.content, sourcePath: p.sourcePath, path: p.path, rawHash: p.rawHash, lineEndingOnly: p.lineEndingOnly },
+      { root, snapshot, ...(moved && moved.slug !== row.slug ? { renamedFrom: { slug: moved.slug } } : {}), noEmbed: p.processingOptions?.noEmbed === true, companyApproval: !!p.companyApproval, validate, releaseHold, clock, screening: !!screening,
+        refuse: (code, message, cause) => syncPublicationRefusal(code, message, row, p, cause) });
   }
+  if (isCodeFilePath(p.sourcePath)) return prepareManagedSyncCode(engine, row, { content: p.content, sourcePath: p.sourcePath, rawHash: p.rawHash, lineEndingOnly: p.lineEndingOnly, companyApproval: !!p.companyApproval },
+    { snapshot, validate, releaseHold, clock, refuse: (code, message, cause) => syncPublicationRefusal(code, message, row, p, cause), contentRefusal: refusal => syncContentRefusal(refusal, row, p) });
   const schema = p.companyApproval?.schema;
   if (schema && p.processingOptions?.noSchemaPack) throw syncPublicationRefusal('profile_incompatible', 'Company source approval requires its pinned schema pack.', row,
     { ...p, processingOptions: { ...p.processingOptions!, noSchemaPack: false } },

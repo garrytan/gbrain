@@ -23,13 +23,13 @@ import { fenceMessage, type FenceMessageLocation } from '../fence-repair/reasons
 import { completeFenceLocation, FENCE_VERSION, type ReceiptFenceLocation } from '../fence-repair/refusal.ts';
 import { fenceFileLine } from '../fence-repair/hold-fix.ts';
 import { slugConflictHoldMessage } from '../import-file.ts';
-import { isImageFilePath, resolveSlugForPath } from '../sync.ts';
+import { isImageFilePath, isMultimodalEnabled, resolveSlugForPath } from '../sync.ts';
 import { loadActivePackForEngine } from '../schema-pack/engine-resolution.ts';
 import { VERSION } from '../../version.ts';
 import { sha256 } from './digest.ts';
 import { readPagePurgeTombstones } from './page-purge.ts';
 import { readSyncContent, readSyncFile, syncGitPath, type SyncDiscovery, type SyncEntry } from './sync-discovery.ts';
-import { PINNED_WINDOW, readBlobContents, readPinnedBlob, readPinnedContent, readTreeBlobs, SYNC_READ_BOUND, type TreeBlob } from './sync-blobs.ts';
+import { PINNED_WINDOW, readBlobBytes, readBlobContents, readPinnedBlob, readPinnedBytes, readPinnedContent, readTreeBlobs, SYNC_READ_BOUND, type TreeBlob } from './sync-blobs.ts';
 import { screenSyncImport, type SyncImportScreenInput } from './sync-prepare.ts';
 import type { SyncProcessingOptions } from './sync-authority.ts';
 import { gitHoldItem, readSyncHoldPolicy, readSyncImportProvenance, type GitHoldItem, type GitHoldRecord, type PreparationStallMeta, type SyncHoldPolicy } from './sync-holds.ts';
@@ -78,6 +78,34 @@ export function pinnedBlob(cursor: PinnedCursor, path: string): TreeBlob | null 
 export function pinnedContent(cursor: SyncDiscovery & { index: number }, entry: SyncEntry): string {
   const content = entry.working ? null : readPinnedContent(cursor.gitRoot, cursor.target, syncGitPath(cursor, entry.path), upcomingGitPaths(cursor));
   return content ?? readSyncContent(cursor, entry);
+}
+
+/**
+ * #6529: `pinnedContent` for an image entry: the frozen bytes, never decoded as
+ * text. A committed entry's pinned blob is read binary-safe with the entries
+ * after it (one `cat-file --batch` per window slice); a working-tree entry is
+ * read from the file. Throws `source_changed` when the committed blob or the file is gone.
+ */
+export function pinnedImageBytes(cursor: SyncDiscovery & { index: number }, entry: SyncEntry): Buffer {
+  const bytes = (() => {
+    if (entry.working) return readSyncFile(cursor.root, entry.path);
+    const gitPath = syncGitPath(cursor, entry.path);
+    const windowed = readPinnedBytes(cursor.gitRoot, cursor.target, gitPath, upcomingGitPaths(cursor));
+    if (windowed) return windowed;
+    const blob = readTreeBlobs(cursor.gitRoot, cursor.target, [gitPath]).get(gitPath);
+    return blob ? readBlobBytes(cursor.gitRoot, [blob]).get(blob.oid) ?? null : null;
+  })();
+  if (bytes) return bytes;
+  throw opError('source_changed', 'The discovered image disappeared.',
+    `${entry.path} left ${cursor.sourceId} between discovery and import, so nothing was imported from it. Run gbrain sync --no-pull --source ${cursor.sourceId} to rediscover the tree.`);
+}
+
+/** #5493: the hold `freezeEntry` returns for an image import while multimodal embedding is off, keyed by the pinned blob or the working bytes (an over-bound file keys by nothing). */
+export function heldImageEntry(cursor: SyncDiscovery & { index: number }, entry: SyncEntry): HeldEntry {
+  const blob = entry.working ? null : pinnedBlob(cursor, entry.path);
+  let bytes: Buffer | null = null;
+  if (!blob) { try { bytes = readSyncFile(cursor.root, entry.path); } catch (error) { if (!isSyncReadBound(error)) throw error; } }
+  return managedImageHold(entry, bytes === null ? null : bytes.toString('utf8'), blob);
 }
 
 function heldEntry(entry: Pick<SyncEntry, 'path' | 'sourcePath' | 'working' | 'renameFrom' | 'renameHeld'>, slug: string, pageId: number | null,
@@ -134,14 +162,22 @@ export function preparationStalledHold(entry: Pick<SyncEntry, 'path' | 'sourcePa
 }
 
 /**
- * #5493: managed sync has no image importer, so an image import is held as
- * incomplete coverage instead of refusing the run. The hold names the pinned
- * blob (or the working-tree bytes), so discovery re-screens it when the file
- * changes, leaves the source, or `sources retry-held` asks.
+ * #5493 / #6529: with multimodal embedding off, managed sync has no image
+ * importer, so an image import is held as incomplete coverage instead of
+ * refusing the run. The hold names the pinned blob (or the working-tree
+ * bytes), so discovery re-screens it when the file changes, leaves the source,
+ * `sources retry-held` asks, or `GBRAIN_EMBEDDING_MULTIMODAL=true` turns the
+ * coordinated image importer on (`holdRescreenDue`).
  */
-export function managedImageHold(entry: SyncEntry, content: string | null, blob: TreeBlob | null | undefined): HeldEntry {
+export function managedImageHold(entry: Pick<SyncEntry, 'path' | 'sourcePath' | 'working' | 'renameFrom' | 'renameHeld' | 'slug' | 'pageId'>, content: string | null, blob: TreeBlob | null | undefined): HeldEntry {
   return heldEntry(entry, entry.slug!, entry.pageId ?? null, { code: 'managed_image_sync_unsupported',
-    message: `${entry.path} is an image, which managed sync does not import yet; the rest of the source synced.` }, content, blob);
+    message: `${entry.path} is an image, and managed sync imports images only with GBRAIN_EMBEDDING_MULTIMODAL=true (multimodal embedding is off on this install); the rest of the source synced.` }, content, blob);
+}
+
+/** #5988: the hold of a file over the sync read bound, whose content is never read (#6529: shared with the image freeze). */
+export function oversizeHold(entry: Pick<SyncEntry, 'path' | 'sourcePath' | 'working' | 'renameFrom' | 'renameHeld'>, slug: string, pageId: number | null, size: number | null, blob: TreeBlob | null | undefined): HeldEntry {
+  return heldEntry(entry, slug, pageId, { code: 'file_too_large',
+    message: `File too large (${size ?? 'over 10485760'} bytes; the sync read bound is ${SYNC_READ_BOUND} bytes). Split the content into smaller files or leave it out of the source.` }, null, blob);
 }
 
 const purgeTombstonesByRun = new WeakMap<SyncScreenRun, Promise<Map<string, string>>>();
@@ -171,11 +207,7 @@ export interface FrozenImportScreen {
  */
 export async function screenFrozenImport(engine: BrainEngine, input: FrozenImportScreen, run: SyncScreenRun): Promise<HeldEntry | null> {
   const { entry, slug, pageId, snapshot, content, blob } = input;
-  if (input.oversize || content === null) {
-    const size = input.oversize?.size ?? blob?.size ?? null;
-    return heldEntry(entry, slug, pageId, { code: 'file_too_large',
-      message: `File too large (${size ?? 'over 10485760'} bytes; the sync read bound is ${SYNC_READ_BOUND} bytes). Split the content into smaller files or leave it out of the source.` }, null, blob);
-  }
+  if (input.oversize || content === null) return oversizeHold(entry, slug, pageId, input.oversize?.size ?? blob?.size ?? null, blob);
   if (entry.renameHeld) {
     return heldEntry(entry, slug, pageId, { code: 'rename_held', reason: 'rename_source_changed', message: `${entry.path} is a rename of page ${entry.renameHeld.slug}, which changed after the rename was recorded, so the page was not moved.` }, content, blob);
   }
@@ -228,8 +260,11 @@ export async function dryRunScreen(engine: BrainEngine, discovery: SyncDiscovery
     try {
       const blob = entry.working ? null : blobs.get(syncGitPath(discovery, entry.path)) ?? null;
       if (isImageFilePath(entry.path)) {
-        const hold = managedImageHold(entry, blob ? null : readSyncFile(discovery.root, entry.path)?.toString('utf8') ?? null, blob);
-        held.push(gitHoldItem({ version: 1, source_id: discovery.sourceId, incarnation: discovery.incarnation, ...hold,
+        // #6529: with multimodal embedding on, the coordinated image importer takes the entry (only its size is screened).
+        const hold = isMultimodalEnabled()
+          ? blob && blob.size > SYNC_READ_BOUND ? oversizeHold(entry, entry.slug!, entry.pageId ?? null, blob.size, blob) : null
+          : managedImageHold(entry, blob ? null : readSyncFile(discovery.root, entry.path)?.toString('utf8') ?? null, blob);
+        if (hold) held.push(gitHoldItem({ version: 1, source_id: discovery.sourceId, incarnation: discovery.incarnation, ...hold,
           observed_at: observed, held_at: observed, updated_at: observed, run_id: null, mode: 'managed' }));
         continue;
       }

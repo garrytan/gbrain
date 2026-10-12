@@ -16,6 +16,7 @@ test/alias-source-cascade-5094.test.ts
 test/attribution-backfill-history.test.ts
 test/behavior-change-notice.test.ts
 test/capture-consent-admission.test.ts
+test/capture-dispatch-provenance-6524.test.ts
 test/chronicle-backfill-max-usd.test.ts
 test/colon-slug-windows-5032.test.ts
 test/company-brain-policy.test.ts
@@ -25,7 +26,9 @@ test/decide/conflict-proposals-managed.test.ts
 test/declared-lineage-visibility.test.ts
 test/derived-link-reconciliation.test.ts
 test/doctor-frontmatter-holds.test.ts
+test/doctor-image-embedding-coverage.test.ts
 test/doctor-routing-skill-pack-source.test.ts
+test/embed-stale-images-managed-6529.test.ts
 test/embedding-completion-atomic.serial.test.ts
 test/engine-sql-facts-keyset.test.ts
 test/extract-all-stamp-intersection.serial.test.ts

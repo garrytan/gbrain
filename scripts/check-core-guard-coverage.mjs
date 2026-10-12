@@ -28,6 +28,7 @@ const EXEMPT = {
   'src/core/persistence/file-repair.ts': 'publishes bytes the owner approved with gbrain repair frontmatter --apply',
   'src/core/persistence/grandfather.ts': 'adopts pages that already exist at activation; no content change',
   'src/core/persistence/import-prepare.ts': 'owner-run local import (gbrain import); doctor reports any overage',
+  'src/core/persistence/sync-image.ts': 'owner git edits (managed sync image branch, prepared through importImageFile as import-prepare.ts is); doctor core_memory reports any overage',
   'src/core/persistence/connector-sync.ts': 'connector-owned pages; core marking is owner-written frontmatter the connector never sets',
   'src/core/persistence/connector-google-receipts.ts': 'connector receipt rows, not page text',
   'src/core/persistence/projection-reindex.ts': 'rebuilds derived projections; page text is unchanged',

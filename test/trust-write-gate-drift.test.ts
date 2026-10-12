@@ -44,6 +44,7 @@ const EXEMPT: Record<string, string> = {
   'src/core/persistence/connector-google-receipts.ts': 'connector delivery receipts; the connector page publication is gated (connector-sync.ts)',
   'src/core/persistence/file-repair.ts': 'publishes an owner-reviewed repair preview of the owner source',
   'src/core/persistence/grandfather.ts': 'mechanical validate:false stamp under withTrustKeep',
+  'src/core/persistence/sync-image.ts': 'managed sync image import of an owner-committed file through importImageFile, which has no gate seam (its page text is gbrain-generated OCR/caption); import-prepare.ts takes the same image path',
   'src/core/persistence/links-maintenance.ts': 'link extraction from stored page text',
   'src/core/persistence/loop-fact-retirement.ts': 'expires a loop fact (lifecycle)',
   'src/core/persistence/memory-mutations.ts': 'forget (lifecycle); remember is gated in memory-prepare.ts',

@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 231140,
-    "stdoutSha256": "bb979a78c5e89bb88016cc8af97c2215136976a11b8fdba6de37d572d83dc54d",
+    "stdoutBytes": 231864,
+    "stdoutSha256": "7c78c1bc5229533a82e47b508d6208d0d9e993b8e1129664b363a3656b0a193f",
     "toolNames": [
       "remember",
       "entity",
@@ -758,11 +758,14 @@
           "depth": "string?",
           "expected_revision": "string?",
           "force": "boolean?",
+          "ingested_via": "string?",
           "kind": "string?",
           "local_file": "string?",
           "request_id": "string?",
           "slug": "string?",
           "source_id": "string?",
+          "source_kind": "string?",
+          "source_uri": "string?",
           "type": "string?",
           "what": "string?",
           "where": "string?",
@@ -796,6 +799,10 @@
               "description": "Ignore the revision.",
               "type": "boolean"
             },
+            "ingested_via": {
+              "description": "Trusted local CLI provenance (capture-cli); a remote caller's value is replaced by the server-stamped mcp:capture.",
+              "type": "string"
+            },
             "kind": {
               "description": "Event kind.",
               "type": "string"
@@ -814,6 +821,14 @@
             },
             "source_id": {
               "description": "Write source.",
+              "type": "string"
+            },
+            "source_kind": {
+              "description": "Trusted local CLI provenance (capture-cli); a remote caller's value is replaced by the server-stamped mcp:capture.",
+              "type": "string"
+            },
+            "source_uri": {
+              "description": "Trusted local CLI provenance (stdin, cli-positional); a remote caller's value is replaced by the server-stamped mcp:capture.",
               "type": "string"
             },
             "type": {
