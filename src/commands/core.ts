@@ -22,6 +22,7 @@ import {
 } from '../core/core-memory.ts';
 import { serializePageToMarkdown } from '../core/markdown.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
+import { helpFlagRequested } from '../cli/subcommands.ts';
 
 /** Core is opt-in: marking a page does nothing for sessions until the owner turns delivery on. */
 const CORE_OFF_HINT = 'Core memory is off (the default), so sessions do not load it yet. If the user wants it always loaded: gbrain config set memory.core.enabled true';
@@ -125,6 +126,9 @@ function lineDiff(before: string, after: string): string {
 }
 
 export async function runCore(engine: BrainEngine, args: string[]): Promise<void> {
+  // #6521: main.ts calls this handler with a null engine whenever a help flag is present, so help is answered
+  // before anything reads the engine, for every subcommand (`core list --help`), not just `core --help`.
+  if (helpFlagRequested(args)) { console.log(USAGE); return; }
   const sub = args[0];
   const json = args.includes('--json');
   const sourceId = flag(args, '--source') ?? 'default';
