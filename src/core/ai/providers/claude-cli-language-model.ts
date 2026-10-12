@@ -195,6 +195,21 @@ function envelopeError(envelope: ClaudeJsonResult, exitCode: number | undefined)
   return new ClaudeCliProcessError(message, { apiErrorStatus: status, exitCode });
 }
 
+/** #6523: Claude Code reports its output cap as an error, sometimes exiting 1.
+ * Recognize only its whole diagnostic for this call's forwarded cap, never a
+ * quoted phrase or an HTTP failure. There is no generated text in this shape;
+ * preserve reported usage but let the caller's existing length policy decide
+ * whether to escalate, retry or refuse publication.
+ */
+function outputCapEnvelope(envelope: ClaudeJsonResult, outputCap: string | undefined): ClaudeJsonResult | null {
+  if (!outputCap || envelope.type !== 'result' || envelope.is_error !== true ||
+      envelope.api_error_status != null || typeof envelope.result !== 'string') return null;
+  const diagnostic = `API Error: Claude's response exceeded the ${outputCap} output token maximum. ` +
+    'To configure this behavior, set the CLAUDE_CODE_MAX_OUTPUT_TOKENS environment variable.';
+  if (envelope.result.trim() !== diagnostic) return null;
+  return { ...envelope, is_error: false, result: '', stop_reason: 'max_tokens' };
+}
+
 /**
  * Build the system-prompt addendum that teaches the model the
  * `<use_tools>...</use_tools>` emission format. Returns the empty string
@@ -430,6 +445,15 @@ function runClaude(
 
     child.on('close', code => {
       if (signal) signal.removeEventListener('abort', onAbort);
+      const attempt = parseResultEnvelope(stdout);
+      // Do not turn a killed/crashed process into an ordinary length outcome.
+      if ((code === 0 || code === 1) && attempt.ok) {
+        const capped = outputCapEnvelope(attempt.envelope, outputCap);
+        if (capped) {
+          resolve(capped);
+          return;
+        }
+      }
       if (code !== 0) {
         // Even on a non-zero exit the CLI writes a formatted result envelope
         // to stdout (e.g. an API 429 arrives as {is_error:true,
@@ -439,7 +463,6 @@ function runClaude(
         // envelope followed by a non-zero exit is a process failure whose
         // reason lives in stderr, so it falls through to the blob fallback
         // (as does any stdout without a parseable envelope).
-        const attempt = parseResultEnvelope(stdout);
         if (attempt.ok && attempt.envelope.type === 'result' && attempt.envelope.is_error === true) {
           reject(envelopeError(attempt.envelope, code ?? undefined));
           return;
@@ -457,7 +480,6 @@ function runClaude(
         ));
         return;
       }
-      const attempt = parseResultEnvelope(stdout);
       if (!attempt.ok) {
         if (attempt.reason === 'no-result-event') {
           reject(new Error(`claude-cli JSON event array had no "result" event\n--- raw ---\n${stdout.slice(0, 500)}`));
