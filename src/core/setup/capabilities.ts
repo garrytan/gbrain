@@ -10,7 +10,7 @@
  * meaning changes.
  */
 
-export const SETUP_CAPABILITY_TABLE_VERSION = 3;
+export const SETUP_CAPABILITY_TABLE_VERSION = 4;
 
 export const SETUP_HARNESSES = ['claude-code', 'codex', 'openclaw', 'hermes'] as const;
 export type SetupHarness = (typeof SETUP_HARNESSES)[number];
@@ -45,7 +45,8 @@ export const SETUP_CAPABILITIES: readonly SetupCapabilityRow[] = [
     read_events: [], capture_events: [], docs: 'docs/mcp/OPENCLAW.md' },
   { harness: 'openclaw', transport: 'thin-client', setup: 'unsupported', pull: 'manual', push: 'unsupported',
     read_events: [], capture_events: [], docs: 'docs/mcp/OPENCLAW.md' },
-  { harness: 'hermes', transport: 'local-stdio', setup: 'supported', pull: 'connection-verified', push: 'native-pending',
+  { harness: 'hermes', transport: 'local-stdio', setup: 'supported', pull: 'connection-verified', push: 'native-verified',
+    push_evidence: 'hermes-agent v0.21.7 (427d605d), 2026-10-13: after a fresh `gbrain setup hermes`, the pre_llm_call hook injected a randomized brain item into a fresh native `hermes -z` session, which answered it with no tool call (3/3 installs; state.db shows the item only in the hook-appended user content, tool_call_count 0); a --no-hooks control answered NONE',
     read_events: ['pre_llm_call'], capture_events: ['on_session_finalize'], docs: 'docs/mcp/HERMES.md' },
 ];
 

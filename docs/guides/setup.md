@@ -99,9 +99,9 @@ the serve binds its socket about 2 seconds after spawn.
 4. `native-verified`: the capability table records an observed push for the
    harness, and setup wired and trusted that event. Codex reaches it when
    setup owns the trusted `UserPromptSubmit` hook (observed on codex-cli
-   0.162.1, see the table below); Claude Code and Hermes stay `native-pending`
-   (Hermes: `pre_llm_call` is wired and approved, but no observed session is on
-   record yet).
+   0.162.1, see the table below), and Hermes when setup owns the approved
+   `pre_llm_call` hook (observed on hermes-agent v0.21.7); Claude Code stays
+   `native-pending`.
 
 ## Ownership and removal
 
@@ -244,7 +244,7 @@ claimed from documentation alone.
 | codex | local stdio | supported | native-verified: on codex-cli 0.162.1, after a fresh `gbrain setup codex`, the `UserPromptSubmit` hook put a randomized brain item into a fresh native `codex exec` session, which answered it with no tool call (3 of 3 installs); a `--no-hooks` control answered NONE |
 | openclaw | local context engine | refusal with [its guide](../mcp/OPENCLAW.md) | native-pending |
 | openclaw | thin client | refusal with [its guide](../mcp/OPENCLAW.md) | unsupported |
-| hermes | local stdio | supported (`pre_llm_call` read hook; `on_session_finalize` capture on `--capture`) | native-pending: wired and approved, no observed session on record |
+| hermes | local stdio | supported (`pre_llm_call` read hook; `on_session_finalize` capture on `--capture`) | native-verified: on hermes-agent v0.21.7 (427d605d), after a fresh `gbrain setup hermes`, the approved `pre_llm_call` hook put a randomized brain item into a fresh native `hermes -z` session, which answered it with no tool call (3 of 3 installs; `state.db` shows the item only in the hook-appended user content); a `--no-hooks` control answered NONE |
 
 ## How setup relates to the other entry points
 

@@ -35,7 +35,9 @@ session-start digest. Transcript capture (`on_session_finalize`, read from the
 profile's `state.db`, with `--capture`) and provider use (`--providers`) stay off
 unless you accept them; `--no-hooks` registers MCP only. Restart Hermes in the
 profile, then check `hermes mcp test gbrain` and `hermes hooks doctor`. Setup
-reports `native-pending`: push is not claimed until an observed session shows it.
+reports `native-verified` when it wrote and approved the `pre_llm_call` hook (observed on
+hermes-agent v0.21.7: 3 of 3 fresh installs answered a randomized brain item with no tool
+call; a `--no-hooks` control answered NONE), and `native-pending` with `--no-hooks`.
 Details: [setup guide](../guides/setup.md#hermes).
 
 **When to use the HTTP lane instead.** Every Hermes process starts its own stdio

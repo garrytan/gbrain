@@ -91,9 +91,9 @@ describe('gbrain setup hermes: install lifecycle', () => {
     expect(Object.keys(first.doc)).toEqual(['harness', 'dry_run', 'remove', 'target', 'consent', 'steps', 'preserved', 'states', 'state', 'verify', 'capability', 'capability_table_version', 'notes', 'notices']);
     expect(first.doc.target).toMatchObject({ brain: { kind: 'new-local-pglite' }, launcher: b.bin, scope: 'user', config_path: cfgPath(b), hermes_home: hermesDir(b), allowlist_path: allowPath(b), registration_owner: 'setup' });
     expect(first.doc.verify.reason).toBe('smoke_passed');
-    expect(first.doc.states).toEqual(['configured', 'connection-verified', 'native-pending']);
-    expect(first.doc.capability).toMatchObject({ harness: 'hermes', setup: 'supported', pull: 'connection-verified', push: 'native-pending', read_events: ['pre_llm_call'], capture_events: ['on_session_finalize'] });
-    expect(first.doc.capability_table_version).toBe(3);
+    expect(first.doc.states).toEqual(['configured', 'connection-verified', 'native-verified']);
+    expect(first.doc.capability).toMatchObject({ harness: 'hermes', setup: 'supported', pull: 'connection-verified', push: 'native-verified', read_events: ['pre_llm_call'], capture_events: ['on_session_finalize'] });
+    expect(first.doc.capability_table_version).toBe(4);
     expect(first.doc.consent.capture).toMatchObject({ value: 'declined', source: 'default' });
     expect(first.doc.consent.providers).toMatchObject({ value: 'declined', source: 'default' });
     expect(readJson(join(b.gbrainHome, '.gbrain', 'config.json')).embedding_disabled).toBe(true);
@@ -629,37 +629,43 @@ describe('review finding 2: a non-default profile is pinned and its receipt is f
     expect(yaml(e).mcp_servers.gbrain.env).toEqual({ GBRAIN_HOME: e.gbrainHome });
   });
 
-  test('provider-recorder proxy: a serve started with ONLY the named profile\'s entry env honors the recorded decline (and does not without the receipt)', async () => {
+  test('provider-recorder proxy: a gbrain process started with ONLY the named profile\'s entry env honors the recorded decline (and does not without the receipt)', async () => {
     const seen: string[] = [];
-    const recorder = Bun.serve({ port: 0, fetch(req) { seen.push(`${req.method} ${new URL(req.url).pathname}`); return Response.json({ object: 'list', data: [{ id: 'gpt-4o-mini', object: 'model' }] }); } });
+    const recorder = Bun.serve({ port: 0, fetch(req) {
+      const path = new URL(req.url).pathname;
+      seen.push(`${req.method} ${path}`);
+      if (path.endsWith('/embeddings')) return Response.json({ object: 'list', data: [{ object: 'embedding', index: 0, embedding: Array(1536).fill(0) }], model: 'text-embedding-3-large', usage: { prompt_tokens: 1, total_tokens: 1 } });
+      return Response.json({ object: 'list', data: [{ id: 'text-embedding-3-large', object: 'model' }] });
+    } });
     try {
       const b = box();
       expect((await setup(b, ['hermes', '--hermes-home', profile(b), '--json'])).exitCode).toBe(0);
       const entry = (load(readFileSync(join(profile(b), 'config.yaml'), 'utf8')) as any).mcp_servers.gbrain;
-      const serveOnce = async (): Promise<void> => {
+      // Since #6607 discovery runs only before an OpenAI-routed call, so measure the decline on one: the opt-in embedding probe.
+      const cfgFile = join(b.gbrainHome, '.gbrain', 'config.json');
+      const cfg = readJson(cfgFile) as Record<string, unknown>;
+      delete cfg.embedding_disabled;
+      writeFileSync(cfgFile, JSON.stringify({ ...cfg, embedding_model: 'openai:text-embedding-3-large', embedding_dimensions: 1536 }));
+      const probeOnce = async (): Promise<void> => {
         // What Hermes hands a stdio child: a safe baseline plus the entry's own env. Nothing else (no HERMES_HOME of the launcher).
         const env: Record<string, string> = { PATH: process.env.PATH ?? '', HOME: b.home, ...entry.env, GBRAIN_SKIP_STARTUP_HOOKS: '1',
-          OPENAI_API_KEY: 'sk-recorder-only-not-a-real-key', OPENAI_BASE_URL: `http://127.0.0.1:${recorder.port}/v1` };
-        const proc = Bun.spawn([entry.command, ...entry.args], { env, stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' });
-        proc.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'recorder-test', version: '1' } } })}\n`);
-        proc.stdin.flush();
-        await Bun.sleep(7000);
-        proc.kill();
+          OPENAI_API_KEY: 'sk-rec...-key', OPENAI_BASE_URL: `http://127.0.0.1:${recorder.port}/v1` };
+        const proc = Bun.spawn([entry.command, 'doctor', '--only', 'embedding_provider', '--probe', '--yes', '--json'], { env, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' });
         await proc.exited;
       };
       seen.length = 0;
-      await serveOnce();
+      await probeOnce();
       expect(seen).toEqual([]);
-      // Control: the same serve with the profile's receipt moved aside does contact the provider, so the recorder sees what a decline suppresses.
+      // Control: the same process with the profile's receipt moved aside does contact the provider, so the recorder sees what a decline suppresses.
       const aside = `${receiptPathIn(profile(b))}.aside`;
       const { renameSync } = await import('node:fs');
       renameSync(receiptPathIn(profile(b)), aside);
-      await serveOnce();
-      expect(seen.join(' ')).toContain('/v1/models');
+      await probeOnce();
+      expect(seen.join(' ')).toMatch(/\/v1\/(models|embeddings)/);
     } finally {
       recorder.stop(true);
     }
-  }, 120_000);
+  }, 180_000);
 });
 const receiptPathIn = (home: string, name = 'gbrain') => join(home, `.gbrain-connection-hermes-${name}.json`);
 
