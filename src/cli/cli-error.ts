@@ -23,6 +23,7 @@ import { redactConnectionInfo } from '../core/audit/redact-connection-info.ts';
 import { suggestNearest } from '../core/levenshtein.ts';
 import { isConsentRefusal, printConsentRefusal } from '../core/consent.ts';
 import { exclusiveFix, liveServeOwner } from '../core/exclusive-fix.ts';
+import { RemoteMcpError } from '../core/remote-mcp-error.ts';
 
 export interface CliErrorWriteOpts {
   /** Raw argv (defaults to process.argv.slice(2)); decides `--json`. */
@@ -144,7 +145,11 @@ export function unknownFlagError(command: string, flag: string, message: string,
  * The fatal seam (main() rejected). Same renderer, plus the two pre-v1
  * behaviours agents and skills depend on: the `pglite_busy` JSON keys
  * (`next_action`) and the `GBRAIN_DB_ACCESS` marker line skills/db-repair
- * literal-matches, with the classifier's remediation.
+ * literal-matches, with the classifier's remediation. A thin client's remote
+ * MCP failure is never a database access error: Bun 1.4.3's fetch says
+ * `ECONNREFUSED: Unable to connect…` where 1.4.2 said `Unable to connect…`,
+ * which the database classifier would otherwise read as a refused Postgres
+ * connection and send the user to `gbrain db-repair` (#6586).
  */
 export function writeFatalCliError(e: unknown, opts: { argv?: readonly string[]; dbUrl?: string | null; brainId?: string } = {}): number {
   const argv = opts.argv ?? process.argv.slice(2);
@@ -166,7 +171,7 @@ export function writeFatalCliError(e: unknown, opts: { argv?: readonly string[];
     });
     return writeCliError(err, command, { argv, legacy: { error: 'pglite_busy', retryable: true, reason: busy.reason, next_action: next } });
   }
-  if (!jsonRequested(argv)) {
+  if (!jsonRequested(argv) && !(e instanceof RemoteMcpError)) {
     try {
       const d = classifyPgAccessError(e, { url: opts.dbUrl ?? null, brainId: opts.brainId });
       if (d.reason !== 'unknown') {

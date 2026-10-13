@@ -16,7 +16,7 @@ import type { LanesCap } from './sync-group.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { SyncOpts, SyncResult } from '../../commands/sync.ts';
 import { OperationError } from '../ops/contract.ts';
-import { getCode, isRetryableConnError, isStatementTimeoutError } from '../retry-matcher.ts';
+import { getCode, getMessage, isRetryableConnError, isStatementTimeoutError } from '../retry-matcher.ts';
 import { currentRunDeadline, noteForwardProgress } from '../forward-progress.ts';
 import { serr } from '../console-prefix.ts';
 import { ERROR_CATALOGUE, type CatalogueName } from '../error-catalogue.ts';
@@ -212,11 +212,15 @@ export function formatDuration(seconds: number): string {
  * #6340: whether `error` is the database connection going away under the pass (a pooler drop, a reset socket, a
  * timed-out write). `CONNECTION_DESTROYED` / `CONNECTION_CLOSED` are left out on purpose: #6329 classifies those as
  * this process's own settle of a cancelled statement after the owner's deadline, which becomes a
- * `preparation_stalled` receipt on the stall path, never a transport retry.
+ * `preparation_stalled` receipt on the stall path, never a transport retry. #6586: a child process that failed or timed out
+ * (`spawnSync git ETIMEDOUT`, Node's `syscall: 'spawnSync git'`) is not the database going away either; it takes the
+ * ordinary transient retry, with no reconnect and no "database connection dropped" line.
  */
 export function isConnectionDrop(error: unknown): boolean {
   const code = getCode(error);
   if (code === 'CONNECTION_DESTROYED' || code === 'CONNECTION_CLOSED') return false;
+  const syscall = error && typeof error === 'object' ? (error as { syscall?: unknown }).syscall : undefined;
+  if ((typeof syscall === 'string' && syscall.startsWith('spawn')) || /\bspawn(?:Sync)? \S+ E[A-Z]+\b/.test(getMessage(error))) return false;
   return isRetryableConnError(error);
 }
 

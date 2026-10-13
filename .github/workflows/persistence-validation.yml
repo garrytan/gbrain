@@ -16,7 +16,7 @@ jobs:
       fail-fast: false
       matrix:
         engine: [pglite, postgres]
-        bun: ['1.4.0', '1.4.2']
+        bun: ['1.4.0', '1.4.3']
         # Event parity: every event, pull requests and merge-queue runs
         # included, runs both supported Bun versions (docs/TESTING.md#event-parity).
     services:
@@ -56,7 +56,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        bun: ['1.4.0', '1.4.2']
+        bun: ['1.4.0', '1.4.3']
         # Event parity: every event, pull requests and merge-queue runs
         # included, runs both supported Bun versions (docs/TESTING.md#event-parity).
     services:
@@ -178,7 +178,7 @@ jobs:
       fail-fast: false
       matrix:
         shard: [1, 2, 3]
-        bun: ['1.4.0', '1.4.2']
+        bun: ['1.4.0', '1.4.3']
         # Event parity: every event, pull requests and merge-queue runs
         # included, runs both supported Bun versions (docs/TESTING.md#event-parity).
     services:
@@ -262,7 +262,7 @@ jobs:
       fail-fast: false
       matrix:
         engine: [pglite, postgres]
-        bun: ['1.4.0', '1.4.2']
+        bun: ['1.4.0', '1.4.3']
         # Event parity: every event, pull requests and merge-queue runs
         # included, runs both supported Bun versions (docs/TESTING.md#event-parity).
     services:
@@ -315,7 +315,7 @@ jobs:
       fail-fast: false
       matrix:
         engine: [pglite, postgres]
-        bun: ['1.4.0', '1.4.2']
+        bun: ['1.4.0', '1.4.3']
         # Event parity: every event, pull requests and merge-queue runs
         # included, runs both supported Bun versions (docs/TESTING.md#event-parity).
     services:
@@ -392,7 +392,7 @@ jobs:
       fail-fast: false
       matrix:
         engine: [pglite, postgres]
-        bun: ['1.4.0', '1.4.2']
+        bun: ['1.4.0', '1.4.3']
         # Event parity: every event, pull requests and merge-queue runs
         # included, runs both supported Bun versions (docs/TESTING.md#event-parity).
     services:

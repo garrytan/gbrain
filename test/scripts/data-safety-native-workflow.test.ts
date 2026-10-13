@@ -38,7 +38,7 @@ describe('data-safety native CI coverage', () => {
     expect(job['timeout-minutes']).toBe(5);
     expect(job.strategy['fail-fast']).toBe(false);
     expect(job.strategy.matrix.runner).toEqual(['windows-2022', 'windows-11-arm']);
-    expect(job.strategy.matrix.bun).toEqual(['1.4.0', '1.4.2']);
+    expect(job.strategy.matrix.bun).toEqual(['1.4.0', '1.4.3']);
     expect(job.steps.some(entry => entry.run === 'bun scripts/native/verify.ts')).toBe(true);
     const step = job.steps.find(entry => entry.name === 'Compare native hidden-window launch behavior');
     expect(step).toBeDefined();
@@ -73,7 +73,7 @@ describe('data-safety native CI coverage', () => {
     expect(job['timeout-minutes']).toBe(5);
     expect(job.strategy['fail-fast']).toBe(false);
     expect(job.strategy.matrix.runner).toEqual(['windows-2022', 'windows-11-arm']);
-    expect(job.strategy.matrix.bun).toEqual(['1.4.0', '1.4.2']);
+    expect(job.strategy.matrix.bun).toEqual(['1.4.0', '1.4.3']);
     expect(job.steps.some(entry => entry.run === 'bun scripts/native/verify.ts')).toBe(true);
     const step = job.steps.find(entry => entry.name === 'Compare cmdlet and direct dotnet ACL programs');
     expect(step).toBeDefined();

@@ -42,7 +42,7 @@ All eight addons are checked in, so source installs work with
 `bun install --frozen-lockfile --ignore-scripts`. They support x64 and arm64
 on Linux glibc (2.17 ABI baseline), Linux musl, macOS (13.0 deployment
 target), and Windows. The required CI matrix covers the repository's minimum
-Bun 1.4.0 and the release compiler, Bun 1.4.2. OS compatibility
+Bun 1.4.0 and the release compiler, Bun 1.4.3. OS compatibility
 also requires the selected Bun version's own platform minimums.
 
 Node-API headers and their upstream license are vendored from Node
@@ -177,12 +177,12 @@ checks real process exclusion, crash handoff, retained files, cancellation,
 missing-addon failure and source/binary manifest integrity. Tests use isolated
 temporary paths and never open an operator datastore. The required
 `native-locks.yml` lane rebuilds and executes all eight OS/architecture/libc
-targets on Bun 1.4.0 and 1.4.2, including native musl Docker userspace.
+targets on Bun 1.4.0 and 1.4.3, including native musl Docker userspace.
 Every pair also runs `bun scripts/native/compiled-smoke.ts` to prove compiled
 process locking. Release CI verifies the shipped CLI embeds the matching
 addon and runs the compiled smoke on its two release platforms. Rebuild
 instructions and the precise packaging/runtime distinction are above.
-Release compilation uses Bun 1.4.2; strict Darwin codesign verification must
+Release compilation uses Bun 1.4.3; strict Darwin codesign verification must
 pass before publication. The native macOS 26.2 smoke is not macOS 27
 certification, and Linux fault injection is not a full native Windows backup
 create/restore test.

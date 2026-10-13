@@ -51,16 +51,16 @@ describe('pull-request CI scope', () => {
 
   test('a pull request touching native paths runs every target on the primary Bun version', () => {
     const primary = nativeCells('primary');
-    expect(primary.native.sort()).toEqual(['darwin-arm64', 'darwin-x64', 'linux-arm64-glibc', 'linux-x64-glibc', 'win32-arm64', 'win32-x64'].map(target => `1.4.2/${target}`));
-    expect(primary.musl).toEqual(['1.4.2/linux-x64-musl', '1.4.2/linux-arm64-musl']);
-    expect(primary.console).toEqual(['windows-2022/1.4.2', 'windows-11-arm/1.4.2']);
-    expect(primary.dotnet).toEqual(['windows-2022/1.4.2', 'windows-11-arm/1.4.2']);
+    expect(primary.native.sort()).toEqual(['darwin-arm64', 'darwin-x64', 'linux-arm64-glibc', 'linux-x64-glibc', 'win32-arm64', 'win32-x64'].map(target => `1.4.3/${target}`));
+    expect(primary.musl).toEqual(['1.4.3/linux-x64-musl', '1.4.3/linux-arm64-musl']);
+    expect(primary.console).toEqual(['windows-2022/1.4.3', 'windows-11-arm/1.4.3']);
+    expect(primary.dotnet).toEqual(['windows-2022/1.4.3', 'windows-11-arm/1.4.3']);
     expect(primary.openclaw).toBe(true);
   });
 
   test('other pull requests keep one Linux smoke cell that runs the whole native step list', () => {
     const smoke = nativeCells('smoke');
-    expect(smoke).toEqual({ native: ['1.4.2/linux-x64-glibc'], musl: [], console: [], dotnet: [], openclaw: false });
+    expect(smoke).toEqual({ native: ['1.4.3/linux-x64-glibc'], musl: [], console: [], dotnet: [], openclaw: false });
   });
 
   test('native path changes, an empty list and docs-only diffs classify as expected', () => {
@@ -213,7 +213,7 @@ esac
   // #4479: a local gate or VM on a different Bun than CI produced
   // runtime-only skew, so every single-version pin moves together.
   test('every single-version Bun pin matches the primary, and matrices keep the oldest supported version', () => {
-    const primary = '1.4.2';
+    const primary = '1.4.3';
     const read = (path: string) => readFileSync(join(root, path), 'utf8');
     const workflows = ['test', 'e2e', 'heavy-tests', 'macos-validation', 'persistence-validation', 'release', 'native-locks']
       .map(name => read(`.github/workflows/${name}.yml`)).join('\n');

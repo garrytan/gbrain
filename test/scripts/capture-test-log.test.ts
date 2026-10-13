@@ -270,6 +270,63 @@ describe('bun_spawnsync_poisoned signature (oven-sh/bun#34069)', () => {
     expect(c.render('test (7)', '/tmp/unit.log', 1)).not.toContain(BUN_SPAWNSYNC_POISONED);
   });
 
+  // #6586, run 38335527492 job 115101422707 (0030c078f, Bun 1.4.2): the drift showed first as the sync drain's git reads
+  // returning `spawnSync git ETIMEDOUT`, ten minutes before the first kill; the job then hit its time limit, the test
+  // process never exited, and nothing named the signature.
+  const cancelledRun = [
+    'bun test v1.4.2 (744846f84)',
+    '##[group]test/managed-sync-pinned-reads.test.ts:',
+    '[sync] 0/? processed · database connection dropped (spawnSync git ETIMEDOUT); reconnecting and retrying in 5s (1 of 3)',
+    '[sync] 9/28 processed · database connection dropped (spawnSync git ETIMEDOUT); reconnecting and retrying in 5s (1 of 3)',
+    'killed 1 dangling process',
+    ...timeout('pglite: windowed pinned reads leave the same rows as per-entry reads, with far fewer Git processes', 600000),
+    'killed 1 dangling process', 'killed 1 dangling process',
+    ...timeout("the Git top level is read once per root and run, and again when the checkout's .git changes", 60001),
+    '##[group]test/dream.test.ts:', 'killed 1 dangling process',
+    ...timeout('runDream --phase lint --phase orphans > runs both phases', 60000),
+  ];
+
+  it('warns live on the first spawnSync ETIMEDOUT and gives the verdict the moment it holds, each once', () => {
+    const c = new FailureCollector();
+    const notes: Array<[number, string]> = [];
+    cancelledRun.forEach((line, index) => { c.feed(line); for (const note of c.takeLiveNotes()) notes.push([index, note]); });
+    expect(notes).toHaveLength(2);
+    expect(notes[0]![0]).toBe(2);
+    expect(notes[0]![1]).toContain(`**${BUN_SPAWNSYNC_POISONED}?**`);
+    expect(notes[0]![1]).toContain('test/managed-sync-pinned-reads.test.ts printed `[sync] 0/? processed · database connection dropped (spawnSync git ETIMEDOUT)');
+    expect(notes[0]![1]).toContain('Bun v1.4.2');
+    expect(notes[0]![1]).toContain('fixed in Bun 1.4.3');
+    expect(notes[1]![0]).toBe(cancelledRun.length - 1);
+    expect(notes[1]![1]).toContain(`**${BUN_SPAWNSYNC_POISONED}**`);
+    expect(notes[1]![1]).toContain('3 timed-out tests across 2 files');
+    expect(c.takeLiveNotes()).toEqual([]);
+    // Already announced: the exit summary keeps the failures without repeating the verdict.
+    expect(c.render('test (2)', '/tmp/unit.log', 143)).not.toContain(`**${BUN_SPAWNSYNC_POISONED}**`);
+    const quiet = feed(['bun test v1.4.3 (abc)', '##[group]test/a.test.ts:', '(pass) a > spawns [1.00ms]']);
+    expect(quiet.takeLiveNotes()).toEqual([]);
+  });
+
+  it('a job whose test process is still running already has the live note in its step summary', async () => {
+    const f = fixture(`console.error('[sync] 0/? processed · database connection dropped (spawnSync git ETIMEDOUT); reconnecting and retrying in 5s (1 of 3)');
+await new Promise(() => setInterval(() => {}, 1000));`);
+    const summary = join(f.root, 'summary.md');
+    const proc = Bun.spawn([process.execPath, SCRIPT, '--job', 'test (2)', '--out', f.output, '--', process.execPath, f.script], {
+      stdout: 'ignore', stderr: 'pipe', env: { ...process.env, GITHUB_STEP_SUMMARY: summary },
+    });
+    try {
+      const deadline = Date.now() + 15_000;
+      while (!(existsSync(summary) && readFileSync(summary, 'utf8').includes(BUN_SPAWNSYNC_POISONED)) && Date.now() < deadline) await Bun.sleep(100);
+      const text = existsSync(summary) ? readFileSync(summary, 'utf8') : '';
+      expect(text).toContain('### test (2): live note');
+      expect(text).toContain(`**${BUN_SPAWNSYNC_POISONED}?**`);
+      expect(text).toContain('spawnSync git ETIMEDOUT');
+    } finally {
+      proc.kill('SIGTERM');
+      await proc.exited;
+    }
+    expect(await new Response(proc.stderr).text()).toContain(`capture-test-log: ${BUN_SPAWNSYNC_POISONED}?`);
+  }, 30000);
+
   it('a non-timeout failure after the kill, or timeouts confined to one file, is left for its own diagnosis', () => {
     const mixed = feed([
       ...poisonedRun,

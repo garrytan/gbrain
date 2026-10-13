@@ -24,14 +24,14 @@
 # the packages are already installed, so apt is skipped and the image pulls
 # only confirm the baked images are current.
 #
-# Knobs: SLOTS (default nproc), BUN_VERSION (default 1.4.2), GITLEAKS=0|1,
+# Knobs: SLOTS (default nproc), BUN_VERSION (default 1.4.3), GITLEAKS=0|1,
 # CHECKOUT (default .), CHECKOUT_MARKER (default: none, checkout present),
 # PREPARE_IMAGE=1 (install packages and pull images only, then reset
 # cloud-init so the stopped VM can be captured as a machine image).
 set -euo pipefail
 
 SLOTS="${SLOTS:-$(nproc)}"
-BUN_VERSION="${BUN_VERSION:-1.4.2}"
+BUN_VERSION="${BUN_VERSION:-1.4.3}"
 GITLEAKS="${GITLEAKS:-0}"
 CHECKOUT="${CHECKOUT:-.}"
 CHECKOUT_MARKER="${CHECKOUT_MARKER:-}"

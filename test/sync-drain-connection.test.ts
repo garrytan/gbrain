@@ -12,6 +12,7 @@
  * this process's own settle of a cancelled statement, the stall path).
  */
 import { describe, expect, spyOn, test } from 'bun:test';
+import { spawnSync } from 'node:child_process';
 import { CONNECTION_RETRY_MS, CONNECTION_STRIKES, drainJsonFields, drainNext, formatDrainSummary, isConnectionDrop, runDrain } from '../src/core/persistence/sync-drain.ts';
 import { isRetryableConnError } from '../src/core/retry-matcher.ts';
 import { ERROR_CATALOGUE } from '../src/core/error-catalogue.ts';
@@ -98,6 +99,36 @@ describe('runDrain over a dropping connection', () => {
     expect(result).toMatchObject({ added: 4, drain: { outcome: 'blocked', stop_reason: 'connection_lost', remaining: 5 } });
     expect(JSON.stringify(result)).not.toContain('secret');
     expect(result.drain!.connection!.last_error).toBe('write ECONNABORTED <url>');
+  });
+
+  // #6586: on Bun 1.4.2 a drifted spawnSync loop made the drain's git reads return `spawnSync git ETIMEDOUT`; the drain
+  // printed "database connection dropped", reconnected the database and counted a strike toward `connection_lost`.
+  test('a timed-out child process is not a drop: no reconnect, no "database connection dropped" line, a transient retry', async () => {
+    const child = spawnSync('sh', ['-c', 'sleep 5'], { timeout: 50 }).error!;
+    expect(child).toMatchObject({ code: 'ETIMEDOUT', syscall: 'spawnSync sh' });
+    const git = Object.assign(new Error('spawnSync git ETIMEDOUT'), { code: 'ETIMEDOUT', syscall: 'spawnSync git', errno: -110 });
+    for (const error of [child, git, new Error('reading notes/a.md: spawnSync git ETIMEDOUT'), Object.assign(new Error('spawn git ENOENT'), { code: 'ENOENT', syscall: 'spawn git' })]) {
+      expect(isConnectionDrop(error)).toBe(false);
+    }
+    expect(isConnectionDrop(dropped('ETIMEDOUT'))).toBe(true);
+    let passes = 0;
+    const reconnects: unknown[] = [];
+    const err = captureStderr();
+    try {
+      const result = await runDrain({ announce: true, progressMs: 1, backoffMs: 2, reconnect: async error => { reconnects.push(error); },
+        pass: async (_signal, onProgress) => {
+          if (++passes <= 2) throw git;
+          onProgress({ phase: 'managed_sync.page_committed', bankedFiles: 1, total: 1 });
+          return { ...base, managedCursor: { index: 1, total: 1 } };
+        } });
+      expect(result.drain).toMatchObject({ outcome: 'synced', passes: 3 });
+      expect(reconnects).toEqual([]);
+      expect(err.lines.filter(line => line.includes('database connection dropped'))).toEqual([]);
+    } finally { err.restore(); }
+    passes = 0;
+    await expect(runDrain({ backoffMs: 2, reconnect: async error => { reconnects.push(error); }, pass: async () => { passes++; throw git; } })).rejects.toBe(git);
+    expect(reconnects).toEqual([]);
+    expect(passes).toBeGreaterThan(1);
   });
 
   test('a settle-discard code is not a drop: the drain ends with the error as before', async () => {

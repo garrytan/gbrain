@@ -369,7 +369,7 @@
       "argv": "salience",
       "exitCode": 1,
       "stderr": [
-        "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: Unable to connect. Is the computer able to access the url?",
+        "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: ECONNREFUSED: Unable to connect. Is the computer able to access the url?",
         "Fix: gbrain remote doctor",
         "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
       ],
@@ -379,7 +379,7 @@
       "argv": "anomalies",
       "exitCode": 1,
       "stderr": [
-        "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: Unable to connect. Is the computer able to access the url?",
+        "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: ECONNREFUSED: Unable to connect. Is the computer able to access the url?",
         "Fix: gbrain remote doctor",
         "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
       ],
@@ -412,7 +412,7 @@
         "  local-only — N/A on remote brain",
         "",
         "Warnings:",
-        "  ! remote snapshot failed: OAuth discovery failed: OAuth discovery network error: Unable to connect. Is the computer able to access the url?"
+        "  ! remote snapshot failed: OAuth discovery failed: OAuth discovery network error: ECONNREFUSED: Unable to connect. Is the computer able to access the url?"
       ]
     },
     {
@@ -637,7 +637,7 @@
       "argv": "recall",
       "exitCode": 1,
       "stderr": [
-        "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: Unable to connect. Is the computer able to access the url?",
+        "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: ECONNREFUSED: Unable to connect. Is the computer able to access the url?",
         "Fix: gbrain remote doctor",
         "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
       ],

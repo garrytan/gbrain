@@ -4,7 +4,7 @@
       "argv": "takes list",
       "exitCode": 1,
       "stderr": [
-        "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: Unable to connect. Is the computer able to access the url?",
+        "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: ECONNREFUSED: Unable to connect. Is the computer able to access the url?",
         "Fix: gbrain remote doctor",
         "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
       ],
@@ -34,7 +34,7 @@
       "argv": "cache stats",
       "exitCode": 1,
       "stderr": [
-        "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: Unable to connect. Is the computer able to access the url?",
+        "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: ECONNREFUSED: Unable to connect. Is the computer able to access the url?",
         "Fix: gbrain remote doctor",
         "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
       ],
@@ -55,7 +55,7 @@
       "argv": "quarantine list",
       "exitCode": 1,
       "stderr": [
-        "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: Unable to connect. Is the computer able to access the url?",
+        "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: ECONNREFUSED: Unable to connect. Is the computer able to access the url?",
         "Fix: gbrain remote doctor",
         "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
       ],
@@ -76,7 +76,7 @@
       "argv": "jobs list",
       "exitCode": 1,
       "stderr": [
-        "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: Unable to connect. Is the computer able to access the url?",
+        "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: ECONNREFUSED: Unable to connect. Is the computer able to access the url?",
         "Fix: gbrain remote doctor",
         "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
       ],
@@ -86,7 +86,7 @@
       "argv": "jobs get 1",
       "exitCode": 1,
       "stderr": [
-        "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: Unable to connect. Is the computer able to access the url?",
+        "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: ECONNREFUSED: Unable to connect. Is the computer able to access the url?",
         "Fix: gbrain remote doctor",
         "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
       ],
@@ -96,7 +96,7 @@
       "argv": "jobs stats",
       "exitCode": 1,
       "stderr": [
-        "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: Unable to connect. Is the computer able to access the url?",
+        "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: ECONNREFUSED: Unable to connect. Is the computer able to access the url?",
         "Fix: gbrain remote doctor",
         "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
       ],
@@ -117,7 +117,7 @@
       "argv": "search modes",
       "exitCode": 1,
       "stderr": [
-        "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: Unable to connect. Is the computer able to access the url?",
+        "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: ECONNREFUSED: Unable to connect. Is the computer able to access the url?",
         "Fix: gbrain remote doctor",
         "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
       ],
@@ -160,7 +160,7 @@
       "argv": "capture hello",
       "exitCode": 1,
       "stderr": [
-        "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: Unable to connect. Is the computer able to access the url?",
+        "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: ECONNREFUSED: Unable to connect. Is the computer able to access the url?",
         "Fix: Retry the same operation and arguments with request_id <uuid>; do not generate a replacement ID.",
         "Request: <uuid>"
       ],
@@ -219,7 +219,7 @@
         "",
         "  [✓] config_integrity: mcp_url=http://127.0.0.1:1/mcp, issuer_url=http://127.0.0.1:1",
         "  [✓] oauth_credentials: client_id=cid, secret_source=config",
-        "  [✗] oauth_discovery: OAuth discovery network error: Unable to connect. Is the computer able to access the url?",
+        "  [✗] oauth_discovery: OAuth discovery network error: ECONNREFUSED: Unable to connect. Is the computer able to access the url?",
         "",
         "Connectivity check FAILED — see error above.",
         "Common fixes:",
@@ -232,7 +232,7 @@
       "argv": "think q",
       "exitCode": 1,
       "stderr": [
-        "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: Unable to connect. Is the computer able to access the url?",
+        "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: ECONNREFUSED: Unable to connect. Is the computer able to access the url?",
         "Fix: gbrain remote doctor",
         "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
       ],
@@ -242,7 +242,7 @@
       "argv": "recall q",
       "exitCode": 1,
       "stderr": [
-        "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: Unable to connect. Is the computer able to access the url?",
+        "Error [unavailable]: OAuth discovery failed: OAuth discovery network error: ECONNREFUSED: Unable to connect. Is the computer able to access the url?",
         "Fix: gbrain remote doctor",
         "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#unavailable"
       ],
