@@ -5,7 +5,7 @@
  * 而不是干等半分钟后报一个看不懂的迁移失败。
  */
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync, readdirSync } from 'node:fs';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -43,6 +43,28 @@ describe('precheckPgliteLock', () => {
   test('无锁目录 → 放行', () => {
     const dbDir = makeDbDir();
     expect(precheckPgliteLock(dbDir).blocked).toBe(false);
+  });
+
+  test('数据库路径是普通文件时在 Sidecar 启动前拦截，并保留原文件', () => {
+    const root = makeDbDir(), path = join(root, 'brain.pglite');
+    writeFileSync(path, 'Keep the existing file.');
+    const result = precheckPgliteLock(path);
+    expect(result.blocked).toBe(true);
+    expect(result.message).toContain('普通文件');
+    expect(result.message).toContain('修改配置');
+    expect(result.message).toContain(path);
+    expect(readFileSync(path, 'utf8')).toBe('Keep the existing file.');
+    expect(readdirSync(root)).toEqual(['brain.pglite']);
+  });
+
+  test('父路径文件冲突不能被当作无锁目录放行', () => {
+    const root = makeDbDir(), parent = join(root, 'parent-file');
+    writeFileSync(parent, 'Keep the parent file.');
+    const result = precheckPgliteLock(join(parent, 'brain.pglite'));
+    expect(result.blocked).toBe(true);
+    expect(result.message).toContain('父路径');
+    expect(result.message).toContain(parent);
+    expect(readFileSync(parent, 'utf8')).toBe('Keep the parent file.');
   });
 
   test('锁文件损坏 → 安全拦截且不自动删除', () => {

@@ -40,6 +40,7 @@ import {
   type ProcessInspector,
 } from './pglite-process-inspector.ts';
 import { DatabaseAlreadyOwnedError, PgliteLockMetadataError } from './pglite-errors.ts';
+import { createPgliteDatabaseDirectory } from './pmbrain-adapters/pglite-database-path.ts';
 
 const LOCK_DIR_NAME = '.gbrain-lock';
 const LOCK_FILE = 'lock';
@@ -568,7 +569,7 @@ export async function acquireLock(
     };
   }
 
-  mkdirSync(dataDir as string, { recursive: true });
+  createPgliteDatabaseDirectory(dataDir as string);
   const inspector = resolveInspector(opts?.inspector);
   const timeoutMs = opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const ownerType = opts?.ownerType ?? 'cli';

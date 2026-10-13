@@ -1,5 +1,21 @@
 # Bug 修复台账
 
+## 2026-10-13 PMBrain 1.4.60 覆盖安装后 PGLite 路径冲突诊断与旧配置保护
+
+- 时间：2026-10-13
+- 版本号：PMBrain 1.4.60（统一产品版本，Schema 134 未变）
+- 标题：文件占用数据库目录时报原始 EEXIST，启动预检及配置保存未识别冲突
+- 编程工具：Codex 大模型：GPT-6
+- 描述：截图显示数据库打开前 mkdir 失败。当前源码在普通文件占用 brain.pglite 时可复现同型 EEXIST，桌面预检原来仍放行；普通目录与已有数据库重开成功。用户实际文件属性与安装版本未提供，不能确定现场唯一原因，也没有旧版单文件数据库格式的证据。
+- 修复：按用户确认范围新增共享的只读路径检查，Core 建目录、桌面启动预检、升级冷备及配置保存复用；区分缺失、正常目录、目标或父路径文件冲突、权限及其他访问错误。复用现有 PgliteOpenError/PglitePermissionError，保留 cause 与路径且不快速自动重试。无效路径保存前拒绝，保留旧配置；已有自定义配置路径原样沿用，不再追加 brain.pglite。已有正常目录不重复 mkdir，新目录仍沿用首次创建流程。
+- 是否完成：代码、定向双库与桌面验收、统一版本、打包资源、当前源码页面及本地 CI 预演完成；准确新 SHA Actions、用户实际文件状态与安装包待用户提交打包后验收。
+- 最终结果：修复前 Core 两项、Desktop 四项失败；修复后路径/既有锁与错误分类 57 项/166 断言、只读路径与权限 7 项/28 断言、桌面配置/预检/冷备/启动/Sidecar 91 项/485 断言通过。真实 PGLite 一项/6 断言验证文件冲突停止、修正目录后同库重开及记录保留；独立 Postgres 包装器两项/8 断言同时核对 PGLite 与 Postgres 连接地址路由、重开记录与闲置同名文件保留。临时测试容器已按准确 ID 回收。
+- 当前桌面与资源：最新源码 Desktop 1.4.60 的实际 Electron 页面验证版本、启动冲突提示、打开修改配置、错误保存反馈、原配置字节及原文件哈希不变，无 pageerror；正常退出码 0。图片与结果在 ui/startup-file-conflict.png、ui/invalid-save.png、ui/result.json。Admin/内嵌 47 个资源、Desktop 和 Sidecar 已构建，Root/Desktop 类型及 Windows Bun/Sidecar/Canvas/PGLite runtime 通过。
+- 本地门禁：verify 40 项全绿（默认八路、300 秒检查期限，142 秒），ci:pr-preview 235 项/564 断言通过；版本与 diff 校验通过，生成资源重建无漂移。证据 .codex/startup-path-1460 的 before-core.log、before-desktop.log、core-after.log、path-unit.log、desktop-final.log、engine-pglite.log、engine-postgres-final.log、desktop-ui-final.log、runtime-resources.log、ci-preview.log。
+- 验收中修正：首次桌面组合测试用了根工作目录，导致一项相对路径扫描报错；回到 desktop 工作目录后通过。临时空目录替换夹具改用 rmdirSync，不改变产品删除策略。界面脚本改从服务状态进入既有恢复入口，错误保存反馈按当前数据库面板的 status 校验；正常 quit 的 TargetClosedError 单独处理并要求进程退出码 0。原失败日志保留，不计作通过；没有修改产品恢复导航或放宽数据保留断言。
+- Skill/插件与工作流：pmbrain-ci-governance、webapp-testing；无外部插件、连接器或子代理。规则与反馈核查 → 隔离复现 → 用户确认共享修复范围 → 先写失败回归 → 共享检查与旧配置保护 → 双库及当前源码桌面验证 → 版本、打包资源与本地门禁。
+- 与规划差异和边界：补查发现旧自定义目录保存时可能被追加 brain.pglite，按保留原库目标一并修正；升级冷备也提前复用检查。Windows 目录联接的另一个锁等待问题保留复现证据，本轮不改变锁协议或目录联接机制。没有自动删除、移动、解压或转换冲突文件，没有自动换空库、修改正式配置或知识/原始资料/向量；不运行正式库迁移、全量本地测试、Git 提交推送或 build:win。
+
 ## 2026-10-12 PMBrain 1.4.58 实体整理分块共用轮数导致整轮提前停止
 
 - 时间：2026-10-12

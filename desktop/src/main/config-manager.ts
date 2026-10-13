@@ -5,6 +5,7 @@ import { isIP } from 'node:net';
 import { createHash, randomBytes } from 'node:crypto';
 import { getRecipe } from '../../../src/core/ai/recipes/index.js';
 import { assertModelRevision, modelConfigRevision } from './models/model-config-revision.js';
+import { validatePgliteDatabasePath } from '../../../src/core/pmbrain-adapters/pglite-database-path.js';
 
 const DESKTOP_RECOMMENDED_EMBEDDING_DIMENSIONS: Readonly<Record<string, number>> = {
   'zhipu:embedding-3': 1024,
@@ -841,10 +842,11 @@ export function saveSetup(payload: SetupPayload): {
   if (payload.engine === 'pglite') {
     const preferredDefault = join(preferredConfigDirectory(), 'brain.pglite');
     const requested = payload.databasePath?.trim();
-    const databasePath = normalizePgliteDatabasePath(
-      requested || (typeof existing.database_path === 'string' ? existing.database_path : preferredDefault),
-    );
+    const configured = typeof existing.database_path === 'string' ? existing.database_path : undefined;
+    const chosen = requested || configured || preferredDefault;
+    const databasePath = chosen === configured ? chosen : normalizePgliteDatabasePath(chosen);
     if (!isAbsolute(databasePath)) throw new Error('PGLite 数据库路径必须是绝对路径。');
+    validatePgliteDatabasePath(databasePath);
     config.database_path = databasePath;
     delete config.database_url;
   } else {
