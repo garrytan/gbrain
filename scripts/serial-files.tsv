@@ -247,6 +247,7 @@ test/memory-safety-wave.serial.test.ts	global-state	global-state: process-wide t
 test/migrate-embeddings-ann-deferred-5088.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)
 test/migrate-embeddings-boundary.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)
 test/migrate-embeddings-dry-run-split-5226.serial.test.ts	global-state	global-state: process-wide test seams __setEmbedTransportForTests; configureGateway changes the process-wide AI gateway; spyOn console.log, console.error
+test/migrate-embeddings-facts-drain.serial.test.ts	global-state	global-state: configureGateway and __setEmbedTransportForTests replace the process-wide AI gateway; spyOn AbortSignal.timeout compresses the standalone repair timer
 test/migrate-embeddings-flow.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)
 test/migrate-embeddings-hardening.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, GBRAIN_EMBEDDING_MODEL, GBRAIN_EMBEDDING_DIMENSIONS, GBRAIN_EMBED_LOCK_HEARTBEAT_MS (+3 more))
 test/migrate-embeddings-op-contract.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, GBRAIN_EMBEDDING_MODEL, GBRAIN_EMBEDDING_DIMENSIONS)
