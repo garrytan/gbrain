@@ -20,7 +20,7 @@
 import { existsSync, readFileSync, statSync, unlinkSync } from 'node:fs';
 import { ownedEntryFingerprint } from './adopted-connections.ts';
 import { atomicWriteTextFile } from './atomic-write.ts';
-import { appendHermesYamlEntry, readHermesYaml, removeHermesYamlEntry } from './hermes-yaml.ts';
+import { appendHermesYamlText, readHermesConfigText, readHermesYamlText, removeHermesYamlText, writeHermesConfigText, type HermesConfigGuard } from './hermes-yaml.ts';
 
 export const HERMES_SETUP_LANE_TOKEN = 'GBRAIN_HOOK_LANE=setup';
 export const HERMES_SETUP_EVENTS = ['pre_llm_call', 'on_session_finalize'] as const;
@@ -52,15 +52,28 @@ function detachedSessionEnd(bin: string): string {
   return `sh -c '${script.replace(/'/g, "'\\''")}' ${shellQuote(bin)}`;
 }
 
-/** Setup's hook item for one event. `env` pins this install (and, for capture, the profile whose state.db is read). */
+/**
+ * The `env` that leads every setup command, as an absolute path when this machine has one. Hermes' doctor
+ * (`hermes hooks doctor`, `script_is_executable`) judges the FIRST path-like token of a hook command: with a bare
+ * `env` that is `GBRAIN_HOME=/…` (not a file), so the hook was reported "script missing or not executable" and its
+ * approval recorded no mtime. `/usr/bin/env` is a real executable that contains a `/`, so it is the token Hermes
+ * inspects. (Its mtime then tracks the OS `env`, not gbrain, so a gbrain upgrade never reads as hook drift.)
+ */
+export const hermesEnvLauncher = (): string => (existsSync('/usr/bin/env') ? '/usr/bin/env' : 'env');
+
+/**
+ * Setup's hook item for one event. `env` pins this install: GBRAIN_HOME and GBRAIN_SOURCE on every event (so a
+ * captured session lands in the same source the reads use), and HERMES_HOME where it matters (capture reads that
+ * profile's state.db; the read hook pins a non-default profile so a consent receipt in it stays visible).
+ */
 export function hermesSetupHookItem(bin: string, event: HermesSetupEvent, env: { GBRAIN_HOME?: string; GBRAIN_SOURCE?: string; HERMES_HOME?: string }): HermesHookItem {
   const spec = SPECS[event];
-  const finalize = event === 'on_session_finalize';
-  const assignments = [HERMES_SETUP_LANE_TOKEN, ...(env.GBRAIN_HOME ? [`GBRAIN_HOME=${env.GBRAIN_HOME}`] : []), ...(env.GBRAIN_SOURCE && !finalize ? [`GBRAIN_SOURCE=${env.GBRAIN_SOURCE}`] : []),
-    ...(finalize && env.HERMES_HOME ? [`HERMES_HOME=${env.HERMES_HOME}`] : [])];
+  const assignments = [HERMES_SETUP_LANE_TOKEN, ...(env.GBRAIN_HOME ? [`GBRAIN_HOME=${env.GBRAIN_HOME}`] : []), ...(env.GBRAIN_SOURCE ? [`GBRAIN_SOURCE=${env.GBRAIN_SOURCE}`] : []),
+    ...(env.HERMES_HOME ? [`HERMES_HOME=${env.HERMES_HOME}`] : [])];
+  const launcher = hermesEnvLauncher();
   const command = event === 'on_session_finalize'
-    ? `${['env', ...assignments].map(shellQuote).join(' ')} ${detachedSessionEnd(bin)}`
-    : ['env', ...assignments, bin, 'hook', spec.subcommand, '--harness', 'hermes'].map(shellQuote).join(' ');
+    ? `${[launcher, ...assignments].map(shellQuote).join(' ')} ${detachedSessionEnd(bin)}`
+    : [launcher, ...assignments, bin, 'hook', spec.subcommand, '--harness', 'hermes'].map(shellQuote).join(' ');
   return { command, timeout: spec.timeout };
 }
 
@@ -178,18 +191,20 @@ export interface HermesHookCensusItem { event: HermesSetupEvent; index: number; 
 
 const isRecord = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 
-function eventItems(configPath: string, event: HermesSetupEvent): unknown[] {
-  const v = readHermesYaml(configPath, ['hooks', event]);
+function eventItemsText(label: string, text: string, event: HermesSetupEvent): unknown[] {
+  const hooks = readHermesYamlText(label, text, ['hooks']);
+  if (hooks !== undefined && !isRecord(hooks)) throw new Error(`${label}: 'hooks' is not a mapping (Hermes expects hooks.<event>: [...]); setup leaves it untouched. Fix it by hand, then run setup again.`);
+  const v = readHermesYamlText(label, text, ['hooks', event]);
   if (v === undefined) return [];
-  if (!Array.isArray(v)) throw new Error(`${configPath}: hooks.${event} is not a list; setup leaves it untouched.`);
+  if (!Array.isArray(v)) throw new Error(`${label}: hooks.${event} is not a list; setup leaves it untouched.`);
   return v;
 }
 
-/** Every item under setup's events, fingerprinted. Throws on an unparseable config. */
-export function hermesHookCensus(configPath: string): HermesHookCensusItem[] {
+/** Every item under setup's events (from an in-memory document), fingerprinted. Throws on an unparseable config. */
+export function hermesHookCensusText(label: string, text: string): HermesHookCensusItem[] {
   const out: HermesHookCensusItem[] = [];
   for (const event of HERMES_SETUP_EVENTS) {
-    eventItems(configPath, event).forEach((item, index) => {
+    eventItemsText(label, text, event).forEach((item, index) => {
       if (!isRecord(item)) return;
       const command = typeof item.command === 'string' ? item.command : '';
       out.push({ event, index, hash: ownedEntryFingerprint(item), command,
@@ -199,22 +214,28 @@ export function hermesHookCensus(configPath: string): HermesHookCensusItem[] {
   return out;
 }
 
-/**
- * Converge setup's hook items in config.yaml: per event, an item whose
- * fingerprint is in `owned` (or equals the wanted one) is replaced by the
- * wanted item (extra owned copies dropped), else the wanted item is appended;
- * an unwanted event loses only its owned items. Events in `preserve` (edited by
- * the user) get no write. Foreign and edited items are never touched.
- */
-export function writeHermesSetupHooks(configPath: string, opts: {
+/** Every item under setup's events, fingerprinted. Throws on an unparseable config. */
+export const hermesHookCensus = (configPath: string): HermesHookCensusItem[] => hermesHookCensusText(configPath, readHermesConfigText(configPath));
+
+export interface HermesHookEditOpts {
   want: Partial<Record<HermesSetupEvent, HermesHookItem>>;
   owned: ReadonlySet<string>;
   preserve: ReadonlySet<string>;
   comment: string;
-}): { changed: boolean } {
+}
+
+/**
+ * Converge setup's hook items in an in-memory config.yaml: per event, an item whose fingerprint is in `owned` (or
+ * equals the wanted one) is replaced by the wanted item (extra owned copies dropped), else the wanted item is
+ * appended; an unwanted event loses only its owned items. Events in `preserve` (edited by the user) get no write.
+ * Foreign and edited items are never touched. Pure: the caller decides whether to write the result, so the whole
+ * sequence can be dry-run (and refused) before anything is.
+ */
+export function editHermesSetupHooksText(label: string, text: string, opts: HermesHookEditOpts): { text: string; changed: boolean } {
   let changed = false;
+  let cur = text;
   for (const event of HERMES_SETUP_EVENTS) {
-    const items = eventItems(configPath, event);
+    const items = eventItemsText(label, cur, event);
     const wanted = opts.preserve.has(event) ? undefined : opts.want[event];
     const wantedHash = wanted ? ownedEntryFingerprint(wanted) : null;
     const ours = items.filter(isRecord).map(ownedEntryFingerprint).filter((h) => opts.owned.has(h) || h === wantedHash);
@@ -222,13 +243,22 @@ export function writeHermesSetupHooks(configPath: string, opts: {
     if (!wanted && ours.length === 0) continue;
     for (const hash of new Set(ours)) {
       for (let guard = 0; guard < 8; guard++) {
-        const r = removeHermesYamlEntry(configPath, ['hooks', event], { match: (it) => isRecord(it) && ownedEntryFingerprint(it) === hash });
-        if (r === 'unlocatable') throw new Error(`a gbrain hook item under hooks.${event} in ${configPath} is setup's but is written in a shape setup cannot rewrite safely; remove it by hand, then run setup again.`);
-        if (r !== 'removed') break;
+        const r = removeHermesYamlText(label, cur, ['hooks', event], { match: (it) => isRecord(it) && ownedEntryFingerprint(it) === hash });
+        if (r.result === 'unlocatable') throw new Error(`a gbrain hook item under hooks.${event} in ${label} is setup's but is written in a shape setup cannot rewrite safely; remove it by hand, then run setup again.`);
+        if (r.result !== 'removed') break;
+        cur = r.text;
       }
     }
-    if (wanted) appendHermesYamlEntry(configPath, ['hooks', event], { item: wanted }, opts.comment);
+    if (wanted) cur = appendHermesYamlText(label, cur, ['hooks', event], { item: wanted }, opts.comment);
     changed = true;
   }
+  return { text: cur, changed };
+}
+
+/** {@link editHermesSetupHooksText} applied to the file in ONE write (a single read, guarded against a concurrent writer). */
+export function writeHermesSetupHooks(configPath: string, opts: HermesHookEditOpts & { guard?: HermesConfigGuard }): { changed: boolean } {
+  const raw = readHermesConfigText(configPath);
+  const { text, changed } = editHermesSetupHooksText(configPath, raw, opts);
+  if (changed) writeHermesConfigText(configPath, raw, text, opts.guard);
   return { changed };
 }

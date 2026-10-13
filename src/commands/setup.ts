@@ -29,7 +29,7 @@ import { cliRenderContext, renderCliError, renderNotice, type Action, type Notic
 import { writeCliNotices } from '../core/interop-notices.ts';
 import { setupFirstRunNotices } from './init-first-run.ts';
 import { writeJsonDocument } from '../core/cli-force-exit.ts';
-import { configDir, gbrainPath, loadConfig, type GBrainConfig } from '../core/config.ts';
+import { configDir, gbrainPath, loadConfig, loadConfigFileOnly, type GBrainConfig } from '../core/config.ts';
 import { resolveGbrainBin } from '../core/gbrain-bin.ts';
 import { isRegistrationSurface, isValidName, REGISTRATION_SURFACE } from '../core/mcp-registration.ts';
 import { isValidSourceId } from '../core/source-id.ts';
@@ -75,6 +75,7 @@ import type { CodexSetupEvent } from '../core/bootstrap/codex-hooks.ts';
 import {
   applyHermesSetup,
   desiredHermesMcpEntry,
+  hermesProviderEnvNames,
   hermesProviderReceipt,
   hermesSetupPaths,
   inspectHermesSetup,
@@ -85,6 +86,7 @@ import {
   type HermesSetupStep,
 } from '../core/setup/hermes.ts';
 import type { HermesSetupEvent } from '../core/bootstrap/hermes-hooks.ts';
+import { HermesConfigConflict, readHermesYaml } from '../core/bootstrap/hermes-yaml.ts';
 
 export const SETUP_HELP = `gbrain setup <harness> — give an agent harness memory in one command
 
@@ -701,8 +703,20 @@ async function runHermesSetup(flags: SetupFlags, launcher: string, cfg: GBrainCo
       // Hermes filters a stdio child's environment, so the install is always pinned in the entry and the hooks.
       gbrainHomeEnv: process.env.GBRAIN_HOME?.trim() || dirname(brainHome),
       sourceId, surface, events: hookEvents<HermesSetupEvent>(consent, 'hermes'),
+      providerEnv: hermesProviderEnvNames({ accepted: consent.providers.value === 'accepted', env: process.env,
+        // File-plane only: loadConfig() folds the environment's keys in, which would make every env key look "already in config.json".
+        cfg: fileConfigForKeys(),
+        existingEntryEnv: existingEntryEnv(paths.configPath, flags.name) }),
     };
     const found = inspectHermesSetup(plan);
+    if (plan.providerEnv?.length) notes.push(`provider keys ${plan.providerEnv.map((n) => `\${${n}}`).join(', ')} are referenced (never copied) in the MCP entry's env: Hermes gives a stdio server only the env its entry lists, filling each reference from the profile's .env or its own environment. Put the key in ${join(home, '.env')} or export it where Hermes starts.`);
+    if (found.memoryProvider === 'gbrain') {
+      return refuse(ownerConflict('harness_lane', `${found.configPath} selects the hosted MemoryProvider (memory.provider: gbrain); it already pushes recalled context every turn, so setup's pre_llm_call hook would inject it twice and two lanes would own the 'gbrain' name.`, {
+        actor: 'user', argv: ['gbrain', 'hermes', 'setup', '--hermes-home', home, '--remove'],
+        why: 'Remove the hosted provider lane first (it restores the profile), or keep it and skip gbrain setup hermes for this profile.',
+        user_message: 'This profile uses the gbrain MemoryProvider (hosted lane). Run gbrain hermes setup --remove for it before gbrain setup hermes, or keep the provider and skip setup.',
+        verify: verifyDryRun('hermes', flags.name) }), out);
+    }
     if (found.mcp.state === 'remote') return refuse(hostedConnection(found.mcp.url ?? 'a hosted brain', true, flags.name, 'hermes', home), out);
 
     const { dataDir, liveOwner } = liveOwnerOf(cfg, prior?.status === 'installed' && found.mcp.state === 'current');
@@ -775,9 +789,26 @@ async function runHermesSetup(flags: SetupFlags, launcher: string, cfg: GBrainCo
   } catch (e) {
     if (e instanceof OperationError) return refuse(e, out);
     if (e instanceof SetupAbortInjected) { process.stderr.write(`${e.message}\n`); return 1; }
+    if (e instanceof HermesConfigConflict) { process.stderr.write(`gbrain setup: ${e.message}\n`); return 1; }
     process.stderr.write(`gbrain setup: ${(e as Error).message}\n`);
     return 1;
   }
+}
+
+function fileConfigForKeys(): (Record<string, unknown> & { embedding_model?: string }) | null {
+  try {
+    const f = loadConfigFileOnly() as (Record<string, unknown> & { embedding_model?: string }) | null;
+    const model = process.env.GBRAIN_EMBEDDING_MODEL || f?.embedding_model;
+    return f || model ? { ...(f ?? {}), ...(model ? { embedding_model: model } : {}) } : null;
+  } catch { return null; }
+}
+
+/** The env block of the profile's current `mcp_servers.<name>` entry (placeholders a previous run wrote are kept). */
+function existingEntryEnv(configPath: string, name: string): Record<string, unknown> | undefined {
+  try {
+    const entry = readHermesYaml(configPath, ['mcp_servers', name]) as { env?: unknown } | undefined;
+    return entry?.env && typeof entry.env === 'object' ? entry.env as Record<string, unknown> : undefined;
+  } catch { return undefined; }
 }
 
 async function runHermesRemove(flags: SetupFlags, receipt: HermesSetupReceipt | null, receiptPath: string, brainHome: string, out: Out): Promise<number> {

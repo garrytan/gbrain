@@ -21,7 +21,7 @@
 
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, join, resolve as resolvePath } from 'node:path';
 
 // ── Spec-target registry [ENG-7] ────────────────────────────────────────────
 
@@ -389,6 +389,16 @@ export function hermesHome(override?: string): string {
   const explicit = override?.trim() || process.env.HERMES_HOME?.trim();
   if (explicit) return explicit;
   return join(process.env.HOME?.trim() || homedir(), '.hermes');
+}
+
+/** `$HOME/.hermes`: the default Hermes profile (what a process without HERMES_HOME resolves to). */
+export function hermesDefaultHome(): string {
+  return join(process.env.HOME?.trim() || homedir(), '.hermes');
+}
+
+/** True when `home` is the default profile, so a process with no HERMES_HOME already resolves to it. */
+export function isDefaultHermesHome(home: string): boolean {
+  return resolvePath(home) === resolvePath(hermesDefaultHome());
 }
 
 /** Hermes profile config (YAML): `mcp_servers.<name>` and `hooks.<event>` live here. */

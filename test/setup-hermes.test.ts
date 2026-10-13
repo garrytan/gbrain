@@ -23,11 +23,14 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { createServer, type Server } from 'node:net';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { load } from 'js-yaml';
 import { buildHermesFixture } from './fixtures/transcripts/hermes-fixture-builder.ts';
 import { shlexSplit } from '../src/core/bootstrap/hermes-hooks.ts';
+import { applyHermesSetup, type HermesSetupPlan } from '../src/core/setup/hermes.ts';
+import { HermesConfigConflict } from '../src/core/bootstrap/hermes-yaml.ts';
+import { installHermesPlugin } from '../src/core/harness/hermes.ts';
 import { runCli, type CliResult } from './helpers/cli-spawn.ts';
 import { sortedJson } from '../src/core/bootstrap/hermes-hooks.ts';
 
@@ -68,7 +71,8 @@ const approvals = (b: Box): any[] => (existsSync(allowPath(b)) ? readJson(allowP
 const items = (b: Box, event: string): any[] => yaml(b).hooks?.[event] ?? [];
 const setupItems = (b: Box, event: string) => items(b, event).filter((i) => String(i.command).includes('GBRAIN_HOOK_LANE=setup'));
 const writeCfg = (b: Box, text: string) => { mkdirSync(hermesDir(b), { recursive: true }); writeFileSync(cfgPath(b), text); };
-const userPromptCommand = (b: Box, extra = '') => `env GBRAIN_HOOK_LANE=setup GBRAIN_HOME=${b.gbrainHome}${extra} ${b.bin} hook user-prompt --harness hermes`;
+const ENV = existsSync('/usr/bin/env') ? '/usr/bin/env' : 'env';
+const userPromptCommand = (b: Box, extra = '') => `${ENV} GBRAIN_HOOK_LANE=setup GBRAIN_HOME=${b.gbrainHome}${extra} ${b.bin} hook user-prompt --harness hermes`;
 
 const FOREIGN_YAML = [
   '# my hermes profile', 'model:', '  default: some-model  # keep this', '',
@@ -100,7 +104,7 @@ describe('gbrain setup hermes: install lifecycle', () => {
     expect(cfg.hooks.pre_llm_call).toEqual([{ command: userPromptCommand(b), timeout: 10 }]);
     expect(cfg.memory).toBeUndefined();
     expect(cfg.hooks_auto_accept).toBeUndefined();
-    expect(approvals(b)).toEqual([{ approved_at: expect.any(String), command: userPromptCommand(b), event: 'pre_llm_call', script_mtime_at_approval: null }]);
+    expect(approvals(b)).toEqual([{ approved_at: expect.any(String), command: userPromptCommand(b), event: 'pre_llm_call', script_mtime_at_approval: expect.any(String) }]);
     expect(statSync(allowPath(b)).mode & 0o777).toBe(0o600);
     const r = readJson(receiptPath(b));
     expect(r).toMatchObject({ harness: 'hermes', connection: 'local-stdio', setup_receipt_version: 3, status: 'installed', native_harness_verified: false, hermes_home: hermesDir(b) });
@@ -508,7 +512,7 @@ describe('gbrain setup hermes: consent and flags', () => {
     expect(Object.keys(yaml(b).hooks).sort()).toEqual(['on_session_finalize', 'pre_llm_call']);
     const end = items(b, 'on_session_finalize')[0];
     expect(end.timeout).toBe(5);
-    expect(end.command).toMatch(/^env GBRAIN_HOOK_LANE=setup GBRAIN_HOME=\S+ HERMES_HOME=\S+ sh -c '.*hook session-end --harness hermes/);
+    expect(end.command).toMatch(/^\S*env GBRAIN_HOOK_LANE=setup GBRAIN_HOME=\S+ HERMES_HOME=\S+ sh -c '.*hook session-end --harness hermes/);
     expect(end.command).toContain(`HERMES_HOME=${hermesDir(b)} `);
     expect(approvals(b).map((a) => a.event).sort()).toEqual(['on_session_finalize', 'pre_llm_call']);
     const off = await setup(b, ['hermes', '--no-hooks', '--json']);
@@ -524,7 +528,7 @@ describe('gbrain setup hermes: consent and flags', () => {
     buildHermesFixture(hermesDir(b));
     expect((await setup(b, ['hermes', '--capture'])).exitCode).toBe(0);
     const prompt = shlexSplit(items(b, 'pre_llm_call')[0].command)!;
-    expect(prompt.slice(0, 3)).toEqual(['env', 'GBRAIN_HOOK_LANE=setup', `GBRAIN_HOME=${b.gbrainHome}`]);
+    expect(prompt.slice(0, 3)).toEqual([ENV, 'GBRAIN_HOOK_LANE=setup', `GBRAIN_HOME=${b.gbrainHome}`]);
     expect(prompt.slice(3)).toEqual([b.bin, 'hook', 'user-prompt', '--harness', 'hermes']);
     const argv = shlexSplit(items(b, 'on_session_finalize')[0].command)!;
     const proc = Bun.spawn(argv, { env: { ...process.env, HOME: b.home, GBRAIN_SKIP_STARTUP_HOOKS: '1' }, stdin: new Blob([JSON.stringify({ hook_event_name: 'on_session_finalize', session_id: 'hermes-fixture-1', cwd: b.home, extra: { platform: 'cli' } })]), stdout: 'pipe', stderr: 'pipe' });
@@ -563,5 +567,258 @@ describe('gbrain setup hermes: consent and flags', () => {
     expect(existsSync(hermesDir(b))).toBe(false);
     const h = await setup(b, ['hermes', '--dry-run', '--json']);
     expect(h.exitCode).toBe(0);
+  });
+});
+
+// ── review-driven regressions (independent review of the first implementation) ──────────────────────────────
+
+const noBrain = (b: Box) => expect(existsSync(join(b.gbrainHome, '.gbrain'))).toBe(false);
+
+describe('review finding 1: unsupported config shapes are refused before ANY write; null headers are supported', () => {
+  for (const [label, text] of [['mcp_servers: null', 'model: x\nmcp_servers: null\n'], ['mcp_servers: ~', 'mcp_servers: ~\n'], ['hooks: null and hooks.pre_llm_call: null', 'hooks:\n  pre_llm_call: null\n']] as const) {
+    test(`${label}: setup --capture succeeds and --remove restores the original bytes`, async () => {
+      const b = box();
+      writeCfg(b, text);
+      const r = await setup(b, ['hermes', '--capture', '--json']);
+      expect(r.exitCode).toBe(0);
+      expect(yaml(b).mcp_servers.gbrain).toBeDefined();
+      expect(items(b, 'pre_llm_call')).toHaveLength(1);
+      expect(items(b, 'on_session_finalize')).toHaveLength(1);
+      expect((await setup(b, ['hermes', '--remove', '--json'])).exitCode).toBe(0);
+      expect(readFileSync(cfgPath(b), 'utf8')).toBe(text);
+    });
+  }
+  for (const [label, text, args] of [
+    ['hooks as a list', 'hooks:\n  - a\n  - b\n', ['--capture']],
+    ['a non-empty flow hooks.pre_llm_call', 'hooks:\n  pre_llm_call: [{command: /bin/x}]\n', []],
+    ['a non-empty flow mcp_servers', 'mcp_servers: {other: {command: /bin/true}}\n', ['--capture']],
+    ['an anchored mcp_servers header', 'mcp_servers: &m\n  other:\n    command: /bin/true\n', []],
+  ] as const) {
+    test(`${label}: exit 1 with a clear message, no brain, no receipt, config byte-identical`, async () => {
+      const b = box();
+      writeCfg(b, text);
+      const r = await setup(b, ['hermes', ...args, '--json']);
+      expect(r.exitCode).toBe(1);
+      expect(r.stderr).toMatch(/cannot edit safely|would change other settings|is not a mapping|is not a list|cannot be located|cannot rewrite/);
+      expect(existsSync(receiptPath(b))).toBe(false);
+      expect(existsSync(allowPath(b))).toBe(false);
+      expect(readFileSync(cfgPath(b), 'utf8')).toBe(text);
+      noBrain(b);
+    });
+  }
+});
+
+describe('review finding 2: a non-default profile is pinned and its receipt is found without HERMES_HOME', () => {
+  const profile = (b: Box) => join(b.home, '.hermes', 'profiles', 'research');
+
+  test('a named profile pins HERMES_HOME in the MCP env and the read hook; the default profile keeps the plain entry', async () => {
+    const b = box();
+    const named = await setup(b, ['hermes', '--hermes-home', profile(b), '--capture', '--json']);
+    expect(named.exitCode).toBe(0);
+    const cfg: any = load(readFileSync(join(profile(b), 'config.yaml'), 'utf8'));
+    expect(cfg.mcp_servers.gbrain.env).toEqual({ GBRAIN_HOME: b.gbrainHome, HERMES_HOME: profile(b) });
+    expect(cfg.hooks.pre_llm_call[0].command).toContain(`HERMES_HOME=${profile(b)} `);
+    expect(cfg.hooks.on_session_finalize[0].command).toContain(`HERMES_HOME=${profile(b)} `);
+    const d = box();
+    expect((await setup(d, ['hermes', '--json'])).exitCode).toBe(0);
+    expect(yaml(d).mcp_servers.gbrain.env).toEqual({ GBRAIN_HOME: d.gbrainHome });
+    expect(yaml(d).hooks.pre_llm_call[0].command).not.toContain('HERMES_HOME');
+    // An explicit --hermes-home that IS the default profile is the default entry, not a pinned one.
+    const e = box();
+    expect((await setup(e, ['hermes', '--hermes-home', hermesDir(e), '--json'])).exitCode).toBe(0);
+    expect(yaml(e).mcp_servers.gbrain.env).toEqual({ GBRAIN_HOME: e.gbrainHome });
+  });
+
+  test('provider-recorder proxy: a serve started with ONLY the named profile\'s entry env honors the recorded decline (and does not without the receipt)', async () => {
+    const seen: string[] = [];
+    const recorder = Bun.serve({ port: 0, fetch(req) { seen.push(`${req.method} ${new URL(req.url).pathname}`); return Response.json({ object: 'list', data: [{ id: 'gpt-4o-mini', object: 'model' }] }); } });
+    try {
+      const b = box();
+      expect((await setup(b, ['hermes', '--hermes-home', profile(b), '--json'])).exitCode).toBe(0);
+      const entry = (load(readFileSync(join(profile(b), 'config.yaml'), 'utf8')) as any).mcp_servers.gbrain;
+      const serveOnce = async (): Promise<void> => {
+        // What Hermes hands a stdio child: a safe baseline plus the entry's own env. Nothing else (no HERMES_HOME of the launcher).
+        const env: Record<string, string> = { PATH: process.env.PATH ?? '', HOME: b.home, ...entry.env, GBRAIN_SKIP_STARTUP_HOOKS: '1',
+          OPENAI_API_KEY: 'sk-recorder-only-not-a-real-key', OPENAI_BASE_URL: `http://127.0.0.1:${recorder.port}/v1` };
+        const proc = Bun.spawn([entry.command, ...entry.args], { env, stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' });
+        proc.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'recorder-test', version: '1' } } })}\n`);
+        proc.stdin.flush();
+        await Bun.sleep(7000);
+        proc.kill();
+        await proc.exited;
+      };
+      seen.length = 0;
+      await serveOnce();
+      expect(seen).toEqual([]);
+      // Control: the same serve with the profile's receipt moved aside does contact the provider, so the recorder sees what a decline suppresses.
+      const aside = `${receiptPathIn(profile(b))}.aside`;
+      const { renameSync } = await import('node:fs');
+      renameSync(receiptPathIn(profile(b)), aside);
+      await serveOnce();
+      expect(seen.join(' ')).toContain('/v1/models');
+    } finally {
+      recorder.stop(true);
+    }
+  }, 120_000);
+});
+const receiptPathIn = (home: string, name = 'gbrain') => join(home, `.gbrain-connection-hermes-${name}.json`);
+
+describe('review finding 5: --source is pinned on the capture hook too', () => {
+  test('--source X --capture puts GBRAIN_SOURCE=X on the user-prompt AND the session-end command, and the MCP env', async () => {
+    const b = box();
+    expect((await runCli(['init', '--pglite', '--no-embedding'], { home: b.home })).exitCode).toBe(0);
+    const dir = join(b.root, 'acme-notes');
+    mkdirSync(dir);
+    expect((await runCli(['sources', 'add', 'acme-notes', '--path', dir, '--force'], { home: b.home })).exitCode).toBe(0);
+    const r = await setup(b, ['hermes', '--source', 'acme-notes', '--capture', '--json']);
+    expect(r.exitCode).toBe(0);
+    expect(yaml(b).mcp_servers.gbrain.env).toEqual({ GBRAIN_HOME: b.gbrainHome, GBRAIN_SOURCE: 'acme-notes' });
+    for (const event of ['pre_llm_call', 'on_session_finalize']) {
+      const argv = shlexSplit(items(b, event)[0].command)!;
+      expect(argv).toContain('GBRAIN_SOURCE=acme-notes');
+      expect(argv.indexOf('GBRAIN_SOURCE=acme-notes')).toBeLessThan(argv.findIndex((t) => t === 'sh' || t === b.bin));
+    }
+  });
+});
+
+describe('review finding 6: --remove with an unlocatable entry keeps a receipt; a UTF-8 BOM is locatable', () => {
+  test('a BOM config installs, is removed byte for byte, and the receipt goes', async () => {
+    const b = box();
+    const text = '\uFEFFmodel: x\nmcp_servers:\n  other:\n    command: /bin/true\n';
+    writeCfg(b, text);
+    expect((await setup(b, ['hermes', '--capture', '--json'])).exitCode).toBe(0);
+    const removed = await setup(b, ['hermes', '--remove', '--json']);
+    expect(removed.doc.preserved).toEqual([]);
+    expect(readFileSync(cfgPath(b), 'utf8')).toBe(text);
+    expect(existsSync(receiptPath(b))).toBe(false);
+  });
+
+  test('an entry re-rendered in a shape setup cannot locate is preserved AND remembered: the receipt stays (removed), a later setup does not adopt it', async () => {
+    const b = box();
+    expect((await setup(b, ['hermes', '--json'])).exitCode).toBe(0);
+    const entry = yaml(b).mcp_servers.gbrain;
+    // Same parsed value, different layout: a flow mapping under the block header (what a hand edit or a dumper can produce).
+    writeCfg(b, `mcp_servers:\n  gbrain: ${JSON.stringify(entry)}\n`);
+    const removed = await setup(b, ['hermes', '--remove', '--json']);
+    expect(removed.exitCode).toBe(0);
+    expect(removed.doc.preserved).toContainEqual({ kind: 'mcp', reason: 'unlocatable' });
+    expect(yaml(b).mcp_servers.gbrain).toEqual(entry);
+    const kept = readJson(receiptPath(b));
+    expect(kept.status).toBe('removed');
+    expect(kept.entry_hash).toEqual(expect.any(String));
+    const again = await setup(b, ['hermes', '--json']);
+    expect(again.exitCode).toBe(0);
+    expect(readJson(receiptPath(b)).mcp_adopted).toBeUndefined();
+    const second = await setup(b, ['hermes', '--remove', '--json']);
+    expect(second.doc.preserved).toContainEqual({ kind: 'mcp', reason: 'unlocatable' });
+    expect(existsSync(receiptPath(b))).toBe(true);
+  });
+});
+
+describe('review finding 8: the written hooks pass real Hermes\' own executable and mtime checks', () => {
+  const hermesRepo = join(homedir(), '.hermes', 'hermes-agent');
+  const py = join(hermesRepo, 'venv', 'bin', 'python');
+  test.skipIf(!existsSync(py) || !existsSync(join(hermesRepo, 'agent', 'shell_hooks.py')))('script_is_executable, script_mtime_iso and allowlist_entry_for (read-only Hermes source, throwaway HERMES_HOME, no model call)', async () => {
+    const b = box();
+    expect((await setup(b, ['hermes', '--capture'])).exitCode).toBe(0);
+    const cmds = ['pre_llm_call', 'on_session_finalize'].map((e) => [e, items(b, e)[0].command]);
+    const code = `import sys, json\nsys.path.insert(0, ${JSON.stringify(hermesRepo)})\nfrom agent import shell_hooks as sh\nout = {}\nfor e, c in json.loads(sys.argv[1]):\n    ent = sh.allowlist_entry_for(e, c)\n    out[e] = {'exec': sh.script_is_executable(c), 'mtime': sh.script_mtime_iso(c), 'approved': ent is not None, 'approved_mtime': (ent or {}).get('script_mtime_at_approval')}\nprint(json.dumps(out))`;
+    const proc = Bun.spawn([py, '-I', '-c', code, JSON.stringify(cmds)], { env: { PATH: process.env.PATH ?? '', HERMES_HOME: hermesDir(b), HOME: b.home }, stdout: 'pipe', stderr: 'pipe' });
+    const [out, err] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
+    expect(await proc.exited, err).toBe(0);
+    const got = JSON.parse(out.trim().split('\n').pop()!);
+    for (const e of ['pre_llm_call', 'on_session_finalize']) {
+      expect(got[e].exec).toBe(true);
+      expect(got[e].mtime).toEqual(expect.any(String));
+      expect(got[e].approved).toBe(true);
+      expect(got[e].approved_mtime).toEqual(expect.any(String));
+    }
+  }, 60_000);
+
+  test('every hook command starts with an absolute launcher, so its first path-like token is a real executable (not GBRAIN_HOME=/…)', async () => {
+    const b = box();
+    expect((await setup(b, ['hermes', '--capture'])).exitCode).toBe(0);
+    for (const e of ['pre_llm_call', 'on_session_finalize']) {
+      const first = shlexSplit(items(b, e)[0].command)![0]!;
+      expect(first.startsWith('/') || first === 'env').toBe(true);
+      if (first.startsWith('/')) expect(statSync(first).mode & 0o111).not.toBe(0);
+    }
+  });
+});
+
+describe('review finding 9: a config.yaml write during setup aborts it instead of being overwritten', () => {
+  test('Hermes writing between inspect and the MCP write: configuration_conflict, the foreign write is intact, the receipt stays prepared and a rerun converges', async () => {
+    const b = box();
+    const home = hermesDir(b);
+    mkdirSync(home, { recursive: true });
+    writeFileSync(join(home, 'config.yaml'), 'model: x\n');
+    const consent: any = { wiring_scope: { value: { scope: 'user', hooks: 'read-context' }, source: 'default' }, capture: { value: 'declined', source: 'default' }, providers: { value: 'declined', source: 'default' } };
+    const plan: HermesSetupPlan = { name: 'gbrain', launcher: b.bin, brainHome: join(b.gbrainHome, '.gbrain'), gbrainHomeEnv: b.gbrainHome, hermesHome: home, sourceId: null, surface: 'full', events: ['pre_llm_call'] };
+    const midWrite = 'model: x\nhermes_wrote: this-during-setup\n';
+    await expect(applyHermesSetup(plan, consent, { brainCreated: false, beforeMcp: async () => { writeFileSync(join(home, 'config.yaml'), midWrite); } })).rejects.toBeInstanceOf(HermesConfigConflict);
+    expect(readFileSync(join(home, 'config.yaml'), 'utf8')).toBe(midWrite);
+    expect(readJson(receiptPath(b)).status).toBe('prepared');
+    const done = await applyHermesSetup(plan, consent, { brainCreated: false });
+    expect(done.receipt.status).toBe('installed');
+    expect(readFileSync(join(home, 'config.yaml'), 'utf8')).toContain('hermes_wrote: this-during-setup');
+    expect(yaml(b).mcp_servers.gbrain).toBeDefined();
+  });
+});
+
+describe('review finding 11: --providers lets the Hermes-spawned serve see the keys it needs, by reference only', () => {
+  const secret = ['sk', 'proj', 'review', 'finding', '11', 'not', 'real'].join('-');
+  async function brainFirst(b: Box): Promise<void> { expect((await runCli(['init', '--pglite', '--no-embedding'], { home: b.home })).exitCode).toBe(0); }
+
+  test('accepted + OPENAI_API_KEY in the env: the entry references ${OPENAI_API_KEY}; the value is written nowhere; a rerun keeps it', async () => {
+    const b = box();
+    await brainFirst(b);
+    const r = await setup(b, ['hermes', '--providers', '--json'], { OPENAI_API_KEY: secret });
+    expect(r.exitCode).toBe(0);
+    expect(yaml(b).mcp_servers.gbrain.env).toEqual({ GBRAIN_HOME: b.gbrainHome, OPENAI_API_KEY: '${OPENAI_API_KEY}' });
+    expect(r.doc.notes.join(' ')).toContain('.env');
+    for (const p of [cfgPath(b), receiptPath(b), allowPath(b)]) if (existsSync(p)) expect(readFileSync(p, 'utf8')).not.toContain(secret);
+    expect(r.stdout).not.toContain(secret);
+    const again = await setup(b, ['hermes', '--json']);
+    expect(again.exitCode).toBe(0);
+    expect(again.doc.steps.map((s: any) => [s.step, s.action])).toEqual([['receipt', 'keep'], ['mcp', 'keep'], ['hooks', 'keep'], ['trust', 'keep']]);
+    expect(yaml(b).mcp_servers.gbrain.env.OPENAI_API_KEY).toBe('${OPENAI_API_KEY}');
+  });
+
+  test('declined (the default), or no key set, or the key already in config.json: no placeholder', async () => {
+    const declined = box();
+    expect((await setup(declined, ['hermes', '--json'], { OPENAI_API_KEY: secret })).exitCode).toBe(0);
+    expect(yaml(declined).mcp_servers.gbrain.env).toEqual({ GBRAIN_HOME: declined.gbrainHome });
+    const keyless = box();
+    await brainFirst(keyless);
+    expect((await setup(keyless, ['hermes', '--providers', '--json'], { OPENAI_API_KEY: undefined })).exitCode).toBe(0);
+    expect(yaml(keyless).mcp_servers.gbrain.env).toEqual({ GBRAIN_HOME: keyless.gbrainHome });
+    const inFile = box();
+    await brainFirst(inFile);
+    const cfgFile = join(inFile.gbrainHome, '.gbrain', 'config.json');
+    writeFileSync(cfgFile, JSON.stringify({ ...readJson(cfgFile), openai_api_key: secret }));
+    expect((await setup(inFile, ['hermes', '--providers', '--json'], { OPENAI_API_KEY: secret })).exitCode).toBe(0);
+    expect(yaml(inFile).mcp_servers.gbrain.env).toEqual({ GBRAIN_HOME: inFile.gbrainHome });
+  });
+});
+
+describe('review finding 13: provider-lane interaction', () => {
+  test('memory.provider: gbrain in config.yaml is refused with a pointer to removing the hosted lane; nothing is written', async () => {
+    const b = box();
+    const text = 'memory:\n  provider: gbrain\n  gbrain:\n    url: https://brain.example.test/mcp\n';
+    writeCfg(b, text);
+    const r = await setup(b, ['hermes', '--json']);
+    expect(r.exitCode).toBe(1);
+    expect(r.doc).toMatchObject({ code: 'setup_owner_conflict', reason: 'harness_lane' });
+    expect(r.doc.fix.argv.slice(0, 6)).toEqual(['gbrain', 'hermes', 'setup', '--hermes-home', hermesDir(b), '--remove']);
+    expect(readFileSync(cfgPath(b), 'utf8')).toBe(text);
+    expect(existsSync(receiptPath(b))).toBe(false);
+    noBrain(b);
+  });
+
+  test('the hosted provider lane refuses a setup-owned mcp_servers.gbrain and names `gbrain setup hermes --remove`', async () => {
+    const b = box();
+    expect((await setup(b, ['hermes', '--json'])).exitCode).toBe(0);
+    await expect(installHermesPlugin({ home: hermesDir(b), url: 'https://brain.example/mcp', token: 'synthetic-token', assets: { 'plugin.yaml': 'name: gbrain\n' } }))
+      .rejects.toThrow(/gbrain setup hermes --remove/);
   });
 });

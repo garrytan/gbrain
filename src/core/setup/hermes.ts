@@ -39,25 +39,39 @@ import { dirname, join } from 'node:path';
 import { atomicWriteTextFile } from '../bootstrap/atomic-write.ts';
 import { ownedEntryFingerprint } from '../bootstrap/adopted-connections.ts';
 import { acquireBootstrapLock } from '../bootstrap/lock.ts';
-import { hermesAllowlistPath, hermesConfigPath, hermesHome } from '../bootstrap/host-specs.ts';
-import { appendHermesYamlEntry, readHermesYaml, removeHermesYamlEntry } from '../bootstrap/hermes-yaml.ts';
+import { hermesAllowlistPath, hermesConfigPath, hermesHome, isDefaultHermesHome } from '../bootstrap/host-specs.ts';
+import {
+  appendHermesYamlEntry,
+  appendHermesYamlText,
+  hermesConfigGuardOf,
+  readHermesConfigText,
+  readHermesYamlText,
+  removeHermesYamlEntry,
+  removeHermesYamlText,
+  writeHermesConfigText,
+  type HermesConfigGuard,
+} from '../bootstrap/hermes-yaml.ts';
 import {
   HERMES_SETUP_EVENTS,
   HERMES_SETUP_LANE_TOKEN,
   approvalIsEdited,
   approveHermesHooks,
-  hermesHookCensus,
+  editHermesSetupHooksText,
+  hermesHookCensusText,
   hermesSetupHookItem,
   isApproved,
   readHermesAllowlist,
   revokeHermesHooks,
   writeHermesSetupHooks,
+  type HermesHookEditOpts,
   type HermesHookItem,
   type HermesPair,
   type HermesSetupEvent,
 } from '../bootstrap/hermes-hooks.ts';
 import { stdioServeArgv } from '../mcp-registration.ts';
 import type { McpSurface } from '../../mcp/surface.ts';
+import { CONFIG_API_KEY_ENV } from '../ai/provider-env.ts';
+import { resolveRecipe } from '../ai/model-resolver.ts';
 import { SetupAbortInjected, type SetupConsent, type SetupStep } from './claude-code.ts';
 
 export const HERMES_SETUP_RECEIPT_VERSION = 3;
@@ -103,6 +117,12 @@ export interface HermesSetupPlan {
   sourceId: string | null;
   surface: McpSurface;
   events: HermesSetupEvent[];
+  /**
+   * Provider key variable NAMES (never values) the Hermes-spawned serve needs when provider use was accepted:
+   * Hermes filters a stdio child's environment, so each is written to the MCP entry's env as a `${NAME}` reference
+   * that Hermes resolves from the profile's .env or its own environment.
+   */
+  providerEnv?: string[];
 }
 
 export type HermesSetupStep = Omit<SetupStep, 'step'> & { step: SetupStep['step'] | 'trust' };
@@ -121,6 +141,10 @@ export interface HermesInspection {
   edited: Hashes;
   hooksCurrent: boolean;
   trustCurrent: boolean;
+  /** `memory.provider` of the profile (the hosted MemoryProvider lane when it is `gbrain`). */
+  memoryProvider: string | undefined;
+  /** Hash of the config.yaml bytes every planned edit was computed from; writes abort if it changed. */
+  guard: HermesConfigGuard;
 }
 
 export function hermesSetupPaths(name: string, home: string = hermesHome()): { home: string; configPath: string; allowlistPath: string; receiptPath: string } {
@@ -150,15 +174,61 @@ export function readHermesSetupReceipt(receiptPath: string): { setup: HermesSetu
 
 const writeReceipt = (path: string, receipt: HermesSetupReceipt) => atomicWriteTextFile(path, `${JSON.stringify(receipt, null, 2)}\n`, { forceMode: 0o600 });
 
-export function desiredHermesMcpEntry(plan: Pick<HermesSetupPlan, 'launcher' | 'surface' | 'gbrainHomeEnv' | 'sourceId'>): Record<string, unknown> {
+/**
+ * The stdio entry. Hermes strips HERMES_HOME from a stdio child's environment, so a serve it spawns for a NON-default
+ * profile would resolve `$HOME/.hermes` and never see that profile's setup receipt (a recorded `providers: declined`
+ * would be ignored). The profile is therefore pinned in the entry's env whenever it is not `$HOME/.hermes`; a default
+ * profile's entry stays what a plain install writes.
+ */
+export function desiredHermesMcpEntry(plan: Pick<HermesSetupPlan, 'launcher' | 'surface' | 'gbrainHomeEnv' | 'sourceId' | 'hermesHome' | 'providerEnv'>): Record<string, unknown> {
   const env: Record<string, string> = { GBRAIN_HOME: plan.gbrainHomeEnv };
   if (plan.sourceId) env.GBRAIN_SOURCE = plan.sourceId;
+  if (!isDefaultHermesHome(plan.hermesHome)) env.HERMES_HOME = plan.hermesHome;
+  for (const name of plan.providerEnv ?? []) env[name] = `\${${name}}`;
   return { command: plan.launcher, args: stdioServeArgv(plan.launcher, plan.surface).slice(1), env };
 }
 
+/**
+ * Hook items. GBRAIN_SOURCE rides every event (a captured session is stamped with the source the reads use). HERMES_HOME
+ * rides the capture hook always (it reads that profile's state.db) and the read hook for a non-default profile.
+ */
 function desiredItems(plan: HermesSetupPlan): Partial<Record<HermesSetupEvent, HermesHookItem>> {
-  const env = { GBRAIN_HOME: plan.gbrainHomeEnv, GBRAIN_SOURCE: plan.sourceId ?? undefined, HERMES_HOME: plan.hermesHome };
-  return Object.fromEntries(plan.events.map((e) => [e, hermesSetupHookItem(plan.launcher, e, env)]));
+  const pin = !isDefaultHermesHome(plan.hermesHome);
+  return Object.fromEntries(plan.events.map((e) => [e, hermesSetupHookItem(plan.launcher, e, {
+    GBRAIN_HOME: plan.gbrainHomeEnv, GBRAIN_SOURCE: plan.sourceId ?? undefined, HERMES_HOME: e === 'on_session_finalize' || pin ? plan.hermesHome : undefined })]));
+}
+
+/**
+ * Provider key variable NAMES the Hermes-spawned serve needs once provider use is accepted. gbrain resolves a key from
+ * the process env OR `config.json` (`mergedProviderEnv`); Hermes hands a stdio child neither the user's env nor (since
+ * setup creates the brain keyless) a config.json key, so an env-only key would leave the serve unable to embed. Setup
+ * therefore references each needed key as `${NAME}` (Hermes fills it from the profile `.env` or its own environment) and
+ * never writes a value. Needed = the configured embedding model's provider keys when known, else every provider key
+ * set in the environment now; a key already in config.json is skipped; placeholders a previous run wrote are kept.
+ */
+export function hermesProviderEnvNames(opts: {
+  accepted: boolean;
+  cfg: { embedding_model?: string } & Record<string, unknown> | null;
+  env: NodeJS.ProcessEnv;
+  existingEntryEnv?: Record<string, unknown>;
+}): string[] {
+  if (!opts.accepted) return [];
+  const known = new Map<string, string>(CONFIG_API_KEY_ENV.map(([cfgKey, name]) => [name, cfgKey]));
+  let wanted: string[] = [...known.keys()].filter((n) => !!opts.env[n]);
+  if (opts.cfg?.embedding_model) {
+    try { wanted = resolveRecipe(opts.cfg.embedding_model).recipe.auth_env?.required ?? []; } catch { /* unknown model: fall back to every key set */ }
+  }
+  const keep = Object.entries(opts.existingEntryEnv ?? {}).filter(([k, v]) => known.has(k) && v === `\${${k}}`).map(([k]) => k);
+  return [...new Set([...wanted, ...keep])].filter((n) => known.has(n) && !(opts.cfg && opts.cfg[known.get(n)!])).sort();
+}
+
+const setupComment = (name: string): string => `gbrain setup (${name}): owned by fingerprint; \`gbrain setup hermes --remove\` deletes it while unchanged`;
+
+/** The hook edit setup performs (shared by the preflight dry-run in inspect and the real write in apply). */
+function hookEdit(plan: HermesSetupPlan, prior: HermesSetupReceipt | null, edited: Hashes): HermesHookEditOpts {
+  const writeItems = Object.fromEntries(Object.entries(desiredItems(plan)).filter(([e]) => !edited[e as HermesSetupEvent])) as Partial<Record<HermesSetupEvent, HermesHookItem>>;
+  const owned = new Set([...values(prior?.hooks.owned), ...values(prior?.hooks.pending), ...values(hashes(writeItems))]);
+  return { want: writeItems, owned, preserve: new Set(Object.keys(edited)), comment: setupComment(plan.name) };
 }
 
 const hashes = (items: Partial<Record<HermesSetupEvent, HermesHookItem>>): Hashes =>
@@ -175,19 +245,27 @@ function desiredPairs(items: Partial<Record<HermesSetupEvent, HermesHookItem>>):
   return (Object.entries(items) as Array<[HermesSetupEvent, HermesHookItem]>).map(([event, it]) => ({ event, command: it.command, hash: pairFingerprint({ event, command: it.command }) }));
 }
 
-/** Read-only: what setup would find and own. Throws on an unparseable config or allowlist. */
+/**
+ * Read-only: what setup would find and own. Throws on an unparseable config or allowlist, and, because it dry-runs
+ * every planned YAML edit (the MCP entry, then each hook event) against an in-memory copy, on any config shape setup
+ * cannot edit: all refusals happen here, before the brain, the receipt or any file is written.
+ */
 export function inspectHermesSetup(plan: HermesSetupPlan): HermesInspection {
   const paths = hermesSetupPaths(plan.name, plan.hermesHome);
   const { setup: prior, hosted } = readHermesSetupReceipt(paths.receiptPath);
-  const entry = readHermesYaml(paths.configPath, ['mcp_servers', plan.name]);
+  const text = readHermesConfigText(paths.configPath);
+  const label = paths.configPath;
+  const entry = readHermesYamlText(label, text, ['mcp_servers', plan.name]);
   const desired = ownedEntryFingerprint(desiredHermesMcpEntry(plan));
   const entryFp = entry === undefined ? null : ownedEntryFingerprint(entry);
   const mcp: HermesInspection['mcp'] = entry === undefined ? { state: 'absent' }
     : entryFp === desired ? { state: 'current' }
       : typeof (entry as Record<string, unknown>)?.url === 'string' ? { state: 'remote', url: (entry as Record<string, string>).url }
         : prior && [prior.entry_hash, prior.pending_entry_hash].includes(entryFp) ? { state: 'owned' } : { state: 'unowned' };
+  const memory = readHermesYamlText(label, text, ['memory']);
+  const memoryProvider = memory && typeof memory === 'object' && typeof (memory as Record<string, unknown>).provider === 'string' ? (memory as Record<string, string>).provider : undefined;
 
-  const census = hermesHookCensus(paths.configPath);
+  const census = hermesHookCensusText(label, text);
   const items = desiredItems(plan);
   const want = hashes(items);
   const owned = new Set([...values(prior?.hooks.owned), ...values(prior?.hooks.pending), ...values(want)]);
@@ -210,6 +288,16 @@ export function inspectHermesSetup(plan: HermesSetupPlan): HermesInspection {
   }
   for (const event of plan.events) if (!edited[event] && !seen[event]) hooksCurrent = false;
 
+  // Dry-run the edits setup would make, in order, on an in-memory copy: an unsupported shape is refused HERE.
+  let draft = text;
+  if (mcp.state === 'owned') {
+    const r = removeHermesYamlText(label, draft, ['mcp_servers'], { key: plan.name });
+    if (r.result === 'unlocatable') throw new Error(`mcp_servers.${plan.name} in ${label} is setup's but was re-rendered in a shape setup cannot rewrite safely; remove that entry by hand, then run setup again.`);
+    draft = r.text;
+  }
+  if (mcp.state === 'absent' || mcp.state === 'owned') draft = appendHermesYamlText(label, draft, ['mcp_servers'], { key: plan.name, value: desiredHermesMcpEntry(plan) }, setupComment(plan.name));
+  editHermesSetupHooksText(label, draft, hookEdit(plan, prior, edited));
+
   // Read (and so parse-check) the approval store up front: an unparseable file is refused before anything is written.
   const file = readHermesAllowlist(paths.allowlistPath);
   let trustCurrent = hooksCurrent;
@@ -222,7 +310,8 @@ export function inspectHermesSetup(plan: HermesSetupPlan): HermesInspection {
     }
   }
   const otherLaneEvents = [...new Set(census.filter((g) => g.lane === 'other').map((g) => g.event))];
-  return { configPath: paths.configPath, allowlistPath: paths.allowlistPath, receiptPath: paths.receiptPath, prior, hostedReceipt: hosted, mcp, otherLaneEvents, edited, hooksCurrent, trustCurrent };
+  return { configPath: paths.configPath, allowlistPath: paths.allowlistPath, receiptPath: paths.receiptPath, prior, hostedReceipt: hosted, mcp, otherLaneEvents, edited, hooksCurrent, trustCurrent,
+    memoryProvider, guard: hermesConfigGuardOf(paths.configPath, text) };
 }
 
 export interface HermesApplyResult { steps: HermesSetupStep[]; receipt: HermesSetupReceipt; changed: boolean; preserved: HermesPreserved[]; notes: string[] }
@@ -286,15 +375,16 @@ export async function applyHermesSetup(
     await opts.beforeMcp?.();
 
     // 2. MCP entry.
-    const comment = `gbrain setup (${plan.name}): owned by fingerprint; \`gbrain setup hermes --remove\` deletes it while unchanged`;
+    const comment = setupComment(plan.name);
+    const guard = found.guard;
     if (found.mcp.state === 'current') {
       if (!prior?.entry_hash && !prior?.pending_entry_hash) receipt.mcp_adopted = true;
       steps.push({ step: 'mcp', action: 'keep', detail: `mcp_servers.${plan.name} in ${paths.configPath} is current${receipt.mcp_adopted ? ' (adopted: it was already there, so --remove keeps it)' : ''}` });
     } else {
-      if (found.mcp.state === 'owned' && removeHermesYamlEntry(paths.configPath, ['mcp_servers'], { key: plan.name }) === 'unlocatable') {
+      if (found.mcp.state === 'owned' && removeHermesYamlEntry(paths.configPath, ['mcp_servers'], { key: plan.name }, { guard }) === 'unlocatable') {
         throw new Error(`mcp_servers.${plan.name} in ${paths.configPath} is setup's but was re-rendered in a shape setup cannot rewrite safely; remove that entry by hand, then run setup again.`);
       }
-      appendHermesYamlEntry(paths.configPath, ['mcp_servers'], { key: plan.name, value: desired }, comment);
+      appendHermesYamlEntry(paths.configPath, ['mcp_servers'], { key: plan.name, value: desired }, comment, { guard });
       delete receipt.mcp_adopted;
       steps.push({ step: 'mcp', action: 'write', detail: `mcp_servers.${plan.name} in ${paths.configPath}` });
     }
@@ -304,8 +394,7 @@ export async function applyHermesSetup(
     if (opts.abortAfter === 'mcp') throw new SetupAbortInjected('mcp');
 
     // 3. hook items (inert until approved).
-    const ownedHooks = new Set([...values(prior?.hooks.owned), ...values(prior?.hooks.pending), ...values(want)]);
-    const w = writeHermesSetupHooks(paths.configPath, { want: writeItems, owned: ownedHooks, preserve: new Set(Object.keys(found.edited)), comment });
+    const w = writeHermesSetupHooks(paths.configPath, { ...hookEdit(plan, prior, found.edited), guard });
     const written = Object.keys(writeItems);
     steps.push(w.changed
       ? { step: 'hooks', action: 'write', detail: written.length ? `${written.join(', ')} in ${paths.configPath}` : `removed setup's hook items from ${paths.configPath}` }
@@ -368,6 +457,7 @@ export interface HermesRemoveResult { steps: HermesSetupStep[]; preserved: Herme
 export async function removeHermesSetup(receipt: HermesSetupReceipt, receiptPath: string, opts: { dryRun: boolean }): Promise<HermesRemoveResult> {
   const lock = await acquireBootstrapLock(dirname(receipt.config_path));
   try {
+    const guard = hermesConfigGuardOf(receipt.config_path, readHermesConfigText(receipt.config_path));
     const steps: HermesSetupStep[] = [];
     const preserved: HermesPreserved[] = [];
     const trustEdited: TrustRecords = {};
@@ -385,12 +475,15 @@ export async function removeHermesSetup(receipt: HermesSetupReceipt, receiptPath
     if (approvals.length) revokeHermesHooks(receipt.allowlist_path, approvals, { dryRun: opts.dryRun, deleteIfEmpty: receipt.trust.allowlist_created === true });
 
     const owned = new Set([...values(receipt.hooks.owned), ...values(receipt.hooks.pending)]);
-    const census = hermesHookCensus(receipt.config_path);
+    const census = hermesHookCensusText(receipt.config_path, readHermesConfigText(receipt.config_path));
     const removedItems = census.filter((g) => owned.has(g.hash));
     const unlocatableHooks = new Set<string>();
+    const keptHooks: Hashes = {};
+    let keptEntry: string | null = null;
     for (const g of removedItems) {
-      if (removeHermesYamlEntry(receipt.config_path, ['hooks', g.event], { match: (it) => !!it && typeof it === 'object' && ownedEntryFingerprint(it) === g.hash }, { dryRun: opts.dryRun }) === 'unlocatable') {
+      if (removeHermesYamlEntry(receipt.config_path, ['hooks', g.event], { match: (it) => !!it && typeof it === 'object' && ownedEntryFingerprint(it) === g.hash }, { dryRun: opts.dryRun, guard }) === 'unlocatable') {
         unlocatableHooks.add(g.event);
+        keptHooks[g.event] = g.hash;
         preserved.push({ kind: 'hook', event: g.event, reason: 'unlocatable' });
         steps.push({ step: 'hooks', action: 'preserve', detail: `${g.event} in ${receipt.config_path} could not be located as one item; kept` });
       }
@@ -411,7 +504,7 @@ export async function removeHermesSetup(receipt: HermesSetupReceipt, receiptPath
       steps.push({ step: 'hooks', action: 'preserve', detail: `${event} in ${receipt.config_path} was edited after setup wrote it; kept` });
     }
 
-    const entry = readHermesYaml(receipt.config_path, ['mcp_servers', receipt.name]);
+    const entry = readHermesYamlText(receipt.config_path, readHermesConfigText(receipt.config_path), ['mcp_servers', receipt.name]);
     const entryFp = entry === undefined ? null : ownedEntryFingerprint(entry);
     if (entry === undefined) {
       steps.push({ step: 'mcp', action: 'skip', detail: `no mcp_servers.${receipt.name} in ${receipt.config_path}` });
@@ -419,7 +512,8 @@ export async function removeHermesSetup(receipt: HermesSetupReceipt, receiptPath
       preserved.push({ kind: 'mcp', reason: 'adopted' });
       steps.push({ step: 'mcp', action: 'preserve', detail: `mcp_servers.${receipt.name} existed before setup ran; kept` });
     } else if ([receipt.entry_hash, receipt.pending_entry_hash].includes(entryFp)) {
-      if (removeHermesYamlEntry(receipt.config_path, ['mcp_servers'], { key: receipt.name }, { dryRun: opts.dryRun }) === 'unlocatable') {
+      if (removeHermesYamlEntry(receipt.config_path, ['mcp_servers'], { key: receipt.name }, { dryRun: opts.dryRun, guard }) === 'unlocatable') {
+        keptEntry = entryFp;
         preserved.push({ kind: 'mcp', reason: 'unlocatable' });
         steps.push({ step: 'mcp', action: 'preserve', detail: `mcp_servers.${receipt.name} could not be located as one entry; kept` });
       } else steps.push({ step: 'mcp', action: 'remove', detail: `mcp_servers.${receipt.name} from ${receipt.config_path}` });
@@ -430,10 +524,12 @@ export async function removeHermesSetup(receipt: HermesSetupReceipt, receiptPath
 
     let receiptRemoved = false;
     if (!opts.dryRun) {
-      if (preserved.some((p) => p.reason === 'edited')) {
-        writeReceipt(receiptPath, { ...receipt, status: 'removed', entry_hash: null, pending_entry_hash: null,
-          hooks: { owned: {}, pending: {}, edited }, trust: { owned: {}, pending: {}, edited: trustEdited }, updated_at: new Date().toISOString() });
-        steps.push({ step: 'receipt', action: 'write', detail: `${receiptPath} (removed; remembers the edited entries so a later setup leaves them alone)` });
+      // An edited or unlocatable entry is still ours (or looks like it): keep a `removed` receipt that remembers its
+      // fingerprint, so a later setup neither adopts it as the user's nor rewrites it, and `--remove` can find it again.
+      if (preserved.some((p) => p.reason === 'edited' || p.reason === 'unlocatable')) {
+        writeReceipt(receiptPath, { ...receipt, status: 'removed', entry_hash: keptEntry, pending_entry_hash: null,
+          hooks: { owned: keptHooks, pending: {}, edited }, trust: { owned: {}, pending: {}, edited: trustEdited }, updated_at: new Date().toISOString() });
+        steps.push({ step: 'receipt', action: 'write', detail: `${receiptPath} (removed; remembers the edited or unlocatable entries so a later setup leaves them alone)` });
       } else {
         if (existsSync(receiptPath)) unlinkSync(receiptPath);
         receiptRemoved = true;

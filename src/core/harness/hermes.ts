@@ -131,7 +131,7 @@ export async function installHermesPlugin(options: {
       const current = saved(config, key), owned = next.leaves[key];
       if (owned) {
         if (!same(current, owned.before) && !same(current, owned.after) && !same(current, owned.previousAfter)) throw new Error(`configuration_conflict: edited owned Hermes leaf ${key}`);
-      } else if (key !== 'memory.provider' && current.exists) throw new Error(`configuration_conflict: foreign Hermes leaf ${key}`);
+      } else if (key !== 'memory.provider' && current.exists) throw new Error(`configuration_conflict: foreign Hermes leaf ${key}${key === 'mcp_servers.gbrain' ? "; if `gbrain setup hermes` wrote it, run `gbrain setup hermes --remove` first (one owner of the gbrain MCP entry per profile)" : ''}`);
       else if (key === 'memory.provider' && current.value === 'gbrain') throw new Error('configuration_conflict: gbrain provider has no ownership receipt');
       if (!options.remove) next.leaves[key] = { before: owned?.before ?? current, after: saved(desired, key), ...(owned ? { previousAfter: current } : {}) };
     }

@@ -2041,6 +2041,9 @@ release. The message names the guide for the harness you asked for (OpenClaw:
   `--capture`. On Hermes it fires when the profile's `config.yaml` already
   carries a hand-written `gbrain hook … --harness hermes` item on an event setup
   would wire: keep it and run setup with `--no-hooks` (or `--no-capture`).
+  It also fires when the profile has `memory.provider: gbrain` (the hosted
+  MemoryProvider lane already pushes context every turn): remove that lane with
+  `gbrain hermes setup --hermes-home DIR --remove` first, or skip setup there.
 
 `gbrain setup claude-code --dry-run --json` (or `codex`, `hermes`) shows the resolved target and the
 blocking owner without writing anything.

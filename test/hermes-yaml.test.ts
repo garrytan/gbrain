@@ -14,7 +14,9 @@ import { afterAll, describe, expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { appendHermesYamlEntry, readHermesYaml, removeHermesYamlEntry } from '../src/core/bootstrap/hermes-yaml.ts';
+import {
+  appendHermesYamlEntry, appendHermesYamlText, hermesConfigGuard, HermesConfigConflict, readHermesYaml, removeHermesYamlEntry, removeHermesYamlText,
+} from '../src/core/bootstrap/hermes-yaml.ts';
 
 const dirs: string[] = [];
 afterAll(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); });
@@ -144,5 +146,91 @@ describe('hermes-yaml hook sequence items', () => {
     expect(readFileSync(p, 'utf8')).toBe(base);
     const inline = file('hooks:\n  pre_llm_call: [{command: /a}]\n');
     expect(removeHermesYamlEntry(inline, ['hooks', 'pre_llm_call'], { match: (i) => (i as { command: string }).command === '/a' })).toBe('unlocatable');
+  });
+});
+
+describe('hermes-yaml: null headers are convertible empty containers (review finding 1)', () => {
+  const cases: Array<[string, string]> = [
+    ['mcp_servers: null', 'model: x\nmcp_servers: null\nhooks_auto_accept: false\n'],
+    ['mcp_servers: ~', 'mcp_servers: ~\nmodel: x\n'],
+    ['mcp_servers: Null', 'mcp_servers: Null\n'],
+  ];
+  for (const [name, text] of cases) {
+    test(`${name}: append parses, remove restores the original bytes`, () => {
+      const p = file(text);
+      appendHermesYamlEntry(p, ['mcp_servers'], entry, 'gbrain setup (gbrain)');
+      expect(readHermesYaml(p, ['mcp_servers', 'gbrain'])).toEqual(entry.value);
+      expect(removeHermesYamlEntry(p, ['mcp_servers'], { key: 'gbrain' })).toBe('removed');
+      expect(readFileSync(p, 'utf8')).toBe(text);
+    });
+  }
+  test('hooks: null and hooks.<event>: null (what PyYAML writes for an emptied container) convert and restore', () => {
+    for (const text of ['hooks: null\nmodel: x\n', 'hooks:\n  pre_llm_call: null\nmodel: x\n', 'hooks:\n  pre_llm_call: ~\n  on_session_finalize: []\n']) {
+      const p = file(text);
+      appendHermesYamlEntry(p, ['hooks', 'pre_llm_call'], { item: hookItem }, 'gbrain setup (gbrain)');
+      expect((readHermesYaml(p, ['hooks', 'pre_llm_call']) as unknown[]).length).toBe(1);
+      expect(removeHermesYamlEntry(p, ['hooks', 'pre_llm_call'], { match: isHook })).toBe('removed');
+      expect(readFileSync(p, 'utf8')).toBe(text);
+    }
+  });
+  test('genuinely unsupported shapes (hooks as a list, a non-empty flow map, a commented {}) throw a clear message on the pure form too, before any write', () => {
+    expect(() => appendHermesYamlText('c.yaml', 'hooks: [a, b]\n', ['hooks', 'pre_llm_call'], { item: hookItem }, 'x')).toThrow(/cannot edit safely|would change other settings/);
+    expect(() => appendHermesYamlText('c.yaml', 'hooks:\n  - a\n  - b\n', ['hooks', 'pre_llm_call'], { item: hookItem }, 'x')).toThrow();
+    expect(() => appendHermesYamlText('c.yaml', 'mcp_servers: {a: {command: x}}\n', ['mcp_servers'], entry, 'x')).toThrow(/cannot edit safely/);
+    expect(() => appendHermesYamlText('c.yaml', 'mcp_servers: {}  # mine\n', ['mcp_servers'], entry, 'x')).toThrow(/comment setup cannot preserve/);
+    expect(() => appendHermesYamlText('c.yaml', 'mcp_servers: &a\n  x: {command: y}\n', ['mcp_servers'], entry, 'x')).toThrow();
+  });
+  test('the pure forms never touch disk: the same text edits round-trip in memory', () => {
+    const text = 'model: x\nmcp_servers: null\n';
+    const added = appendHermesYamlText('c.yaml', text, ['mcp_servers'], entry, 'gbrain setup (gbrain)');
+    expect(added).not.toBe(text);
+    const gone = removeHermesYamlText('c.yaml', added, ['mcp_servers'], { key: 'gbrain' });
+    expect(gone).toEqual({ result: 'removed', text });
+    expect(removeHermesYamlText('c.yaml', text, ['mcp_servers'], { key: 'gbrain' }).result).toBe('absent');
+  });
+});
+
+describe('hermes-yaml: byte-exact restore of BOM, final newline and line endings (review findings 6 and 7)', () => {
+  const roundTrip = (text: string) => {
+    const p = file(text);
+    appendHermesYamlEntry(p, ['mcp_servers'], entry, 'gbrain setup (gbrain)');
+    expect(readHermesYaml(p, ['mcp_servers', 'gbrain'])).toEqual(entry.value);
+    expect(removeHermesYamlEntry(p, ['mcp_servers'], { key: 'gbrain' })).toBe('removed');
+    expect(readFileSync(p, 'utf8')).toBe(text);
+  };
+  test('a UTF-8 BOM is preserved and the entry stays locatable', () => roundTrip('\uFEFFmodel: x\nmcp_servers:\n  other:\n    command: /bin/true\n'));
+  test('no trailing newline after the last line is restored exactly', () => {
+    roundTrip('mcp_servers:\n  other:\n    command: y');
+    roundTrip('model: x');
+  });
+  test('mixed CRLF/LF line endings come back as they were', () => roundTrip('model: x\r\nmcp_servers:\n  other:\r\n    command: y\n'));
+  test('a CRLF file stays CRLF, including the lines setup inserts', () => {
+    const p = file('model: x\r\nmcp_servers:\r\n  other:\r\n    command: y\r\n');
+    appendHermesYamlEntry(p, ['mcp_servers'], entry, 'gbrain setup (gbrain)');
+    const raw = readFileSync(p, 'utf8');
+    expect(raw.replace(/\r\n/g, '')).not.toContain('\n');
+  });
+  test('an empty file and a file with only a BOM round-trip', () => {
+    roundTrip('');
+    roundTrip('\uFEFF');
+  });
+});
+
+describe('hermes-yaml: concurrent-writer guard (review finding 9)', () => {
+  test('a write aborts with HermesConfigConflict when the file changed since the guard was taken; nothing is written', () => {
+    const p = file('model: x\n');
+    const guard = hermesConfigGuard(p);
+    writeFileSync(p, 'model: x\nsomething: hermes-wrote-this\n');
+    expect(() => appendHermesYamlEntry(p, ['mcp_servers'], entry, 'x', { guard })).toThrow(HermesConfigConflict);
+    expect(readFileSync(p, 'utf8')).toBe('model: x\nsomething: hermes-wrote-this\n');
+  });
+  test('the guard follows our own writes, so a sequence of edits passes; a foreign write in between does not', () => {
+    const p = file('model: x\n');
+    const guard = hermesConfigGuard(p);
+    appendHermesYamlEntry(p, ['mcp_servers'], entry, 'x', { guard });
+    appendHermesYamlEntry(p, ['hooks', 'pre_llm_call'], { item: hookItem }, 'x', { guard });
+    writeFileSync(p, readFileSync(p, 'utf8') + 'late: 1\n');
+    expect(() => removeHermesYamlEntry(p, ['mcp_servers'], { key: 'gbrain' }, { guard })).toThrow(/configuration_conflict/);
+    expect(readFileSync(p, 'utf8')).toContain('late: 1');
   });
 });

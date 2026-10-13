@@ -163,13 +163,27 @@ byte. `gbrain setup hermes` writes:
 - `mcp_servers.<name>` with `command`, `args: [serve, --surface, <surface>]` and
   `env`. Hermes filters a stdio server's environment to a safe baseline plus the
   entry's own `env`, so `GBRAIN_HOME` is always pinned there (and
-  `GBRAIN_SOURCE` when set). No `memory.provider` (that slot is exclusive and
+  `GBRAIN_SOURCE` when set). For a profile other than `~/.hermes` it also pins
+  `HERMES_HOME`: Hermes strips that variable from a stdio child, and without it
+  the serve could not find that profile's setup receipt, so a recorded
+  `providers: declined` would be ignored. With `--providers`, each provider key
+  gbrain needs (the configured embedding model's, else those set in your
+  environment, unless `config.json` already holds it) is added as a
+  `${OPENAI_API_KEY}`-style reference, never a value: put the key in the
+  profile's `.env` or export it where Hermes starts. No `memory.provider` (that slot is exclusive and
   belongs to the hosted provider lane), and none of Hermes' optional keys
   (`connect_timeout`, `enabled`, `tools`): they keep Hermes' defaults, and a key
   you add later makes the entry yours (kept on `--remove`);
 - one shell-hook item under `hooks.pre_llm_call`, running
-  `env GBRAIN_HOOK_LANE=setup GBRAIN_HOME=… <launcher> hook user-prompt --harness hermes`
-  (10 s). Hermes runs it before each turn and appends its `{"context": "…"}`
+  `/usr/bin/env GBRAIN_HOOK_LANE=setup GBRAIN_HOME=… <launcher> hook user-prompt --harness hermes`
+  (10 s; the absolute `env` is the first path-like token Hermes inspects, so
+  `hermes hooks doctor` finds an executable and records its mtime; `GBRAIN_SOURCE`
+  and, for a non-default profile, `HERMES_HOME` ride the same command).
+  The hook skips cron, kanban and subagent turns and child sessions
+  (`parent_session_id`); gateway senders are people and are not skipped, and
+  reads stay world-visibility only. It reads Hermes' whole stdin (a long
+  session's history passes 4 MB) and waits for a starting serve only on a
+  session's first turn. Hermes runs it before each turn and appends its `{"context": "…"}`
   answer to the user message, so gbrain's context reaches the model without a
   tool call. The first turn of a session (and the first turn gbrain sees of a
   resumed one) also carries the session-start digest. The block stays under
@@ -194,7 +208,13 @@ entry, hook items (inert until approved), approvals (activation, last), receipt
 `installed`; `--remove` runs it backwards. A hook command, an approval, or an
 MCP entry you edited is preserved and reported; setup refuses a `config.yaml`
 or allowlist it cannot parse, and a block it cannot edit safely (a non-empty
-inline `mcp_servers: {…}`), rather than rewrite it. Hermes reads its config and
+inline `mcp_servers: {…}`, `hooks:` as a list), rather than rewrite it. Every
+planned edit is dry-run in memory first, so a refusal happens before the brain,
+the receipt or any file is written; an empty `mcp_servers: null` (what Hermes
+writes after `hermes mcp remove`) is fine. A `config.yaml` that changes while
+setup runs aborts it with `configuration_conflict` (rerun to converge). Setup
+refuses a profile with `memory.provider: gbrain` (the hosted lane already pushes
+context): remove that lane with `gbrain hermes setup --remove` first. Hermes reads its config and
 hooks at process start, so restart Hermes (a running gateway needs a restart)
 and check `hermes mcp test <name>`. `gbrain hook … --harness hermes` also
 answers `hermes hooks test pre_llm_call`, which needs no model call.
