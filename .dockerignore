@@ -1,0 +1,23 @@
+# Keep the build context small. Keep test/ and tests/ in the build context:
+# some committed fixtures are embedded into the compiled binary, and including
+# all tests keeps the Docker build simple and predictable.
+.git
+bin/
+node_modules/
+admin/node_modules/
+admin/e2e/
+evals/
+docs/
+.github/
+.gstack/
+.agents/
+.claude-plugin/
+.codex-plugin/
+plugin/
+plugin-variants/
+CHANGELOG.md
+TODOS.md
+llms.txt
+llms-full.txt
+*.log
+.DS_Store

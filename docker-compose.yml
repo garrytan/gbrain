@@ -1,0 +1,40 @@
+# Self-hosted gbrain, built from source (see Dockerfile) — not an `oven/bun`
+# dev image, not `bun install -g gbrain`: this builds the compiled binary
+# from the checked-out repo and runs only that binary.
+#
+# PGLite only — the embedded, zero-config engine. No separate Postgres
+# container: the brain's data lives entirely in the gbrain_data volume
+# (mounted at $GBRAIN_HOME) via the docker-entrypoint.sh first-run init.
+#
+#   docker compose up -d --build
+
+services:
+  gbrain:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3131:3131"
+    environment:
+      # Extra flags for the first-run `gbrain init` (docker-entrypoint.sh).
+      # Example: "--embedding-model text-embedding-3-small" with
+      # OPENAI_API_KEY set below to enable embeddings/hybrid search.
+      GBRAIN_INIT_ARGS: ${GBRAIN_INIT_ARGS:-}
+      GBRAIN_ADMIN_BOOTSTRAP_TOKEN: ${GBRAIN_ADMIN_BOOTSTRAP_TOKEN}
+      # Provider API keys, only if you want embeddings / LLM-assisted
+      # enrichment. Uncomment what you use.
+      # ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      # Required once gbrain sits behind this (or any) reverse proxy, so
+      # rate limiting and audit logs see the real client IP instead of the
+      # proxy's. See SECURITY.md.
+      # GBRAIN_HTTP_TRUST_PROXY: "1"
+      # GBRAIN_HTTP_CORS_ORIGIN: https://your.app
+    volumes:
+      # Persists $GBRAIN_HOME: config, the PGLite database files, tokens,
+      # logs. This volume IS the brain — back it up to keep your data.
+      - gbrain_data:/data
+    restart: unless-stopped
+
+volumes:
+  gbrain_data:
