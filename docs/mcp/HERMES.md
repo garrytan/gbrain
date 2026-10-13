@@ -10,7 +10,44 @@ Codex/Claude skillpack in the selected Hermes profile.
 capture off."* Or *"Import only my interactive Hermes conversations after this
 date, then check that they were saved."*
 
-## Install in one explicit profile
+## Fastest local path: `gbrain setup hermes`
+
+For a brain on this machine, one command creates a keyless brain when there is
+none, registers a stdio MCP server in the profile, wires a `pre_llm_call` context
+hook with the approval Hermes requires, and smoke-tests the registration:
+
+```bash
+bun install -g github:garrytan/gbrain
+gbrain setup hermes --dry-run   # the resolved target and every step; writes nothing
+gbrain setup hermes             # wire and verify (profile: HERMES_HOME, else ~/.hermes)
+gbrain setup hermes --hermes-home ~/.hermes/profiles/research   # another profile
+gbrain setup hermes --remove    # remove only what setup wrote
+```
+
+It writes `mcp_servers.gbrain` (stdio, `GBRAIN_HOME` pinned in its `env` because
+Hermes filters the child's environment) and one `hooks.pre_llm_call` item into
+the profile's `config.yaml` as text, leaving every other byte, comment and key
+alone, and the matching entry in `shell-hooks-allowlist.json`. It does not set
+`memory.provider` or `hooks_auto_accept`. Before each turn Hermes runs the hook
+and appends its `{"context": "…"}` answer to the user message, so brain context
+arrives without a tool call; the first turn of a session also carries the
+session-start digest. Transcript capture (`on_session_finalize`, read from the
+profile's `state.db`, with `--capture`) and provider use (`--providers`) stay off
+unless you accept them; `--no-hooks` registers MCP only. Restart Hermes in the
+profile, then check `hermes mcp test gbrain` and `hermes hooks doctor`. Setup
+reports `native-pending`: push is not claimed until an observed session shows it.
+Details: [setup guide](../guides/setup.md#hermes).
+
+**When to use the HTTP lane instead.** Every Hermes process starts its own stdio
+`gbrain serve`, and a PGLite brain has one writer, so the second process gets a
+status-only server (`gbrain_status`, no `recall`). That is fine for one session at
+a time. With a gateway plus CLI sessions, several profiles, or any always-on
+`gbrain serve --http`, use the hosted/HTTP lane below (`gbrain hermes setup --url`),
+or Postgres. `gbrain setup hermes` refuses with `setup_owner_conflict`
+(`live_serve`) or `setup_hosted_connection` and names that command when it
+applies.
+
+## Install in one explicit profile (hosted or HTTP lane)
 
 Start with a working GBrain host from [INSTALL_FOR_AGENTS.md](../../INSTALL_FOR_AGENTS.md).
 Use one `gbrain serve --http` owner for a PGLite brain, including when several
@@ -234,7 +271,8 @@ Edited files cause a conflict instead of being overwritten. Restart Hermes;
 revoke the server grant separately if access should end. Private backups and
 already-saved brain content remain.
 
-Legacy stdio remains supported for a single local session:
+`gbrain setup hermes` is the owned way to register this stdio entry. The manual
+command remains supported for a single local session:
 
 ```sh
 hermes mcp add gbrain --env GBRAIN_HOME=/absolute/brain-home --connect-timeout 60 \

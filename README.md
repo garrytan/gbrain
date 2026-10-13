@@ -104,7 +104,7 @@ before restarting services with this version.
 
 ```bash
 bun install -g github:garrytan/gbrain
-gbrain setup claude-code   # or codex; --dry-run previews, --remove undoes
+gbrain setup claude-code   # or codex, hermes; --dry-run previews, --remove undoes
 ```
 
 `setup` shows the brain, source, launcher and owner it resolved before writing, runs `gbrain init --pglite --no-embedding` only when no brain exists, writes the stdio MCP entry and read-context hooks (owned by hash, plus Codex hook trust) and smoke-tests them. Capture and providers stay off unless accepted; a hosted brain keeps `gbrain connect --install`. [Setup guide](docs/guides/setup.md).
