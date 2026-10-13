@@ -21,6 +21,7 @@ export const help: CliHelpSpec = {
     { name: '--enable-dcr', type: 'boolean', desc: 'Allow OAuth dynamic client registration (consent-bearing authorization_code clients).' },
     { name: '--enable-dcr-insecure', type: 'boolean', desc: 'Also allow consent-bypassing client_credentials DCR clients (implies --enable-dcr).' },
     { name: '--log-full-params', type: 'boolean', desc: 'Log raw request payloads instead of redacted summaries (debug only).' },
+    { name: '--log-read-params', type: 'boolean', desc: 'For read operations, log the query (PII-scrubbed) and the slugs/fact ids returned; writes stay redacted.' },
     { name: '--suppress-bootstrap-token', type: 'boolean', desc: 'Never print the admin bootstrap token (pair with GBRAIN_ADMIN_BOOTSTRAP_TOKEN).' },
     { name: '--print-admin-token', type: 'boolean', desc: 'Print the generated admin token even when stdout is not a TTY.' },
   ],
