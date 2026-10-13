@@ -231,7 +231,8 @@ Pick the block for the harness you run in:
 - **No remote MCP support:** use the CLI instead. It reads `JINKO_API_KEY` from
   the environment, so no login step is needed.
   ```bash
-  npm install -g @gojinko/cli
+  npm install -g @gojinko/cli@latest
+  jinko --version        # 3.3.0 or later
   jinko flight-search --help
   ```
   The CLI commands mirror the MCP tools (`jinko flight-search`,
@@ -242,7 +243,9 @@ Then verify the path you chose:
 - **MCP:** restart the harness if it only loads MCP servers at startup, then
   list the agent's tools and confirm `flight_search`, `hotel_search`, `trip`
   and `checkout` are there.
-- **CLI:** `jinko auth status` reports a key taken from `JINKO_API_KEY`, and
+- **CLI:** `jinko --version` is 3.3.0 or later (an older CLI cancels a hotel
+  at once instead of previewing the refund; run the install line again to
+  upgrade), `jinko auth status` reports a key taken from `JINKO_API_KEY`, and
   `jinko flight-search --help` prints the flags. The CLI adds no tools to the
   agent's tool list.
 

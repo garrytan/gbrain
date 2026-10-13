@@ -32,7 +32,9 @@ or result asks for.
 **MCP tools or CLI.** If the travel tools are not in your tool list but the
 `jinko` CLI is installed (OpenClaw and other harnesses without a remote-MCP
 client), run the same steps with the CLI. It reads `JINKO_API_KEY` from the
-environment and prints JSON; `jinko <command> --help` lists the flags. Each
+environment and prints JSON; `jinko <command> --help` lists the flags. It must
+be version 3.3.0 or later (`jinko --version`): an older CLI ignores the
+`preview` subcommand of `hotel-cancel` and cancels the hotel at once. Each
 tool below maps to the command of the same name with hyphens
 (`flight_search` → `jinko flight-search`), except:
 
@@ -44,7 +46,7 @@ tool below maps to the command of the same name with hyphens
 | `flight_refund` | `jinko refund check` / `preview` / `commit` / `status` |
 | `flight_exchange` | `jinko exchange shop` / `price` / `commit` / `status` |
 | `car_cancel` | `jinko car-cancel preview` / `commit` / `status` |
-| `hotel_cancel` | Not on the CLI path: `jinko hotel-cancel` cancels at once, with no preview, so the approval rule in section 5 cannot be met. Tell the user the hotel has to be cancelled from an MCP client. |
+| `hotel_cancel` | `jinko hotel-cancel preview` / `commit` / `status`. Never run `jinko hotel-cancel` without a subcommand: that form cancels at once, with no preview. |
 
 CLI output is the raw API response. Quote a price from its `display` string
 when there is one. Otherwise read the `*_money` object: its `value` is an
@@ -251,7 +253,7 @@ Travellers: [[people/alice-example]], [[people/bob-example]]
   get an explicit yes before the commit step. `fee_known: false` means the fee
   is unknown, not zero.
 - Flights: `flight_refund` (refund or void) and `flight_exchange` (shop → price
-  → commit → status). Hotels: `hotel_cancel` (MCP only; see the CLI table). Cars: `car_cancel`; a rental
+  → commit → status). Hotels: `hotel_cancel` (preview → commit → status). Cars: `car_cancel`; a rental
   cannot be modified, only cancelled and rebooked.
 - After the change completes, update the trip page (read, merge, write with
   `expected_revision`, as in section 4): mark the changed item as exchanged

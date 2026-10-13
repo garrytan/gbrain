@@ -18,7 +18,9 @@ not from gbrain. Check the path you set up there:
 
 - **MCP:** list the agent's tools and check that `flight_search` is there.
 - **CLI** (OpenClaw and other harnesses without a remote-MCP client):
-  `jinko auth status` reports a key taken from `JINKO_API_KEY`, and
+  `jinko --version` is 3.3.0 or later (an older CLI cancels a hotel at once
+  instead of previewing the refund), `jinko auth status` reports a key taken
+  from `JINKO_API_KEY`, and
   `jinko flight-search --help` prints the flags. The CLI adds no tools to the
   agent's tool list.
 
