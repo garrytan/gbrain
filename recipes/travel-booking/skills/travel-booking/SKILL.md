@@ -64,6 +64,9 @@ not save one-off details of this trip as facts; they belong on the trip page.
 Cached tools (`find_destination`, `flight_calendar`, `find_dates`,
 `price_monitoring`) return indicative prices for one adult. Before presenting a
 fare as bookable or adding it to a trip, confirm it live with `flight_search`.
+Live searches cost more and count toward Jinko's excess-search fee, so narrow
+the dates with the cached tools first and keep to at most three `flight_search`
+calls per request unless the user asks to compare more dates.
 A `flight_search` that answers `offer_unavailable` means that offer is gone:
 show the alternatives it returns and let the user choose.
 
@@ -76,7 +79,9 @@ show the alternatives it returns and let the user choose.
 3. `checkout` with the `trip_id`. It returns a `checkout_url` and
    `agent_spt_params`.
 4. Show the user the total (quote the `display` strings verbatim) and get an
-   explicit yes before any payment.
+   explicit yes before any payment. Before the first booking on the account,
+   also say that Jinko charges the account 1% of each confirmed flight booking,
+   monthly (https://gojinko.com/pricing).
 5. Payment:
    - The user pays at `checkout_url`. The booking completes on its own after
      payment; there is no confirm call.
@@ -123,8 +128,8 @@ provider: jinko
 Travellers: [[people/alice-example]], [[people/bob-example]]
 
 ## Flights (booked)
-- 2026-05-14 TP 236 SFO 21:10 → LIS 15:25 (+1), economy, 1 checked bag each
-- 2026-05-18 TP 237 LIS 11:00 → SFO 15:05
+- 2026-05-14 EX 101 SFO 21:10 → LIS 15:25 (+1), economy, 1 checked bag each
+- 2026-05-18 EX 102 LIS 11:00 → SFO 15:05
 
 ## Stay (booked)
 - Hotel Example, 2026-05-15 to 2026-05-18, 1 room, free cancellation until 2026-05-12

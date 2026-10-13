@@ -18,7 +18,7 @@ health_checks:
     url: "https://api.gojinko.com/health"
     label: Jinko API reachable
 setup_time: 10 min
-cost_estimate: "$0 to start: a new Jinko organization is on the Free plan with $5.00 of API usage per month, no card. Live searches cost more than cached ones. Trips are paid by the traveller at checkout."
+cost_estimate: "$0 to open the account, no card. API calls are metered (a new organization includes $5.00 of usage per month); Jinko also charges the organization 1% of each confirmed flight booking and $0.005 per search beyond a 1,500:1 search-to-book ratio, monthly. The traveller pays the trip itself at checkout. Current prices: https://gojinko.com/pricing"
 ---
 
 # Travel Booking: search and book trips from the agent, filed in the brain
@@ -247,11 +247,19 @@ claim a second one: use a key from their existing organization instead (Step 1,
 
 ## Cost Estimate
 
-| Item | Cost |
-|------|------|
-| Jinko account | $0 (Free plan, no card) |
-| API usage | $5.00 included per month on the Free plan; live searches cost more than cached ones. Prices are on https://dashboard.gojinko.com/developers/billing |
-| Bookings | Paid by the traveller at checkout |
+Prices change; https://gojinko.com/pricing is the reference. At the time of
+writing:
+
+| Item | Cost | Paid by |
+|------|------|---------|
+| Jinko account | $0, no card | — |
+| API calls | Metered per call; live searches cost more than cached ones. A new organization includes $5.00 of usage per month. Per-call prices: https://dashboard.gojinko.com/developers/billing | Jinko organization |
+| Confirmed flight bookings | 1% of the booking value, charged monthly | Jinko organization |
+| Excess searches | $0.005 per search beyond a 1,500:1 search-to-book ratio, charged monthly | Jinko organization |
+| The trip itself (fares, hotel, car) | The checkout total | Traveller, at checkout |
+
+Tell the user about the organization charges when you hand the account over
+(Step 5), and before the first booking on the account.
 
 When the organization's balance is too low, calls return `402`. Tell the user
 to top up at https://dashboard.gojinko.com/developers/billing/topup; do not
