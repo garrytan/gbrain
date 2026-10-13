@@ -18,7 +18,7 @@ health_checks:
     url: "https://api.gojinko.com/health"
     label: Jinko API reachable
 setup_time: 10 min
-cost_estimate: "250 free queries per month"
+cost_estimate: "Bookings are paid by the traveller at checkout"
 ---
 
 # Travel Booking: search and book trips from the agent, filed in the brain
@@ -94,10 +94,14 @@ record, the travel server for search and booking.
 Jinko supports agent registration: the agent creates its own identity and
 account with no human step, then mints an API key.
 
-**1a. Register and get an access token.** The agent registers **anonymously**:
-no email and no human step. The registration response holds the identity
-assertion and the claim token, so it is kept in a private file and never
-printed. An existing registration is reused.
+Each block below runs on its own: the blocks share nothing but files under
+`~/.jinko/`, so a harness that runs every command in a fresh shell can follow
+them as written.
+
+**1a. Register.** The agent registers **anonymously**: no email and no human
+step. The registration response holds the identity assertion and the claim
+token, so it is kept in a private file and never printed. An existing
+registration is reused.
 
 ```bash
 ISSUER="https://auth.gojinko.com"
@@ -112,28 +116,32 @@ if [ ! -s "$REG_FILE" ]; then
   else
     echo "FAIL: registration refused:"; printf '%s' "$REG" | jq -c '{code, error, message, retry_after}'
   fi
+else
+  echo "PASS: reusing $REG_FILE"
 fi
+```
 
-# exchange the identity for a short-lived token for the Jinko platform MCP
+**1b. Mint the API key.** Exchange the registration for a short-lived token for
+the Jinko platform MCP server, open an MCP session (Streamable HTTP), and call
+`get_api_key`. The key is written to a private file and never printed:
+
+```bash
+ISSUER="https://auth.gojinko.com"
+REG_FILE="$HOME/.jinko/agent-registration.json"
+KEY_FILE="$HOME/.jinko/api-key"
+PLATFORM_MCP="https://mcp.platform.gojinko.com/mcp"
+
+# exchange the identity for a token (about 5 minutes) for the platform MCP
 ACCESS_TOKEN="$(curl -sS "$ISSUER/oauth2/token" \
   -H 'Content-Type: application/x-www-form-urlencoded' \
   -d grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer \
   --data-urlencode "assertion=$(jq -r .identity.assertion "$REG_FILE")" \
   --data-urlencode "resource=https://mcp.platform.gojinko.com" \
   | jq -r '.access_token // empty')"
-[ -n "$ACCESS_TOKEN" ] && echo "PASS: access token" \
-  || echo "FAIL: token exchange refused; if the registration expired, delete $REG_FILE and re-run 1a"
-```
+if [ -z "$ACCESS_TOKEN" ]; then
+  echo "FAIL: token exchange refused; if the registration expired, delete $REG_FILE and re-run 1a"
+fi
 
-The `resource` value is required: a token issued for any other audience is
-refused. `ACCESS_TOKEN` is valid for about 5 minutes; re-run the exchange to
-get a new one.
-
-**1b. Mint the API key.** The Jinko platform MCP server is a standard MCP server
-over Streamable HTTP. Open a session, then call `get_api_key`:
-
-```bash
-PLATFORM_MCP="https://mcp.platform.gojinko.com/mcp"
 MCP_HEADERS=(-H "Authorization: Bearer $ACCESS_TOKEN" \
   -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream')
@@ -146,7 +154,7 @@ SID="$(awk 'tolower($1)=="mcp-session-id:" {print $2}' "$HDRS" | tr -d '\r')"; r
 # responses arrive as JSON or as server-sent events ("data: {...}")
 PROTO="$(printf '%s\n' "$INIT" | sed 's/^data: //' | jq -Rr 'fromjson? | select(.id == 1) | .result.protocolVersion // empty')"
 if [ -z "$SID" ] || [ -z "$PROTO" ]; then
-  echo "FAIL: initialize refused; the access token was refused or expired (re-run the exchange in 1a)"
+  echo "FAIL: initialize refused; the access token was refused or expired (re-run 1b)"
 fi
 MCP_HEADERS+=(-H "Mcp-Session-Id: $SID" -H "MCP-Protocol-Version: $PROTO")
 curl -sS -o /dev/null "$PLATFORM_MCP" "${MCP_HEADERS[@]}" \
@@ -156,26 +164,31 @@ curl -sS -o /dev/null "$PLATFORM_MCP" "${MCP_HEADERS[@]}" \
 RES="$(curl -sS "$PLATFORM_MCP" "${MCP_HEADERS[@]}" \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_api_key","arguments":{"key_name":"gbrain-agent","environment":"production"}}}')"
 TEXT="$(printf '%s\n' "$RES" | sed 's/^data: //' | jq -Rr 'fromjson? | select(.id == 2) | .result.content[0].text // .error.message')"
-JINKO_API_KEY="$(printf '%s' "$TEXT" | jq -Rrs 'try (fromjson | .api_key // empty) catch empty')"
-if [ -n "$JINKO_API_KEY" ]; then echo "PASS: key minted"; else
+KEY="$(printf '%s' "$TEXT" | jq -Rrs 'try (fromjson | .api_key // empty) catch empty')"
+if [ -n "$KEY" ]; then
+  (umask 077; printf '%s' "$KEY" > "$KEY_FILE"); echo "PASS: key minted, saved to $KEY_FILE"
+else
   echo "FAIL: no key in the result:"
   printf '%s' "$TEXT" | jq -Rrs '. as $t | try (fromjson | del(.. | .api_key?)) catch ($t | gsub("jnk_[A-Za-z0-9_]+"; "jnk_***"))'
 fi
 ```
 
-The first `get_api_key` call creates the agent's Jinko organization and a
-default tenant. The key (`jnk_t_…`) is shown only once. A result with
+The `resource` value in the token exchange is required: a token issued for any
+other audience is refused. The first `get_api_key` call creates the agent's
+Jinko organization and a default tenant. The key (`jnk_t_…`) is shown only once. A result with
 `status: "already_exists"` means a key with that `key_name` was minted before
 and cannot be shown again: re-run the `tools/call` with a new `key_name`.
 
 **1c. Store the key** as `JINKO_API_KEY` in the environment that both gbrain
-and your harness run in (the `env_exists` health check reads it from there).
-Do not echo it.
+and your harness run in (the `env_exists` health check reads it from there),
+taking the value from `~/.jinko/api-key`. Do not echo it. Once it is set there,
+delete the file.
 
 **1d. Validate** with a lookup that needs a valid key but books nothing:
 
 ```bash
-curl -s -o /dev/null -w '%{http_code}\n' -H "X-API-Key: $JINKO_API_KEY" \
+KEY="${JINKO_API_KEY:-$(cat "$HOME/.jinko/api-key" 2>/dev/null)}"
+curl -s -o /dev/null -w '%{http_code}\n' -H "X-API-Key: $KEY" \
   https://api.gojinko.com/v1/trip/key-check
 ```
 
@@ -223,9 +236,14 @@ Pick the block for the harness you run in:
   The CLI commands mirror the MCP tools (`jinko flight-search`,
   `jinko hotel-search`, `jinko trip`, `jinko checkout`, …) and print JSON.
 
-Restart the harness if it only loads MCP servers at startup, then list the
-agent's tools and confirm `flight_search`, `hotel_search`, `trip` and
-`checkout` are there.
+Then verify the path you chose:
+
+- **MCP:** restart the harness if it only loads MCP servers at startup, then
+  list the agent's tools and confirm `flight_search`, `hotel_search`, `trip`
+  and `checkout` are there.
+- **CLI:** `jinko auth status` reports a key taken from `JINKO_API_KEY`, and
+  `jinko flight-search --help` prints the flags. The CLI adds no tools to the
+  agent's tool list.
 
 ### Step 3: Install the travel-booking skill
 
@@ -295,11 +313,6 @@ revokes its keys. A person who already belongs to a Jinko organization cannot
 claim a second one: use a key from their existing organization instead (Step 1,
 "If the user already has a Jinko account").
 
-## Free queries
-
-A Jinko account includes 250 free queries per month. When they are used up,
-calls return `402`: tell the user and do not retry. The key stays valid.
-
 ## Troubleshooting
 
 - **`invalid_target` at the token exchange (1a):** the `resource` value is
@@ -317,7 +330,8 @@ calls return `402`: tell the user and do not retry. The key stays valid.
   re-run 1b.
 - **`401` from the travel MCP:** the key is wrong, revoked, or was pasted with
   whitespace. Mint or create a new one.
-- **`402`:** this month's free queries are used up. See Free queries.
+- **`402`:** the account has no allowance left. Tell the user and do not
+  retry; the key stays valid.
 - **`429`:** back off, then retry once.
 - **Travel tools missing after Step 2:** the harness did not reload its MCP
   configuration. Restart it and list tools again.

@@ -10,6 +10,7 @@ mutating: true
 writes_pages: true
 writes_to:
   - trips/
+  - people/
 # Brain ops (MCP names). Travel tools come from the separate Jinko MCP server.
 tools: [whoami, query, get_page, recall, remember, put_page, add_link, add_timeline_entry]
 ---
@@ -42,6 +43,14 @@ tool below maps to the command of the same name with hyphens
 | `submit_agent_payment` | `jinko agent-pay submit` |
 | `flight_refund` | `jinko refund check` / `preview` / `commit` / `status` |
 | `flight_exchange` | `jinko exchange shop` / `price` / `commit` / `status` |
+| `car_cancel` | `jinko car-cancel preview` / `commit` / `status` |
+
+CLI output is the raw API response. Quote a price from its `display` string
+when there is one. Otherwise read the `*_money` object: its `value` is an
+integer in minor units, so divide it by `10 ** decimal_places`
+(`{"value": 15977, "decimal_places": 2}` is 159.77, not 15,977). The older
+`total_amount` fields beside them are deprecated and already in major units;
+do not divide those.
 
 ## 1. Before searching: read the brain
 
@@ -107,9 +116,15 @@ show the alternatives it returns and let the user choose.
 3. `checkout` with the `trip_id`. It returns a `checkout_url`,
    `agent_spt_params`, the total (`total_amount.display`) and the payment
    deadline (`Payment accepted until`; it can be only minutes away).
-4. Show the user the total (quote the `display` string verbatim) and the
+4. Flights with seats, bags or meals: when the user asked for them, or the
+   brain says they always take them, call `get_trip` for the
+   `available_ancillaries` the quote returned. Show the options with their
+   prices, get the user's yes for anything paid, then call `trip` with
+   `select_ancillaries` and `checkout` again. Only the latest checkout's total,
+   link and `agent_spt_params` are payable.
+5. Show the user the total (quote the `display` string verbatim) and the
    deadline in their local time, and get an explicit yes before any payment.
-5. Payment:
+6. Payment:
    - The user pays at `checkout_url` before the deadline. The booking
      completes on its own after payment; there is no confirm call.
    - Or, when the user's platform can mint a Stripe Shared Payment Token scoped
@@ -120,7 +135,7 @@ show the alternatives it returns and let the user choose.
      `checkout_url`.
    - If the deadline passes, or the travellers change after checkout, the quote
      is no longer payable: call `checkout` again for a new total and link.
-6. Follow the booking with `get_trip`, once the user says they have paid or
+7. Follow the booking with `get_trip`, once the user says they have paid or
    after `submit_agent_payment`. Until the traveller presses Pay (or you call
    `submit_agent_payment`) the trip has no `fulfillment` and no `booking_ref`:
    nothing is booked or charged yet. Then read these fields:
@@ -214,8 +229,8 @@ Travellers: [[people/alice-example]], [[people/bob-example]]
 
 - Never invent traveller data, and never drop or change a traveller to make a
   search succeed; surface the error instead.
-- Do not retry in a loop. A `402` means the account's free queries for this
-  month are used up: tell the user and do not retry. A `429` means back off,
-  then retry once.
-- Quote prices from the `display` fields verbatim; do not compute them.
+- Do not retry in a loop. A `402` means the account has no allowance left:
+  tell the user and do not retry. A `429` means back off, then retry once.
+- Quote prices from the `display` fields verbatim; do not compute them. With
+  the CLI, read a price without `display` as the CLI paragraph above says.
 - Do not print the API key or put it in a page, a log or a message.
