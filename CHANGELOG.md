@@ -10,6 +10,20 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**Conversation fact extraction no longer skips a message for being alone.** `gbrain extract-conversation-facts` and the `conversation_facts_backfill` phase dropped every gap group with fewer than two messages, so a lone text sent more than 30 minutes from its neighbours, and every one-message page, never reached the extractor, and such a page could be recorded as not extractable. Consecutive sub-minimum groups on the same calendar day now coalesce into one window (each line keeps its own timestamp) and a lone message is extracted as a one-message window. Gap boundaries between real conversations are unchanged, and nothing is glued across a gap onto a longer exchange. A page with scattered lone messages takes one more extractor call per day that has them, under the existing caps.
+
+### To take advantage of this release
+
+New and changed pages pick this up on their next extraction. A page an earlier release recorded as not extractable for "fewer than two eligible messages" keeps that outcome until its content changes or you replay it: list them with `SELECT source_markdown_slug FROM facts WHERE source = 'cli:extract-conversation-facts:non-extractable:v2' AND context LIKE '%fewer than two eligible messages%'`, preview with `gbrain extract-conversation-facts --source <id> --slug <slug> --dry-run`, then `--force`.
+
+### Itemized changes
+
+- `splitIntoSegments` (`src/core/facts/conversation-windows.ts`): runs of consecutive gap groups below `MIN_SEGMENT_MESSAGES` are merged into one group before windowing, a new group starting when the next lone message falls on a different calendar day (read off its timestamp the way a window's start dates its facts, so a fact the extractor does not date is never dated from an earlier day); a lone message, including an oversized one split at sentence boundaries, is windowed like any other. Groups of two or more messages and their windows are unchanged.
+- `pages_skipped_insufficient_turns` now counts only a page whose parsed messages all lack a usable timestamp, and the not-extractable reason it records reads `no message with a usable timestamp` (earlier releases wrote `fewer than two eligible messages`); one-message email pages are still recorded not extractable by the page-level gate (they belong to page fact extraction), as before.
+- Tests: `test/conversation-windows-6267.test.ts` and `test/extract-conversation-facts.test.ts` pin the coalescing, the calendar-day bound, the lone trailing reply as its own window, and seven gap-separated messages as one window; tests that used a one-message page to reach the not-extractable and audit-row paths (`test/extract-conversation-facts.test.ts`, `test/extract-conversation-facts-diagnostics.serial.test.ts`, `test/managed-facts-writers.test.ts`) now reach them with an undated or prose page.
+
 ## [0.60.207.0] - 2026-10-13
 
 **The claim root probe's buffer test no longer depends on how random worktree ids happen to sort.** `test/e2e/claim-earlier-equivalence.test.ts` checks that the indexed root probe reads fewer than 0.85× the buffers of the former COALESCE key. Its fixture queued each worktree's rows as one contiguous block. The former key's scan of the pending index `(worktree_id, sequence)` can only use `sequence` as an index condition, so it skipped every root whose rows all came after the candidate. When the random ids sorted in reverse insert order, the former key read 1388 buffers against the current probe's 1309 (ratio 0.943) and the test failed. It failed in #6613's CI at 1308 against `< 1205.3`.

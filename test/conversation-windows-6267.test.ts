@@ -79,16 +79,26 @@ describe('conversation windows (#6267): eligibility before windowing', () => {
     expectEveryTurnOnce(messages, rendered(segments));
   });
 
-  test('an original singleton stays ineligible, alone and after a gap', () => {
-    expect(splitIntoSegments([at(0, 'Alice Example', 'only one')], { pageTitle: TITLE })).toHaveLength(0);
+  test('singletons are kept; consecutive same-day singletons coalesce', () => {
+    const one = splitIntoSegments([at(0, 'Alice Example', 'only one')], { pageTitle: TITLE });
+    expect(one).toHaveLength(1);
+    expect(one[0].messages.map((m) => m.text)).toEqual(['only one']);
     const long = at(0, 'Alice Example', `${'A long single turn. '.repeat(600)}`);
     expect(long.text.length).toBeGreaterThan(SEGMENT_TEXT_CHAR_LIMIT);
-    // Splitting one oversized turn must not make a singleton conversation eligible.
-    expect(splitIntoSegments([long], { pageTitle: TITLE })).toHaveLength(0);
+    // An oversized lone turn is split into pieces, every piece kept.
+    const pieces = splitIntoSegments([long], { pageTitle: TITLE });
+    expect(pieces.length).toBeGreaterThan(1);
+    expect(pieces.flatMap((s) => s.messages.map((m) => m.text)).join('').replace(/\s+/g, '')).toBe(long.text.replace(/\s+/g, ''));
     const withTail = [...turns(2, (i) => `pair ${i}`), at(200, 'Alice Example', 'lonely tail')];
     const segments = splitIntoSegments(withTail, { pageTitle: TITLE });
-    expect(segments).toHaveLength(1);
-    expect(segments[0].messages.map((m) => m.text)).toEqual(['pair 0', 'pair 1']);
+    expect(segments.map((s) => s.messages.map((m) => m.text))).toEqual([['pair 0', 'pair 1'], ['lonely tail']]);
+    const scattered = [at(0, 'Alice Example', 's1'), at(120, 'Bob Example', 's2'), at(300, 'Alice Example', 's3'),
+      ...turns(2, (i) => `pair ${i}`, 500), at(900, 'Bob Example', 's4')];
+    expect(splitIntoSegments(scattered, { pageTitle: TITLE }).map((s) => s.messages.map((m) => m.text)))
+      .toEqual([['s1', 's2', 's3'], ['pair 0', 'pair 1'], ['s4']]);
+    // Lone messages on different calendar days never share a window.
+    const days = [at(0, 'Alice Example', 'd1'), at(60 * 24 * 40, 'Bob Example', 'd2'), at(60 * 24 * 40 + 120, 'Bob Example', 'd2b')];
+    expect(splitIntoSegments(days, { pageTitle: TITLE }).map((s) => s.messages.map((m) => m.text))).toEqual([['d1'], ['d2', 'd2b']]);
     expect(MIN_SEGMENT_MESSAGES).toBe(2);
   });
 
@@ -102,7 +112,9 @@ describe('conversation windows (#6267): eligibility before windowing', () => {
       expect(Date.parse(s.endIso) - Date.parse(s.startIso)).toBeLessThan(90 * 60_000);
     }
     const lonely = splitIntoSegments([...head, at(29 + 90, 'Bob Demo', 'lonely')], { pageTitle: TITLE });
-    expect(lonely.reduce((n, s) => n + s.messages.length, 0)).toBe(30);
+    // The lonely reply is kept as its own window, never glued to the head.
+    expect(lonely.map((s) => s.messages.length)).toEqual([30, 1]);
+    expect(lonely[1].messages[0].text).toBe('lonely');
   });
 
   test('a full window plus a long final reply: the reply opens new bounded windows split at sentence boundaries with the speaker prefix repeated', () => {
@@ -180,7 +192,8 @@ describe('conversation windows (#6267): eligibility before windowing', () => {
     const since = splitIntoSegments(parsed, { sinceIso: '2024-03-15T09:04:30Z', pageTitle: TITLE });
     expect(since.flatMap((s) => s.messages.map((m) => m.text))).toEqual(['msg 5', 'msg 6']);
     const gapped = splitIntoSegments(parsed, { gapMinutes: 0.5, pageTitle: TITLE });
-    expect(gapped).toHaveLength(0);
+    // Seven gap-separated singletons coalesce into one window instead of vanishing.
+    expect(gapped.map((s) => s.messages.length)).toEqual([7]);
   });
 });
 

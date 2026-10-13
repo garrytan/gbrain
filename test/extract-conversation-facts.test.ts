@@ -197,16 +197,19 @@ describe('splitIntoSegments', () => {
     }
     const msgs = parseConversationMessages(lines.join('\n'));
     const segs = splitIntoSegments(msgs, { maxMessages: 3 });
-    // 7 messages / 3 per segment → 2 full + 1 leftover (dropped: <2 messages).
+    // 7 messages / 3 per segment → windows of at most 3, every message kept.
     expect(segs.length).toBeGreaterThanOrEqual(2);
     for (const s of segs) expect(s.messages.length).toBeLessThanOrEqual(3);
   });
 
-  test('drops segments shorter than the minimum', () => {
+  // Singletons are kept (conversation-windows.ts).
+  test('keeps a lone message as a one-message segment', () => {
     const msgs = parseConversationMessages(
       fmt('Alice Example', '2024-03-15', '9:00 AM', 'only one'),
     );
-    expect(splitIntoSegments(msgs)).toHaveLength(0);
+    const segs = splitIntoSegments(msgs);
+    expect(segs).toHaveLength(1);
+    expect(segs[0].messages.map((m) => m.text)).toEqual(['only one']);
   });
 
   test('participants array preserves first-seen order', () => {
@@ -638,12 +641,21 @@ describe('runExtractConversationFactsCore', () => {
   });
 
   test('#5364 skip reasons are additive subsets and no-match remains retryable', async () => {
+    // Singletons are kept (conversation-windows.ts). A one-message
+    // page is no longer an insufficient-turns skip; it extracts like any
+    // conversation. The durable non-extractable outcome is reached through an
+    // undated time-only page (conversationSkip), which counts in pages_skipped
+    // but in none of the retryable subset counters.
     const singleton = 'conversations/single-speaker-object-example';
     await engine.putPage(singleton, { type: 'conversation', title: 'Single turn', compiled_truth: fmt('Alice Example', '2024-03-15', '9:00 AM', 'hello'), timeline: '', frontmatter: {} });
-    const slugs = ['conversations/novel-format-example', singleton, 'people/alice-example'];
+    const lone = await runExtractConversationFactsCore(engine, { sourceId: 'default', slug: singleton, dryRun: true, sleepMs: 0 });
+    expect(lone).toMatchObject({ pages_processed: 1, pages_skipped: 0, pages_skipped_insufficient_turns: 0, segments_processed: 1 });
+    const undated = 'conversations/undated-speaker-object-example';
+    await engine.putPage(undated, { type: 'conversation', title: 'Undated chat', compiled_truth: ['**Alice Example:** hello', '**Bob Example:** hi'].join('\n'), timeline: '', frontmatter: {} });
+    const slugs = ['conversations/novel-format-example', undated, 'people/alice-example'];
     for (const dryRun of [true, false]) {
       const result = await runExtractConversationFactsCore(engine, { sourceId: 'default', slugs, dryRun, sleepMs: 0 });
-      expect(result).toMatchObject({ pages_skipped: 3, pages_skipped_unparsed: 1, pages_skipped_type_mismatch: 1, pages_skipped_insufficient_turns: 1, pages_skipped_since: 0, pages_marked_non_extractable: dryRun ? 0 : 1 });
+      expect(result).toMatchObject({ pages_skipped: 3, pages_skipped_unparsed: 1, pages_skipped_type_mismatch: 1, pages_skipped_insufficient_turns: 0, pages_skipped_since: 0, pages_marked_non_extractable: dryRun ? 0 : 1 });
     }
     const retry = await runExtractConversationFactsCore(engine, { sourceId: 'default', slugs, sleepMs: 0 });
     expect(retry).toMatchObject({ pages_skipped: 2, pages_skipped_unparsed: 1, pages_skipped_type_mismatch: 1, pages_skipped_insufficient_turns: 0, pages_skipped_non_extractable: 1 });
@@ -1012,7 +1024,11 @@ describe('runExtractConversationFactsCore', () => {
       });
       expect(result.budget_exhausted).toBe(true);
       expect(result.pages_processed).toBe(0);
-      expect(result.pages_skipped).toBe(1);
+      // Singletons are kept (conversation-windows.ts). The one
+      // fallback message is now an eligible segment rather than a skip; the
+      // budget stop still prevents any extraction call.
+      expect(result.pages_skipped).toBe(0);
+      expect(mainChatCalls).toBe(0);
       expect(result.spent_usd).toBeGreaterThan(1);
       expect(fallbackCalls).toBe(1);
     });
@@ -1238,11 +1254,13 @@ describe('runExtractConversationFactsCore', () => {
 
   test('facts.default_visibility world: the non-extractable audit row stays private', async () => {
     await engine.setConfig('facts.default_visibility', 'world');
-    const slug = 'conversations/imessage/one-message-example';
+    // Singletons are kept (conversation-windows.ts); the audit row
+    // is reached through an undated time-only page instead.
+    const slug = 'conversations/imessage/undated-example';
     await engine.putPage(slug, {
       type: 'conversation',
-      title: 'iMessage: One message example',
-      compiled_truth: fmt('Alice Example', '2024-03-15', '9:00 AM', 'Only one message here.'),
+      title: 'iMessage: Undated example',
+      compiled_truth: ['**Alice Example:** Shall we ship Friday?', '**Bob Example:** Yes.'].join('\n'),
       timeline: '',
       frontmatter: {},
     });
@@ -1350,10 +1368,13 @@ describe('runExtractConversationFactsCore', () => {
   });
 
   test('records and then skips a definitive scan with no eligible segment', async () => {
+    // Singletons are kept (conversation-windows.ts). A one-message
+    // page now extracts, so the definitive no-segment outcome is reached
+    // through an undated time-only page (conversationSkip). The slug is kept.
     await engine.putPage('conversations/single-message', {
       type: 'slack',
-      title: 'Single message',
-      compiled_truth: fmt('Alice Example', '2024-03-15', '9:00 AM', 'only one'),
+      title: 'Undated chat',
+      compiled_truth: ['**Alice Example:** only one', '**Bob Example:** and another'].join('\n'),
       timeline: '',
       frontmatter: {},
     });

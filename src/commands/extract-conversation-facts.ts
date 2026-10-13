@@ -961,7 +961,7 @@ async function processPage(
     ) {
       const reason = skip?.reason ?? (messages.length === 0
         ? 'no conversation messages found'
-        : 'fewer than two eligible messages');
+        : 'no message with a usable timestamp');
       if (await snapshotIsCurrent(state.engine, state.sourceId, snapshot)) {
         if (state.managed) {
           // Counted when its batch publishes.

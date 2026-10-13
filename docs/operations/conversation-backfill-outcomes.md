@@ -120,11 +120,14 @@ the page from later runs.
 
 ### Bounded windows (#6267)
 
-Every eligible turn reaches the extractor. A gap-separated group with at
-least two messages is eligible; inside it, windows close at 30 messages or
-when the rendered text (header included) would exceed 6,500 characters, and
-the next turn opens a new window. A turn that cannot fit alone is split at
-sentence boundaries with its speaker and timestamp repeated on every piece.
+Every turn with a usable timestamp reaches the extractor. Messages are cut
+into gap-separated groups; consecutive groups of fewer than two messages on
+the same calendar day coalesce into one group rather than being dropped, so
+a lone message is extracted as a one-message window. Inside a group, windows
+close at 30 messages or when the rendered text (header included) would
+exceed 6,500 characters, and the next turn opens a new window. A turn that
+cannot fit alone is split at sentence boundaries with its speaker and
+timestamp repeated on every piece.
 Nothing is clipped: an unrepresentable header fails the page before any
 model call or prior-fact cleanup, and a window rendered over budget is a
 bug that surfaces as a page failure, never as a silent cut. A dense page
@@ -137,12 +140,18 @@ run `gbrain extract-conversation-facts --source <id> --slug <slug> --force`
 preview of the window count); this spends model calls, so it is the
 operator's decision.
 
+A page an earlier release recorded as not extractable for "fewer than two
+eligible messages" (a lone message, or only lone messages) keeps that outcome
+until its content changes or `--force` replays it; see the CHANGELOG entry for
+the query that lists them.
+
 ## Non-extractable authority
 
 A non-extractable marker is written only when all of the following are true:
 
 - a deterministic or accepted parser format recognized the input;
-- ordinary segmentation produced no eligible multi-message segment;
+- ordinary segmentation produced no window (every parsed message lacked a
+  usable timestamp), or the page-level gate declined it;
 - the parser phase was not `no_match`;
 - cleanup of prior command-owned rows succeeded; and
 - the input snapshot was still current immediately before cleanup and write.
@@ -193,7 +202,9 @@ and snapshot verification. Force means "recompute" rather than "relax safety."
 
 `pages_skipped` retains its existing aggregate meaning. Its reason-specific
 subsets distinguish `pages_skipped_unparsed`, `pages_skipped_type_mismatch`,
-`pages_skipped_insufficient_turns`, and `pages_skipped_since`; speaker-attribution
+`pages_skipped_insufficient_turns` (now only a page whose parsed messages all
+lack a usable timestamp, since lone messages are extracted), and
+`pages_skipped_since`; speaker-attribution
 declines retain `pages_skipped_unrecognized_speaker`. These subsets explain a
 skip without adding a second page to the aggregate. `--since` filtering is not
 a checkpoint skip, and a parse miss remains retryable.

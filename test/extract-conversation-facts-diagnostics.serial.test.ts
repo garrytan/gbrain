@@ -67,7 +67,10 @@ beforeEach(async () => {
       ['conversations/unparsed', 'Opaque prose without speaker turns.', 'conversation'],
       ['people/profile-example', 'An ordinary profile.', 'person'],
     ] as const) {
-      await engine.putPage(slug, { title: slug, type, compiled_truth, timeline: '', frontmatter: { date: '2026-06-02' } }, { sourceId });
+      // A one-message page is extracted (lone messages are kept), so the durable
+      // non-extractable outcome is reached through an undated time-only page instead.
+      const frontmatter = slug === 'conversations/single' ? {} : { date: '2026-06-02' };
+      await engine.putPage(slug, { title: slug, type, compiled_truth, timeline: '', frontmatter }, { sourceId });
     }
   }
 });
@@ -115,7 +118,7 @@ describe('#5364 diagnostics across workers, sources, CLI, and cycle', () => {
     const workerCount = spyOn(concurrency, 'resolveWorkersWithClamp').mockReturnValue({ workers: 3, reason: 'override', wasClamped: false, requested: 3 });
     try {
       const result = await runExtractConversationFactsCore(engine, { sourceId: 'speaker-a', types: ['conversation'], workers: 3, sleepMs: 0 });
-      expect(result).toMatchObject({ pages_considered: 5, pages_processed: 3, pages_skipped: 2, pages_skipped_unparsed: 1, pages_skipped_insufficient_turns: 1, pages_skipped_type_mismatch: 0, pages_skipped_since: 0, pages_failed: 0, pages_marked_non_extractable: 1, segments_processed: 3 });
+      expect(result).toMatchObject({ pages_considered: 5, pages_processed: 3, pages_skipped: 2, pages_skipped_unparsed: 1, pages_skipped_insufficient_turns: 0, pages_skipped_type_mismatch: 0, pages_skipped_since: 0, pages_failed: 0, pages_marked_non_extractable: 1, segments_processed: 3 });
       expect(calls).toBe(3);
       expect(maxActive).toBe(3);
       expect(await engine.executeRaw("SELECT id FROM facts WHERE source_id = 'speaker-b'")).toEqual([]);
@@ -137,7 +140,7 @@ describe('#5364 diagnostics across workers, sources, CLI, and cycle', () => {
       expect(summary).toContain('from 6/10 pages');
       expect(summary).toContain('Skipped 4 page(s)');
       expect(summary).toContain('2 with no parseable speaker turns');
-      expect(summary).toContain('2 with insufficient turns');
+      expect(summary).toContain('0 with insufficient turns');
       expect(summary).not.toContain('since last checkpoint');
       expect(calls).toBe(0);
       log.mockClear();
@@ -186,14 +189,14 @@ describe('#5364 diagnostics across workers, sources, CLI, and cycle', () => {
   test('cycle totals equal exact per-source subsets in dry-run and durable replay', async () => {
     const dry = await runPhaseConversationFactsBackfill(engine, { dryRun: true });
     expect(dry.status).toBe('ok');
-    expect(dry.details).toMatchObject({ pages_processed: 6, pages_skipped: 4, pages_skipped_unparsed: 2, pages_skipped_type_mismatch: 0, pages_skipped_insufficient_turns: 2, pages_skipped_since: 0 });
+    expect(dry.details).toMatchObject({ pages_processed: 6, pages_skipped: 4, pages_skipped_unparsed: 2, pages_skipped_type_mismatch: 0, pages_skipped_insufficient_turns: 0, pages_skipped_since: 0 });
     const sources = dry.details?.per_source as Record<string, unknown>;
-    for (const id of ['speaker-a', 'speaker-b']) expect(sources[id]).toMatchObject({ pages_considered: 5, pages_processed: 3, pages_skipped: 2, pages_skipped_unparsed: 1, pages_skipped_insufficient_turns: 1, pages_skipped_since: 0, pages_skipped_type_mismatch: 0 });
+    for (const id of ['speaker-a', 'speaker-b']) expect(sources[id]).toMatchObject({ pages_considered: 5, pages_processed: 3, pages_skipped: 2, pages_skipped_unparsed: 1, pages_skipped_insufficient_turns: 0, pages_skipped_since: 0, pages_skipped_type_mismatch: 0 });
     expect(calls).toBe(0);
     expect(await engine.executeRaw('SELECT id FROM facts')).toEqual([]);
     expect(await engine.executeRaw('SELECT * FROM op_checkpoints')).toEqual([]);
     const first = await runPhaseConversationFactsBackfill(engine, {});
-    expect(first.details).toMatchObject({ pages_processed: 6, pages_skipped: 4, pages_skipped_unparsed: 2, pages_skipped_insufficient_turns: 2, pages_marked_non_extractable: 2 });
+    expect(first.details).toMatchObject({ pages_processed: 6, pages_skipped: 4, pages_skipped_unparsed: 2, pages_skipped_insufficient_turns: 0, pages_marked_non_extractable: 2 });
     expect(calls).toBe(6);
     const second = await runPhaseConversationFactsBackfill(engine, {});
     expect(second.details).toMatchObject({ pages_processed: 0, pages_skipped: 2, pages_skipped_unparsed: 2, pages_skipped_insufficient_turns: 0, pages_skipped_completed: 6, pages_skipped_non_extractable: 2, pages_marked_non_extractable: 0 });

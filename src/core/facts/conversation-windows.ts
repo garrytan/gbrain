@@ -9,10 +9,11 @@
  * still stamped complete. Here every eligible turn lands in exactly one
  * window and every rendered window fits the budget, header included.
  *
- * Eligibility is decided per gap-separated group BEFORE windowing: a group
- * needs MIN_SEGMENT_MESSAGES original messages, so an original singleton
- * stays ineligible and splitting one oversized turn never makes a page
- * eligible. Inside an eligible group a window closes when the next message
+ * Gap groups are cut BEFORE windowing. A group below MIN_SEGMENT_MESSAGES
+ * is not dropped: consecutive sub-minimum groups on the same calendar day
+ * coalesce into a single group, and a lone message becomes a one-message
+ * window, so every parsed message with a usable timestamp reaches the
+ * extractor exactly once. Inside a group a window closes when the next message
  * would exceed the message cap or the rendered budget, and that message
  * opens a new bounded window; a trailing single reply of an eligible group
  * is a legitimate one-message window, never glued across a gap and never
@@ -39,7 +40,7 @@ export const DEFAULT_SEGMENT_GAP_MINUTES = 30;
  */
 export const DEFAULT_SEGMENT_MAX_MESSAGES = 30;
 
-/** Minimum original messages a gap group needs to be worth extracting. */
+/** Gap groups below this many original messages are coalesced with their sub-minimum same-day neighbours rather than dropped. */
 export const MIN_SEGMENT_MESSAGES = 2;
 
 /**
@@ -161,9 +162,10 @@ function splitOversizedTurn(m: ConversationMessage, pageTitle: string, maxChars:
  * Split parsed messages into bounded extraction windows.
  *
  * 1. Drop messages at or before `sinceIso` and unparseable timestamps.
- * 2. Cut gap groups on `gapMinutes`; a group with fewer than
- *    MIN_SEGMENT_MESSAGES messages is ineligible and dropped whole.
- * 3. Window each eligible group under `maxMessages` and `maxChars`
+ * 2. Cut gap groups on `gapMinutes`; consecutive groups with fewer than
+ *    MIN_SEGMENT_MESSAGES messages on the same calendar day are coalesced
+ *    into one group, never dropped.
+ * 3. Window each group under `maxMessages` and `maxChars`
  *    (the rendered budget, header included, for `pageTitle`).
  */
 export function splitIntoSegments(
@@ -192,9 +194,28 @@ export function splitIntoSegments(
   }
   groups.push(cur);
 
-  return groups
-    .filter((g) => g.length >= MIN_SEGMENT_MESSAGES)
-    .flatMap((g) => windowGroup(g, pageTitle, maxMessages, maxChars));
+  // No message is dropped for being alone: runs of consecutive groups below
+  // MIN_SEGMENT_MESSAGES coalesce into one group (each line keeps its own
+  // timestamp) and a lone message is a one-message window. A lone text across
+  // a 30-minute gap ("I'll pay you back Friday") used to vanish here.
+  const merged: ConversationMessage[][] = [];
+  let scattered: ConversationMessage[] = [];
+  for (const g of groups) {
+    if (g.length === 0) continue;
+    if (g.length < MIN_SEGMENT_MESSAGES) {
+      // Coalesce only within one calendar day, read off the ISO timestamp the
+      // same way segmentObservationDate reads a window's start, so the default
+      // date of a fact from a lone message is always that message's own day.
+      if (scattered.length && scattered[0].timestamp.slice(0, 10) !== g[0].timestamp.slice(0, 10)) {
+        merged.push(scattered); scattered = [];
+      }
+      scattered.push(...g); continue;
+    }
+    if (scattered.length) { merged.push(scattered); scattered = []; }
+    merged.push(g);
+  }
+  if (scattered.length) merged.push(scattered);
+  return merged.flatMap((g) => windowGroup(g, pageTitle, maxMessages, maxChars));
 }
 
 /**
