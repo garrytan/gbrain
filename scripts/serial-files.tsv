@@ -129,6 +129,7 @@ test/doctor-engine-fit.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)
 test/doctor-eval-drift-branches.serial.test.ts	R2	R2: mock.module(../src/core/eval/drift-watch.ts) replaces modules for every file in the process
 test/doctor-keyless.serial.test.ts	global-state	global-state: configureGateway changes the process-wide AI gateway
 test/doctor-mode-matrix.serial.test.ts	R1	R1: mutates process.env (HOME, GBRAIN_HOME, GBRAIN_AUDIT_DIR, GBRAIN_SYNC_FAILURES_DIR (+1 more))
+test/doctor-provider-consent.serial.test.ts	global-state	global-state: spawns the CLI as subprocesses against a local request-logging server; binds local servers/ports
 test/doctor-remediation-plan-observational.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll
 test/doctor-remote.serial.test.ts	global-state	global-state: binds local servers/ports
 test/doctor-report-remote.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)
@@ -202,6 +203,7 @@ test/guarded-http-tls.serial.test.ts	global-state	global-state: binds local serv
 test/harness-delivery-recovery.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll; R4: PGLiteEngine without an afterAll disconnect
 test/hook-backup-notice.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, GBRAIN_BACKUP_CHECK)
 test/hook-command.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, GBRAIN_HOOKS, GBRAIN_HOOK_LANE, GBRAIN_SOURCE (+3 more))
+test/hook-session-start-serve-wait.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, CLAUDE_CONFIG_DIR, CODEX_HOME)
 test/hook-writeback-stop.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, GBRAIN_SOURCE)
 test/hybrid-adaptive-dedup-cache-plane.serial.test.ts	R2	R2: mock.module(../src/core/embedding.ts) replaces modules for every file in the process
 test/hybrid-cache-hit-limit-honors-mode.serial.test.ts	R2	R2: mock.module(../src/core/embedding.ts) replaces modules for every file in the process

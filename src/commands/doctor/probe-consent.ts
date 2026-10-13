@@ -4,7 +4,8 @@
  * embedding provider as configured but not probed. The probe goes through the
  * consent matrix (`paid` + `egress`); an unauthorized non-TTY run exits 3
  * before any check. A local provider that bills nothing (ollama,
- * llama-server, lmstudio) needs no consent.
+ * llama-server, lmstudio) needs no consent. A provider-use decline recorded
+ * by `gbrain setup` skips the probe outright (provider_consent).
  */
 import type { BrainEngine } from '../../core/engine.ts';
 import { setCliExitVerdict } from '../../core/cli-force-exit.ts';
@@ -16,6 +17,10 @@ const PROVIDER_PROBE_EST_USD = 0.0001;
 export async function authorizeProviderProbe(engine: BrainEngine | null, args: string[], json: boolean): Promise<boolean> {
   const { embeddingProviderIsFree } = await import('../../core/embed-consent.ts');
   if (await embeddingProviderIsFree()) return true;
+  // Setup recorded provider use as declined: embedding_provider reports the
+  // probe skipped by consent and sends nothing, so there is nothing to authorize.
+  const { providerDeclineRecord } = await import('../../core/setup/local-receipts.ts');
+  if (providerDeclineRecord()) return true;
   const { requireConsent, isConsentRefusal, printConsentRefusal } = await import('../../core/consent.ts');
   const end = args.indexOf('--');
   const argv = ['gbrain', 'doctor', ...(end >= 0 ? args.slice(0, end) : args).filter(a => a !== '--yes')];

@@ -187,7 +187,8 @@ describeDb('Postgres worker configuration release', () => {
             const stat = readFileSync(`/proc/${descendant}/stat`, 'utf8');
             running = !['Z', 'X'].includes(stat.slice(stat.lastIndexOf(')') + 2).split(' ')[0]);
           } catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+            // ENOENT: the task is gone. ESRCH: it was reaped between open() and read() of its stat file.
+            if (!['ENOENT', 'ESRCH'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
             running = false;
           }
           if (running) await new Promise(resolve => setTimeout(resolve, 25));

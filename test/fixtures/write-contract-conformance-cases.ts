@@ -78,8 +78,14 @@ async function withFixture(databaseUrl: string | undefined, run: (fixture: Fixtu
           const connect = async (server: typeof full) => {
             const client = new Client({ name: 'write-contract-conformance', version: '1' }, { capabilities: {} });
             clients.push(client);
+            // `Connection: close`: each HTTP call opens its own socket. The clients
+            // connect before the stdio arm, so a pooled socket would sit idle past
+            // the server's 10 s idle timeout (Bun.serve default, swept every 4 s);
+            // Bun's fetch keeps pooled sockets for 5 minutes, cannot see that
+            // timeout and never retries a POST, so a call issued as the sweep
+            // closes the socket fails with ECONNRESET on a slow shard.
             await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${server.port}/mcp`), {
-              requestInit: { headers: { Authorization: `Bearer ${token}` } } }), { signal: AbortSignal.timeout(30_000) });
+              requestInit: { headers: { Authorization: `Bearer ${token}`, Connection: 'close' } } }), { signal: AbortSignal.timeout(30_000) });
             return client;
           };
           const fullClient = await connect(full), verbsClient = await connect(verbs);

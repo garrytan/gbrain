@@ -49,6 +49,17 @@ the recorded answers; a flag changes one.
 
 Provider keys in the environment do not change these defaults.
 
+### Provider use declined
+
+A declined provider decision holds even when provider keys sit in the
+environment: gbrain sends no request to a model provider it was not asked to
+use. OpenAI model discovery (`GET /v1/models` on engine connect) is skipped,
+and `gbrain doctor --probe` does not probe the embedding provider. `gbrain
+doctor` reports the decision as `provider_consent` ("skipped by consent").
+Only the user changes it: `gbrain setup claude-code --providers` records
+provider use as accepted for this install. A decline in any of this install's
+setup receipts wins.
+
 ## States
 
 Setup reports how far the wiring is proven:
@@ -60,6 +71,12 @@ Setup reports how far the wiring is proven:
 3. `native-pending`: no observed event has shown gbrain context reaching a
    fresh session of this harness yet. Open a new session (the harness reads
    its config at session start) and check that `/mcp` lists gbrain.
+
+In a new Claude Code session (SessionStart `startup` or `resume`) the
+SessionStart hook waits up to 4 seconds for the stdio serve Claude Code starts
+alongside it, then prints the context pack (recent world-visible facts; private
+facts are never pushed). Without the wait a fresh session got nothing, because
+the serve binds its socket about 2 seconds after spawn.
 4. `native-verified`: the capability table records an observed push for the
    harness, and setup wired and trusted that event. Codex reaches it when
    setup owns the trusted `UserPromptSubmit` hook (observed on codex-cli
