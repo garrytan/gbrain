@@ -67,7 +67,7 @@ function epochToIso(v: unknown): string {
 }
 
 /** Unwrap content that is a JSON block array; pass plain text through. */
-function contentToText(content: unknown): string {
+export function contentToText(content: unknown): string {
   if (typeof content !== 'string') return '';
   const t = content.trim();
   if (!t) return '';
@@ -106,6 +106,29 @@ interface MessageRow {
   role: string;
   content: string | null;
   timestamp: number | null;
+}
+
+/** The sessions.source values that are not a human conversation (hook-lane capture skips them). */
+export const HERMES_NON_HUMAN_SOURCES: readonly string[] = ['cron', 'subagent', 'kanban', 'tool', 'recovered', 'acp', 'api_server'];
+
+/**
+ * One session's user/assistant text messages from an OPEN state.db connection,
+ * oldest first: the same row selection and content unwrapping `parse` uses, so
+ * the import lane and the session-end hook lane read a session identically.
+ * `source` is null when the session row is missing. The hook lane passes a
+ * read-only connection (no snapshot: a profile store can be gigabytes).
+ */
+export function hermesSessionMessages(db: Database, sessionId: string): { source: string | null; messages: TranscriptMessage[] } {
+  const row = db.query<{ source: string | null }, [string]>('SELECT source FROM sessions WHERE id = ?').get(sessionId);
+  const messages: TranscriptMessage[] = [];
+  for (const m of db.query<MessageRow, [string]>(
+    "SELECT role, content, timestamp FROM messages WHERE session_id = ? AND role IN ('user','assistant') ORDER BY timestamp, id",
+  ).all(sessionId)) {
+    const role = m.role === 'user' || m.role === 'assistant' ? m.role : null;
+    const text = role ? contentToText(m.content) : '';
+    if (role && text) messages.push({ role, timestamp: epochToIso(m.timestamp), text });
+  }
+  return { source: row ? row.source ?? '' : null, messages };
 }
 
 export const hermesAdapter: TranscriptAdapter = {

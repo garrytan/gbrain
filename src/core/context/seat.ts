@@ -99,6 +99,7 @@ function harnessHome(opts: { env: Env; harness?: string; transcriptPath?: string
   const { env, harness, transcriptPath } = opts;
   const home = env.HOME?.trim() || homedir();
   if (harness === 'codex') return env.CODEX_HOME?.trim() || join(home, '.codex');
+  if (harness === 'hermes') return env.HERMES_HOME?.trim() || join(home, '.hermes');
   if (harness === 'openclaw') {
     return (transcriptPath && parentOfNearestAncestor(transcriptPath, 'sessions')) || join(home, '.openclaw');
   }

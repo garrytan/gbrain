@@ -22,7 +22,8 @@
  *
  * Engine-free: setup never opens the database itself.
  */
-import { realpathSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
+import { dirname, isAbsolute, join } from 'node:path';
 import { opError, OperationError } from '../core/ops/contract.ts';
 import { cliRenderContext, renderCliError, renderNotice, type Action, type Notice } from '../core/agent-output.ts';
 import { writeCliNotices } from '../core/interop-notices.ts';
@@ -34,7 +35,7 @@ import { isRegistrationSurface, isValidName, REGISTRATION_SURFACE } from '../cor
 import { isValidSourceId } from '../core/source-id.ts';
 import { peekLock } from '../core/pglite-lock.ts';
 import { claudePluginProvidesName, codexPluginProvidesName } from '../core/bootstrap/plugin-lanes.ts';
-import { claudeUserSettingsPath, type ClaudeHookEvent } from '../core/bootstrap/host-specs.ts';
+import { claudeUserSettingsPath, hermesHome, type ClaudeHookEvent } from '../core/bootstrap/host-specs.ts';
 import { readHarnessReceiptState } from '../core/bootstrap/format.ts';
 import { smokeStdioRegistration } from './doctor/checks/harness-wiring.ts';
 import type { McpSurface } from '../mcp/surface.ts';
@@ -71,11 +72,25 @@ import {
   type CodexSetupStep,
 } from '../core/setup/codex.ts';
 import type { CodexSetupEvent } from '../core/bootstrap/codex-hooks.ts';
+import {
+  applyHermesSetup,
+  desiredHermesMcpEntry,
+  hermesProviderReceipt,
+  hermesSetupPaths,
+  inspectHermesSetup,
+  readHermesSetupReceipt,
+  removeHermesSetup,
+  type HermesSetupPlan,
+  type HermesSetupReceipt,
+  type HermesSetupStep,
+} from '../core/setup/hermes.ts';
+import type { HermesSetupEvent } from '../core/bootstrap/hermes-hooks.ts';
 
 export const SETUP_HELP = `gbrain setup <harness> — give an agent harness memory in one command
 
 Usage: gbrain setup claude-code [flags]
        gbrain setup codex [flags]
+       gbrain setup hermes [--hermes-home DIR] [flags]
 
 Resolves the brain, source, transport, launcher and registration owner first and
 prints them; refuses before writing anything when another owner holds the target.
@@ -83,6 +98,8 @@ With no brain configured it creates a keyless local one (gbrain init --pglite
 --no-embedding). It then writes the MCP entry and hooks into the harness's own
 config and verifies them with the harness_wiring smoke. Codex: [mcp_servers.<name>]
 and the hook trust entries in $CODEX_HOME/config.toml, the hooks in hooks.json.
+Hermes: mcp_servers.<name> and the pre_llm_call hook in the profile's config.yaml,
+and the hook approval in shell-hooks-allowlist.json (Hermes runs no hook without it).
 
 Flags:
   --dry-run            Print the target and every step; write nothing.
@@ -91,35 +108,39 @@ Flags:
                        then the surface already registered, then full).
   --scope user|project Wiring scope: every Claude Code session (user, default) or only
                        sessions in this directory (project: ~/.claude.json projects
-                       entry + .claude/settings.local.json). Codex: user only.
+                       entry + .claude/settings.local.json). Codex, Hermes: user only.
   --no-hooks           Register MCP only; install no hooks (GBRAIN_HOOKS=0 does the same).
   --capture            Accept automatic capture: also install the capture hooks
-                       (Claude Code: Stop and SessionEnd; Codex: SessionEnd).
+                       (Claude Code: Stop and SessionEnd; Codex: SessionEnd; Hermes:
+                       on_session_finalize, read from the profile's state.db).
   --no-capture         Decline automatic capture (the default).
   --providers          Accept provider use: a new brain is created with embeddings.
   --no-providers       Decline provider use (the default: keyless, no paid calls).
   --name NAME          MCP server name (default gbrain); one name per install.
   --source ID          Pin the source the MCP server and hooks use.
   --gbrain-bin PATH    Absolute gbrain launcher (default: the gbrain on PATH).
+  --hermes-home DIR    Hermes profile to wire (default: HERMES_HOME, then ~/.hermes).
   --remove             Remove exactly what setup wrote (unchanged entries only). The
                        brain and your notes stay. Combine with --dry-run to preview.
 
 States: configured (entries written), connection-verified (the smoke answered),
 native-pending (no observed push into a native session yet), native-verified (an
 observed push is on record for this harness and setup wired and trusted that event;
-Codex: UserPromptSubmit, codex-cli 0.162.1).
+Codex: UserPromptSubmit, codex-cli 0.162.1; Hermes: not yet, pre_llm_call is wired
+and approved but no observed session is on record).
 
 Refusals: setup never starts a second owner or a second brain. A hosted brain is
 wired with gbrain connect <url> --harness <harness> --install; a running
-serve --http owner with gbrain bootstrap harness --harness <harness> --yes.
+serve --http owner with gbrain bootstrap harness --harness <harness> --yes (Hermes:
+gbrain hermes setup --hermes-home DIR --url <mcp-url>, the hosted/HTTP lane).
 
-Supported harnesses: claude-code, codex. openclaw and hermes print their guide.
+Supported harnesses: claude-code, codex, hermes. openclaw prints its guide.
 setup and onboard differ: setup wires a harness to a brain; onboard (post-connect)
 improves an existing brain's content.
 `;
 
-type SetupHarnessId = 'claude-code' | 'codex';
-const HARNESS_LABEL: Record<SetupHarnessId, string> = { 'claude-code': 'Claude Code', codex: 'Codex' };
+type SetupHarnessId = 'claude-code' | 'codex' | 'hermes';
+const HARNESS_LABEL: Record<SetupHarnessId, string> = { 'claude-code': 'Claude Code', codex: 'Codex', hermes: 'Hermes' };
 
 interface SetupFlags {
   harness?: string;
@@ -134,9 +155,10 @@ interface SetupFlags {
   name: string;
   source?: string;
   gbrainBin?: string;
+  hermesHome?: string;
 }
 
-const VALUE_FLAGS = new Set(['--surface', '--scope', '--name', '--source', '--gbrain-bin']);
+const VALUE_FLAGS = new Set(['--surface', '--scope', '--name', '--source', '--gbrain-bin', '--hermes-home']);
 
 function parseFlags(args: string[]): SetupFlags | string {
   const value = (flag: string): string | undefined => {
@@ -152,6 +174,8 @@ function parseFlags(args: string[]): SetupFlags | string {
   if (!isValidName(name)) return `invalid --name '${name}'; use lowercase letters, digits, '-' or '_'`;
   const source = value('--source');
   if (source !== undefined && !isValidSourceId(source)) return `invalid --source '${source}'`;
+  const hermesDir = value('--hermes-home');
+  if (hermesDir !== undefined && (!isAbsolute(hermesDir) || hermesDir.split(/[\\/]/).includes('..'))) return `invalid --hermes-home '${hermesDir}'; pass an absolute path without '..'`;
   if (args.includes('--capture') && args.includes('--no-capture')) return 'pass --capture or --no-capture, not both';
   if (args.includes('--providers') && args.includes('--no-providers')) return 'pass --providers or --no-providers, not both';
   return {
@@ -167,6 +191,7 @@ function parseFlags(args: string[]): SetupFlags | string {
     name,
     source,
     gbrainBin: value('--gbrain-bin'),
+    hermesHome: hermesDir,
   };
 }
 
@@ -206,6 +231,9 @@ interface Target {
   config_path: string;
   settings_path?: string;
   hooks_path?: string;
+  /** Hermes: the profile (HERMES_HOME) this setup wires, and its hook-approval store. */
+  hermes_home?: string;
+  allowlist_path?: string;
   receipt_path: string;
 }
 
@@ -248,7 +276,9 @@ function describeTarget(t: Target, out: Out, harness: SetupHarnessId = 'claude-c
   say(out, `  transport  stdio MCP: ${t.launcher} serve --surface ${t.surface}`);
   say(out, `  owner      ${t.registration_owner === 'setup' ? `this setup (${t.receipt_path})` : t.registration_owner === 'plugin' ? `the gbrain ${HARNESS_LABEL[harness]} plugin (MCP); setup adds hooks only` : `none yet; setup will own '${t.name}'`}`);
   if (t.live_owner) say(out, `  live       gbrain ${t.live_owner.transport === 'http' ? 'serve --http' : 'stdio serve'} PID ${t.live_owner.pid}${t.live_owner.ours ? ' (started by this registration)' : ''}`);
-  say(out, `  files      ${t.config_path} (MCP${t.hooks_path ? ' + hook trust' : ''}), ${t.hooks_path ?? t.settings_path} (hooks)`);
+  if (t.hermes_home) say(out, `  profile    ${t.hermes_home}`);
+  say(out, t.allowlist_path ? `  files      ${t.config_path} (MCP + hooks), ${t.allowlist_path} (hook approvals)`
+    : `  files      ${t.config_path} (MCP${t.hooks_path ? ' + hook trust' : ''}), ${t.hooks_path ?? t.settings_path} (hooks)`);
 }
 
 function describeConsent(c: SetupConsent, events: string[], out: Out, harness: SetupHarnessId = 'claude-code'): void {
@@ -303,6 +333,13 @@ export async function runSetup(args: string[]): Promise<number> {
       return 2;
     }
     return runCodexSetup(flags, launcher, cfg, brainHome, out);
+  }
+  if (flags.harness === 'hermes') {
+    if (flags.scope === 'project') {
+      process.stderr.write('gbrain setup: hermes is wired per profile (its config.yaml and hook approvals live in HERMES_HOME); drop --scope project, or pass --hermes-home for another profile.\n');
+      return 2;
+    }
+    return runHermesSetup(flags, launcher, cfg, brainHome, out);
   }
   const scope: WiringScope = flags.scope ?? 'user';
   const projectDir = scope === 'project' ? realpathSync(process.cwd()) : undefined;
@@ -412,11 +449,16 @@ function liveOwnerOf(cfg: GBrainConfig | null, ours: boolean): { dataDir?: strin
     ? { pid: lock.pid, transport: lock.http ? 'http' : 'stdio', ours: ours && !lock.http } : null };
 }
 
-function liveServeConflict(live: NonNullable<Target['live_owner']>, harness: SetupHarnessId, name: string): OperationError {
+function liveServeConflict(live: NonNullable<Target['live_owner']>, harness: SetupHarnessId, name: string, profile?: string): OperationError {
   const http = live.transport === 'http';
   return ownerConflict('live_serve',
     `A live gbrain ${http ? 'serve --http' : 'stdio serve'} (PID ${live.pid}) holds this PGLite brain's single-writer lock; a stdio registration would start a second server that fails on the lock.`,
-    http
+    http && harness === 'hermes'
+      ? { actor: 'user', argv: ['gbrain', 'hermes', 'setup', '--hermes-home', profile!, '--url', 'http://127.0.0.1:3131/mcp'], consent: ['persistent_install', 'credentials'],
+        why: 'Connect Hermes to the running shared server through its HTTP lane (bootstrap harness does not wire Hermes); use the URL the server listens on.',
+        user_message: 'A shared gbrain server already holds this brain. Connect Hermes to it with gbrain hermes setup --url <its /mcp URL> and your token file instead of starting a second owner.',
+        verify: { argv: ['gbrain', 'doctor', '--only', 'harness_wiring', '--json'] } }
+    : http
       ? { actor: 'agent', argv: ['gbrain', 'bootstrap', 'harness', '--harness', harness, '--yes'], consent: ['persistent_install', 'credentials'],
         why: `Connect ${HARNESS_LABEL[harness]} to the running shared server instead of starting a second owner.`, verify: { argv: ['gbrain', 'doctor', '--only', 'harness_wiring', '--json'] } }
       : { actor: 'user', argv: ['kill', String(live.pid)],
@@ -561,8 +603,21 @@ async function runCodexRemove(flags: SetupFlags, receipt: CodexSetupReceipt | nu
   return finish(out, { harness: 'codex', dryRun: flags.dryRun, remove: true, steps: r.steps, states: [], verify: null, notices: [], notes: r.notes, preserved: r.preserved });
 }
 
-function hostedConnection(url: string, wired: boolean, name: string, harness: SetupHarnessId = 'claude-code'): OperationError {
+function hostedConnection(url: string, wired: boolean, name: string, harness: SetupHarnessId = 'claude-code', profile?: string): OperationError {
   const label = HARNESS_LABEL[harness];
+  if (harness === 'hermes') {
+    const argv = ['gbrain', 'hermes', 'setup', '--hermes-home', profile!, '--url', url.startsWith('http') ? url : '<mcp-url>'];
+    return opError('setup_hosted_connection',
+      `This machine already reaches a hosted brain (${url})${wired ? ` and ${label}'s '${name}' entry points at it` : ''}; gbrain setup will not create a second, local brain.`,
+      wired ? 'Nothing to do: the hosted connection is wired. `gbrain doctor --only harness_wiring` verifies it.' : `Connect ${label} to it with \`${argv.join(' ')}\` (the hosted/HTTP lane).`,
+      { docs: 'docs/guides/repair.md#setup-hosted-connection',
+        fix: wired
+          ? { argv: ['gbrain', 'doctor', '--only', 'harness_wiring', '--json'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Shows which brain the registration reaches and smoke-tests it.' }
+          : { argv, consent: ['persistent_install', 'credentials'], actor: 'user', requires_exclusive: false,
+            why: `The hosted Hermes lane writes the HTTP MCP entry and the provider with the hosted credential; this profile keeps its own name '${name}'.`,
+            user_message: `Your brain is hosted at ${url}. Run \`gbrain hermes setup\` for this profile with your token file; setup will not create a local brain.`,
+            verify: { argv: ['gbrain', 'doctor', '--only', 'harness_wiring', '--json'] } } });
+  }
   return opError('setup_hosted_connection',
     `This machine already reaches a hosted brain (${url})${wired ? ` and ${label}'s '${name}' entry points at it` : ''}; gbrain setup will not create a second, local brain.`,
     wired ? 'Nothing to do: the hosted connection is wired. `gbrain doctor --only harness_wiring` verifies it.' : `Connect ${label} to it with \`gbrain connect ${url} --harness ${harness} --install\`.`,
@@ -609,9 +664,133 @@ async function finish(out: Out, doc: {
   if (state) say(out, `State: ${state} (${doc.states.join(' -> ')}).${state === 'native-verified' ? '' : ' Native push is not claimed until an observed event reaches a fresh session.'}`);
   if (state && !doc.remove) say(out, harness === 'codex'
     ? 'Next: start a new Codex session (config and hooks are read at session start) and check that /mcp lists gbrain.'
-    : 'Next: open a new Claude Code session (config is read at session start) and check that /mcp lists gbrain.');
+    : harness === 'hermes'
+      ? 'Next: restart Hermes in this profile (config and hooks are read at process start; a running gateway needs a restart) and check that `hermes mcp test` lists gbrain.'
+      : 'Next: open a new Claude Code session (config is read at session start) and check that /mcp lists gbrain.');
   if (state && !doc.remove) say(out, 'Memory: save what the user asks you to remember as a fact with gbrain remember "<fact>", naming its entity and provenance (MCP tool: remember). '
     + 'World-visible facts (the default) are pushed into new sessions; a private fact is not (local CLI recall only). capture writes a page, not a fact.');
   writeCliNotices(doc.notices);
   return 0;
+}
+
+async function runHermesSetup(flags: SetupFlags, launcher: string, cfg: GBrainConfig | null, brainHome: string, out: Out): Promise<number> {
+  const home = hermesHome(flags.hermesHome);
+  const paths = hermesSetupPaths(flags.name, home);
+  try {
+    const receiptRead = readHermesSetupReceipt(paths.receiptPath);
+    if (flags.remove) return await runHermesRemove(flags, receiptRead.setup, paths.receiptPath, brainHome, out);
+
+    const providerLane = hermesProviderReceipt(home);
+    const hostedUrl = cfg?.remote_mcp?.mcp_url ?? receiptRead.hosted?.mcp_url ?? providerLane?.mcp_url ?? (receiptRead.hosted || providerLane ? 'a hosted brain' : undefined);
+    if (hostedUrl) return refuse(hostedConnection(hostedUrl, receiptRead.hosted !== null || providerLane !== null, flags.name, 'hermes', home), out);
+    const prior = receiptRead.setup;
+    if (prior && prior.gbrain_home !== brainHome) {
+      return refuse(ownerConflict('other_install', `The '${flags.name}' connection belongs to the gbrain install at ${prior.gbrain_home}, not ${brainHome}.`, {
+        actor: 'agent', argv: ['gbrain', 'setup', 'hermes', '--name', `${flags.name}-2`, '--dry-run', '--json'],
+        why: 'Each install owns its own MCP name and hooks; preview this install under another name.', verify: verifyDryRun('hermes', flags.name) }), out);
+    }
+
+    const notes: string[] = [];
+    const consent = resolveConsent(flags, prior, cfg, 'user', notes);
+    const envSurface = process.env.GBRAIN_SURFACE;
+    if (envSurface && !isRegistrationSurface(envSurface)) notes.push(`GBRAIN_SURFACE='${envSurface}' is not verbs, starter or full; ignored.`);
+    const surface: McpSurface = flags.surface ?? (isRegistrationSurface(envSurface) ? envSurface : undefined) ?? prior?.surface ?? REGISTRATION_SURFACE;
+    const sourceId = flags.source ?? (process.env.GBRAIN_SOURCE && isValidSourceId(process.env.GBRAIN_SOURCE) ? process.env.GBRAIN_SOURCE : null);
+    const plan: HermesSetupPlan = {
+      name: flags.name, launcher, brainHome, hermesHome: home,
+      // Hermes filters a stdio child's environment, so the install is always pinned in the entry and the hooks.
+      gbrainHomeEnv: process.env.GBRAIN_HOME?.trim() || dirname(brainHome),
+      sourceId, surface, events: hookEvents<HermesSetupEvent>(consent, 'hermes'),
+    };
+    const found = inspectHermesSetup(plan);
+    if (found.mcp.state === 'remote') return refuse(hostedConnection(found.mcp.url ?? 'a hosted brain', true, flags.name, 'hermes', home), out);
+
+    const { dataDir, liveOwner } = liveOwnerOf(cfg, prior?.status === 'installed' && found.mcp.state === 'current');
+    const target: Target = {
+      brain: !cfg ? { kind: 'new-local-pglite', path: gbrainPath('brain.pglite'), config_dir: brainHome }
+        : cfg.engine === 'pglite' ? { kind: 'local-pglite', path: dataDir, config_dir: brainHome } : { kind: 'local-postgres', config_dir: brainHome },
+      source: { id: sourceId, pinned: sourceId !== null, from: flags.source ? 'flag' : sourceId ? 'env' : 'brain-default' },
+      transport: 'local-stdio', launcher, surface,
+      registration_owner: prior ? 'setup' : 'none',
+      live_owner: liveOwner, scope: 'user', name: flags.name,
+      config_path: found.configPath, hermes_home: home, allowlist_path: found.allowlistPath, receipt_path: found.receiptPath,
+    };
+    describeTarget(target, out, 'hermes');
+    describeConsent(consent, plan.events, out, 'hermes');
+    for (const n of notes) say(out, `note: ${n}`);
+    if (consent.capture.value === 'accepted' && existsSync(join(home, 'plugins', 'gbrain-session-corpus'))) {
+      const n = `${join(home, 'plugins', 'gbrain-session-corpus')} already exports Hermes sessions on on_session_finalize; --capture adds a second capture path, so the same session can be ingested twice.`;
+      notes.push(n); say(out, `note: ${n}`);
+    }
+
+    if (liveOwner && !liveOwner.ours) return refuse(liveServeConflict(liveOwner, 'hermes', flags.name, home), out);
+    if (found.mcp.state === 'unowned') {
+      return refuse(ownerConflict('unowned_entry', `${found.configPath} already has mcp_servers.${flags.name} that gbrain setup did not write (or it was edited since); setup never overwrites it.`, {
+        actor: 'agent', argv: ['gbrain', 'setup', 'hermes', '--name', `${flags.name}-local`, '--dry-run', '--json'],
+        why: 'Preview a setup under another name, or remove that entry yourself and run setup again.', verify: verifyDryRun('hermes', flags.name) }), out);
+    }
+    const harnessReceipt = readHarnessReceiptState(brainHome);
+    const harnessLane = harnessReceipt.state === 'ok' && harnessReceipt.receipt.targets.some((t) => (t.host as string) === 'hermes');
+    const laneEvents = found.otherLaneEvents.filter((e) => (plan.events as string[]).includes(e));
+    if (harnessLane || laneEvents.length > 0) {
+      return refuse(ownerConflict('harness_lane', `${harnessLane ? '`gbrain bootstrap harness` already wires Hermes for this install' : `${found.configPath} already wires ${laneEvents.join(', ')} through a hand-written gbrain hook`}; two lanes would fire every hook twice.`, {
+        actor: 'agent', argv: harnessLane ? ['gbrain', 'bootstrap', 'harness', '--remove', '--dry-run'] : ['gbrain', 'setup', 'hermes', laneEvents.every((e) => e === 'on_session_finalize') ? '--no-capture' : '--no-hooks', '--dry-run', '--json'],
+        why: harnessLane ? 'Preview removing the bootstrap harness wiring first, or keep it and skip setup.' : 'Keep your own hook for those events and preview setup without them.', verify: verifyDryRun('hermes', flags.name) }), out);
+    }
+
+    const brainCreate = !cfg;
+    const initArgv = [launcher, 'init', '--pglite', ...(consent.providers.value === 'accepted' ? [] : ['--no-embedding']), '--json'];
+    if (flags.dryRun) {
+      const unchanged = found.prior?.status === 'installed' && found.hooksCurrent && found.trustCurrent && found.mcp.state === 'current' && !brainCreate;
+      const steps: HermesSetupStep[] = [
+        { step: 'receipt', action: unchanged ? 'keep' : 'write', detail: found.receiptPath },
+        ...(brainCreate ? [{ step: 'brain' as const, action: 'write' as const, detail: `would run: ${initArgv.join(' ')}` }] : []),
+        { step: 'mcp', action: found.mcp.state === 'current' ? 'keep' : 'write', detail: `mcp_servers.${flags.name} in ${found.configPath}` },
+        { step: 'hooks', action: found.hooksCurrent ? 'keep' : 'write', detail: plan.events.length ? `${plan.events.join(', ')} in ${found.configPath}` : `no hooks (${found.configPath})` },
+        { step: 'trust', action: found.trustCurrent ? 'keep' : 'write', detail: `hook approvals for setup's items in ${found.allowlistPath}` },
+        ...Object.keys(found.edited).map((event) => ({ step: 'hooks' as const, action: 'preserve' as const, detail: `${event} was edited after setup wrote it; kept` })),
+      ];
+      return finish(out, { harness: 'hermes', dryRun: true, target, consent, steps, states: [], verify: null, notices: [], notes });
+    }
+
+    let notices: Notice[] = [];
+    const result = await applyHermesSetup(plan, consent, {
+      brainCreated: brainCreate, abortAfter: process.env.GBRAIN_SETUP_ABORT_AFTER,
+      beforeMcp: brainCreate ? async () => { notices = runBrainInit(initArgv, out, 'hermes'); } : undefined,
+    });
+    for (const s of result.steps) say(out, `  ${s.action.padEnd(8)} ${s.step.padEnd(7)} ${s.detail}`);
+    for (const n of result.notes) say(out, `note: ${n}`);
+    if (!result.changed) say(out, 'Nothing changed: this install is already wired.');
+
+    let verify: { ok: boolean; reason: string; message: string };
+    if (liveOwner?.ours) verify = { ok: true, reason: 'wired_running', message: `A live stdio serve (PID ${liveOwner.pid}) started by this registration holds the brain.` };
+    else {
+      const entry = desiredHermesMcpEntry(plan) as { command: string; args: string[]; env: Record<string, string> };
+      verify = await smokeStdioRegistration({ harness: 'hermes', source: found.configPath, kind: 'stdio', command: entry.command, args: entry.args, env: entry.env });
+    }
+    const states = ['configured', ...(verify.ok ? ['connection-verified', capabilityRows('hermes')[0]!.push === 'native-verified' && result.receipt.trust.owned.pre_llm_call ? 'native-verified' : 'native-pending'] : [])];
+    const code = await finish(out, { harness: 'hermes', dryRun: false, target: { ...target, registration_owner: 'setup' }, consent: result.receipt.consent,
+      steps: result.steps, states, verify, notices, notes: [...notes, ...result.notes], preserved: result.preserved });
+    return verify.ok ? code : 1;
+  } catch (e) {
+    if (e instanceof OperationError) return refuse(e, out);
+    if (e instanceof SetupAbortInjected) { process.stderr.write(`${e.message}\n`); return 1; }
+    process.stderr.write(`gbrain setup: ${(e as Error).message}\n`);
+    return 1;
+  }
+}
+
+async function runHermesRemove(flags: SetupFlags, receipt: HermesSetupReceipt | null, receiptPath: string, brainHome: string, out: Out): Promise<number> {
+  if (!receipt) {
+    say(out, `No gbrain setup receipt at ${receiptPath}; setup owns nothing here, so nothing was removed.`);
+    return finish(out, { harness: 'hermes', dryRun: flags.dryRun, remove: true, steps: [], states: [], verify: null, notices: [], notes: [] });
+  }
+  if (receipt.gbrain_home !== brainHome) {
+    return refuse(ownerConflict('other_install', `The '${receipt.name}' connection belongs to the gbrain install at ${receipt.gbrain_home}, not ${brainHome}; --remove leaves it alone.`, {
+      actor: 'user', why: `Run --remove with GBRAIN_HOME set to the install that owns it (${receipt.gbrain_home}).`, user_message: 'This setup belongs to another gbrain install; remove it from that install.' }), out);
+  }
+  const r = await removeHermesSetup(receipt, receiptPath, { dryRun: flags.dryRun });
+  for (const s of r.steps) say(out, `  ${(flags.dryRun ? `would ${s.action}` : s.action).padEnd(14)} ${s.step.padEnd(7)} ${s.detail}`);
+  say(out, 'The brain, its notes and unrelated Hermes settings were left as they were.');
+  return finish(out, { harness: 'hermes', dryRun: flags.dryRun, remove: true, steps: r.steps, states: [], verify: null, notices: [], notes: r.notes, preserved: r.preserved });
 }

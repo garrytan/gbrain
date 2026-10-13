@@ -10,7 +10,7 @@
  * meaning changes.
  */
 
-export const SETUP_CAPABILITY_TABLE_VERSION = 2;
+export const SETUP_CAPABILITY_TABLE_VERSION = 3;
 
 export const SETUP_HARNESSES = ['claude-code', 'codex', 'openclaw', 'hermes'] as const;
 export type SetupHarness = (typeof SETUP_HARNESSES)[number];
@@ -45,8 +45,8 @@ export const SETUP_CAPABILITIES: readonly SetupCapabilityRow[] = [
     read_events: [], capture_events: [], docs: 'docs/mcp/OPENCLAW.md' },
   { harness: 'openclaw', transport: 'thin-client', setup: 'unsupported', pull: 'manual', push: 'unsupported',
     read_events: [], capture_events: [], docs: 'docs/mcp/OPENCLAW.md' },
-  { harness: 'hermes', transport: 'local-stdio', setup: 'unsupported', pull: 'manual', push: 'unsupported',
-    read_events: [], capture_events: [], docs: 'docs/mcp/HERMES.md' },
+  { harness: 'hermes', transport: 'local-stdio', setup: 'supported', pull: 'connection-verified', push: 'native-pending',
+    read_events: ['pre_llm_call'], capture_events: ['on_session_finalize'], docs: 'docs/mcp/HERMES.md' },
 ];
 
 export function isSetupHarness(v: string | undefined): v is SetupHarness {

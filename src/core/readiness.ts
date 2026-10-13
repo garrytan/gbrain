@@ -383,7 +383,7 @@ function lockOwnerFor(cfg: GBrainConfig): LockOwner | null {
 
 // ── harness wiring ─────────────────────────────────────────────────────────
 
-export type ReadinessHarness = 'claude-code' | 'codex' | 'opencode';
+export type ReadinessHarness = 'claude-code' | 'codex' | 'opencode' | 'hermes';
 export interface HarnessWiringInput {
   transport: Transport;
   /** The surface the registration pins; default REGISTRATION_SURFACE (`gbrain init --surface` overrides). */
@@ -397,11 +397,12 @@ export interface HarnessWiringInput {
   httpStatusServer?: HttpStatusMarker | null;
 }
 
-const HARNESS_LABEL: Record<ReadinessHarness, string> = { 'claude-code': 'Claude Code', codex: 'Codex', opencode: 'opencode' };
+const HARNESS_LABEL: Record<ReadinessHarness, string> = { 'claude-code': 'Claude Code', codex: 'Codex', opencode: 'opencode', hermes: 'Hermes' };
 const HARNESS_DESTINATION: Record<ReadinessHarness, string> = {
   'claude-code': 'the Claude Code MCP config (~/.claude.json)',
   codex: 'the Codex config (~/.codex/config.toml)',
   opencode: 'the opencode config (opencode.json)',
+  hermes: 'the Hermes profile config ($HERMES_HOME/config.yaml)',
 };
 const MEMORY_VERBS_INSTALL = 'docs/protocol/MEMORY_VERBS_v1.md#install-the-4-command-quickstart';
 
@@ -415,8 +416,10 @@ function stdioRegistration(h: ReadinessHarness, bin: string, surface: McpSurface
   const serve = stdioServeArgv(bin, surface);
   const argv = h === 'claude-code' ? ['claude', 'mcp', 'add', 'gbrain', '--', ...serve]
     : h === 'codex' ? ['codex', 'mcp', 'add', 'gbrain', '--', ...serve]
-      : ['gbrain', 'bootstrap', 'hooks', '--harness', 'opencode', '--no-hooks', ...(surface === REGISTRATION_SURFACE ? [] : ['--surface', surface])];
-  const hooks = h === 'opencode' ? ' No lifecycle hooks are installed (--no-hooks); it must run inside an initialized agent workspace.' : ' No hooks, tool pre-approvals or tokens are added.';
+      : h === 'hermes' ? ['gbrain', 'setup', 'hermes', ...(surface === REGISTRATION_SURFACE ? [] : ['--surface', surface])]
+        : ['gbrain', 'bootstrap', 'hooks', '--harness', 'opencode', '--no-hooks', ...(surface === REGISTRATION_SURFACE ? [] : ['--surface', surface])];
+  const hooks = h === 'opencode' ? ' No lifecycle hooks are installed (--no-hooks); it must run inside an initialized agent workspace.'
+    : h === 'hermes' ? ' It also adds the pre_llm_call context hook and its Hermes approval; `--no-hooks` skips them. No tokens are added.' : ' No hooks, tool pre-approvals or tokens are added.';
   return {
     argv, consent: ['persistent_install'], actor: 'agent', requires_exclusive: false,
     why: `Registers gbrain as a stdio MCP server (${serve.join(' ')}, ${SURFACE_GLOSS[surface]}) in ${HARNESS_DESTINATION[h]}, so new ${HARNESS_LABEL[h]} sessions get memory tools.${hooks}`,
@@ -426,6 +429,15 @@ function stdioRegistration(h: ReadinessHarness, bin: string, surface: McpSurface
 }
 
 function sharedHttpWiring(selector: ReadinessHarness | 'all'): Action {
+  if (selector === 'hermes') {
+    return {
+      argv: ['gbrain', 'hermes', 'setup', '--hermes-home', '<hermes-profile>', '--url', 'http://127.0.0.1:3131/mcp'],
+      consent: ['persistent_install', 'credentials'], actor: 'user', requires_exclusive: false,
+      why: 'Connects the Hermes profile to the shared `gbrain serve --http` on this machine (it must be running) through the hosted/HTTP lane; bootstrap harness does not wire Hermes. The token comes from a private file or the profile .env, never an argument.',
+      user_message: 'To let Hermes share this brain with other sessions, connect the profile to the local gbrain HTTP server with your token file. OK?',
+      verify: VERIFY('harness_wiring'), docs: 'docs/mcp/HERMES.md',
+    };
+  }
   const names = selector === 'all' ? 'each detected harness' : HARNESS_LABEL[selector];
   return {
     argv: ['gbrain', 'bootstrap', 'harness', '--harness', selector, '--yes'],

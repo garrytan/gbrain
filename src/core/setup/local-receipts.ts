@@ -11,7 +11,10 @@
  *     even when provider keys sit in the environment. Opt-outs win: one live
  *     receipt that declines is enough.
  *   - the SessionStart hook: a Claude Code receipt means the harness starts a
- *     stdio serve for every new session, so the hook may wait briefly for it.
+ *     stdio serve for every new session, so the hook may wait briefly for it;
+ *     a Hermes receipt means the same for the first turn of each Hermes process.
+ *     (Hermes: the active profile only, `hermesHome()`; another profile's receipt
+ *     is found when HERMES_HOME names it.)
  *
  * File reads only (engine-free, no harness code imported) so the hook and the
  * gateway can call it. A receipt that is unreadable, hosted (no
@@ -21,7 +24,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { configDir } from '../config.ts';
-import { claudeUserMcpConfigPath, codexConfigPath } from '../bootstrap/host-specs.ts';
+import { claudeUserMcpConfigPath, codexConfigPath, hermesHome } from '../bootstrap/host-specs.ts';
 
 export interface LocalSetupRecord {
   path: string;
@@ -59,7 +62,7 @@ function parse(path: string, home: string): LocalSetupRecord | null {
 
 /** Every live local-stdio setup receipt this install (`configDir()`) wrote. */
 export function localSetupRecords(home: string = configDir()): LocalSetupRecord[] {
-  const dirs = [...new Set([dirname(claudeUserMcpConfigPath()), dirname(codexConfigPath())])];
+  const dirs = [...new Set([dirname(claudeUserMcpConfigPath()), dirname(codexConfigPath()), hermesHome()])];
   const records: LocalSetupRecord[] = [];
   for (const dir of dirs) {
     let names: string[];
@@ -90,4 +93,9 @@ export function providerDeclineRecord(home?: string): LocalSetupRecord | null {
 export function claudeCodeSpawnsServe(cwd: string, home?: string): boolean {
   return localSetupRecords(home).some((r) => r.harness === 'claude-code' && r.status === 'installed'
     && (r.scope !== 'project' || r.projectDir === cwd));
+}
+
+/** True when an installed `gbrain setup hermes` registration makes the active Hermes profile spawn a stdio serve. */
+export function hermesSpawnsServe(home?: string): boolean {
+  return localSetupRecords(home).some((r) => r.harness === 'hermes' && r.status === 'installed');
 }

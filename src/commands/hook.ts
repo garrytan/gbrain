@@ -85,6 +85,8 @@ import { resolveWritebackConfigFromFile } from '../core/facts/writeback-config.t
 import { recordCaptureIfOff } from '../core/context/capture-consent.ts';
 import { memorableGateAllowed, recordAndRelayReceipt, redactedToolCallsJson } from '../core/context/hook-heartbeat.ts';
 import { captureSpecFor } from '../core/transcripts/capture-spec.ts';
+import { composeHermesContext, hermesContextLine, hermesFirstTurnSeen, markHermesFirstTurn, parseHermesPromptPayload } from '../core/context/hermes-hook.ts';
+import { hermesHome, hermesStateDbPath } from '../core/bootstrap/host-specs.ts';
 import {
   heartbeatPath,
   hookStatusPath,
@@ -233,11 +235,11 @@ export interface HookIo {
    */
   disableTelemetry?: boolean;
   /**
-   * Feedback-loop attribution channel (`--harness <claude-code|codex|opencode>`).
+   * Feedback-loop attribution channel (`--harness <claude-code|codex|opencode|hermes>`).
    * Default 'claude-code' — the only harness bootstrap registers hooks for
    * today; a codex/opencode hook registration passes the flag explicitly.
    */
-  harness?: 'claude-code' | 'codex' | 'opencode';
+  harness?: 'claude-code' | 'codex' | 'opencode' | 'hermes';
 }
 
 // ── Entry point ─────────────────────────────────────────────────────────────
@@ -252,8 +254,9 @@ Events (wired into .claude/settings.local.json by gbrain bootstrap):
                   hook health) to stdout
   user-prompt     read hook JSON on stdin, request per-turn context from a
                   running 'gbrain serve' over IPC, print additionalContext JSON
-                  (--harness <claude-code|codex|opencode> sets the feedback-loop
-                  channel; default claude-code, unknown values fall back to the default)
+                  (--harness <claude-code|codex|opencode|hermes> sets the feedback-loop
+                  channel; default claude-code, unknown values fall back to the default;
+                  hermes reads Hermes' pre_llm_call payload and prints {"context": ...})
   stop            bank the writeback backstop and spawn the workspace push
   session-end     ingest the session transcript into the dream corpus
                   (secret-scanned), prune old corpus files, push the workspace
@@ -272,13 +275,13 @@ export async function runHook(args: string[], io: HookIo = {}): Promise<number> 
     write(io, USAGE + '\n');
     return 0;
   }
-  // `--harness <claude-code|codex|opencode>` — feedback-loop channel
+  // `--harness <claude-code|codex|opencode|hermes>` — feedback-loop channel
   // attribution for user-prompt. Unknown values fall back to the default
   // (fail-open: a bad registration must never break the hook contract).
   const harnessIdx = args.indexOf('--harness');
   if (harnessIdx >= 0 && !io.harness) {
     const v = args[harnessIdx + 1];
-    if (v === 'claude-code' || v === 'codex' || v === 'opencode') io = { ...io, harness: v };
+    if (v === 'claude-code' || v === 'codex' || v === 'opencode' || v === 'hermes') io = { ...io, harness: v };
   }
   if (!event || !(HOOK_EVENTS as readonly string[]).includes(event)) {
     process.stderr.write(USAGE + '\n');
@@ -337,7 +340,7 @@ export async function runHook(args: string[], io: HookIo = {}): Promise<number> 
     case 'session-start':
       return hookSessionStart(io);
     case 'user-prompt':
-      return hookUserPrompt(io);
+      return io.harness === 'hermes' ? hookUserPromptHermes(io) : hookUserPrompt(io);
     case 'stop':
       return hookStop(io);
     case 'session-end':
@@ -1285,6 +1288,72 @@ async function hookUserPrompt(io: HookIo): Promise<number> {
   return 0;
 }
 
+// ── user-prompt for Hermes (pre_llm_call) ───────────────────────────────────
+
+/** Self-deadline for a Hermes turn without the first-turn digest. */
+const HERMES_TURN_DEADLINE_MS = 800;
+/** Outer bound for the whole Hermes hook (first turn awaiting a starting serve); under the 10s Hermes timeout setup writes. */
+const HERMES_FIRST_TURN_MAX_MS = SESSION_START_SERVE_WAIT_DEADLINE_MS + 500;
+
+/**
+ * Hermes' `pre_llm_call` hook: the per-turn context block and, on the first turn of a session
+ * (is_first_turn, or the first turn gbrain sees for a resumed session id), the session-start pack.
+ * Both come from the running serve over IPC, concurrently; the answer is Hermes' own
+ * `{"context": "..."}` envelope. Fail-open: any miss prints nothing and exits 0.
+ */
+async function hookUserPromptHermes(io: HookIo): Promise<number> {
+  const t0 = Date.now();
+  let expired = false;
+  let first = false;
+  let greetedSession: string | undefined;
+  const sentinelDir = async () => join(await resolveHome(), 'integrations', 'hermes', 'sessions');
+  const work = (async (): Promise<UserPromptOutcome> => {
+    const j = await readStdinJson(io, 300);
+    if (!j) return { outcome: 'degraded', reason: 'no_stdin' };
+    const p = parseHermesPromptPayload(j);
+    if (!p) return { outcome: 'ok', reason: 'no_prompt' };
+    const sessionId = sanitizeSessionId(p.sessionId);
+    first = p.firstTurn || (sessionId !== 'unknown' && !hermesFirstTurnSeen(await sentinelDir(), sessionId));
+    const cfg = io.configOverride !== undefined ? io.configOverride : loadConfig();
+    const sourceId = process.env.GBRAIN_SOURCE || undefined;
+    const socketPath = await hookResolveSocketForConfig(cfg, sourceId);
+    if (!socketPath) return { outcome: 'degraded', reason: 'no_pglite_path' };
+    const secret = readIpcSecretForConfig(cfg);
+    if (!secret) return { outcome: 'degraded', reason: 'no_serve' };
+    const awaitServe = first && sessionStartAwaitsServe('startup', 'hermes', p.cwd ?? process.cwd());
+    const deadlineAt = t0 + (first ? (awaitServe ? SESSION_START_SERVE_WAIT_DEADLINE_MS : SESSION_START_DEADLINE_MS) : (io.userPromptDeadlineMs ?? HERMES_TURN_DEADLINE_MS));
+    const [turn, start] = await Promise.all([
+      requestTurnContext(socketPath, { secret, window: [{ role: 'user', text: p.prompt }], ...(sessionId !== 'unknown' ? { sessionId } : {}), ...(sourceId ? { sourceId } : {}), channel: 'hermes' }),
+      first ? requestSessionStartPack(cfg, { sourceId, sessionId, trigger: 'session-start:hermes', deadlineAt, awaitServe }) : Promise.resolve(null),
+    ]);
+    if (turn === IPC_UNAVAILABLE && !start?.pack) return { outcome: 'degraded', reason: start?.serveNotReady ? 'serve_not_ready' : 'ipc_unavailable', turns: 1 };
+    const resp = turn !== IPC_UNAVAILABLE && !('degraded' in turn) ? (turn as TurnContextResponse) : null;
+    const blockText = resp?.ok ? resp.block?.text ?? null : null;
+    const pack = start?.pack?.ok ? start.pack.block : null;
+    const digest = pack ? composeSessionStartOutput(process.env.GBRAIN_CORE !== '0' ? pack.core?.text ?? '' : '', pack.text ? [pack.text] : []) : null;
+    const context = composeHermesContext(digest, blockText);
+    if (!context) return { outcome: 'ok', reason: resp && !resp.ok ? reasonCode(resp.error ?? 'server_error') : 'empty_block', turns: 1 };
+    if (!expired) {
+      write(io, hermesContextLine(context));
+      greetedSession = first && digest ? sessionId : undefined;
+    }
+    return { outcome: 'ok', turns: 1 };
+  })();
+  let result: UserPromptOutcome;
+  try {
+    const raced = await withDeadline(HERMES_FIRST_TURN_MAX_MS, work);
+    if (raced === DEADLINE) { expired = true; result = { outcome: 'degraded', reason: 'deadline' }; } else result = raced;
+  } catch (e) {
+    expired = true;
+    result = { outcome: 'error', reason: errorCode(e) };
+  }
+  // Record-after-write: only a digest that reached stdout counts as the greeting.
+  if (greetedSession && !expired) markHermesFirstTurn(await sentinelDir(), greetedSession);
+  await writeHeartbeat(io, { ts: new Date().toISOString(), event: 'user-prompt', outcome: result.outcome,
+    ...(result.reason ? { reason: result.reason } : {}), duration_ms: Date.now() - t0, ...(result.turns !== undefined ? { turns: result.turns } : {}) });
+  return 0;
+}
+
 // ── compact (PreCompact banking, v0.45.7 ambient recall) ─────────────────────
 
 /** Self-deadline for the compact event (harness timeout is 5s). */
@@ -1681,7 +1750,10 @@ async function hookSessionEnd(io: HookIo): Promise<number> {
     const spec = captureSpecFor(io.harness);
     const rootOpt = io.transcriptRoot ? { root: io.transcriptRoot } : {};
     // #5701: every spec parser reads a bounded window (claude tail, codex head+tail).
-    let conf = spec.confine(j?.transcript_path, { ...rootOpt, allowOversize: true });
+    // Hermes hands the hook a session_id and no transcript: the store is the pinned profile state.db.
+    const hermes = io.harness === 'hermes';
+    const hermesRoot = hermes && !io.transcriptRoot ? { root: hermesHome() } : {};
+    let conf = spec.confine(hermes ? hermesStateDbPath(io.transcriptRoot ?? hermesHome()) : j?.transcript_path, { ...rootOpt, ...hermesRoot, allowOversize: true });
     // A newest-mtime discovery with NO session-id match is a guess: on a
     // machine with concurrent sessions it can be a different, still-RUNNING
     // rollout. Fine for the local corpus (overwritten on the real session
@@ -1714,7 +1786,7 @@ async function hookSessionEnd(io: HookIo): Promise<number> {
       // "conversations", and synthesize mints duplicate idea pages.
       segmentMode = 'self_transcript';
     } else {
-      const parsed = spec.parse(conf.path, { collectToolCalls: memorableAllowed });
+      const parsed = spec.parse(conf.path, { collectToolCalls: memorableAllowed, ...(hermes && typeof j?.session_id === 'string' ? { sessionId: j.session_id } : {}) });
       if (sessionId === 'unknown') {
         // Stdin payload carried no session_id (observed on codex): adopt the
         // transcript's own id so successive such sessions don't collapse onto

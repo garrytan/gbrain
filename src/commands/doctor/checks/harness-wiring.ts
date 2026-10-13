@@ -34,7 +34,8 @@ import { verifiedStatusMarkers } from '../../../core/serve-http-status-marker.ts
 import { agentProcessMarker } from '../../../core/interaction.ts';
 import { resolveGbrainBin } from '../../../core/gbrain-bin.ts';
 import { enabledPluginLanes } from '../../../core/bootstrap/plugin-lanes.ts';
-import { claudeConfigDir } from '../../../core/bootstrap/host-specs.ts';
+import { claudeConfigDir, hermesConfigPath } from '../../../core/bootstrap/host-specs.ts';
+import { readHermesYaml } from '../../../core/bootstrap/hermes-yaml.ts';
 import type { Action } from '../../../core/agent-output.ts';
 import type { Check } from '../../doctor.ts';
 import { checkError, doctorVerify, infoCheck } from '../check-fix.ts';
@@ -59,7 +60,7 @@ export interface HarnessRegistration {
   url?: string;
 }
 
-const HARNESS_LABEL: Record<ReadinessHarness, string> = { 'claude-code': 'Claude Code', codex: 'Codex', opencode: 'opencode' };
+const HARNESS_LABEL: Record<ReadinessHarness, string> = { 'claude-code': 'Claude Code', codex: 'Codex', opencode: 'opencode', hermes: 'Hermes' };
 
 function home(): string { return process.env.HOME || homedir(); }
 
@@ -138,9 +139,22 @@ function opencodeRegistration(name: string): HarnessRegistration | null {
   return { harness: 'opencode', source: path, kind: 'stdio', command: argv[0], args: argv.slice(1), env: stringRecord(entry.environment) };
 }
 
+/** `mcp_servers.<name>` from the active Hermes profile's config.yaml: stdio (`command`/`args`/`env`) or HTTP (`url`). */
+function hermesRegistration(name: string): HarnessRegistration | null {
+  const path = hermesConfigPath();
+  if (!existsSync(path)) return null;
+  try {
+    const entry = readHermesYaml(path, ['mcp_servers', name]) as Record<string, unknown> | undefined;
+    if (!entry || typeof entry !== 'object') return null;
+    if (typeof entry.url === 'string') return { harness: 'hermes', source: path, kind: 'http', url: entry.url };
+    if (typeof entry.command !== 'string') return null;
+    return { harness: 'hermes', source: path, kind: 'stdio', command: entry.command, args: strings(entry.args) ?? [], env: stringRecord(entry.env) };
+  } catch { return null; }
+}
+
 /** Every gbrain MCP registration this machine's harness configs carry. */
 export function readHarnessRegistrations(name = 'gbrain'): HarnessRegistration[] {
-  return [claudeRegistration(name), codexRegistration(name), opencodeRegistration(name)].filter((r): r is HarnessRegistration => r !== null);
+  return [claudeRegistration(name), codexRegistration(name), opencodeRegistration(name), hermesRegistration(name)].filter((r): r is HarnessRegistration => r !== null);
 }
 
 /** Harnesses installed on this machine: the active agent marker, else their config files. */
@@ -155,6 +169,7 @@ function detectedHarnesses(): ReadinessHarness[] {
   if (existsSync(join(home(), '.claude.json')) || existsSync(join(home(), '.claude')) || existsSync(claudeConfigDir())) out.push('claude-code');
   if (existsSync(process.env.CODEX_HOME || join(home(), '.codex'))) out.push('codex');
   if (existsSync(join(process.env.XDG_CONFIG_HOME || join(home(), '.config'), 'opencode'))) out.push('opencode');
+  if (existsSync(hermesConfigPath())) out.push('hermes');
   return out;
 }
 
