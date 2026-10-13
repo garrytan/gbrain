@@ -16,6 +16,11 @@
  */
 import { closeSync, mkdirSync, openSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { loadConfig, type GBrainConfig } from '../config.ts';
+import { ensureGbrainHome, resolveGbrainHome } from '../gbrain-home.ts';
+import { composeSessionStartOutput } from './session-start-output.ts';
+import { requestSessionStartPack, sessionStartAwaitsServe } from './session-start-pack.ts';
+import { IPC_UNAVAILABLE, hookResolveSocketForConfig, readIpcSecretForConfig, requestTurnContext, type TurnContextResponse } from './resolve-ipc.ts';
 
 /** Hermes spills hook output over 10000 chars to a file; stay well under so the context is delivered whole. */
 export const HERMES_CONTEXT_MAX_CHARS = 8000;
@@ -75,3 +80,103 @@ export function composeHermesContext(digest: string | null, block: string | null
 
 /** The one line Hermes parses, or '' when there is nothing to inject. */
 export const hermesContextLine = (context: string): string => (context ? `${JSON.stringify({ context })}\n` : '');
+
+// ── the pre_llm_call run ────────────────────────────────────────────────────
+
+const HERMES_TURN_DEADLINE_MS = 800;
+
+const sentinelDir = async (): Promise<string> => {
+  let base: string;
+  try { base = ensureGbrainHome(); } catch { base = resolveGbrainHome(); }
+  return join(base, 'integrations', 'hermes', 'sessions');
+};
+
+/** Record that the session-start digest reached stdout (called after the write; see markHermesFirstTurn). */
+async function markHermesGreeted(sessionId: string): Promise<void> {
+  markHermesFirstTurn(await sentinelDir(), sessionId);
+}
+
+export interface HermesRunResult { outcome: 'ok' | 'degraded' | 'error'; reason?: string; turns?: number; greeted?: string }
+interface HermesRunDeps {
+  t0: number;
+  sanitize: (id: unknown) => string;
+  write: (line: string) => void;
+  configOverride?: GBrainConfig | null;
+  turnDeadlineMs?: number;
+  /** hook.ts' session-start self-deadlines: the plain one, and the longer one while a starting serve is awaited. */
+  startDeadlineMs: number;
+  serveWaitDeadlineMs: number;
+}
+
+const code = (r: string): string => (/^[A-Za-z0-9_.:-]{1,48}$/.test(r) ? r : 'server_error');
+
+/**
+ * The per-turn context block and, on a first turn (Hermes' is_first_turn, or the first turn gbrain sees for a
+ * resumed session id), the session-start pack, fetched from the running serve over IPC concurrently. Writes
+ * Hermes' `{"context": ...}` line via `deps.write`; never throws on a miss (the caller fail-opens the rest).
+ */
+async function runHermesPrompt(j: Record<string, unknown> | null, deps: HermesRunDeps): Promise<HermesRunResult> {
+  if (!j) return { outcome: 'degraded', reason: 'no_stdin' };
+  const p = parseHermesPromptPayload(j);
+  if (!p) return { outcome: 'ok', reason: 'no_prompt' };
+  const sessionId = deps.sanitize(p.sessionId);
+  const dir = await sentinelDir();
+  const first = p.firstTurn || (sessionId !== 'unknown' && !hermesFirstTurnSeen(dir, sessionId));
+  const cfg = deps.configOverride !== undefined ? deps.configOverride : loadConfig();
+  const sourceId = process.env.GBRAIN_SOURCE || undefined;
+  const socketPath = await hookResolveSocketForConfig(cfg, sourceId);
+  if (!socketPath) return { outcome: 'degraded', reason: 'no_pglite_path' };
+  const secret = readIpcSecretForConfig(cfg);
+  if (!secret) return { outcome: 'degraded', reason: 'no_serve' };
+  const awaitServe = first && sessionStartAwaitsServe('startup', 'hermes', p.cwd ?? process.cwd());
+  const deadlineAt = deps.t0 + (first ? (awaitServe ? deps.serveWaitDeadlineMs : deps.startDeadlineMs) : (deps.turnDeadlineMs ?? HERMES_TURN_DEADLINE_MS));
+  const [turn, start] = await Promise.all([
+    requestTurnContext(socketPath, { secret, window: [{ role: 'user', text: p.prompt }], ...(sessionId !== 'unknown' ? { sessionId } : {}), ...(sourceId ? { sourceId } : {}), channel: 'hermes' }),
+    first ? requestSessionStartPack(cfg, { sourceId, sessionId, trigger: 'session-start:hermes', deadlineAt, awaitServe }) : Promise.resolve(null),
+  ]);
+  if (turn === IPC_UNAVAILABLE && !start?.pack) return { outcome: 'degraded', reason: start?.serveNotReady ? 'serve_not_ready' : 'ipc_unavailable', turns: 1 };
+  const resp = turn !== IPC_UNAVAILABLE && !('degraded' in turn) ? (turn as TurnContextResponse) : null;
+  const pack = start?.pack?.ok ? start.pack.block : null;
+  const digest = pack ? composeSessionStartOutput(process.env.GBRAIN_CORE !== '0' ? pack.core?.text ?? '' : '', pack.text ? [pack.text] : []) : null;
+  const context = composeHermesContext(digest, resp?.ok ? resp.block?.text ?? null : null);
+  if (!context) return { outcome: 'ok', reason: resp && !resp.ok ? code(resp.error ?? 'server_error') : 'empty_block', turns: 1 };
+  deps.write(hermesContextLine(context));
+  return { outcome: 'ok', turns: 1, ...(first && digest ? { greeted: sessionId } : {}) };
+}
+
+/** What hook.ts lends the Hermes runner (its private plumbing), so this module stays free of the command file. */
+export interface HermesHostDeps {
+  readStdinJson: (io: HermesIo, timeoutMs: number) => Promise<Record<string, unknown> | null>;
+  withDeadline: <T>(ms: number, work: Promise<T>) => Promise<T | symbol>;
+  DEADLINE: symbol;
+  write: (io: HermesIo, s: string) => void;
+  writeHeartbeat: (io: HermesIo, entry: { ts: string; event: string; outcome: 'ok' | 'degraded' | 'error'; reason?: string; duration_ms: number; turns?: number }) => Promise<void>;
+  errorCode: (e: unknown) => string;
+  sanitizeSessionId: (id: unknown) => string;
+  startDeadlineMs: number;
+  serveWaitDeadlineMs: number;
+}
+export interface HermesIo { configOverride?: GBrainConfig | null; userPromptDeadlineMs?: number }
+
+/** Outer bound for the whole hook (a first turn awaiting a starting serve); under the 10s Hermes timeout setup writes. */
+const FIRST_TURN_MAX_PAD_MS = 500;
+
+/** Hermes' `pre_llm_call` hook: `{"context": ...}` out, one heartbeat, exit 0 on every path. */
+export async function hookUserPromptHermes(io: HermesIo, h: HermesHostDeps): Promise<number> {
+  const t0 = Date.now();
+  let expired = false;
+  let result: HermesRunResult;
+  try {
+    const raced = await h.withDeadline(h.serveWaitDeadlineMs + FIRST_TURN_MAX_PAD_MS, (async () =>
+      runHermesPrompt(await h.readStdinJson(io, 300), { t0, sanitize: h.sanitizeSessionId, configOverride: io.configOverride, turnDeadlineMs: io.userPromptDeadlineMs,
+        startDeadlineMs: h.startDeadlineMs, serveWaitDeadlineMs: h.serveWaitDeadlineMs, write: (line) => { if (!expired) h.write(io, line); } }))());
+    if (raced === h.DEADLINE) { expired = true; result = { outcome: 'degraded', reason: 'deadline' }; } else result = raced as HermesRunResult;
+  } catch (e) {
+    expired = true;
+    result = { outcome: 'error', reason: h.errorCode(e) };
+  }
+  if (result.greeted && !expired) await markHermesGreeted(result.greeted); // record-after-write: a suppressed digest re-fires
+  await h.writeHeartbeat(io, { ts: new Date().toISOString(), event: 'user-prompt', outcome: result.outcome,
+    ...(result.reason ? { reason: result.reason } : {}), duration_ms: Date.now() - t0, ...(result.turns !== undefined ? { turns: result.turns } : {}) });
+  return 0;
+}

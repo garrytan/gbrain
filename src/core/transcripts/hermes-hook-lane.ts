@@ -19,26 +19,28 @@
  * in a sidecar column, so `messages.content` is the clean conversation and
  * gbrain's pushed context never re-enters the corpus as a "conversation".
  */
-import { existsSync, lstatSync, realpathSync } from 'node:fs';
-import { basename } from 'node:path';
+import { lstatSync } from 'node:fs';
 import { Database } from 'bun:sqlite';
-import { hermesHome } from '../bootstrap/host-specs.ts';
+import { hermesHome, hermesStateDbPath } from '../bootstrap/host-specs.ts';
 import { isPathContained } from '../path-confine.ts';
 import type { ConfineTranscriptResult, ParsedTranscript } from './claude-code-jsonl.ts';
 import { HERMES_NON_HUMAN_SOURCES, hermesSessionMessages } from './hermes.ts';
 
-/** Confine `p` to the active Hermes home's state.db. `opts.root` is the test seam (the Hermes home). */
-export function confineHermesStateDb(p: unknown, opts: { root?: string } = {}): ConfineTranscriptResult {
-  if (typeof p !== 'string' || p.length === 0) return { ok: false, reason: 'missing_path' };
-  if (basename(p) !== 'state.db') return { ok: false, reason: 'not_file' };
+/**
+ * The session store for a Hermes hook: ALWAYS `<hermes home>/state.db`. The payload's `transcript_path` (Hermes sends
+ * none, and a planted one must not steer the read) is ignored. `opts.root` is the Hermes home (test seam; production
+ * uses the active home). Rejects a symlink, a non-file, or a store that resolves outside the home.
+ */
+export function confineHermesStateDb(_payloadPath: unknown, opts: { root?: string } = {}): ConfineTranscriptResult {
+  const root = opts.root ?? hermesHome();
+  const p = hermesStateDbPath(root);
   let st: ReturnType<typeof lstatSync>;
   try { st = lstatSync(p); } catch (e) {
     return { ok: false, reason: (e as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing_path' : 'unreadable' };
   }
   if (st.isSymbolicLink()) return { ok: false, reason: 'symlink' };
   if (!st.isFile()) return { ok: false, reason: 'not_file' };
-  const root = opts.root ?? hermesHome();
-  if (!existsSync(root) || !isPathContained(p, root) || realpathSync(p) !== `${realpathSync(root)}/state.db`) return { ok: false, reason: 'outside_projects_dir' };
+  if (!isPathContained(p, root)) return { ok: false, reason: 'outside_projects_dir' };
   return { ok: true, path: p, size: st.size };
 }
 
