@@ -26,6 +26,9 @@
  *     back committed vectors and never holds the cache write lock across a
  *     network round-trip.
  *   - `LME_FLAGS` drives parsing and help from the same table.
+ *   - `--call-plan FILE` returns right after the run's flags, pins and models
+ *     resolve: before the resume skip, any client, engine or embed call
+ *     (src/eval/longmemeval/call-plan.ts writes the plan).
  *   - `--judge` (Phase D) judges the reader's answer with the official
  *     LongMemEval prompts (src/eval/longmemeval/judge.ts) through the shared
  *     judge runner; a judge malfunction is a `judge_error`, never an
@@ -132,6 +135,7 @@ import * as decideLane from '../eval/longmemeval/decide-lane.ts';
 import * as retrievalArms from '../eval/longmemeval/retrieval-arms.ts';
 import * as viaOperation from '../eval/longmemeval/via-operation.ts';
 import * as synopsisTier from '../eval/longmemeval/synopsis-tier.ts';
+import * as callPlan from '../eval/longmemeval/call-plan.ts';
 import { resolveModel } from '../core/model-config.ts';
 import type { ThinkLLMClient } from '../core/think/index.ts';
 import { createProgress } from '../core/progress.ts';
@@ -210,6 +214,8 @@ interface ParsedArgs {
   allowIncompleteJudgments: boolean;
   /** System One arm (`--decide*`, src/eval/decide-eval-flags.ts) and the eval-only `--eval-pool-depth`. */
   decide: decideLane.DecideEvalOptions; evalPoolDepth?: number; arms: retrievalArms.RetrievalArmOptions; synopsis: synopsisTier.SynopsisTierOptions; viaOp: viaOperation.ViaOperationOptions;
+  /** `--call-plan FILE` / `--call-plan-gate CMD`: write the gstack eval call plan instead of running (src/eval/longmemeval/call-plan.ts). */
+  callPlanPath?: string; callPlanGate?: string;
 }
 
 interface LmeFlag {
@@ -388,6 +394,13 @@ const LME_FLAGS: LmeFlag[] = [
       'such a run is NOT publishable (stderr FAIL line + exit 1) — re-run with',
       '--judge --resume-from FILE until all three are 0.'],
     apply: (o) => { o.allowIncompleteJudgments = true; } },
+  { name: '--call-plan', arg: 'FILE', help: [
+      'Write the gstack eval call plan (GSTACK_EVAL_CALLS v1) for the run these',
+      'flags describe to FILE and exit 0: per-lane calls and token bounds, no',
+      'provider call, no brain. A lane it cannot bound refuses (exit 1).'],
+    apply: (o, v) => { o.callPlanPath = v; } },
+  { name: '--call-plan-gate', arg: 'CMD', help: ['The GSTACK_EVAL_GATE line for --call-plan (default: this command without --call-plan).'],
+    apply: (o, v) => { o.callPlanGate = v; } },
   ...decideLane.LME_DECIDE_FLAGS,
   ...retrievalArms.LME_RETRIEVAL_ARM_FLAGS, ...synopsisTier.LME_SYNOPSIS_FLAGS, ...viaOperation.LME_VIA_OPERATION_FLAGS,
 ];
@@ -440,6 +453,7 @@ function parseArgs(args: string[]): ParsedArgs {
     throw new Error('--judge cannot be combined with --retrieval-only (there is no reader hypothesis to judge)');
   }
   viaOperation.validateViaOperation(out);
+  if (out.callPlanGate !== undefined && !out.callPlanPath) throw new Error('--call-plan-gate needs --call-plan FILE');
   return out;
 }
 
@@ -666,9 +680,7 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
   }
   let decideRun: decideLane.DecideEvalRun | null;
   try { ({ run: decideRun, questions } = decideLane.prepareLmeDecide(opts, questions)); } catch (err: any) { process.stderr.write(`Error: ${err.message ?? err}\n`); return fail(1); }
-  if (opts.limit && opts.limit < questions.length) {
-    questions = questions.slice(0, opts.limit);
-  }
+  if (opts.limit && opts.limit < questions.length) questions = questions.slice(0, opts.limit);
   if (questions.length === 0) {
     process.stderr.write(`Error: dataset contains no questions.\n`);
     fail(1);
@@ -692,10 +704,18 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
     envVar: 'GBRAIN_MODEL',
     fallback: 'sonnet',
   });
+  const extractorModel = trajectoryEnabled
+    ? await resolveModel(null, {
+        cliFlag: runOpts.extractorModel,
+        tier: 'utility',
+        fallback: 'haiku',
+      })
+    : '';
   const readerHash = readerConfigHash(readerConfig, normalizeModelId(model));
   const judgeHashFor = makeJudgeConfigHasher(opts.judgeModel, { model, prompt_sha: readerConfig.promptSha, max_tokens: readerConfig.maxTokens, k: opts.topK });
   /** This run's judge_config_hash (live rows; prior rows hash from their own recorded reader pins). */
   const runJudgeHash = judgeHashFor({});
+  if (opts.callPlanPath) return callPlan.runLmeCallPlan({ args, opts, questions, questionByQid, pins, knobs, synopsis, model, extractorModel, readerConfig, decide: decideRun, judgeHashFor }, fail);
 
   /** Everything the run-end block needs; filled by the main path or the no-op resume path. */
   interface RunEndState {
@@ -1014,13 +1034,6 @@ export async function runEvalLongMemEval(args: string[], runOpts: RunOpts = {}):
   const gatewayClient: ThinkLLMClient = makeGatewayThinkClient();
   const client: ThinkLLMClient = runOpts.client ?? gatewayClient;
   const extractorClient: ThinkLLMClient = runOpts.extractorClient ?? gatewayClient;
-  const extractorModel = trajectoryEnabled
-    ? await resolveModel(null, {
-        cliFlag: runOpts.extractorModel,
-        tier: 'utility',
-        fallback: 'haiku',
-      })
-    : '';
 
   if (runOpts.exitOnError === false) {
     if (!opts.retrievalOnly && !runOpts.client && !isAvailable('chat', model)) {

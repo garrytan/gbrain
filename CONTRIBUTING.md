@@ -704,6 +704,23 @@ Community PRs are batched into release waves rather than merged one-by-one;
 contributor attribution stays attached via `Co-Authored-By:` trailers and every
 accepted contribution is credited in `CHANGELOG.md`.
 
+### gstack repo config (`.gstack/`)
+
+Two committed files tell gstack (1.91.98.0 or later) about gbrain's own gates;
+gstack reads both from master, so a branch's edits take effect after it merges.
+
+- `.gstack/pregate.json`: `gstack-pregate run --allow-repo-commands` runs a
+  guard when the branch touches its files: the serial-lane manifest test, the
+  CLI goldens, `regen:all --check` and the schema-migration order check. A
+  failing guard prints its fix line. `sealed` lists eval output that must never
+  reach this public repository (run reports, sealed-confirmation and counted
+  cell outputs, per-cell `results.jsonl`/`usage.jsonl.gz`);
+  `gstack-pregate sealed` refuses a push that adds one.
+- `.gstack/ship-policy.json`: the stamp rule (the release stamp files and
+  version patterns) and the migration numbering `gstack-pregate regate` and
+  `gstack-tree-receipt` use to decide whether a restamped head is the same tree
+  that passed the gate.
+
 ### How a contributor PR lands
 
 Contributor PRs are never merged into master as-is. A maintainer folds the

@@ -51,6 +51,7 @@ import type {
 } from './types.ts';
 import { resolveRecipe, assertTouchpoint, parseModelId, embeddingDimsForModel } from './model-resolver.ts';
 import { recordChatUsage } from './chat-usage.ts';
+import { buildExpansionPrompt } from './expansion-prompt.ts';
 import {
   OPENROUTER_CACHE_HEADER,
   openrouterRequiresExplicitPromptCache,
@@ -2494,13 +2495,7 @@ export async function expand(query: string): Promise<string[]> {
     metadata: { query_chars: query.length },
   });
 
-  const expansionPrompt = [
-    'Rewrite the search query below into 3-4 different, related queries that would help find relevant documents. Respond with a JSON object in exactly this shape: {"queries": ["rewrite1", "rewrite2", "rewrite3"]}. The JSON key MUST be exactly "queries" (not "rewrites" or any other variation).',
-    'Return ONLY the JSON object. Do NOT include the original query in the result.',
-    'Each rewrite should emphasize different aspects, synonyms, or framings.',
-    '',
-    `Query: ${query}`,
-  ].join('\n');
+  const expansionPrompt = buildExpansionPrompt(query);
 
   // #4121: expand() calls generateObject/generateText directly and never
   // goes through chat()'s _recordBudget closure, so every expansion LLM
