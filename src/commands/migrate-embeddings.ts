@@ -757,7 +757,9 @@ export async function executeMigrationFlow(
       const [active] = await engine.executeRaw('SELECT id FROM sources WHERE id=$1 AND NOT archived', [sourceId]);
       if (!active) continue;
       await assertOwned();
-      const facts = await embedStaleFacts(engine, { sourceId, yes: true, maxCostUsd: opts.maxCostUsd ?? marker.state?.budget?.max_cost_usd ?? 0, maxFacts: 10_000, signal: controller.signal, assertOwned });
+      const facts = await embedStaleFacts(engine, { sourceId, yes: true,
+        maxCostUsd: opts.maxCostUsd ?? marker.state?.budget?.max_cost_usd ?? 0,
+        migrationDrain: { signal: controller.signal, assertOwned } });
       embeddedFacts += facts.embedded;
       if (facts.failures) break;
     }

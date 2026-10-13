@@ -21,6 +21,8 @@ import { eligibleFactEmbedding, staleFactEmbedding } from './facts/embedding-ide
 export interface EmbedFactsOpts extends EmbedFactsOptions {
   signal?: AbortSignal;
   assertOwned?: (tx: BrainEngine) => Promise<void>;
+  /** Internal full migration: drain the finite census under its lease and budget guard. */
+  migrationDrain?: { signal: AbortSignal; assertOwned: (tx: BrainEngine) => Promise<void> };
 }
 
 export interface EmbedFactsResult {
@@ -47,11 +49,11 @@ interface PendingFact {
 const eligible = `f.source_id = $1 AND ${eligibleFactEmbedding} AND ${staleFactEmbedding}`;
 
 export async function embedStaleFacts(engine: BrainEngine, opts: EmbedFactsOpts, selectedConfig: GBrainConfig | null = null): Promise<EmbedFactsResult> {
-  const { signal: externalSignal, assertOwned, ...wireOptions } = opts;
-  opts = { ...validateEmbedFactsOptions(wireOptions), signal: externalSignal, assertOwned };
-  const maxFacts = opts.maxFacts ?? 100;
+  const { signal: externalSignal, assertOwned, migrationDrain, ...wireOptions } = opts;
+  opts = { ...validateEmbedFactsOptions(wireOptions), signal: migrationDrain?.signal ?? externalSignal,
+    assertOwned: migrationDrain?.assertOwned ?? assertOwned };
   const batchSize = opts.batchSize ?? 100;
-  const budgetMs = opts.budgetMs ?? 60_000;
+  const budgetMs = migrationDrain ? undefined : opts.budgetMs ?? 60_000;
   const dryRun = opts.dryRun === true || opts.yes !== true;
   const verified = currentVerifiedLocalWriter();
   if (verified && (verified.remote || verified.principal.kind !== 'local_cli' || verified.grant.slugPrefixes !== null
@@ -85,6 +87,10 @@ export async function embedStaleFacts(engine: BrainEngine, opts: EmbedFactsOpts,
     return { count: Number(row.count), lastId: row.last_id };
   };
   const initial = await census();
+  // Keep batches bounded without imposing the standalone repair's per-run cap.
+  // The existing lastId fence excludes new rows; concurrent changes remain stale
+  // for the migration's final census instead of creating an endless catch-up loop.
+  const maxFacts = migrationDrain ? initial.count : opts.maxFacts ?? 100;
   const result: EmbedFactsResult = {
     source_id: opts.sourceId, dryRun, total_stale: initial.count,
     would_embed: dryRun ? Math.min(initial.count, maxFacts) : 0,
@@ -116,7 +122,8 @@ export async function embedStaleFacts(engine: BrainEngine, opts: EmbedFactsOpts,
     label: 'embed.facts', maxCostUsd: opts.maxCostUsd, maxRuntimeMs: budgetMs,
     pricingOverrides: await loadPricingOverrides(engine),
   });
-  const signal = AbortSignal.any([AbortSignal.timeout(budgetMs), ...(opts.signal ? [opts.signal] : [])]);
+  const signal = AbortSignal.any([...(budgetMs !== undefined ? [AbortSignal.timeout(budgetMs)] : []),
+    ...(opts.signal ? [opts.signal] : [])]);
   const maxTokens = resolveMaxChunkTokens();
   let afterId = '0';
   while (result.attempted < maxFacts) {
