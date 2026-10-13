@@ -340,7 +340,7 @@ export async function runHook(args: string[], io: HookIo = {}): Promise<number> 
       return hookSessionStart(io);
     case 'user-prompt':
       return io.harness === 'hermes'
-        ? hookUserPromptHermes(io, { readStdinJson, withDeadline, DEADLINE, write, writeHeartbeat, errorCode, sanitizeSessionId, startDeadlineMs: SESSION_START_DEADLINE_MS, serveWaitDeadlineMs: SESSION_START_SERVE_WAIT_DEADLINE_MS })
+        ? hookUserPromptHermes(io, { withDeadline, DEADLINE, write, writeHeartbeat, errorCode, sanitizeSessionId, startDeadlineMs: SESSION_START_DEADLINE_MS, serveWaitDeadlineMs: SESSION_START_SERVE_WAIT_DEADLINE_MS })
         : hookUserPrompt(io);
     case 'stop':
       return hookStop(io);

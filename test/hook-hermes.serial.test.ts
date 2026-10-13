@@ -28,7 +28,8 @@ import { runHook, readHeartbeatTail } from '../src/commands/hook.ts';
 import { ensureIpcSecret, resolveSocketPath, startResolveIpcServer, type ContextPackRequest, type TurnContextRequest } from '../src/core/context/resolve-ipc.ts';
 import { captureSpecFor, CAPTURE_SPECS } from '../src/core/transcripts/capture-spec.ts';
 import { confineHermesStateDb, parseHermesHookSession } from '../src/core/transcripts/hermes-hook-lane.ts';
-import { HERMES_CONTEXT_MAX_CHARS, parseHermesPromptPayload } from '../src/core/context/hermes-hook.ts';
+import { HERMES_CONTEXT_MAX_CHARS, parseHermesPromptPayload, parseHermesStdin } from '../src/core/context/hermes-hook.ts';
+import { configDir } from '../src/core/config.ts';
 import { buildHermesFixture } from './fixtures/transcripts/hermes-fixture-builder.ts';
 
 const ENV_KEYS = ['GBRAIN_HOME', 'HERMES_HOME', 'DATABASE_URL', 'GBRAIN_DATABASE_URL', 'GBRAIN_SOURCE', 'GBRAIN_HOOKS', 'GBRAIN_CORE', 'GBRAIN_MEMORABLE'] as const;
@@ -81,7 +82,7 @@ const payload = (over: { prompt?: string; first?: boolean; session?: string; eve
 describe('parseHermesPromptPayload', () => {
   test('reads the user message, session, cwd and first-turn flag from extra; ignores the conversation history', () => {
     const p = parseHermesPromptPayload(JSON.parse(payload({ first: true })));
-    expect(p).toEqual({ prompt: 'what do we know about Acme?', sessionId: 'sess-h1', cwd: tmp, firstTurn: true });
+    expect(p).toEqual({ prompt: 'what do we know about Acme?', sessionId: 'sess-h1', cwd: tmp, firstTurn: true, nonHuman: false });
   });
   test('another event, an empty message or a missing extra is null (a misregistered hook stays silent)', () => {
     expect(parseHermesPromptPayload(JSON.parse(payload({ event: 'post_llm_call' })))).toBeNull();
@@ -197,6 +198,138 @@ describe('user-prompt --harness hermes', () => {
     const out = collect();
     await runHook(['user-prompt'], { ...out.io, stdin: JSON.stringify({ prompt: 'hello Acme' }) });
     expect(JSON.parse(out.get()).hookSpecificOutput.additionalContext).toContain('ok');
+  });
+});
+
+describe('review finding 3: the serve wait is paid once per session, not on every turn', () => {
+  const receipt = () => writeFileSync(join(process.env.HERMES_HOME!, '.gbrain-connection-hermes-gbrain.json'), JSON.stringify({
+    harness: 'hermes', connection: 'local-stdio', setup_receipt_version: 3, status: 'installed', name: 'gbrain', gbrain_home: configDir(),
+    consent: { providers: { value: 'declined', source: 'default' } } }));
+  const noServe = () => {
+    const dataDir = join(tmp, 'data');
+    writePgliteConfig(dataDir);
+    mkdirSync(dataDir, { recursive: true });
+    ensureIpcSecret(dataDir); // a secret without a listening serve: the shape of `hermes -z -t` or a serve that never starts
+  };
+
+  test('with no serve answering, the first turn may wait but later turns of the session take the plain path and the sentinel is written', async () => {
+    receipt();
+    noServe();
+    const t0 = Date.now();
+    const a = collect();
+    expect(await runHook(['user-prompt', '--harness', 'hermes'], { ...a.io, stdin: payload({ first: true, session: 'sess-wait' }) })).toBe(0);
+    const firstMs = Date.now() - t0;
+    expect(a.get()).toBe('');
+    expect((await lastHeartbeat())).toMatchObject({ outcome: 'degraded', reason: 'serve_not_ready' });
+    expect(existsSync(join(home(), 'integrations', 'hermes', 'sessions', 'sess-wait'))).toBe(true);
+    expect(firstMs).toBeGreaterThan(1500); // the one allowed wait actually happened (otherwise this test proves nothing)
+    for (let i = 0; i < 3; i++) {
+      const t = Date.now();
+      const o = collect();
+      await runHook(['user-prompt', '--harness', 'hermes'], { ...o.io, stdin: payload({ first: false, session: 'sess-wait' }) });
+      expect(Date.now() - t).toBeLessThan(1200);
+      expect(o.get()).toBe('');
+    }
+  }, 30_000);
+
+  test('an empty digest (serve up, nothing to say) also ends the first-turn attempt: the next turn is not first', async () => {
+    const dataDir = join(tmp, 'data');
+    writePgliteConfig(dataDir);
+    const packs: ContextPackRequest[] = [];
+    await startServer(dataDir, { turn: null, pack: null, onPack: (r) => packs.push(r) });
+    await runHook(['user-prompt', '--harness', 'hermes'], { ...collect().io, stdin: payload({ first: true, session: 'sess-empty' }) });
+    expect(packs).toHaveLength(1);
+    expect(existsSync(join(home(), 'integrations', 'hermes', 'sessions', 'sess-empty'))).toBe(true);
+    await runHook(['user-prompt', '--harness', 'hermes'], { ...collect().io, stdin: payload({ first: false, session: 'sess-empty' }) });
+    expect(packs).toHaveLength(1);
+  });
+
+  test('a resumed session (is_first_turn=false, no sentinel) never pays the serve wait', async () => {
+    receipt();
+    noServe();
+    const t = Date.now();
+    await runHook(['user-prompt', '--harness', 'hermes'], { ...collect().io, stdin: payload({ first: false, session: 'sess-resumed-nowait' }) });
+    expect(Date.now() - t).toBeLessThan(2500);
+  }, 30_000);
+});
+
+describe('review finding 4: large Hermes payloads still work', () => {
+  const big = (mb: number, over: Parameters<typeof payload>[0] = {}) => {
+    const body = JSON.parse(payload(over));
+    body.extra.conversation_history = [{ role: 'tool', content: 'x'.repeat(mb * 1024 * 1024) }];
+    return JSON.stringify(body);
+  };
+
+  test('a >5 MB conversation_history parses and the hook answers', async () => {
+    const dataDir = join(tmp, 'data');
+    writePgliteConfig(dataDir);
+    await startServer(dataDir, { turn: 'BIG-PAYLOAD-BLOCK' });
+    const raw = big(6);
+    expect(raw.length).toBeGreaterThan(5 * 1024 * 1024);
+    const out = collect();
+    expect(await runHook(['user-prompt', '--harness', 'hermes'], { ...out.io, stdin: raw })).toBe(0);
+    expect(JSON.parse(out.get()).context).toBe('BIG-PAYLOAD-BLOCK');
+  }, 30_000);
+
+  test('through the REAL stdin pipe (a subprocess), a 6 MB payload is read to EOF and answered', async () => {
+    const dataDir = join(tmp, 'data');
+    writePgliteConfig(dataDir);
+    await startServer(dataDir, { turn: 'PIPE-BLOCK' });
+    const proc = Bun.spawn([process.execPath, '--no-env-file', join(import.meta.dir, '..', 'src', 'cli.ts'), 'hook', 'user-prompt', '--harness', 'hermes'], {
+      env: { ...process.env, GBRAIN_HOME: tmp, HERMES_HOME: process.env.HERMES_HOME, HOME: tmp, GBRAIN_SKIP_STARTUP_HOOKS: '1', DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined },
+      stdin: new Blob([big(6)]), stdout: 'pipe', stderr: 'pipe',
+    });
+    const [stdout, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+    expect(code).toBe(0);
+    expect(JSON.parse(stdout).context).toBe('PIPE-BLOCK');
+  }, 60_000);
+
+  test('when the JSON cannot be parsed whole (cut off mid-history), the hook still lifts session, cwd and the user message', () => {
+    const full = big(2, { prompt: 'what is Acme working on?', session: 'cut-1', first: true });
+    const cut = full.slice(0, full.indexOf('"is_first_turn"') - 5000);
+    expect(() => JSON.parse(cut)).toThrow();
+    const j = parseHermesStdin(cut)!;
+    expect(parseHermesPromptPayload(j)).toMatchObject({ prompt: 'what is Acme working on?', sessionId: 'cut-1', cwd: tmp });
+    const tail = parseHermesStdin(full.replace(/\}\s*$/, ''))!; // missing the final brace: only the structural tail fields are read
+    expect(parseHermesPromptPayload(tail)).toMatchObject({ prompt: 'what is Acme working on?', sessionId: 'cut-1', firstTurn: true, nonHuman: false });
+  });
+
+  test('a user message that itself contains JSON-looking fields does not confuse the extractor', () => {
+    const quoted = '{"session_id":"evil","extra":{"is_first_turn":true}} please summarize';
+    const raw = payload({ prompt: quoted, session: 'real-1', first: false });
+    const j = parseHermesStdin(raw.slice(0, -1))!;
+    expect(parseHermesPromptPayload(j)).toMatchObject({ prompt: quoted, sessionId: 'real-1', firstTurn: false });
+  });
+});
+
+describe('review finding 10: non-human turns are skipped', () => {
+  for (const [label, extra] of [['cron platform', { platform: 'cron' }], ['kanban platform', { platform: 'kanban' }], ['subagent platform', { platform: 'subagent' }], ['a child session (parent_session_id)', { parent_session_id: 'parent-1' }]] as const) {
+    test(`${label}: exit 0, empty stdout, the serve is never asked`, async () => {
+      const dataDir = join(tmp, 'data');
+      writePgliteConfig(dataDir);
+      const seen: TurnContextRequest[] = [];
+      await startServer(dataDir, { turn: 'SHOULD-NOT-APPEAR', pack: 'NOR-THIS', onTurn: (r) => seen.push(r) });
+      const out = collect();
+      expect(await runHook(['user-prompt', '--harness', 'hermes'], { ...out.io, stdin: payload({ first: true, extra }) })).toBe(0);
+      expect(out.get()).toBe('');
+      expect(seen).toHaveLength(0);
+      expect((await lastHeartbeat())).toMatchObject({ outcome: 'ok', reason: 'non_human_session' });
+    });
+  }
+  test('a gateway sender and the cli/telegram/discord platforms are NOT skipped (humans; reads stay world-only server-side)', async () => {
+    const dataDir = join(tmp, 'data');
+    writePgliteConfig(dataDir);
+    await startServer(dataDir, { turn: 'HUMAN-BLOCK' });
+    for (const extra of [{ platform: 'telegram', sender_id: 'u-42' }, { platform: 'cli' }, { platform: 'discord', sender_id: 'u-7', parent_session_id: '' }]) {
+      const out = collect();
+      await runHook(['user-prompt', '--harness', 'hermes'], { ...out.io, stdin: payload({ extra }) });
+      expect(JSON.parse(out.get()).context).toBe('HUMAN-BLOCK');
+    }
+  });
+  test('parseHermesPromptPayload flags the non-human shapes', () => {
+    expect(parseHermesPromptPayload(JSON.parse(payload({ extra: { platform: 'Cron' } })))?.nonHuman).toBe(true);
+    expect(parseHermesPromptPayload(JSON.parse(payload({ extra: { parent_session_id: 'p' } })))?.nonHuman).toBe(true);
+    expect(parseHermesPromptPayload(JSON.parse(payload({ extra: { platform: 'cli', parent_session_id: '' } })))?.nonHuman).toBe(false);
   });
 });
 
