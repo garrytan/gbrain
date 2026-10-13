@@ -101,7 +101,7 @@ not save one-off details of this trip as facts; they belong on the trip page.
 | A route and dates to watch over time | `price_monitoring` (a `stale` answer is a valid result; do not switch to `flight_search` on your own) |
 | A flight and wants to know if the price is good | `flight_price_advice` |
 | A destination and dates for a stay | `hotel_search`, then `hotel_details` for one hotel |
-| Pick-up and drop-off places and times for a car | `car_search`, only if it is in your tool list |
+| Pick-up and drop-off places and times for a car | `car_search`, only when it is available: in your tool list, or on the CLI path when `jinko car-search --help` works |
 | A booking to look up | `get_booking` (`booking_ref`; add the traveller's `last_name` when looking it up as a guest) or `get_trip` (`trip_id`) |
 
 The flight discovery tools (`find_destination`, `flight_calendar`,
@@ -192,7 +192,7 @@ title: Lisbon, 2026-05-14 to 2026-05-18
 date: 2026-05-14
 location: Lisbon
 attendees: [people/alice-example, people/bob-example]
-visibility: private
+visibility: private   # local brain only; see below
 status: booked
 bookings:
   - booking_ref: JNK-ABC123
@@ -218,14 +218,26 @@ Travellers: [[people/alice-example]], [[people/bob-example]]
 - USD 2,184.60, JNK-ABC123 (checkout 2026-04-02)
 ```
 
-- Keep `visibility: private` on every trip page. A guest can change or cancel
-  a booking with its `booking_ref` and the traveller's last name, so the page
-  must not be readable by clients that only have world-visible access.
+- Who can read the page. A guest can change or cancel a booking with its
+  `booking_ref` and the traveller's last name, so the page should be readable
+  only by clients that need it.
+  - On a local brain (CLI or stdio MCP), keep `visibility: private`: remote
+    clients cannot read the page, and you still can.
+  - On a brain reached over remote (OAuth) MCP, gbrain hides `visibility:
+    private` pages from every remote caller, you included, so a private trip
+    page could not be read back or updated. Leave `visibility` out there; the
+    page is then readable by every client granted this source. Before the first
+    trip page in that brain, tell the user so and suggest a source granted only
+    to this agent (gbrain's boundary for remote access). If they do not want
+    booking references stored there, record each booking's `trip_id` without
+    its `booking_ref`, and read the `booking_ref` back from `get_trip` when you
+    need it.
 - Record only these values: flight numbers, airports, times, cabin and bags;
   the hotel name, room, dates and cancellation deadline; for a rental car, the
   rental company, car category, pick-up and drop-off places and times, and
   cancellation deadline; the total paid; and
-  the `booking_ref` and `trip_id` of every booking on the trip. A booking
+  the `booking_ref` and `trip_id` of every booking on the trip; and, while a
+  change is in progress, the handle its status step needs (see section 5). A booking
   added to an existing trip page gets its own entry under `bookings:`, and each
   item and payment line names the `booking_ref` it belongs to; never overwrite
   an earlier booking's identifiers. Never write passport or ID numbers, dates of
@@ -240,10 +252,13 @@ Travellers: [[people/alice-example]], [[people/bob-example]]
   same direction gbrain uses for meeting attendees.
 - Add a timeline entry (`add_timeline_entry`: `date` = departure date,
   `summary` = "Trip to Lisbon", `source` = the trip slug) only to a traveller
-  page that is itself `visibility: private`. A timeline row on another page
-  cannot be hidden from remote readers, so on a world-visible `people/` page it
-  would publish the dates and destination of a private trip; gbrain skips
-  private meetings' timeline rows for the same reason. Skip the entry there.
+  page at least as restricted as the trip page: on a local brain, only to a
+  traveller page that is itself `visibility: private`; on a remote brain, where
+  the trip page is not private, to any traveller page you can read. A timeline
+  row on another page cannot be hidden from remote readers, so on a
+  world-visible `people/` page it would publish the dates and destination of a
+  private trip; gbrain skips private meetings' timeline rows for the same
+  reason. Skip the entry there.
 
 ## 5. Changes, refunds and cancellations
 
@@ -255,6 +270,13 @@ Travellers: [[people/alice-example]], [[people/bob-example]]
 - Flights: `flight_refund` (refund or void) and `flight_exchange` (shop → price
   → commit → status). Hotels: `hotel_cancel` (preview → commit → status). Cars: `car_cancel`; a rental
   cannot be modified, only cancelled and rebooked.
+- A commit can finish later than the conversation. Before polling, write the
+  handle the status step needs (for example the `svc_…` operation a refund or
+  hotel-cancellation commit returns) to the trip page, beside the item, marked
+  in progress (read, merge, write with `expected_revision`, as in section 4).
+  Check the status every 30 seconds for at most 10 minutes; if it is still in
+  progress, tell the user and stop. In a later session, read the handle from
+  the page and check again. Remove it once the change has finished.
 - After the change completes, update the trip page (read, merge, write with
   `expected_revision`, as in section 4): mark the changed item as exchanged
   (with its new segments), refunded or cancelled, with the amount returned.
