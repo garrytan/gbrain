@@ -66,6 +66,8 @@ export async function runPhaseConsolidate(
       FROM facts
       WHERE consolidated_at IS NULL
         AND expired_at IS NULL
+        AND visibility = 'world'
+        AND (valid_until IS NULL OR valid_until > now())
         AND entity_slug IS NOT NULL
       GROUP BY source_id, entity_slug
       HAVING COUNT(*) >= ${minPerBucket}
@@ -94,10 +96,11 @@ export async function runPhaseConsolidate(
     const facts = await engine.listFactsByEntity(b.source_id, b.entity_slug, {
       activeOnly: true,
       unconsolidatedOnly: true,
+      visibility: ['world'],
       limit: 100,
     });
     // Re-filter to unconsolidated since listFactsByEntity returns all active.
-    const unconsolidated = facts.filter(f => f.consolidated_at == null);
+    const unconsolidated = facts.filter(f => f.consolidated_at == null && f.visibility === 'world');
     if (unconsolidated.length < minPerBucket) {
       bucketsSkipped += 1;
       continue;

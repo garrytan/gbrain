@@ -6,7 +6,7 @@ import type { BrainEngine } from '../../core/engine';
 import { chat, getVisionCapability, toolLoop } from '../../core/ai/gateway';
 import { runAdminKnowledgeSearch } from '../../commands/admin-knowledge-search';
 import { serviceModelValue, type ModelService } from '../../../shared/model-services';
-import {toolContextHistory,type WorkbenchCitation,type WorkbenchConversation,type WorkbenchModel} from '../../../shared/workbench';
+import {toolContextHistory,type WorkbenchCitation,type WorkbenchConversation,type WorkbenchModel,type WorkbenchMessage} from '../../../shared/workbench';
 import { retrievalText, workbenchModelContent } from './attachments';
 import { WorkbenchService, type WorkbenchAnswer, type WorkbenchSummarizer } from './service';
 import { WorkbenchStore } from './store';
@@ -101,11 +101,11 @@ export function knowledgeWorkbenchAnswer(engine: BrainEngine, dependencies: { se
       const questions = messages.filter(item => item.role === 'user').slice(-4).map(item => retrievalText(item)).filter(Boolean);
       const query = questions.join('\n').trim();
       if (sourceId && query && dependencies.recall) {
-        const memories = await dependencies.recall(engine, { sourceId, query: questions.at(-1) || query, sessionId: conversationId, budget: Math.min(1500, Math.floor(evidenceTokens / 2)) });
+        const memories = await dependencies.recall(engine, { sourceId, query: questions.at(-1) || query, sessionId: conversationId, window: messages.filter((item): item is WorkbenchMessage & { role: 'user' | 'assistant' } => item.role === 'user' || item.role === 'assistant').slice(-4).map(item => ({ role: item.role, text: retrievalText(item) })), budget: Math.min(1500, Math.floor(evidenceTokens / 2)) });
         for (const memory of memories) {
-          let index = citations.findIndex(item => item.kind === 'memory' && item.factId === memory.factId && item.sourceId === memory.sourceId);
+          let index = citations.findIndex(item => item.sourceId === memory.sourceId && (memory.kind === 'memory' ? item.kind === 'memory' && item.factId === memory.factId : item.slug === memory.slug));
           if (index < 0) { index = citations.length; citations.push(memory); }
-          evidence += `\n[${index + 1}] ${memory.title}（用户已明确表达并保存）：${memory.snippet}\n`;
+          evidence += `\n[${index + 1}] ${memory.title}${memory.kind==='memory'?'（用户已明确表达并保存）':` (${memory.sourceId}/${memory.slug})`}：${memory.snippet}\n`;
         }
       }
       const result = query

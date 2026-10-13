@@ -6,6 +6,7 @@ import { WorkbenchStore } from './store';
 import { compressTranscript, contextFailure,requestOutputTokens } from './context-runtime';
 import type {ChatRequestEvent} from '../../core/ai/chat-request-runtime';
 import {assistantSession} from './request';
+import { memoryVersion } from './memory-identity';
 
 export { conversationContext } from './context';
 
@@ -173,7 +174,7 @@ export class WorkbenchService {
           const moved = input.retry ? [] : advanceStoredReads(conversation.messages, userTurn?.text ?? '');
           if (!input.retry && userTurn && this.memoryHooks) {
             try { userTurn.memory = await this.memoryHooks.capture(conversation, userTurn); }
-            catch (error) { userTurn.memory = { sourceId: conversation.sourceId ?? 'default', hash: '', capturedAt: userTurn.createdAt, mode: 'off', visibility: 'private', ttl: '3d', status: 'held', error: error instanceof Error ? error.message : String(error) }; }
+            catch (error) { userTurn.memory = { sourceId: conversation.sourceId ?? 'default', hash: memoryVersion(userTurn), capturedAt: userTurn.createdAt, mode: 'off', visibility: 'private', ttl: '3d', status: 'held', error: error instanceof Error ? error.message : String(error) }; }
           }
           if (moved.length && userTurn) userTurn.attachmentSupplement = moved.map(item => item.excerpt).join('\n\n');
           this.dropRemovedAttachments(snapshot, conversation);

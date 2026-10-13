@@ -1,5 +1,22 @@
 # Bug 修复台账
 
+## 2026-10-13 PMBrain 1.4.62 原生记忆登记恢复、旧分支退役与召回对齐
+
+- 时间：2026-10-13
+- 版本号：PMBrain 1.4.62（统一产品版本，Schema 134 未变）
+- 标题：模型登记失败留下空 hash，编辑后旧派生页残留，召回未接上下文恢复
+- 编程工具：Codex 大模型：GPT-6
+- 描述：用户指出 Workbench 适配层失败恢复和旧分支清理缺口，并明确撤回统一 private 的建议；要求沿用 GBrain 可见性及共享知识底座。实查另外确认派生页 private 布尔字段不符合 Core visibility 过滤契约，显式私有页面可被外部搜索读取。
+- 修复：登记异常保留准确 hash、时间和 Source，held 自动重扫且兼容旧空 hash；明确 off 不回填。多次配置读取失败仍保留已确认的私有可见性、TTL 和更严格的 salient 模式，恢复时不扩大旧记忆权限。私有派生页使用 visibility，旧原生私有页按准确身份补齐字段，默认 world 不变。编辑退役使用 Core 关系对账、软删除和原生待整理副本清理，去重事实被其他当前会话引用时保留，原句历史保留。召回调用现有 context_pack、Recall、混合检索；按原生客户端恢复实体和检查点，命中快照后重新读取有效 Facts，有已配置向量时为新派生页建向量；无向量仍用 Core 关键词查询。
+- 追加确认：Dream consolidate 隔离复现三条 private Facts 被提升为公开实体的一条 Take。按 AGENTS 公共层规则提出具体过滤范围，用户明确同意纳入本轮；Core 扫描、加载和聚类只处理 world Facts，未变更默认可见性、表结构或既有私有 Facts。
+- 是否完成：代码、双引擎定向、真实模型当前源码页面、资源及本地门禁完成；准确新 SHA Actions 与安装包由用户提交打包后验收。
+- 最终结果：PGLite、独立 Postgres 原生及 Dream 核心各 16 项/89 断言通过；实际 HTTP、产品队列、重启和模型登记恢复 PGLite 5 项/27 断言通过，Postgres 原组 5 项/27 断言通过，最终故障代理夹具下恢复专项 1 项/7 断言通过。Core 原整理 PGLite 5 项/31 断言、历史与重复整理 11 项/70 断言、Postgres 3 项/26 断言通过。上下文/记忆协议/可见性/配置 48 项/163 断言、工作台工具 21 项/81 断言、会话登记 5 项/22 断言通过。向量链路使用隔离 transport 验证调用与无同词召回，不作为真实 Embedding 语义质量评测。
+- 最后复核：原生页修复与退役同时核对受控 conversations/pmbrain/<会话>/ 命名空间、Source、消息身份和出处；用户正式保存或迁移到 Wiki 的同标识页面保留，已在双库增加保护断言。最后 private 读取失败守卫与 Wiki 保护定向、Root 类型及最新 Sidecar 重建通过。本地最终 verify 40 项、CI 预演 235 项/564 断言通过；日志 ci-accepted.log。不把本地预演当作远端完整 CI。
+- 当前源码与资源：真实 MiMo 页面六项操作通过、零脚本错误；普通沉淀、编辑旧分支退役、原句历史、刷新重载、新会话只引用新分支及遵循新回复顺序均验证。Admin/内嵌 47 资源、Desktop/最新 Sidecar 已准备，Root/Desktop 类型、统一 1.4.62 版本、47 项固定 GBrain 映射与 Windows Bun/Sidecar/Canvas/PGLite runtime 通过。正式库、原资料、Wiki、既有向量和正式配置未参与验收。
+- 验收修正：首次故障夹具把 getConfig 绑定根引擎，影响 PGLite 事务，改为保留原方法；Worker RPC 不能用实例赋值拦截，改为夹具代理确保故障实际触发。向量夹具改为匹配现有 1280 维 schema，未改变产品维度。首次页面断言匹配了历史标题和原消息两处，收紧到消息区域后真实页面通过；失败日志保留。原整理测试明确标注 world 夹具，未降低私有过滤断言。
+- Skill/插件与工作流：pmbrain-ci-governance、webapp-testing；codex-app-tools 用于打开修复记录，返回 queued。规则和现有记录 → 固定 GBrain / Core 复用边界 → 行为回归 → Workbench 最小修复 → Core 范围追加确认 → 隔离双库、当前源码页面及资源校验。未使用子代理。
+- 与规划差异和边界：新增显式私有派生页字段修复及用户追加确认的 Core 公共整理过滤；接入的是当前 Core 上下文接口，没有整体升级最新版 GBrain turn-context / entity-card / delta cursor / core-memory。没有独立 Facts 语义索引；历史向量不批量回建。已有正式 Wiki 和历史 Takes 不因本轮升级自动删除或重写。通用自主 Agent 仍超出当前工具范围；没有改默认可见性、正式配置、原资料、知识与既有向量，没有 Git 提交推送或 build:win。证据 .codex/memory-alignment。
+
 ## 2026-10-13 PMBrain 1.4.61 同步快照满后整轮失败与停止缓存占位
 
 - 时间：2026-10-13

@@ -31,7 +31,8 @@ export function nativeMemoryHandlers(engine: BrainEngine, sourceId: string, conv
   return new Map([
     ['memory_recall', { idempotent: true, execute: async (raw, signal) => {
       const p=params(raw,['query']); if(typeof p.query!=='string'||!p.query.trim()||p.query.length>2000)throw new Error('请输入记忆查询'); signal.throwIfAborted();
-      return {facts:(await recallWorkbenchMemory(engine,{sourceId,query:p.query})).map(row=>({...row,fact_id:row.factId,citation:cite(row)}))};
+      const restored=await recallWorkbenchMemory(engine,{sourceId,query:p.query,sessionId:conversationId});
+      return {facts:restored.filter(row=>row.kind==='memory').map(row=>({...row,fact_id:row.factId,citation:cite(row)})),context:restored.filter(row=>row.kind!=='memory').map(row=>({...row,citation:cite(row)}))};
     }}],
     ['memory_remember', { execute: async (raw,signal) => {
       if(!memoryActionRequested(user().text,'memory_remember'))throw new Error('请明确要求记住这条信息');

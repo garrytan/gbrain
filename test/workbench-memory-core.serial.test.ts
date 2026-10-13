@@ -7,13 +7,17 @@ import { PGLiteEngine } from '../src/core/pglite-engine';
 import { PostgresEngine } from '../src/core/postgres-engine';
 import type { BrainEngine } from '../src/core/engine';
 import { assertSafeE2eDatabaseUrl } from './helpers/db-guard';
-import { configureGateway, resetGateway } from '../src/core/ai/gateway';
+import { configureGateway, resetGateway, __setEmbedTransportForTests, DEFAULT_EMBEDDING_DIMENSIONS } from '../src/core/ai/gateway';
 import { WorkbenchStore } from '../src/product/workbench/store';
 import { WorkbenchMemoryCoordinator, runWorkbenchMemoryTask, recallWorkbenchMemory } from '../src/product/workbench/memory';
 import type { WorkbenchConversation, WorkbenchMessage } from '../shared/workbench';
 import { importFromContent } from '../src/core/import-file';
 import { nativeMemoryHandlers } from '../src/product/workbench/memory-tools';
 import type { ExtractInput } from '../src/core/facts/extract';
+import { operationsByName } from '../src/core/operations';
+import { appendCheckpointManifest } from '../src/core/context/session-state';
+import { runPhaseConsolidate } from '../src/core/cycle/phases/consolidate';
+import { writeSingleFact } from '../src/core/facts/write-single';
 
 const root = mkdtempSync(join(tmpdir(), 'pmbrain-memory-core-'));
 const previous = process.env.PMBRAIN_HOME;
@@ -22,6 +26,69 @@ if(postgresUrl)assertSafeE2eDatabaseUrl(postgresUrl);
 const engine:BrainEngine = postgresUrl?new PostgresEngine():new PGLiteEngine();
 const store = new WorkbenchStore(join(root, 'sessions'));
 const coordinator = new WorkbenchMemoryCoordinator(engine, store, async () => ({ id: 'task-1', status: 'queued' } as any), async () => null);
+
+test('模型解析失败保留可恢复身份，修复配置自动提交同一回合且不补写关闭消息', async () => {
+  const file = join(root, '.pmbrain', 'config.json');
+  const previousConfig = readFileSync(file, 'utf8');
+  const getConfig = engine.getConfig;
+  const submissions: any[] = [];
+  const recovery = new WorkbenchMemoryCoordinator(engine, store, async (input) => { submissions.push(input); return { id: 'task-recovery', status: 'queued' } as any; }, async () => null);
+  try {
+    writeFileSync(file, JSON.stringify({ engine: engine.kind, memory: { auto_writeback: 'all' } }));
+    engine.getConfig = async function (key) { if (key === 'facts.extraction_model') throw new Error('模型配置不可读'); return getConfig.call(this, key); };
+    const f = await turn('以后复盘先列证据');
+    expect(f.message.memory?.status).toBe('held');
+    expect(f.message.memory?.hash).toMatch(/^[a-f0-9]{64}$/);
+    expect(f.message.memory?.mode).toBe('all');
+    const capturedAt = f.message.memory!.capturedAt;
+    await recovery.scan(f.conversation.id);
+    expect(submissions).toHaveLength(0);
+    engine.getConfig = getConfig;
+    await recovery.scan(f.conversation.id);
+    expect(submissions).toHaveLength(1);
+    expect(submissions[0].hash).toBe(f.message.memory!.hash);
+    expect(store.get(f.conversation.id).messages[0].memory?.capturedAt).toBe(capturedAt);
+    const legacy = store.get(f.conversation.id);
+    legacy.messages[0].memory = { ...legacy.messages[0].memory!, hash: '', mode: 'off', status: 'held' };
+    store.save(legacy);
+    await recovery.scan(legacy.id);
+    expect(submissions).toHaveLength(2);
+    await engine.setConfig('facts.default_visibility', 'private');
+    engine.getConfig = async function (key) { if (key === 'facts.extraction_model') throw new Error('模型配置不可读'); return getConfig.call(this, key); };
+    const privateTurn = await turn('私人审批计划保持原可见性');
+    engine.getConfig = async function (key) { if (key === 'memory.auto_writeback') throw new Error('暂时无法读取开关'); return getConfig.call(this, key); };
+    await recovery.scan(privateTurn.conversation.id);
+    expect(store.get(privateTurn.conversation.id).messages[0].memory?.mode).toBe('all');
+    expect(store.get(privateTurn.conversation.id).messages[0].memory?.visibility).toBe('private');
+    engine.getConfig = getConfig;
+    await engine.setConfig('facts.default_visibility', 'world');
+    await recovery.scan(privateTurn.conversation.id);
+    expect(store.get(privateTurn.conversation.id).messages[0].memory?.visibility).toBe('private');
+    expect(submissions).toHaveLength(3);
+    const confirmedOff = store.get(legacy.id);
+    confirmedOff.messages[0].memory!.status = 'off'; confirmedOff.messages[0].memory!.mode = 'off';
+    store.save(confirmedOff);
+    store.saveMemory(confirmedOff.id, confirmedOff.messages[0].id, confirmedOff.messages[0].memory!);
+    await recovery.scan(legacy.id);
+    expect(submissions).toHaveLength(3);
+  } finally { engine.getConfig = getConfig; writeFileSync(file, previousConfig); recovery.close(); }
+}, 60000);
+
+test('配置向量后使用 Core 混合检索召回无相同关键词的原生记忆', async () => {
+  const path = join(root, '.pmbrain', 'config.json');
+  const previousConfig = readFileSync(path, 'utf8');
+  let calls = 0;
+  try {
+    writeFileSync(path, JSON.stringify({ engine: engine.kind, memory: { auto_writeback: 'all' }, embedding_model: 'openai:text-embedding-3-small', embedding_dimensions: DEFAULT_EMBEDDING_DIMENSIONS }));
+    configureGateway({ embedding_model: 'openai:text-embedding-3-small', embedding_dimensions: DEFAULT_EMBEDDING_DIMENSIONS, env: { OPENAI_API_KEY: 'sk-test' } });
+    __setEmbedTransportForTests(async ({ values }) => { calls++; return { embeddings: values.map(() => [1, ...Array(DEFAULT_EMBEDDING_DIMENSIONS - 1).fill(0)]), usage: { tokens: 0 } } as any; });
+    const f = await turn('跨城出差选续航充足的车型');
+    const result = await runWorkbenchMemoryTask(engine, f.input, new AbortController().signal, { extract: (async () => [{ fact: f.message.text, kind: 'preference', entity_slug: null, embedding: null }]) as any });
+    expect((await engine.executeRaw('SELECT cc.embedding IS NOT NULL AS filled FROM content_chunks cc JOIN pages p ON p.id=cc.page_id WHERE p.source_id=$1 AND p.slug=$2', ['work', result.archiveSlug]))[0].filled).toBe(true);
+    expect((await recallWorkbenchMemory(engine, { sourceId: 'work', query: '电车能跑多远' })).map(row => row.snippet)).toContain('跨城出差选续航充足的车型');
+    expect(calls).toBeGreaterThan(1);
+  } finally { __setEmbedTransportForTests(null); configureGateway({ env: {} }); writeFileSync(path, previousConfig); }
+}, 60000);
 
 beforeAll(async () => {
   process.env.PMBRAIN_HOME = root;
@@ -180,3 +247,71 @@ test('失效租约与旧执行者回执不能覆盖新执行者，修改知识�
   const saved=await engine.getPage('people/test-person',{sourceId:'work'});expect(saved!.compiled_truth).toContain('这是用户原始资料。');expect(saved!.compiled_truth).toContain('新增核对后的中文偏好。');expect(saved!.timeline).toBe(timeline);
   let stale:unknown;try{await handlers.get('knowledge_append')!.execute({source_id:'work',slug:'people/test-person',revision:page!.content_hash,content:'过时更新'},new AbortController().signal);}catch(error){stale=error;}expect(String(stale)).toContain('资料已改变');
 },60000);
+
+test('编辑旧回合退役原生派生页及其关系，原句和同名其他 Source 页面保留', async () => {
+  const f = await turn('测试对象的审批由陈工负责');
+  const result = await runWorkbenchMemoryTask(engine, f.input, new AbortController().signal, { extract: (async () => [{ fact: '测试对象的审批由陈工负责', kind: 'fact', entity_slug: 'people/test-person', embedding: null }]) as any });
+  const slug = String(result.archiveSlug);
+  const nativeArchive = await engine.getPage(slug, { sourceId: 'work' });
+  await engine.putPage('wiki/promoted-memory', { ...nativeArchive!, compiled_truth: '用户正式保存的知识必须保留。' }, { sourceId: 'work' });
+  await importFromContent(engine, slug, '---\ntitle: 同名用户资料\n---\n\n这份资料必须保留。', { sourceId: 'other', noEmbed: true });
+  expect((await engine.executeRaw('SELECT l.id FROM links l JOIN pages p ON p.id=l.from_page_id WHERE p.source_id=$1 AND p.slug=$2', ['work', slug])).length).toBeGreaterThan(0);
+  const old = store.get(f.conversation.id);
+  old.revisions = [{ id: randomUUID(), createdAt: new Date().toISOString(), reason: 'edit', messages: old.messages }]; old.messages = []; store.save(old);
+  await runWorkbenchMemoryTask(engine, { ...f.input, retire: true }, new AbortController().signal);
+  expect((await engine.executeRaw('SELECT deleted_at FROM pages WHERE source_id=$1 AND slug=$2', ['work', slug]))[0].deleted_at).not.toBeNull();
+  expect(await engine.executeRaw('SELECT l.id FROM links l JOIN pages p ON p.id=l.from_page_id WHERE p.source_id=$1 AND p.slug=$2', ['work', slug])).toHaveLength(0);
+  expect((await engine.getPage(slug, { sourceId: 'other' }))?.compiled_truth).toContain('这份资料必须保留');
+  expect((await engine.getPage('wiki/promoted-memory', { sourceId: 'work' }))?.compiled_truth).toBe('用户正式保存的知识必须保留。');
+  expect(store.get(f.conversation.id).revisions![0].messages[0].text).toBe(f.message.text);
+  expect(await recallWorkbenchMemory(engine, { sourceId: 'work', query: '陈工负责' })).toHaveLength(0);
+}, 60000);
+
+test('原生召回恢复 Core 检查点，外部 Recall 与搜索遵守原可见性和 Source', async () => {
+  const f = await turn('边界验收的首选工具是白鹭');
+  const result = await runWorkbenchMemoryTask(engine, f.input, new AbortController().signal, { extract: (async () => [{ fact: '边界验收的首选工具是白鹭', kind: 'preference', entity_slug: null, embedding: null }]) as any });
+  const sessionId = randomUUID();
+  await importFromContent(engine, 'projects/context-checkpoint', '---\ntitle: 检查点项目\ntype: project\n---\n\n验收依赖前一轮确认的步骤。', { sourceId: 'work', noEmbed: true });
+  await appendCheckpointManifest(engine, 'work', 'pmbrain:workbench', sessionId, [{ slug: String(result.archiveSlug), title: '已确认工具偏好' }, { slug: 'projects/context-checkpoint', title: '检查点项目' }], 'confirmed');
+  const restored = await recallWorkbenchMemory(engine, { sourceId: 'work', query: '继续之前的约定', sessionId });
+  expect(restored.map(row => row.snippet)).toContain('边界验收的首选工具是白鹭');
+  expect(restored.some(row => row.slug === 'projects/context-checkpoint' && row.kind !== 'memory')).toBe(true);
+  expect(await recallWorkbenchMemory(engine, { sourceId: 'work', query: '继续之前的约定', sessionId, budget: 1 })).toHaveLength(0);
+  await engine.softDeletePage('projects/context-checkpoint', { sourceId: 'work' });
+  expect((await recallWorkbenchMemory(engine, { sourceId: 'work', query: '继续之前的约定', sessionId })).some(row => row.slug === 'projects/context-checkpoint')).toBe(false);
+  const ctx: any = { engine, sourceId: 'work', remote: true, config: { engine: engine.kind }, dryRun: false, logger: { info() {}, warn() {}, error() {} } };
+  expect(((await operationsByName.recall.handler(ctx, { session_id: f.conversation.id })) as any).facts.map((row: any) => row.fact)).toContain('边界验收的首选工具是白鹭');
+  await engine.setConfig('facts.default_visibility', 'private');
+  try {
+    const p = await turn('私人边界测试的工具是海鸥');
+    const privateResult = await runWorkbenchMemoryTask(engine, p.input, new AbortController().signal, { extract: (async () => [{ fact: '私人边界测试的工具是海鸥', kind: 'fact', entity_slug: null, embedding: null }]) as any });
+    expect(p.message.memory?.visibility).toBe('private');
+    expect((await engine.getPage(String(privateResult.archiveSlug), { sourceId: 'work' }))?.frontmatter.private).toBe(true);
+    const archive = await engine.getPage(String(privateResult.archiveSlug), { sourceId: 'work' });
+    const legacyFrontmatter = { ...archive!.frontmatter }; delete legacyFrontmatter.visibility;
+    await engine.putPage(String(privateResult.archiveSlug), { ...archive!, frontmatter: legacyFrontmatter }, { sourceId: 'work' });
+    await coordinator.scan(p.conversation.id);
+    expect((await engine.getPage(String(privateResult.archiveSlug), { sourceId: 'work' }))?.frontmatter.visibility).toBe('private');
+    expect(((await operationsByName.recall.handler(ctx, { session_id: p.conversation.id })) as any).facts).toHaveLength(0);
+    const found = await operationsByName.search.handler(ctx, { query: '私人边界测试', limit: 10 });
+    expect(JSON.stringify(found)).not.toContain('海鸥');
+    await expect(operationsByName.get_page.handler(ctx, { slug: String(privateResult.archiveSlug) })).rejects.toThrow();
+    expect((await recallWorkbenchMemory(engine, { sourceId: 'work', query: '私人边界测试' })).map(row => row.snippet)).toContain('私人边界测试的工具是海鸥');
+  } finally { await engine.setConfig('facts.default_visibility', 'world'); }
+}, 60000);
+
+test('Dream 公共整理不能把私有记忆提升到公开实体的 Take', async () => {
+  await importFromContent(engine, 'projects/private-dream', '---\ntitle: 隐私整理验收\ntype: project\n---\n\n公开项目说明。', { sourceId: 'work', noEmbed: true });
+  const kinds = ['fact', 'preference', 'commitment'] as const;
+  for (let index = 0; index < 3; index++) await writeSingleFact(engine, 'work', { databaseOnly: true, exactDedup: true, fact: `私人整理验收信息${index}`, kind: kinds[index], entity: 'projects/private-dream', provenance: 'PMBrain 知识助手 / private Dream fixture', visibility: 'private', confidence: 1, embedding: new Float32Array([1, ...Array(DEFAULT_EMBEDDING_DIMENSIONS - 1).fill(0)]), validFrom: new Date(Date.now() - 3 * 86400000) });
+  await runPhaseConsolidate(engine, { minOldestAgeMs: 0, minFactsPerBucket: 3 });
+  const takes = await engine.executeRaw('SELECT t.claim FROM takes t JOIN pages p ON p.id=t.page_id WHERE p.source_id=$1 AND p.slug=$2', ['work', 'projects/private-dream']);
+  expect(takes).toHaveLength(0);
+  expect(await engine.listFactsByEntity('work', 'projects/private-dream', { activeOnly: true, visibility: ['private'] })).toHaveLength(3);
+  for (let index = 0; index < 3; index++) await writeSingleFact(engine, 'work', { databaseOnly: true, exactDedup: true, fact: `公开整理验收信息${index}`, kind: kinds[index], entity: 'projects/private-dream', provenance: 'PMBrain 知识助手 / world Dream fixture', visibility: 'world', confidence: 1, embedding: new Float32Array([1, ...Array(DEFAULT_EMBEDDING_DIMENSIONS - 1).fill(0)]), validFrom: new Date(Date.now() - 3 * 86400000) });
+  await runPhaseConsolidate(engine, { minOldestAgeMs: 0, minFactsPerBucket: 3 });
+  const publicTakes = await engine.executeRaw('SELECT t.claim FROM takes t JOIN pages p ON p.id=t.page_id WHERE p.source_id=$1 AND p.slug=$2', ['work', 'projects/private-dream']);
+  expect(publicTakes).toHaveLength(1);
+  expect(publicTakes[0].claim).toStartWith('公开整理验收');
+  expect((await engine.listFactsByEntity('work', 'projects/private-dream', { activeOnly: true, visibility: ['private'] })).every(row => row.consolidated_at === null)).toBe(true);
+}, 60000);

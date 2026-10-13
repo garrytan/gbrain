@@ -19,6 +19,7 @@ const postgresUrl=process.env.PMBRAIN_MEMORY_RUNTIME_TEST_DATABASE_URL;
 if(postgresUrl)assertSafeE2eDatabaseUrl(postgresUrl);
 let engine:BrainEngine,runtime:ProductTaskRuntime,modelServer:ReturnType<typeof Bun.serve>,server:ReturnType<express.Express['listen']>,base:string,config:any;
 let failExtraction=false;let extractionCalls=0;let delayExtraction=false;
+let failModelResolution=false;
 let first:any;
 
 beforeAll(async()=>{
@@ -43,7 +44,7 @@ beforeAll(async()=>{
   await reloadLiveGateway(engine);
   await open();
 },60000);
-async function open(){runtime=new ProductTaskRuntime(engine);await runtime.start();const app=express();registerWorkbenchRoutes(app,(req,res,next)=>{if(req.get('x-test-owner')!=='fixture-owner'){res.status(401).json({error:'unauthorized'});return;}next();},engine,config,{storageRoot:join(root,'sessions'),productTasks:runtime});server=app.listen(0,'127.0.0.1');await new Promise<void>(resolve=>server.once('listening',resolve));base=`http://127.0.0.1:${(server.address() as any).port}/admin/api/workbench`;}
+async function open(){const fixtureEngine=new Proxy(engine,{get(target,key){if(key==='getConfig')return async(name:string)=>{if(failModelResolution&&name.startsWith('models.aliases.'))throw new Error('fixture model resolution unavailable');return target.getConfig(name);};const value=Reflect.get(target,key,target);return typeof value==='function'?value.bind(target):value;}});runtime=new ProductTaskRuntime(fixtureEngine);await runtime.start();const app=express();registerWorkbenchRoutes(app,(req,res,next)=>{if(req.get('x-test-owner')!=='fixture-owner'){res.status(401).json({error:'unauthorized'});return;}next();},fixtureEngine,config,{storageRoot:join(root,'sessions'),productTasks:runtime});server=app.listen(0,'127.0.0.1');await new Promise<void>(resolve=>server.once('listening',resolve));base=`http://127.0.0.1:${(server.address() as any).port}/admin/api/workbench`;}
 async function request(path:string,body?:unknown,method?:string){const response=await fetch(base+path,{method:method??(body===undefined?'GET':'POST'),headers:{'Content-Type':'application/json','x-test-owner':'fixture-owner'},...(body===undefined?{}:{body:JSON.stringify(body)})});const result:any=await response.json();if(!response.ok)throw new Error(JSON.stringify(result));return result;}
 async function completed(id:string,status='complete'){const until=Date.now()+35000;while(Date.now()<until){const value=await request(`/conversations/${id}`);const memory=value.messages[0]?.memory;if(value.messages.at(-1)?.status!=='running'&&memory?.status===status){const run=memory.taskId?await runtime.getRun(memory.taskId):null;if(status==='failed'?run?.status==='failed':run?.status==='completed')return value;}await Bun.sleep(50);}throw new Error(JSON.stringify({conversation:await request(`/conversations/${id}`),tasks:await runtime.listRuns()}));}
 afterAll(async()=>{if(server)await new Promise<void>(resolve=>server.close(()=>resolve()));await runtime?.close();await engine?.disconnect();modelServer?.stop(true);resetGateway();for(const key of keys){if(previous[key]===undefined)delete process.env[key];else process.env[key]=previous[key];}},60000);
@@ -77,3 +78,23 @@ test('正在沉淀时服务退出，重启继续同一回合且不重复事实',
   await new Promise<void>(resolve=>server.close(()=>resolve()));await runtime.close();delayExtraction=false;await open();
   const value=await completed(thread.id);expect(value.messages[0].memory.factIds).toHaveLength(1);expect(await engine.executeRaw("SELECT id FROM facts WHERE fact='项目方案先写结论，再写依据' AND source_id='default' AND expired_at IS NULL")).toHaveLength(1);
 },60000);
+
+test('实际登记模型失败后修好配置，扫描自动恢复同一回合', async () => {
+  try {
+    failModelResolution=true;
+    const thread = await request('/conversations', { knowledge: false });
+    await request(`/conversations/${thread.id}/messages`, { text: '以后项目方案先写结论，再写依据', knowledge: false });
+    let held: any;
+    const deadline = Date.now() + 10000;
+    while (Date.now() < deadline) { held = await request(`/conversations/${thread.id}`); if (held.messages.at(-1)?.status === 'complete') break; await Bun.sleep(50); }
+    expect(held.messages[1].status).toBe('complete');
+    expect(held.messages[0].memory.status).toBe('held');
+    expect(held.messages[0].memory.hash).toMatch(/^[a-f0-9]{64}$/);
+    expect(held.messages[0].memory.taskId).toBeUndefined();
+    failModelResolution=false;
+    const recovered = await completed(thread.id);
+    expect(recovered.messages[0].memory.hash).toBe(held.messages[0].memory.hash);
+    expect(recovered.messages[0].memory.capturedAt).toBe(held.messages[0].memory.capturedAt);
+    expect(recovered.messages[0].memory.factIds).toHaveLength(1);
+  } finally { failModelResolution=false; }
+}, 60000);

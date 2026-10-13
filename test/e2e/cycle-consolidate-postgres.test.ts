@@ -41,8 +41,8 @@ d('cycle consolidate phase (Postgres)', () => {
 
     for (let i = 0; i < 4; i++) {
       await engine.executeRaw(
-        `INSERT INTO facts (source_id, entity_slug, fact, kind, source, confidence, valid_from, embedding, embedded_at)
-         VALUES ('default', 'people/post-cons-alice', $1, 'fact', 'test', 0.9, $2::timestamptz, $3::vector, $2::timestamptz)`,
+        `INSERT INTO facts (source_id, entity_slug, fact, kind, source, visibility, confidence, valid_from, embedding, embedded_at)
+         VALUES ('default', 'people/post-cons-alice', $1, 'fact', 'test', 'world', 0.9, $2::timestamptz, $3::vector, $2::timestamptz)`,
         [`postgres consolidate fact ${i}`, oldDate(), unitVec()],
       );
     }
@@ -92,8 +92,8 @@ d('cycle consolidate phase (Postgres)', () => {
     const recent = new Date(Date.now() - 60 * 1000).toISOString();
     for (let i = 0; i < 4; i++) {
       await engine.executeRaw(
-        `INSERT INTO facts (source_id, entity_slug, fact, kind, source, valid_from, embedding, embedded_at)
-         VALUES ('default', 'cons-recent', $1, 'fact', 'test', $2::timestamptz, $3::vector, $2::timestamptz)`,
+        `INSERT INTO facts (source_id, entity_slug, fact, kind, source, visibility, valid_from, embedding, embedded_at)
+         VALUES ('default', 'cons-recent', $1, 'fact', 'test', 'world', $2::timestamptz, $3::vector, $2::timestamptz)`,
         [`recent fact ${i}`, recent, unitVec()],
       );
     }
@@ -113,8 +113,8 @@ d('cycle consolidate phase (Postgres)', () => {
     );
     for (let i = 0; i < 3; i++) {
       await engine.executeRaw(
-        `INSERT INTO facts (source_id, entity_slug, fact, kind, source, valid_from, embedding, embedded_at)
-         VALUES ('default', 'cons-dryrun-pg', $1, 'fact', 'test', $2::timestamptz, $3::vector, $2::timestamptz)`,
+        `INSERT INTO facts (source_id, entity_slug, fact, kind, source, visibility, valid_from, embedding, embedded_at)
+         VALUES ('default', 'cons-dryrun-pg', $1, 'fact', 'test', 'world', $2::timestamptz, $3::vector, $2::timestamptz)`,
         [`dryrun fact ${i}`, oldDate(), unitVec()],
       );
     }

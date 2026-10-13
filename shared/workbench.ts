@@ -12,6 +12,8 @@ export interface WorkbenchMemory {
   completedParts?: number[];
   error?: string;
   epoch?: string;
+  archiveSlug?: string;
+  archiveRetired?: boolean;
 }
 import type {ChatRequestEvent} from '../src/core/ai/chat-request-runtime';
 import { isValidSourceId } from '../src/core/source-id';

@@ -78,6 +78,7 @@ test('读取记忆配置失败独立保留错误，普通回答仍然完成', as
   const saved: any = f.store.get(f.conversation.id);
   expect(saved.messages[0].memory?.status).toBe('held');
   expect(saved.messages[0].memory?.error).toBe('记忆配置不可读');
+  expect(saved.messages[0].memory?.hash).toMatch(/^[a-f0-9]{64}$/);
   expect(saved.messages[1].text).toBe('正常回答');
   expect(saved.messages[1].status).toBe('complete');
 });
