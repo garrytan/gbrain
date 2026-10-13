@@ -106,7 +106,7 @@ show the alternatives it returns and let the user choose.
    details come from the user, never from guesses or placeholders.
 3. `checkout` with the `trip_id`. It returns a `checkout_url`,
    `agent_spt_params`, the total (`total_amount.display`) and the payment
-   deadline (`Payment accepted until`, usually about 15 minutes away).
+   deadline (`Payment accepted until`; it can be only minutes away).
 4. Show the user the total (quote the `display` string verbatim) and the
    deadline in their local time, and get an explicit yes before any payment.
 5. Payment:
