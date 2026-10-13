@@ -1,5 +1,21 @@
 # Bug 修复台账
 
+## 2026-10-13 PMBrain 1.4.61 同步快照满后整轮失败与停止缓存占位
+
+- 时间：2026-10-13
+- 版本号：PMBrain 1.4.61（统一产品版本，Schema 134 未变）
+- 标题：同步快照窗口满被当作资源中止，整轮无法完成，停止缓存持续占位
+- 编程工具：Codex 大模型：GPT-6
+- 描述：用户反馈同步任务在 66% 报 1024 MB 快照容量失败且无法继续。源码将容量异常传给 Worker 中止信号，持久 resourceStopReason 又使完成已接受文件后的父任务再次暂停；停止任务保留的可重建快照也占总额。截图不能确定现场各任务占用，隔离复现确认停止旧任务后新任务被拒绝，原任务复用记录但仍受旧中止策略影响。
+- 修复：复用现有 Minion 父子队列和 SyncFilesDeferred，窗口满改为批次等待，先完成已接受文件，再自动续扫原任务；父任务续扫前清理成功快照，移除容量旧停止标记。停止与启动时只回收原文件大小、时间及 SHA-256 均匹配的可重建副本，记录与原文件保留，续跑重建同一路径并沿用原 child id；原文件丢失或改变时保留副本。并发重复清理仅扣减一次，恢复写入与删除均验证快照路径范围。启动仅恢复各来源最新的容量中断任务，主动停止及不确定模型请求不自动恢复。
+- 是否完成：实现、双引擎与停止续跑回归、类型、Admin/Desktop/Sidecar 资源、Windows runtime 及最新代码本地发布门禁完成；准确新 SHA Actions 与安装包由用户提交打包后验收。
+- 最终结果：修复前两项失败；最终 PGLite 独立数据库 owner 与独立 Postgres 资源回归各 12 项/83 断言通过，覆盖超窗自动完成、旧容量任务恢复与旧错误清除、实际停止/重启/续跑、记录不重复和原文件保护。PGLite 另一次三项真实链路 28 断言通过，Postgres 原有 120 份资料停止/续跑回归独立串行重跑一项/134 断言通过。证据 resources-pglite-complete.log、resources-postgres-accepted.log、stop-pglite-accepted.log、large-resume-postgres-final.log。
+- 扩大验证边界：首次默认五秒运行导致流式文件测试超时，Bun 回收夹具数据库进程后出现连带失败；按已有串行脚本 60 秒期限复验，生产时限未改变。PGLite 资源夹具保持原有内存库语义，改用独立 owner；尝试持久库的 120 文件夹具启动在 60 秒期限超时。并发扩大的 Postgres 120 文件/失败父任务组合亦超时，后续出现连带断言和清理错误；只读 SQL 未见锁阻塞，不能据此确定唯一原因，原日志保留。单独串行重跑 120 文件停止续跑通过；不把未通过的持久 PGLite 大夹具或整个扩大组合计作通过，不称为用户现场或安装包全量验收。
+- 当前资源：Root 类型、统一版本、46 项固定 GBrain 映射与 diff 检查通过，Admin/内嵌 47 个资源、Desktop 与最新 Sidecar 已构建，Windows Bun/Sidecar/Canvas/PGLite runtime 通过。收尾补强旧容量恢复判断：已执行但未确认完成的私有实体模型任务同样不自动恢复，双库各一项/9 断言通过，证据 legacy-model-pglite-final.log、legacy-model-postgres-final.log。专用 Postgres 容器按准确 ID 核对后已回收。
+- 本地门禁：首轮 verify 40 项通过、预演 234 项通过/一项失败，失败为下载说明新增后有六个版本；按既有五版本发布契约整理为 1.4.61 至 1.4.57，发布回归六项/40 断言通过。第二轮 verify 40 项（187 秒）与预演 235 项/564 断言通过；补强模型请求保护并重建最新 Sidecar 后，最终 verify 40 项及预演 235 项/564 断言再次通过，最新 Windows runtime、Root 类型、版本和 diff 校验通过。未跳过检查或改生产时限；证据 ci-preview.log、release-final.log、ci-preview-final.log、ci-preview-accepted.log、build-sidecar-final.log、runtime-final.log、types-last.log。
+- Skill/插件与工作流：pmbrain-ci-governance；无外部插件或子代理。用户纠正与源码定位 → 先写失败回归 → 产品任务层最小修复 → 隔离双库及停止恢复验证 → 统一版本与资源 → 本地门禁。
+- 与规划差异和边界：根据用户补充“无法手动继续、旧缓存不释放”增加可重建副本回收及旧容量任务自动恢复；1 GiB 保留为并行暂存窗口，真正低磁盘和模型结果不确定仍停止。未改 GBrain Core、CLI、Schema、PGLite 所有者或知识结构，不修改正式配置、原资料、Wiki、知识与向量；没有 Git 提交推送、全量本地测试或 build:win。证据 .codex/snapshot-quota-review。
+
 ## 2026-10-13 PMBrain 1.4.60 覆盖安装后 PGLite 路径冲突诊断与旧配置保护
 
 - 时间：2026-10-13

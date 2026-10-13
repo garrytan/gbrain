@@ -122,6 +122,7 @@ async function runDreamTask(engine: BrainEngine, input: Extract<ProductTask, { t
   const checkpoint: MaintenanceCheckpoint = input.checkpoint ?? { phases: {}, reports: {} };
   const captureModel = input.preset === 'quick' && !input.dryRun ? await chooseCaptureModel(engine, {}) : null;
   let pendingFiles = false;
+  let capacityReached = false;
   let scanned = 0;
   let unchanged = 0;
   const roots = new Map<string, string>();
@@ -129,6 +130,7 @@ async function runDreamTask(engine: BrainEngine, input: Extract<ProductTask, { t
     signal: abort.signal,
     importFile: async (path, relativePath, options) => {
       abort.signal.throwIfAborted();
+      if(capacityReached)return {slug:'',status:'skipped',chunks:0,deferred:true};
       const sourceId = options.sourceId ?? 'default';
       if (!roots.has(sourceId)) roots.set(sourceId, (await fetchSource(engine, sourceId))?.local_path ?? '');
       const sourceRoot = roots.get(sourceId)!;
@@ -145,8 +147,9 @@ async function runDreamTask(engine: BrainEngine, input: Extract<ProductTask, { t
         modelFingerprint: taskModelFingerprint(),
         modelMayRun: options.documentOcr === true && (isOfficeFilePath(relativePath) || isImageFilePath(relativePath)),
         fingerprint: syncFileContentFingerprint(options), options,
-      }]) as import('../../core/import-file.ts').ImportResult & { deferred?: boolean; unchanged?: boolean };
+      }]) as import('../../core/import-file.ts').ImportResult & { deferred?: boolean; unchanged?: boolean; capacityReached?:boolean };
       if (result.deferred) pendingFiles = true;
+      if(result.capacityReached)capacityReached=true;
       scanned++;
       if (result.unchanged) unchanged++;
       send({ type: 'progress', syncScan: { scanned, unchanged,path:relativePath,bytes:snapshot.size,updatedAt:new Date().toISOString(),active:true } });
@@ -220,7 +223,7 @@ async function runDreamTask(engine: BrainEngine, input: Extract<ProductTask, { t
         reports.push({ sourceId: source.id, report: checkpoint.reports[source.id] as unknown as import('../../core/cycle.ts').CycleReport });
         continue;
       }
-      scanned=0;unchanged=0;pendingFiles=false;
+      scanned=0;unchanged=0;pendingFiles=false;capacityReached=false;
       send({ type: 'progress', scope: { name: source.name, index, total: sources.length } });
       const report = await runQuickMaintenance(engine, {
         ...common, sourceId: source.id, brainDir: await resolveBrainDir(engine, null, source.id),

@@ -26,7 +26,7 @@ import { resolveSourceId } from '../../core/source-resolver.ts';
 import { recordSyncedGitFile, commitQuickMaintenanceSource } from './synced-git.ts';
 import type { SyncResult } from '../../commands/sync.ts';
 import { claimMaintenanceCapture, maintenanceFailure } from './maintenance-orchestration.ts';
-import { TaskResourceGuard, PRODUCT_QUEUE_CAPACITY, type TaskResourceOptions } from './resource-guard.ts';
+import { TaskResourceGuard, PRODUCT_QUEUE_CAPACITY, isSyncCapacityError, type TaskResourceOptions } from './resource-guard.ts';
 import { WorkbenchMemoryCoordinator, memoryVersion, type WorkbenchMemoryTask } from '../workbench/memory';
 import { WorkbenchStore } from '../workbench/store';
 import { resolveWritebackConfig } from '../../core/facts/writeback-config';
@@ -175,7 +175,9 @@ export class ProductTaskRuntime {
       RETURNING parent_job_id`,[SYNC_FILE_QUEUE,this.engine.kind==='pglite']);
     for(const id of new Set(committed.map(row=>row.parent_job_id).filter((id):id is number=>id!==null)))await this.queue.resolveParent(id);
     await this.fileQueue.cleanupCompletedSnapshots().catch(error => console.error('[tasks] snapshot recovery cleanup:', error));
+    await this.fileQueue.cleanupStoppedSnapshots().catch(error => console.error('[tasks] stopped snapshot cleanup:', error));
     await this.recoverSessions();
+    await this.recoverCapacitySessions();
     await this.queue.handleStalled([],SYNC_FILE_QUEUE);
     await this.engine.executeRaw(
       `UPDATE minion_jobs SET status = 'paused', lock_token = NULL, lock_until = NULL,
@@ -403,7 +405,10 @@ export class ProductTaskRuntime {
       await this.reconcileMaintenanceChildren(jobId);
       const checkpoint = task.input.checkpoint;
       delete record!.data.resourceStopReason;
-      await this.engine.executeRaw(`UPDATE minion_jobs SET data=(data-'resourceStopReason') || ($2::jsonb - 'relations' - 'gitFiles' - 'gitResults') WHERE id=$1`,[jobId,record!.data]);
+      const progress=(record!.progress??{}) as Progress;
+      delete progress.result;
+      if(progress.product)progress.product.errorReason=null;
+      await this.engine.executeRaw(`UPDATE minion_jobs SET data=(data-'resourceStopReason') || ($2::jsonb - 'relations' - 'gitFiles' - 'gitResults'),progress=$3::jsonb WHERE id=$1`,[jobId,record!.data,progress]);
       if (checkpoint) {
         resumeMaintenanceCheckpoint(checkpoint,run.status==='completed' || maintenanceFailure(run.result)!==null);
         await this.engine.executeRaw(`UPDATE minion_jobs SET data = data || ($2::jsonb - 'relations' - 'gitFiles' - 'gitResults') WHERE id = $1`, [jobId, { ...record!.data, task }]);
@@ -445,6 +450,12 @@ export class ProductTaskRuntime {
         AND status IN ('waiting','active','waiting-children','delayed') LIMIT 1`, [PRODUCT_TASK_QUEUE, context.id]);
       if (earlier.length) return this.deferMaintenance(record);
     }
+    if(structuredTask.type==='dream' && structuredTask.input.preset==='quick'
+      && record.data.resourceStopReason && isSyncCapacityError(record.data.resourceStopReason)){
+      delete record.data.resourceStopReason;
+      await this.engine.executeRaw(`UPDATE minion_jobs SET data=data-'resourceStopReason',error_text=NULL
+        WHERE id=$1 AND status='active' AND lock_token=$2`,[context.id,record.lock_token]);
+    }
     if(record.data.resourceStopReason && structuredTask.type==='dream' && structuredTask.input.preset==='quick'){
       const paused=await this.engine.executeRaw(`UPDATE minion_jobs SET status='paused',lock_token=NULL,lock_until=NULL,error_text=$2,
         data=jsonb_set(data,'{resumeOnRestart}','false'::jsonb),updated_at=now() WHERE id=$1 AND status='active' AND lock_token=$3 RETURNING id`,[context.id,String(record.data.resourceStopReason),record.lock_token]);
@@ -452,6 +463,7 @@ export class ProductTaskRuntime {
       return MINION_DEFERRED;
     }
     if (this.stopIntents.has(context.id) || (structuredTask.type==='sync-file' && this.stopIntents.has(Number(record.data.sessionId)))) throw new Error('任务已停止');
+    if(structuredTask.type==='dream' && structuredTask.input.preset==='quick')await this.fileQueue.cleanup(context.id);
     if (structuredTask.type==='sync-file') this.fileProjection.record(record);
     if (structuredTask.type === 'dream' && structuredTask.input.preset === 'quick' && record.attempts_started > 1) {
       const counts = await this.fileQueue.counts(context.id);
@@ -585,7 +597,13 @@ export class ProductTaskRuntime {
           }
           if (message.method === 'task.syncFile') {
             const file = message.args[0] as SyncFileInput;
-            const result = await this.fileQueue.enqueue(context.id, record.lock_token!, file);
+            const result = await this.fileQueue.enqueue(context.id, record.lock_token!, file).catch(async error=>{
+              if(isSyncCapacityError(error) && !this.stopIntents.has(context.id) && !this.paused){
+                const counts=await this.fileQueue.counts(context.id);
+                if(counts.remaining>0)return {slug:'',status:'skipped' as const,chunks:0,deferred:true,capacityReached:true};
+              }
+              throw error;
+            });
             if (!result.deferred && ['imported', 'skipped'].includes(result.status)) await recordSyncedGitFile(this.engine, context.id,
               file.options.sourceId ?? 'default', { path: file.relativePath, hash: file.hash });
             return result;
@@ -682,11 +700,11 @@ export class ProductTaskRuntime {
     catch(error){
       if(structuredTask.type==='dream'&&structuredTask.input.preset==='quick' && String(error).includes('资源保护：')){
         const message=error instanceof Error?error.message:String(error);
-        if(/队列容量|快照容量/.test(message) && !this.stopIntents.has(context.id) && !this.paused){
+        if(isSyncCapacityError(error) && !this.stopIntents.has(context.id) && !this.paused){
           const counts=await this.fileQueue.counts(context.id);
           if(counts.remaining>0){
-            record.data.resourceStopReason=message;
-            const owned=await this.engine.executeRaw(`UPDATE minion_jobs SET data=data || ($2::jsonb - 'relations' - 'gitFiles' - 'gitResults'),error_text=$3 WHERE id=$1 AND status='active' AND lock_token=$4 RETURNING id`,[context.id,record.data,message,record.lock_token]);
+            delete record.data.resourceStopReason;
+            const owned=await this.engine.executeRaw(`UPDATE minion_jobs SET data=(data-'resourceStopReason') || ($2::jsonb - 'relations' - 'gitFiles' - 'gitResults'),error_text=NULL WHERE id=$1 AND status='active' AND lock_token=$3 RETURNING id`,[context.id,record.data,record.lock_token]);
             if(!owned.length)return MINION_DEFERRED;
             await this.fileQueue.release(context.id,record.lock_token);
             this.scheduleSessionRefresh(context.id);
@@ -716,6 +734,26 @@ export class ProductTaskRuntime {
       WHERE id=$1 AND status='active' AND lock_token=$2`, [record.id, record.lock_token, progress]);
     this.sessionViews.delete(record.id);
     return MINION_DEFERRED;
+  }
+
+  private async recoverCapacitySessions(){
+    const seen=new Set<string>();
+    const jobs=await this.queue.getJobs({queue:PRODUCT_TASK_QUEUE,name:TASK_NAME,limit:100});
+    for(const job of jobs.sort((left,right)=>right.id-left.id)){
+      const task=job.data.task as ProductTask;
+      if(task?.type!=='dream' || task.input.preset!=='quick')continue;
+      const source=task.input.allSources?'*':task.input.sourceId??'default';
+      if(seen.has(source))continue;
+      seen.add(source);
+      if(this.stopIntents.has(job.id) || !['paused','failed','dead'].includes(job.status)
+        || !isSyncCapacityError(job.data.resourceStopReason??job.error_text))continue;
+      const uncertain=await this.engine.executeRaw(`SELECT id FROM minion_jobs WHERE (queue=$1 AND parent_job_id=$2
+        AND (status IN ('active','dead','failed') OR result->>'status' IN ('failed','error','partial')
+          OR (attempts_started>0 AND COALESCE((data->'task'->'input'->>'modelMayRun')::boolean,
+            data->'task'->'input'->'options'->>'documentOcr'='true') AND result->>'pageHash' IS NULL)))
+        OR (private_queue_owner_job_id=$2 AND attempts_started>0 AND status<>'completed') LIMIT 1`,[SYNC_FILE_QUEUE,job.id]);
+      if(!uncertain.length)await this.retry(`task-${job.id}`).catch(error=>console.error('[tasks] capacity recovery:',error));
+    }
   }
 
   private checkMemory():number{
@@ -885,6 +923,7 @@ export class ProductTaskRuntime {
       await this.fileQueue.pause(id);
       await Promise.allSettled([this.executions.get(id)?.done, ...files.map(execution => execution!.done)]);
       await this.reconcileMaintenanceChildren(id);
+      void this.fileQueue.cleanupStoppedSnapshots(id).catch(error=>console.error('[tasks] stopped snapshot cleanup:',error));
     });
     let timer:ReturnType<typeof setTimeout>|undefined;
     const settled=await Promise.race([stopping.then(()=>true),new Promise<boolean>(resolve=>{timer=setTimeout(()=>resolve(false),3000);})]).finally(()=>clearTimeout(timer));
