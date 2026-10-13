@@ -138,16 +138,24 @@ MCP_HEADERS=(-H "Authorization: Bearer $ACCESS_TOKEN" \
   -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream')
 
-# initialize; keep the Mcp-Session-Id header the server returns
-SID="$(curl -sS -D - -o /dev/null "$PLATFORM_MCP" "${MCP_HEADERS[@]}" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"gbrain-travel-booking","version":"0.1.0"}}}' \
-  | awk 'tolower($1)=="mcp-session-id:" {print $2}' | tr -d '\r')"
-[ -n "$SID" ] || echo "FAIL: no Mcp-Session-Id; the access token was refused or expired (re-run the exchange in 1a)"
+# initialize: keep the Mcp-Session-Id header and the negotiated protocol version
+HDRS="$(mktemp)"
+INIT="$(curl -sS -D "$HDRS" "$PLATFORM_MCP" "${MCP_HEADERS[@]}" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"gbrain-travel-booking","version":"0.1.0"}}}')"
+SID="$(awk 'tolower($1)=="mcp-session-id:" {print $2}' "$HDRS" | tr -d '\r')"; rm -f "$HDRS"
+# responses arrive as JSON or as server-sent events ("data: {...}")
+PROTO="$(printf '%s\n' "$INIT" | sed 's/^data: //' | jq -Rr 'fromjson? | select(.id == 1) | .result.protocolVersion // empty')"
+if [ -z "$SID" ] || [ -z "$PROTO" ]; then
+  echo "FAIL: initialize refused; the access token was refused or expired (re-run the exchange in 1a)"
+fi
+MCP_HEADERS+=(-H "Mcp-Session-Id: $SID" -H "MCP-Protocol-Version: $PROTO")
+curl -sS -o /dev/null "$PLATFORM_MCP" "${MCP_HEADERS[@]}" \
+  -d '{"jsonrpc":"2.0","method":"notifications/initialized"}'
 
-# mint the key; the result is returned once, as server-sent events
-RES="$(curl -sS "$PLATFORM_MCP" "${MCP_HEADERS[@]}" -H "Mcp-Session-Id: $SID" \
+# mint the key; it is returned once
+RES="$(curl -sS "$PLATFORM_MCP" "${MCP_HEADERS[@]}" \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_api_key","arguments":{"key_name":"gbrain-agent","environment":"production"}}}')"
-TEXT="$(printf '%s' "$RES" | sed -n 's/^data: //p' | jq -r 'select(.id == 2) | .result.content[0].text // .error.message')"
+TEXT="$(printf '%s\n' "$RES" | sed 's/^data: //' | jq -Rr 'fromjson? | select(.id == 2) | .result.content[0].text // .error.message')"
 JINKO_API_KEY="$(printf '%s' "$TEXT" | jq -Rrs 'try (fromjson | .api_key // empty) catch empty')"
 if [ -n "$JINKO_API_KEY" ]; then echo "PASS: key minted"; else
   echo "FAIL: no key in the result:"
