@@ -15,6 +15,7 @@ import { type PostFusionOpts, RRF_K, cosineReScore, resolveWalkDedupCap, rrfFusi
 import { type RelationalEvidenceSlotDecision, ensureRelationalEvidenceSlot } from '../relational-recall.ts';
 import { type RelationalRerankPinDecision, pinRelationalRows } from '../relational-rerank-pin.ts';
 import { applyFeedbackStage } from '../feedback-boost.ts';
+import { capPerSession } from '../diverse-pool.ts';
 import { type RerankFailedReason, type RerankPassThroughReason, type RerankSkipReason, applyReranker } from '../rerank.ts';
 import type { RerankMeta } from '../../ai/gateway.ts';
 import { applyEvidenceGate, recordRerankReceipts, startRerankShadow } from '../decide-stage.ts';
@@ -244,6 +245,11 @@ export async function expandStructuralNeighbors(req: HybridRequest, fused: Searc
   return dedupOpts;
 }
 
+/** Session-diverse pool (`search.diverse_pool_depth` > 0, diverse-pool.ts): one deduped row per session before the reranker. */
+export function capSessionPool(req: HybridRequest, deduped: SearchResult[]): SearchResult[] {
+  return req.resolvedMode.diverse_pool_depth > 0 ? capPerSession(deduped) : deduped;
+}
+
 /** Cross-encoder rerank (fail-open), then the relational-row pin. */
 export async function rerankAndPin(
   req: HybridRequest,
@@ -260,13 +266,16 @@ export async function rerankAndPin(
   // from the resolved mode bundle (tokenmax → enabled, others → disabled).
   // The resolved mode's fields already participate in knobsHash, so cache
   // rows naturally segregate by reranker config.
-  const rerankerOpts = opts?.reranker ?? {
+  const baseRerankerOpts = opts?.reranker ?? {
     enabled: resolvedMode.reranker_enabled,
     topNIn: resolvedMode.reranker_top_n_in,
     topNOut: resolvedMode.reranker_top_n_out,
     model: resolvedMode.reranker_model,
     timeoutMs: resolvedMode.reranker_timeout_ms,
   };
+  // Session-diverse pool (diverse-pool.ts): the reranker reads at least N rows.
+  const rerankerOpts = resolvedMode.diverse_pool_depth > baseRerankerOpts.topNIn
+    ? { ...baseRerankerOpts, topNIn: resolvedMode.diverse_pool_depth } : baseRerankerOpts;
 
   // is stamped `reranker_skipped` (ranking-only — never shortens the cache TTL
   // or turns an empty result into a degraded miss), and a success-shaped

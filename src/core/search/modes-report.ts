@@ -63,6 +63,7 @@ export const KNOB_DESCRIPTIONS: Record<keyof ModeBundle, string> = {
   relational_planner: 'Multi-hop planner: questions chaining 2-3 typed relations walk typed hop chains with evidence (also keyless recall)',
   relational_orient_onehop: 'Typed one-hop walks read edges written on either page by the relation type signature (opt-in; null = follow relational_planner)',
   relational_chain_slots: 'When a multi-hop chain fired, up to this many chain rows (answers, then evidence pages) lead page 1 (0..10; 0 = single evidence slot)',
+  diverse_pool_depth: 'Session-diverse pool before the reranker: each arm fetches at least N candidates, one row per session, the reranker reads at least N (0..100; 0 = off)',
   // Ranker wave (Phase E2) arm-confidence fusion
   keyword_arm_confidence_floor: 'Keyword-arm confidence floor: below this margin ratio the keyword + title lists fuse at half weight (null = off; (0, 1])',
   // Ranker wave (Phase E3) metadata boost gate

@@ -10,6 +10,15 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.199.0] - 2026-10-13
+
+**A new opt-in search knob, `search.diverse_pool_depth`, gives the reranker a deeper candidate pool with one row per conversation session; it ships off because its measured gain did not clear the preregistered bar (wave 3 item S1).** The BEAM-1M failure analysis found that 30 of the 57 questions with no gold in the top 5 were semantic drift, where several chunks of one session took the reranker's slots. On BEAM-1M dev (gbrain-evals v0.10.83), depth 100 raised strict recall at 10 from 76 to 83 of 198 (+3.5 points, [0.0, 6.6]) and moved strict recall at 5 by +0.5 ([-1.5, 2.5]); answers moved +0.3, +0.3 and -0.4 points for gpt-6.1-sol, Sonnet 5.5 and Opus 5.5. The flip rule needed an interval above zero and no reader below zero, so the default is 0 in every bundle and nothing changes for any brain unless its owner sets the knob.
+
+### Itemized changes
+
+- **`search.diverse_pool_depth`** (integer 0 to 100, `off` = 0): with N > 0 on the fused embedding path of `hybridSearch`, every retrieval arm fetches at least N candidates (still capped at 100), the deduped pool keeps one row per session (`capPerSession` in the new `src/core/search/diverse-pool.ts`; a session is the chat, session or dated slug prefix, otherwise the page), and the reranker reads at least N rows. Keyword-only paths are unchanged. One range contract (`normalizeDiversePoolDepth`) serves config parsing and the `gbrain config set` refusal; the knob joins the cache knobs hash only when on, so existing cache keys are unchanged.
+- **Tests:** `test/search/diverse-pool.test.ts` and `test/search/diverse-pool-hybrid.serial.test.ts` (the session cap, pool floor and reranker width, and the off path byte-identical), plus `test/search-mode.test.ts`. Documented in `docs/architecture/RETRIEVAL.md`.
+
 ## [0.60.198.0] - 2026-10-13
 
 **The lock-order race test retries a topology change that ran out of lock wait, as the product tells callers to, so a single lock timeout on a loaded runner no longer fails it (#6586).** `test/e2e/persistence-publish-lock-order-postgres.test.ts` checks that ordinary writes racing claims and topology changes never form a lock-wait cycle and never deadlock. Each topology change runs with the production 1 s `lock_timeout`. When that wait runs out, the change ends `write_pending` with "Retry the same lifecycle request_id after the current writer finishes". The race recorded that as a failure. On #6591's gate-ahead run it did, once: one topology step hit 55P03 on a loaded gate VM with `cycles: []` and `deadlocks: 0`. The rerun on the same head passed, and 60 local runs with four CPU burners passed.

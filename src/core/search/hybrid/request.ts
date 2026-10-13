@@ -166,7 +166,7 @@ export async function resolveHybridRequest(
 
   const limit = opts?.limit || resolvedMode.searchLimit;
   const offset = opts?.offset || 0;
-  const innerLimit = perArmPoolLimit(limit, offset, PRE_FUSION_POOL_FLOOR);
+  const innerLimit = perArmPoolLimit(limit, offset, Math.max(PRE_FUSION_POOL_FLOOR, resolvedMode.diverse_pool_depth));
 
   // v0.32.x search-lite: classify intent once up front. Drives BOTH the
   // legacy auto-detail / salience / recency suggestions AND the new

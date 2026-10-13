@@ -6,6 +6,7 @@
 import { HNSW_ITERATIVE_SCAN_KEY, HNSW_ITERATIVE_SCAN_MODES, hnswIterativeScanValueProblem } from './hnsw-iterative-scan.ts';
 import { CJK_KEYWORD_DEADLINE_DEFAULT_MS, CJK_KEYWORD_DEADLINE_KEY, cjkKeywordDeadlineValueProblem } from './cjk-keyword-deadline.ts';
 import { AUTO_PACKING_CONFIG_KEY, DEFAULT_AUTO_PACKING, autoPackingValueProblem } from './evidence-packing.ts';
+import { DIVERSE_POOL_DEPTH_KEY, diversePoolDepthValueProblem } from './diverse-pool.ts';
 
 interface SearchValueRule {
   problem: (value: string) => string | null;
@@ -17,6 +18,7 @@ export const SEARCH_VALUE_RULES: Readonly<Record<string, SearchValueRule>> = {
   [HNSW_ITERATIVE_SCAN_KEY]: { problem: hnswIterativeScanValueProblem, example: HNSW_ITERATIVE_SCAN_MODES[0] },
   [CJK_KEYWORD_DEADLINE_KEY]: { problem: cjkKeywordDeadlineValueProblem, example: String(CJK_KEYWORD_DEADLINE_DEFAULT_MS) },
   [AUTO_PACKING_CONFIG_KEY]: { problem: autoPackingValueProblem, example: DEFAULT_AUTO_PACKING },
+  [DIVERSE_POOL_DEPTH_KEY]: { problem: diversePoolDepthValueProblem, example: '100' },
 };
 
 /** The refusal for an invalid value of a validated `search.*` key, or null. */
