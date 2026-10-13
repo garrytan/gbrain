@@ -25,8 +25,8 @@ cost_estimate: "$0 to start: a new Jinko organization is on the Free plan with $
 
 The brain knows that Alice is flying to Lisbon in May, who is going with her,
 and that she prefers aisle seats. Without a travel provider the agent can only
-repeat that. This recipe connects the agent to Jinko, a travel API built for
-agents, so it can search live flights, hotels and rental cars, book them with
+repeat that. This recipe connects the agent to Jinko, a travel API with an MCP
+server, so it can search live flights, hotels and rental cars, book them with
 the user's approval, handle changes, refunds and cancellations, and file each
 confirmed trip as a `trips/` page.
 
@@ -120,19 +120,26 @@ MCP_HEADERS=(-H "Authorization: Bearer $ACCESS_TOKEN" \
 SID="$(curl -sS -D - -o /dev/null "$PLATFORM_MCP" "${MCP_HEADERS[@]}" \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"gbrain-travel-booking","version":"0.1.0"}}}' \
   | awk 'tolower($1)=="mcp-session-id:" {print $2}' | tr -d '\r')"
+[ -n "$SID" ] || echo "FAIL: no Mcp-Session-Id; the access token was refused or expired (re-run auth.md step 4)"
 
 # mint the key; the result is returned once, as server-sent events
 RES="$(curl -sS "$PLATFORM_MCP" "${MCP_HEADERS[@]}" -H "Mcp-Session-Id: $SID" \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_api_key","arguments":{"key_name":"gbrain-agent","environment":"production"}}}')"
-JINKO_API_KEY="$(printf '%s' "$RES" | sed -n 's/^data: //p' \
-  | jq -r '.result.content[0].text | fromjson | .api_key')"
+TEXT="$(printf '%s' "$RES" | sed -n 's/^data: //p' | jq -r 'select(.id == 2) | .result.content[0].text // .error.message')"
+JINKO_API_KEY="$(printf '%s' "$TEXT" | jq -Rrs 'try (fromjson | .api_key // empty) catch empty')"
+if [ -n "$JINKO_API_KEY" ]; then echo "PASS: key minted"; else
+  echo "FAIL: no key in the result:"
+  printf '%s' "$TEXT" | jq -Rrs '. as $t | try (fromjson | del(.api_key)) catch $t'
+fi
 ```
 
 The first `get_api_key` call creates the agent's Jinko organization and a
-default tenant. The key (`jnk_t_…`) is shown only once.
+default tenant. The key (`jnk_t_…`) is shown only once. A result with
+`status: "already_exists"` means a key with that `key_name` was minted before
+and cannot be shown again: re-run the `tools/call` with a new `key_name`.
 
-**1c. Store the key** where your harness reads secrets, as `JINKO_API_KEY`
-(for example the harness's environment configuration or the OS keychain).
+**1c. Store the key** as `JINKO_API_KEY` in the environment that both gbrain
+and your harness run in (the `env_exists` health check reads it from there).
 Do not echo it.
 
 **1d. Validate** with a lookup that needs a valid key but books nothing:
@@ -225,8 +232,8 @@ Do not book a real trip to test the setup: a booking charges the traveller.
 
 An organization created by agent registration starts **unclaimed**. It stays
 usable until its claim window ends (the platform MCP `whoami` tool reports
-`claim.status` and `claim.expires_at`); an unclaimed organization is suspended
-after that. To keep it, the user claims it:
+`agent.claim.status` and `agent.claim.expires_at`); an unclaimed organization
+is suspended after that. To keep it, the user claims it:
 
 1. Follow step 3 of https://auth.gojinko.com/agent/auth.md (the claim
    ceremony) with the user's email as the login hint.
@@ -264,6 +271,9 @@ retry, the key stays valid.
   (auth.md step 1) instead of registering again.
 - **`400` on `tools/call` to the platform MCP:** the `Mcp-Session-Id` header
   from `initialize` is missing. Re-run 1b from the `initialize` call.
+- **`claim_required` from `get_api_key`:** this Jinko environment requires the
+  organization to be claimed before it issues keys. Do Step 5 first, then
+  re-run 1b.
 - **`401` from the travel MCP:** the key is wrong, revoked, or was pasted with
   whitespace. Mint or create a new one.
 - **`402`:** balance too low. See Cost Estimate.

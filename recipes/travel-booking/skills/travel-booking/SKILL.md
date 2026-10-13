@@ -11,7 +11,7 @@ writes_pages: true
 writes_to:
   - trips/
 # Brain ops (MCP names). Travel tools come from the separate Jinko MCP server.
-tools: [query, search, get_page, recall, remember, put_page, add_link, add_timeline_entry]
+tools: [query, get_page, recall, remember, put_page, add_link, add_timeline_entry]
 ---
 
 # Travel Booking: book with the brain's context, file what was booked
@@ -41,8 +41,9 @@ Use what you found as defaults, and say which ones you applied ("searching
 from SFO, aisle seats, as usual"). Anything the user says in the request wins.
 
 When the user states a lasting preference ("I never fly red-eyes"), save it
-with `remember`: one claim, `kind: preference`, `entity` set to the person, no
-`ttl`. Do not save one-off details of this trip as facts; they belong on the
+with `remember`: one claim, `kind: preference`, `entity` set to the person,
+`provenance` naming where it came from (e.g. "user, travel request
+2026-04-02"), no `ttl`. Do not save one-off details of this trip as facts; they belong on the
 trip page.
 
 ## 2. Pick the travel tool
@@ -57,7 +58,7 @@ trip page.
 | A flight and wants to know if the price is good | `flight_price_advice` |
 | A destination and dates for a stay | `hotel_search`, then `hotel_details` for one hotel |
 | Pick-up and drop-off places and times for a car | `car_search`, only if it is in your tool list |
-| A booking to look up | `get_booking` (`booking_ref` + traveller `last_name`) or `get_trip` (`trip_id`) |
+| A booking to look up | `get_booking` (`booking_ref`; add the traveller's `last_name` when looking it up as a guest) or `get_trip` (`trip_id`) |
 
 Cached tools (`find_destination`, `flight_calendar`, `find_dates`,
 `price_monitoring`) return indicative prices for one adult. Before presenting a
@@ -82,7 +83,7 @@ show the alternatives it returns and let the user choose.
      to `agent_spt_params`, call `submit_agent_payment`. If it answers
      `payment_status: requires_authentication` (3DS), the traveller completes
      the bank challenge through the returned `authentication_url`, built as the
-     Jinko server instructions describe. A declined payment falls back to
+     `submit_agent_payment` tool description says. A declined payment falls back to
      `checkout_url`.
 6. `get_trip` until `fulfillment.status` shows the booking is confirmed. A
    `booking_ref` (`JNK-XXXXXX`) can appear before payment completes, so read the
@@ -123,8 +124,10 @@ Travellers: [[people/alice-example]], [[people/bob-example]]
 - Record flight numbers, times, the hotel, the total paid, `booking_ref` and
   `trip_id`. Never write passport or ID numbers, dates of birth, card details,
   payment tokens or the API key.
-- On a brain reached over HTTP MCP, `put_page` does not extract links: call
-  `add_link` from the trip page to each traveller's `people/` page.
+- The `[[people/…]]` wikilinks in the body become mention links to existing
+  pages; no typed edge is inferred from them. For a typed edge, call `add_link`
+  from each traveller's page to the trip page with `link_type: attended`, the
+  same direction gbrain uses for meeting attendees.
 - Add one `add_timeline_entry` to each traveller's page
   (`date` = departure date, `summary` = "Trip to Lisbon", `source` = the trip
   slug).
