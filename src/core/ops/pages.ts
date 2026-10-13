@@ -654,7 +654,7 @@ const capture: Operation = {
     local_file: { type: 'string', description: 'Local CLI only.', required: false },
     slug: { type: 'string', required: false, description: 'Default inbox/<date>-<hash>.' },
     type: { type: 'string', required: false, description: 'Schema type; default note.' },
-    ambient: { type: 'boolean', description: 'Auto-capture; memory.auto_writeback opt-in.' },
+    ambient: { type: 'boolean', description: 'Auto-capture; needs auto_writeback.' },
   },
   scope: 'write',
   mutating: true,

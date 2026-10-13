@@ -542,7 +542,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "name": "capture",
     "idempotent": true,
     "outputRedaction": "no_stored_text",
-    "description": "Quick notes: idempotent auto-slugs in inbox/<date>-<hash>. put_page controls slug/type; remember saves entity facts.",
+    "description": "Quick notes, idempotent: slug inbox/<date>-<hash>. put_page sets slug/type; remember saves entity facts.",
     "params": {
       "source_id": {
         "type": "string",
@@ -630,7 +630,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "ambient": {
         "type": "boolean",
-        "description": "Auto-capture; memory.auto_writeback opt-in."
+        "description": "Auto-capture; needs auto_writeback."
       }
     },
     "scope": "write",

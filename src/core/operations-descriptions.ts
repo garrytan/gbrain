@@ -203,4 +203,4 @@ export const SKILL_CLIENT_GUIDANCE = {
  * test/operations-descriptions.test.ts.
  */
 export const CAPTURE_DESCRIPTION =
-  "Quick notes: idempotent auto-slugs in inbox/<date>-<hash>. put_page controls slug/type; remember saves entity facts.";
+  "Quick notes, idempotent: slug inbox/<date>-<hash>. put_page sets slug/type; remember saves entity facts.";
