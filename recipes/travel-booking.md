@@ -2,7 +2,7 @@
 id: travel-booking
 name: Travel Booking
 version: 0.1.0
-description: Lets the agent search, price, book and service flights, hotels and rental cars through the Jinko travel MCP server. The agent sets up its own account, reads traveler preferences from the brain before searching, and files every confirmed booking as a trips/ page.
+description: Lets the agent search, price and book flights, hotels and rental cars, and manage those bookings (changes, refunds, cancellations), through the Jinko travel MCP server. The agent sets up its own account, reads traveler preferences from the brain before searching, and files every confirmed booking as a trips/ page.
 category: reflex
 install_kind: copy-into-host-repo
 requires: []
@@ -26,9 +26,9 @@ cost_estimate: "Bookings are paid by the traveller at checkout"
 The brain knows that Alice is flying to Lisbon in May, who is going with her,
 and that she prefers aisle seats. Without a travel provider the agent can only
 repeat that. This recipe connects the agent to Jinko, a travel API with an MCP
-server, so it can search live flights, hotels and rental cars, book them with
-the user's approval, handle changes, refunds and cancellations, and file each
-confirmed trip as a `trips/` page.
+server, so it can search flights, hotels and rental cars, book them with the
+user's approval, manage the bookings afterwards (changes, refunds,
+cancellations), and file each confirmed trip as a `trips/` page.
 
 ## IMPORTANT: Instructions for the Agent
 
@@ -56,7 +56,7 @@ Jinko travel MCP  https://mcp.builders.gojinko.com/mcp
   (Authorization: Bearer $JINKO_API_KEY)
   ├── search:   flight_calendar / find_dates / flight_search / hotel_search / car_search
   ├── book:     trip → checkout → user pays at checkout_url (or submit_agent_payment)
-  └── service:  get_booking → flight_refund / flight_exchange / hotel_cancel / car_cancel
+  └── manage:   get_booking → flight_refund / flight_exchange / hotel_cancel / car_cancel
   ↓
 Agent writes the brain (put_page / add_link / add_timeline_entry)
   └── trips/<yyyy-mm-dd>-<destination>.md, linked to each traveller's page
@@ -76,8 +76,9 @@ record, the travel server for search and booking.
 - **One page per trip** under `trips/`, with flights, stay, travellers, total
   paid, `booking_ref` and `trip_id`. Never write passport or ID numbers, dates
   of birth, card details or the API key into a page.
-- **Live price before booking.** Cached prices are indicative and for one adult;
-  confirm with `flight_search` before adding a fare to a trip.
+- **Confirm the price before booking.** Prices from the flight discovery tools
+  are indicative and for one adult; confirm with `flight_search` before adding
+  a fare to a trip.
 
 ## Prerequisites
 
@@ -267,7 +268,7 @@ first (it changes the active schema for the whole brain), then run
 1. Ask the agent: "What do flights from <home airport> to Lisbon cost next
    month?" It should read the brain for the home airport, call
    `flight_calendar` or `find_dates`, and answer with indicative prices.
-2. Ask: "Show me live fares for <a date from that answer>." It should call
+2. Ask: "Show me bookable fares for <a date from that answer>." It should call
    `flight_search`.
 3. Run `gbrain integrations doctor` and confirm both `travel-booking` checks
    pass.

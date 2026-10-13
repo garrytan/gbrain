@@ -1,7 +1,7 @@
 ---
 name: travel-booking
 version: 0.1.0
-description: Search, price, book and service flights, hotels and rental cars through the Jinko travel MCP server, using the brain for traveler preferences before searching and filing every confirmed booking as a trips/ page.
+description: Search, price and book flights, hotels and rental cars, and manage those bookings (changes, refunds, cancellations), through the Jinko travel MCP server, using the brain for traveler preferences before searching and filing every confirmed booking as a trips/ page.
 triggers:
   - "the user wants to find, compare, price or book a flight, hotel or rental car"
   - "the user wants to change, refund or cancel a booking"
@@ -18,8 +18,8 @@ tools: [whoami, query, get_page, recall, remember, put_page, add_link, add_timel
 # Travel Booking: book with the brain's context, file what was booked
 
 The Jinko MCP server (`https://mcp.builders.gojinko.com/mcp`) does the travel
-work: live flight, hotel and car search, the trip cart, checkout and payment,
-and refunds, exchanges and cancellations. The brain supplies who is
+work: flight, hotel and car search, the trip cart, checkout and payment, and
+managing bookings afterwards (exchanges, refunds and cancellations). The brain supplies who is
 travelling and how they like to travel, and keeps the record afterwards.
 
 Each Jinko tool's description gives its parameters and response fields. This
@@ -92,18 +92,19 @@ not save one-off details of this trip as facts; they belong on the trip page.
 | An origin, no destination | `find_destination` |
 | Origin and destination, flexible dates | `flight_calendar` (price per date) or `find_dates` (short list of the best date options) |
 | Origin, destination and exact dates | `flight_search` with `search` |
-| An `offer_token` from a cached tool | `flight_search` with `price_check` |
-| A route and dates to watch over time | `price_monitoring` (cache only; a `stale` answer is valid, do not fall back to a live search on your own) |
+| An `offer_token` from a discovery tool | `flight_search` with `price_check` |
+| A route and dates to watch over time | `price_monitoring` (a `stale` answer is a valid result; do not switch to `flight_search` on your own) |
 | A flight and wants to know if the price is good | `flight_price_advice` |
 | A destination and dates for a stay | `hotel_search`, then `hotel_details` for one hotel |
 | Pick-up and drop-off places and times for a car | `car_search`, only if it is in your tool list |
 | A booking to look up | `get_booking` (`booking_ref`; add the traveller's `last_name` when looking it up as a guest) or `get_trip` (`trip_id`) |
 
-Cached tools (`find_destination`, `flight_calendar`, `find_dates`,
-`price_monitoring`) return indicative prices for one adult. Before presenting a
-fare as bookable or adding it to a trip, confirm it live with `flight_search`.
-Narrow the dates with the cached tools first, and keep to at most three live
-`flight_search` calls per request unless the user asks to compare more dates.
+The flight discovery tools (`find_destination`, `flight_calendar`,
+`find_dates`) and `price_monitoring` give indicative prices for one adult.
+Before presenting a fare as bookable or adding it to a trip, confirm it with
+`flight_search`. Narrow the dates with the discovery tools first, and keep to
+at most three `flight_search` calls per request unless the user asks to
+compare more dates.
 A `flight_search` that answers `offer_unavailable` means that offer is gone:
 show the alternatives it returns and let the user choose.
 
@@ -212,7 +213,7 @@ Travellers: [[people/alice-example]], [[people/bob-example]]
 
 ## 5. Changes, refunds and cancellations
 
-- Every servicing call takes the `booking_ref` and the `item_id` of the item
+- Every change, refund or cancellation call takes the `booking_ref` and the `item_id` of the item
   being changed; guests also give the traveller's `last_name`.
 - Always run the preview or quote step first, show the amount and any fee, and
   get an explicit yes before the commit step. `fee_known: false` means the fee
