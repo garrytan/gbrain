@@ -24,9 +24,9 @@
  * Doctor seeds nothing; the only file it removes is a status marker whose
  * process is gone.
  */
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { isAbsolute, join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { gbrainPath, loadConfig } from '../../../core/config.ts';
 import { peekLock } from '../../../core/pglite-lock.ts';
 import { harnessWiringEntry, httpStatusServerEntry, type ReadinessHarness } from '../../../core/readiness.ts';
@@ -157,6 +157,20 @@ export function readHarnessRegistrations(name = 'gbrain'): HarnessRegistration[]
   return [claudeRegistration(name), codexRegistration(name), opencodeRegistration(name), hermesRegistration(name)].filter((r): r is HarnessRegistration => r !== null);
 }
 
+/**
+ * Hermes counts as a harness gbrain is aimed at only when the profile has a gbrain `mcp_servers` entry or a gbrain
+ * setup/provider receipt. A bare `~/.hermes/config.yaml` (Hermes installed, gbrain never wired) must not turn a
+ * single-harness Claude Code or Codex user's verdict into `multiple_harnesses`.
+ */
+function hermesIsGbrainConnected(): boolean {
+  const path = hermesConfigPath();
+  if (!existsSync(path)) return false;
+  if (hermesRegistration('gbrain') !== null) return true;
+  try {
+    return readdirSync(dirname(path)).some((n) => /^\.gbrain-connection-.+\.json$/.test(n)) || existsSync(join(dirname(path), '.gbrain-hermes', 'receipt.json'));
+  } catch { return false; }
+}
+
 /** Harnesses installed on this machine: the active agent marker, else their config files. */
 function detectedHarnesses(): ReadinessHarness[] {
   const marker = agentProcessMarker();
@@ -169,7 +183,7 @@ function detectedHarnesses(): ReadinessHarness[] {
   if (existsSync(join(home(), '.claude.json')) || existsSync(join(home(), '.claude')) || existsSync(claudeConfigDir())) out.push('claude-code');
   if (existsSync(process.env.CODEX_HOME || join(home(), '.codex'))) out.push('codex');
   if (existsSync(join(process.env.XDG_CONFIG_HOME || join(home(), '.config'), 'opencode'))) out.push('opencode');
-  if (existsSync(hermesConfigPath())) out.push('hermes');
+  if (hermesIsGbrainConnected()) out.push('hermes');
   return out;
 }
 
@@ -290,7 +304,13 @@ export async function smokeStdioRegistration(r: HarnessRegistration, timeoutMs =
   const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) if (typeof v === 'string') env[k] = v;
-  Object.assign(env, r.env ?? {});
+  // A `${NAME}` value is a reference the harness fills from its own env (Hermes does, from the profile .env): resolve it from ours, and drop it when unset rather than hand the server the literal text as a credential.
+  for (const [k, v] of Object.entries(r.env ?? {})) {
+    const ref = /^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$/.exec(v);
+    if (!ref) env[k] = v;
+    else if (process.env[ref[1]!]) env[k] = process.env[ref[1]!]!;
+    else delete env[k];
+  }
   const transport = new StdioClientTransport({ command: r.command!, args: r.args ?? [], env, stderr: 'pipe' });
   const client = new Client({ name: 'gbrain-doctor-harness-smoke', version: '1' }, { capabilities: {} });
   let timer: ReturnType<typeof setTimeout> | undefined;

@@ -16,8 +16,9 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { readHarnessRegistrations } from '../src/commands/doctor/checks/harness-wiring.ts';
+import { harnessWiringCheck, readHarnessRegistrations } from '../src/commands/doctor/checks/harness-wiring.ts';
 import { hermesSpawnsServe, localSetupRecords, providerDeclineRecord } from '../src/core/setup/local-receipts.ts';
+import { withEnv } from './helpers/with-env.ts';
 import { sessionStartAwaitsServe } from '../src/core/context/session-start-pack.ts';
 import { harnessWiringEntry } from '../src/core/readiness.ts';
 import { configDir } from '../src/core/config.ts';
@@ -102,5 +103,77 @@ describe('local setup receipts: Hermes', () => {
     expect(sessionStartAwaitsServe('startup', 'codex', tmp)).toBe(false);
     rmSync(join(profile(), '.gbrain-connection-hermes-gbrain.json'));
     expect(sessionStartAwaitsServe('startup', 'hermes', tmp)).toBe(false);
+  });
+});
+
+describe('review finding 12: a bare Hermes install does not count as a gbrain harness', () => {
+  const clean = { CLAUDECODE: undefined, CLAUDE_CODE_ENTRYPOINT: undefined, CODEX_SANDBOX: undefined, CODEX_CI: undefined, OPENCODE: undefined, OPENCODE_PID: undefined, XDG_CONFIG_HOME: undefined };
+
+  test('Claude Code + a bare ~/.hermes/config.yaml (no gbrain entry, no receipt) keeps the single-harness verdict', async () => {
+    mkdirSync(join(tmp, '.claude'), { recursive: true });
+    mkdirSync(join(tmp, '.hermes'), { recursive: true });
+    writeFileSync(join(tmp, '.hermes', 'config.yaml'), 'model: x\nmcp_servers:\n  other:\n    command: /bin/true\n');
+    await withEnv({ ...clean, HERMES_HOME: join(tmp, '.hermes'), CLAUDE_CONFIG_DIR: join(tmp, '.claude'), CODEX_HOME: join(tmp, 'no-codex') }, async () => {
+      const check = await harnessWiringCheck({ smoke: false });
+      expect(check.status).toBe('warn');
+      expect(check.message).toMatch(/^Claude Code is installed but has no gbrain MCP registration/);
+      expect(check.message).not.toContain('Hermes');
+      expect(check.message).not.toContain('Several');
+    });
+  });
+
+  test('...while a Hermes profile that has a gbrain entry, or a gbrain receipt, does count', async () => {
+    mkdirSync(join(tmp, '.claude'), { recursive: true });
+    mkdirSync(join(tmp, '.hermes'), { recursive: true });
+    const env = { ...clean, HERMES_HOME: join(tmp, '.hermes'), CLAUDE_CONFIG_DIR: join(tmp, '.claude'), CODEX_HOME: join(tmp, 'no-codex') };
+    writeFileSync(join(tmp, '.hermes', 'config.yaml'), 'model: x\n');
+    writeReceipt({}, join(tmp, '.hermes'));
+    await withEnv(env, async () => {
+      const check = await harnessWiringCheck({ smoke: false });
+      expect(check.message).toMatch(/Claude Code, Hermes are installed but have no gbrain MCP registration/);
+    });
+    rmSync(join(tmp, '.hermes', '.gbrain-connection-hermes-gbrain.json'));
+    writeFileSync(join(tmp, '.hermes', 'config.yaml'), 'mcp_servers:\n  gbrain:\n    url: http://127.0.0.1:3131/mcp\n');
+    await withEnv(env, async () => {
+      const check = await harnessWiringCheck({ smoke: false });
+      expect(check.status).toBe('ok');
+      expect(JSON.stringify(check.details)).toContain('hermes');
+    });
+  });
+
+  test('Hermes alone with a bare config.yaml is not "installed with no registration" either (nothing of ours to wire into)', async () => {
+    mkdirSync(join(tmp, '.hermes'), { recursive: true });
+    writeFileSync(join(tmp, '.hermes', 'config.yaml'), 'model: x\n');
+    await withEnv({ ...clean, HERMES_HOME: join(tmp, '.hermes'), CLAUDE_CONFIG_DIR: join(tmp, 'no-claude'), CODEX_HOME: join(tmp, 'no-codex') }, async () => {
+      const check = await harnessWiringCheck({ smoke: false });
+      expect(check.message).not.toMatch(/Hermes is installed but has no gbrain/);
+    });
+  });
+});
+
+describe('review finding 2: receipts of every Hermes profile are visible without HERMES_HOME', () => {
+  test('a decline recorded in ~/.hermes/profiles/<name> is found by a process whose HERMES_HOME is unset (Hermes strips it from stdio children)', () => {
+    const named = join(tmp, '.hermes', 'profiles', 'research');
+    mkdirSync(named, { recursive: true });
+    writeReceipt({}, named);
+    delete process.env.HERMES_HOME;
+    expect(localSetupRecords().map((r) => [r.harness, r.providers])).toEqual([['hermes', 'declined']]);
+    expect(providerDeclineRecord()).toMatchObject({ harness: 'hermes', providers: 'declined' });
+    expect(hermesSpawnsServe()).toBe(true);
+  });
+  test('the default profile and an unrelated profile\'s foreign-install receipt: only this install\'s receipts count; an accepted decision declines nothing', () => {
+    const dflt = join(tmp, '.hermes');
+    const other = join(dflt, 'profiles', 'other');
+    mkdirSync(other, { recursive: true });
+    writeReceipt({ gbrain_home: '/somewhere/else/.gbrain' }, other);
+    delete process.env.HERMES_HOME;
+    expect(providerDeclineRecord()).toBeNull();
+    writeReceipt({ consent: { providers: { value: 'accepted', source: 'flag' } } }, dflt);
+    expect(providerDeclineRecord()).toBeNull();
+    expect(localSetupRecords().map((r) => r.providers)).toEqual(['accepted']);
+  });
+  test('no ~/.hermes at all is no records and no throw', () => {
+    delete process.env.HERMES_HOME;
+    expect(localSetupRecords()).toEqual([]);
   });
 });
