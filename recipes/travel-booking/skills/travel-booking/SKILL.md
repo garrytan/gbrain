@@ -21,11 +21,31 @@ work: live flight, hotel and car search, the trip cart, checkout and payment,
 and refunds, exchanges and cancellations. The brain supplies who is
 travelling and how they like to travel, and keeps the record afterwards.
 
-The Jinko server sends its own instructions when the MCP session starts.
-They are the reference for each tool's parameters and routing details; this
+Each Jinko tool's description gives its parameters and response fields. This
 skill adds the brain steps and the rules that always apply.
 
+**MCP tools or CLI.** If the travel tools are not in your tool list but the
+`jinko` CLI is installed (OpenClaw and other harnesses without a remote-MCP
+client), run the same steps with the CLI. It reads `JINKO_API_KEY` from the
+environment and prints JSON; `jinko <command> --help` lists the flags. Each
+tool below maps to the command of the same name with hyphens
+(`flight_search` → `jinko flight-search`), except:
+
+| Tool | CLI |
+|---|---|
+| `trip` (`select_ancillaries`) | `jinko get-ancillaries`, then `jinko select-ancillaries` |
+| `get_trip` | `jinko trip-status` |
+| `submit_agent_payment` | `jinko agent-pay submit` |
+| `flight_refund` | `jinko refund check` / `preview` / `commit` / `status` |
+| `flight_exchange` | `jinko exchange shop` / `price` / `commit` / `status` |
+
 ## 1. Before searching: read the brain
+
+**One source for reads and writes.** `put_page`, `add_link` and
+`add_timeline_entry` write to your session's source (`gbrain sources current`
+shows it). In a brain with several sources, read the `people/` and `trips/`
+pages from that same source (pass its `source_id` to `get_page`), so the trip
+page, its links and the timeline entries land next to the pages they refer to.
 
 Do this once per trip request, before the first travel tool call:
 
@@ -64,9 +84,8 @@ not save one-off details of this trip as facts; they belong on the trip page.
 Cached tools (`find_destination`, `flight_calendar`, `find_dates`,
 `price_monitoring`) return indicative prices for one adult. Before presenting a
 fare as bookable or adding it to a trip, confirm it live with `flight_search`.
-Live searches cost more and count toward Jinko's excess-search fee, so narrow
-the dates with the cached tools first and keep to at most three `flight_search`
-calls per request unless the user asks to compare more dates.
+Narrow the dates with the cached tools first, and keep to at most three live
+`flight_search` calls per request unless the user asks to compare more dates.
 A `flight_search` that answers `offer_unavailable` means that offer is gone:
 show the alternatives it returns and let the user choose.
 
@@ -79,9 +98,7 @@ show the alternatives it returns and let the user choose.
 3. `checkout` with the `trip_id`. It returns a `checkout_url` and
    `agent_spt_params`.
 4. Show the user the total (quote the `display` strings verbatim) and get an
-   explicit yes before any payment. Before the first booking on the account,
-   also say that Jinko charges the account 1% of each confirmed flight booking,
-   monthly (https://gojinko.com/pricing).
+   explicit yes before any payment.
 5. Payment:
    - The user pays at `checkout_url`. The booking completes on its own after
      payment; there is no confirm call.
@@ -91,9 +108,12 @@ show the alternatives it returns and let the user choose.
      the bank challenge through the returned `authentication_url`, built as the
      `submit_agent_payment` tool description says. A declined payment falls back to
      `checkout_url`.
-6. `get_trip` until `fulfillment.status` shows the booking is confirmed. A
-   `booking_ref` (`JNK-XXXXXX`) can appear before payment completes, so read the
-   status rather than the presence of the reference.
+6. Check `get_trip` every 30 seconds, for at most 10 minutes, until
+   `fulfillment.status` shows the booking is confirmed. If it is still pending
+   (the user has not paid, a 3DS challenge is open, or the supplier confirms
+   manually), stop and tell the user the current status; check again when they
+   ask. A `booking_ref` (`JNK-XXXXXX`) can appear before payment completes, so
+   read the status rather than the presence of the reference.
 
 ## 4. After a confirmed booking: file it
 
@@ -168,9 +188,8 @@ Travellers: [[people/alice-example]], [[people/bob-example]]
 
 - Never invent traveller data, and never drop or change a traveller to make a
   search succeed; surface the error instead.
-- Do not retry in a loop. A `402` means the Jinko organisation's balance is too
-  low: tell the user to top up at
-  https://dashboard.gojinko.com/developers/billing/topup and do not retry. A
-  `429` means back off, then retry once.
+- Do not retry in a loop. A `402` means the account's free queries for this
+  month are used up: tell the user and do not retry. A `429` means back off,
+  then retry once.
 - Quote prices from the `display` fields verbatim; do not compute them.
 - Do not print the API key or put it in a page, a log or a message.

@@ -18,7 +18,7 @@ health_checks:
     url: "https://api.gojinko.com/health"
     label: Jinko API reachable
 setup_time: 10 min
-cost_estimate: "$0 to open the account, no card. API calls are metered (a new organization includes $5.00 of usage per month); Jinko also charges the organization 1% of each confirmed flight booking and $0.005 per search beyond a 1,500:1 search-to-book ratio, monthly. The traveller pays the trip itself at checkout. Current prices: https://gojinko.com/pricing"
+cost_estimate: "250 free queries per month"
 ---
 
 # Travel Booking: search and book trips from the agent, filed in the brain
@@ -94,18 +94,40 @@ record, the travel server for search and booking.
 Jinko supports agent registration: the agent creates its own identity and
 account with no human step, then mints an API key.
 
-**1a. Register and get an access token.** Fetch
-https://auth.gojinko.com/agent/auth.md and follow its steps 1, 2 and 4 exactly,
-using its commands (they keep secrets out of the output). Use these values:
+**1a. Register and get an access token.** The agent registers **anonymously**:
+no email and no human step. The registration response holds the identity
+assertion and the claim token, so it is kept in a private file and never
+printed. An existing registration is reused.
 
-- `ISSUER="https://auth.gojinko.com"`
-- In step 2, register as **anonymous**: it needs no email and no human step.
-- In step 4, set `RESOURCE="https://mcp.platform.gojinko.com"`. It is required:
-  a token issued for any other audience, including the default one, is
-  refused.
+```bash
+ISSUER="https://auth.gojinko.com"
+REG_FILE="$HOME/.jinko/agent-registration.json"
+mkdir -p "$HOME/.jinko" && chmod 700 "$HOME/.jinko"
 
-You end with `ACCESS_TOKEN`, valid for about 5 minutes. If it expires, re-run
-step 4 of auth.md from the stored identity.
+if [ ! -s "$REG_FILE" ]; then
+  REG="$(curl -sS -A 'gbrain-travel-booking/0.1.0' "$ISSUER/agent/identity" \
+    -H 'Content-Type: application/json' -d '{"type":"anonymous"}')"
+  if printf '%s' "$REG" | jq -e '.identity.assertion' >/dev/null 2>&1; then
+    (umask 077; printf '%s' "$REG" > "$REG_FILE"); echo "PASS: registered"
+  else
+    echo "FAIL: registration refused:"; printf '%s' "$REG" | jq -c '{code, error, message, retry_after}'
+  fi
+fi
+
+# exchange the identity for a short-lived token for the Jinko platform MCP
+ACCESS_TOKEN="$(curl -sS "$ISSUER/oauth2/token" \
+  -H 'Content-Type: application/x-www-form-urlencoded' \
+  -d grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer \
+  --data-urlencode "assertion=$(jq -r .identity.assertion "$REG_FILE")" \
+  --data-urlencode "resource=https://mcp.platform.gojinko.com" \
+  | jq -r '.access_token // empty')"
+[ -n "$ACCESS_TOKEN" ] && echo "PASS: access token" \
+  || echo "FAIL: token exchange refused; if the registration expired, delete $REG_FILE and re-run 1a"
+```
+
+The `resource` value is required: a token issued for any other audience is
+refused. `ACCESS_TOKEN` is valid for about 5 minutes; re-run the exchange to
+get a new one.
 
 **1b. Mint the API key.** The Jinko platform MCP server is a standard MCP server
 over Streamable HTTP. Open a session, then call `get_api_key`:
@@ -120,7 +142,7 @@ MCP_HEADERS=(-H "Authorization: Bearer $ACCESS_TOKEN" \
 SID="$(curl -sS -D - -o /dev/null "$PLATFORM_MCP" "${MCP_HEADERS[@]}" \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"gbrain-travel-booking","version":"0.1.0"}}}' \
   | awk 'tolower($1)=="mcp-session-id:" {print $2}' | tr -d '\r')"
-[ -n "$SID" ] || echo "FAIL: no Mcp-Session-Id; the access token was refused or expired (re-run auth.md step 4)"
+[ -n "$SID" ] || echo "FAIL: no Mcp-Session-Id; the access token was refused or expired (re-run the exchange in 1a)"
 
 # mint the key; the result is returned once, as server-sent events
 RES="$(curl -sS "$PLATFORM_MCP" "${MCP_HEADERS[@]}" -H "Mcp-Session-Id: $SID" \
@@ -224,7 +246,7 @@ first (it changes the active schema for the whole brain), then run
 3. Run `gbrain integrations doctor` and confirm both `travel-booking` checks
    pass.
 
-Do not book a real trip to test the setup: a booking charges the traveller.
+Do not book a real trip to test the setup: a booking is a real purchase.
 
 ### Step 5: Hand the account to the user (recommended)
 
@@ -233,11 +255,31 @@ usable until its claim window ends (the platform MCP `whoami` tool reports
 `agent.claim.status` and `agent.claim.expires_at`); an unclaimed organization
 is suspended after that. To keep it, the user claims it:
 
-1. Follow step 3 of https://auth.gojinko.com/agent/auth.md (the claim
-   ceremony) with the user's email as the login hint.
-2. Give the user the `verification_uri` it returns. They sign in on the Jinko
-   dashboard and read back the code the page shows.
-3. Complete the claim with that code, as auth.md describes.
+```bash
+ISSUER="https://auth.gojinko.com"; REG_FILE="$HOME/.jinko/agent-registration.json"
+CLAIM_TOKEN="$(jq -r .claim.token "$REG_FILE")"
+EMAIL="<the user's email>"
+
+# 1. start a claim attempt and give the user the link it returns
+ATT="$(curl -sS "$ISSUER/agent/identity/claim" -H 'Content-Type: application/json' \
+  -d "$(jq -cn --arg t "$CLAIM_TOKEN" --arg e "$EMAIL" '{type:"service_auth", claim_token:$t, login_hint:$e}')")"
+printf '%s' "$ATT" | jq -r '.attempt.verification_uri // .'
+
+# 2. the user signs in at that link and reads back the code the page shows
+USER_CODE="<the code the user read back>"
+VER="$(curl -sS "$ISSUER/agent/identity/claim/complete" -H 'Content-Type: application/json' \
+  -d "$(jq -cn --arg t "$CLAIM_TOKEN" --arg c "$USER_CODE" '{claim_token:$t, user_code:$c}')")"
+if printf '%s' "$VER" | jq -e '.identity.assertion' >/dev/null 2>&1; then
+  (umask 077; printf '%s' "$VER" > "$REG_FILE"); echo "PASS: claimed"
+else
+  printf '%s' "$VER" | jq -c '{code, message}'
+fi
+```
+
+`claim_not_confirmed` means the user has not finished on the page yet: wait
+and complete again. `invalid_user_code` means the code was mistyped: ask
+again. Claim links last about 5 minutes; for an expired one, start a new
+attempt.
 
 After the claim, the user is an admin of the organization. The agent keeps its
 key and its role; the user can change the role or remove the agent, which
@@ -245,36 +287,21 @@ revokes its keys. A person who already belongs to a Jinko organization cannot
 claim a second one: use a key from their existing organization instead (Step 1,
 "If the user already has a Jinko account").
 
-## Cost Estimate
+## Free queries
 
-Prices change; https://gojinko.com/pricing is the reference. At the time of
-writing:
-
-| Item | Cost | Paid by |
-|------|------|---------|
-| Jinko account | $0, no card | — |
-| API calls | Metered per call; live searches cost more than cached ones. A new organization includes $5.00 of usage per month. Per-call prices: https://dashboard.gojinko.com/developers/billing | Jinko organization |
-| Confirmed flight bookings | 1% of the booking value, charged monthly | Jinko organization |
-| Excess searches | $0.005 per search beyond a 1,500:1 search-to-book ratio, charged monthly | Jinko organization |
-| The trip itself (fares, hotel, car) | The checkout total | Traveller, at checkout |
-
-Tell the user about the organization charges when you hand the account over
-(Step 5), and before the first booking on the account.
-
-When the organization's balance is too low, calls return `402`. Tell the user
-to top up at https://dashboard.gojinko.com/developers/billing/topup; do not
-retry, the key stays valid.
+A Jinko account includes 250 free queries per month. When they are used up,
+calls return `402`: tell the user and do not retry. The key stays valid.
 
 ## Troubleshooting
 
-- **`invalid_target` at the token exchange (auth.md step 4):** `RESOURCE` is
+- **`invalid_target` at the token exchange (1a):** the `resource` value is
   wrong. It must be exactly `https://mcp.platform.gojinko.com`.
 - **`403` with `error code: 1010` from `/agent/identity`:** the request has no
   usable User-Agent (Python's default urllib one is refused). Send an explicit
   `User-Agent` header; curl's default works.
 - **`rate_limit_exceeded` at registration:** registrations are limited to 5 per
-  IP per hour. Wait `retry_after` seconds. Reuse an existing registration
-  (auth.md step 1) instead of registering again.
+  IP per hour. Wait `retry_after` seconds. 1a reuses the registration in
+  `~/.jinko/agent-registration.json`; do not delete it to register again.
 - **`400` on `tools/call` to the platform MCP:** the `Mcp-Session-Id` header
   from `initialize` is missing. Re-run 1b from the `initialize` call.
 - **`claim_required` from `get_api_key`:** this Jinko environment requires the
@@ -282,7 +309,7 @@ retry, the key stays valid.
   re-run 1b.
 - **`401` from the travel MCP:** the key is wrong, revoked, or was pasted with
   whitespace. Mint or create a new one.
-- **`402`:** balance too low. See Cost Estimate.
+- **`402`:** this month's free queries are used up. See Free queries.
 - **`429`:** back off, then retry once.
 - **Travel tools missing after Step 2:** the harness did not reload its MCP
   configuration. Restart it and list tools again.
