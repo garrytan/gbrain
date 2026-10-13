@@ -26,6 +26,8 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, st
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { load } from 'js-yaml';
+import { buildHermesFixture } from './fixtures/transcripts/hermes-fixture-builder.ts';
+import { shlexSplit } from '../src/core/bootstrap/hermes-hooks.ts';
 import { runCli, type CliResult } from './helpers/cli-spawn.ts';
 import { sortedJson } from '../src/core/bootstrap/hermes-hooks.ts';
 
@@ -514,6 +516,23 @@ describe('gbrain setup hermes: consent and flags', () => {
     expect(yaml(b).hooks ?? {}).toEqual({});
     expect(approvals(b)).toEqual([]);
     expect(yaml(b).mcp_servers.gbrain).toBeDefined();
+  });
+
+  test('the written hooks run the way Hermes runs them: shlex argv, no shell; the detached capture command spools the session from the profile state.db', async () => {
+    const b = box();
+    mkdirSync(hermesDir(b), { recursive: true });
+    buildHermesFixture(hermesDir(b));
+    expect((await setup(b, ['hermes', '--capture'])).exitCode).toBe(0);
+    const prompt = shlexSplit(items(b, 'pre_llm_call')[0].command)!;
+    expect(prompt.slice(0, 3)).toEqual(['env', 'GBRAIN_HOOK_LANE=setup', `GBRAIN_HOME=${b.gbrainHome}`]);
+    expect(prompt.slice(3)).toEqual([b.bin, 'hook', 'user-prompt', '--harness', 'hermes']);
+    const argv = shlexSplit(items(b, 'on_session_finalize')[0].command)!;
+    const proc = Bun.spawn(argv, { env: { ...process.env, HOME: b.home, GBRAIN_SKIP_STARTUP_HOOKS: '1' }, stdin: new Blob([JSON.stringify({ hook_event_name: 'on_session_finalize', session_id: 'hermes-fixture-1', cwd: b.home, extra: { platform: 'cli' } })]), stdout: 'pipe', stderr: 'pipe' });
+    expect(await proc.exited).toBe(0);
+    expect(await new Response(proc.stdout).text()).toBe('');
+    const spooled = join(b.gbrainHome, '.gbrain', 'transcripts', 'corpus', 'sourced', 'hermes-fixture-1.src-_unresolved.txt');
+    for (let i = 0; i < 200 && !existsSync(spooled); i++) await Bun.sleep(100);
+    expect(readFileSync(spooled, 'utf8')).toContain('Draft the widget-co launch checklist.');
   });
 
   test('--capture is sticky across runs, and an existing gbrain-session-corpus plugin is named in a note', async () => {
