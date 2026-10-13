@@ -40,6 +40,7 @@
 import { observationDateFrom, resolveObservationDate, type ObservationDate } from '../ai/date-grounding.ts';
 import { factEventTime } from './event-time.ts';
 import type { BrainEngine, FactInsertStatus, NewFact } from '../engine.ts';
+import type { ExtractedFact } from './extract.ts';
 import type { ResolutionSource } from '../entities/resolve.ts';
 import { isFactsBackstopEligible } from './eligibility.ts';
 import type { PageType } from '../types.ts';
@@ -678,13 +679,31 @@ async function derivedFactWriter(ctx: FactsBackstopCtx, input: PipelineInput, de
   return { insertDerivedFact, gateGroup, write_gate };
 }
 
+/**
+ * #6503: text past the extractor ceiling (a long page body, a long turn) is
+ * read as overlapping windows, one call each, never cut; text within it is
+ * the single historical call (page-windows.ts). A claim two windows both
+ * state is dropped as a repeat by the same cosine verdict the DB dedup
+ * applies (same entity and speaker; capture lanes never drop by cosine, #5888).
+ */
+function windowRepeatVerdict(ctx: FactsBackstopCtx, cosineSimilarity: (a: Float32Array, b: Float32Array) => number) {
+  return async (candidate: ExtractedFact, kept: ExtractedFact): Promise<boolean> => {
+    if ((candidate.entity_slug ?? '').toLowerCase() !== (kept.entity_slug ?? '').toLowerCase()) return false;
+    if ((candidate.attributed_to ?? null) !== (kept.attributed_to ?? null)) return false;
+    if (!candidate.embedding || !kept.embedding || candidate.embedding.length !== kept.embedding.length) return false;
+    if ((candidate.embedding_model ?? null) !== (kept.embedding_model ?? null)) return false;
+    const { threshold } = await readSupersessionThreshold(ctx.engine, candidate.embedding_model, candidate.embedding.length);
+    return cosineVerdict(ctx.source, cosineSimilarity(candidate.embedding, kept.embedding), candidate.fact, kept.fact, threshold) === 'duplicate';
+  };
+}
+
 /** The actual pipeline body — always runs inside a BudgetTracker scope (#4210). */
 async function runPipelineBodyInner(
   input: PipelineInput,
   ctx: FactsBackstopCtx,
   abortSignal?: AbortSignal,
 ): Promise<{ inserted: number; duplicate: number; superseded: number; fact_ids: number[]; entity_slugs: string[]; skipped_reason?: import('./extract.ts').ExtractFailureReason; write_gate?: GateTally; fence_refused?: number; would_dedup_same_page?: number; withdrawn_skipped?: number }> {
-  const { extractFactsFromTurnWithOutcome, FactsExtractionError } = await import('./extract.ts');
+  const [{ FactsExtractionError }, { extractFactsFromTextWithOutcome }] = await Promise.all([import('./extract.ts'), import('./page-windows.ts')]);
   const { resolveEntitySlugWithSource } = await import('../entities/resolve.ts');
   const { cosineSimilarity } = await import('./classify.ts');
   const { writeFactsToFence, lookupSourceLocalPath } = await import('./fence-write.ts');
@@ -717,7 +736,7 @@ async function runPipelineBodyInner(
     : filter === 'medium-and-up'
       ? { allowed: ['high', 'medium'] as const, invalid: 'drop' as const }
       : undefined;
-  const extract = () => extractFactsFromTurnWithOutcome({
+  const extract = () => extractFactsFromTextWithOutcome({
     turnText: input.turnText,
     sessionId: ctx.sessionId,
     entityHints: ctx.entityHints,
@@ -728,7 +747,7 @@ async function runPipelineBodyInner(
     model: ctx.model,
     notabilityAdmission, observationDate: input.observationDate ?? observationDateFrom(ctx.validFrom ?? ctx.turnAt ?? null),
     ...(managed ? { embedding: managed.embedding ?? null } : {}),
-  });
+  }, { isRepeat: windowRepeatVerdict(ctx, cosineSimilarity) }); // #6503: long text is windowed, never cut
   const outcome = managed ? await withAIInvocationPreflight(async call => {
     if (call.kind !== 'embedding') return;
     abortSignal?.throwIfAborted();

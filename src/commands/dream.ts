@@ -657,7 +657,7 @@ async function runDrain(
       `[drain] ${result.failure_count} item failure(s)${omitted}${result.last_error ? `; last error: ${result.last_error}` : ''}\n`,
     );
   }
-  // #6503: cut items are not failures and not complete; say so once per drain.
+  // #6503: extract_atoms reads long items as windows and never cuts them, so this no longer fires.
   if ((result.input_truncated ?? 0) > 0) {
     process.stderr.write(
       `[drain] ${result.input_truncated} item(s) cut at cycle.extract_atoms.max_input_chars: the model did not read their tail; ` +

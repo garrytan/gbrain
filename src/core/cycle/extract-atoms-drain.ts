@@ -114,7 +114,7 @@ export interface ExtractAtomsDrainDeps {
     failures?: Array<{ source: string; reason: string }>;
     budgetSkipped?: number;
     budget?: { spentUsd: number; capUsd: number };
-    /** #6503: items the batch cut at `cycle.extract_atoms.max_input_chars` (partial disposition, not complete). */
+    /** #6503: always 0 now (long items are read as windows, never cut); kept for the result contract. */
     inputTruncated?: number;
   }>;
   /**
@@ -215,7 +215,7 @@ export interface ExtractAtomsDrainResult {
   /** #6425: on a `budget` stop, the attempt's spend and its per-run cap (`cycle.extract_atoms.budget_usd`). */
   spent_usd?: number;
   budget_usd?: number;
-  /** #6503: items cut at the input cap across every batch; the model did not read their tails and they are not marked complete. */
+  /** #6503: always 0 now (long items are read as windows, never cut); kept for the `--json` result contract. */
   input_truncated?: number;
 }
 

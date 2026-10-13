@@ -187,13 +187,18 @@ function findError<T>(err: unknown, match: (e: unknown) => e is T): T | null {
 async function estimateBacklogUsd(engine: BrainEngine, model: string, backlog: number, maxTokens: number): Promise<number | null> {
   const { reservationCostUsd } = await import('../budget/reservation-cost.ts');
   const { MAX_TURN_TEXT_CHARS } = await import('./extract.ts');
-  const [row] = await engine.executeRaw<{ chars: number | null }>(
-    `SELECT avg(LEAST(length(p.compiled_truth), $3))::float AS chars FROM minion_jobs j
+  const { FACT_WINDOW_CHARS } = await import('./page-windows.ts');
+  // #6503: a page past the extractor ceiling is read in full as several windows, one call each.
+  const [row] = await engine.executeRaw<{ chars: number | null; calls: number | null }>(
+    `SELECT avg(length(p.compiled_truth))::float AS chars,
+            avg(CASE WHEN length(p.compiled_truth) <= $3 THEN 1 ELSE ceil(length(p.compiled_truth)::float / $4) END)::float AS calls
+       FROM minion_jobs j
        JOIN pages p ON p.slug = j.data->>'slug' AND p.source_id = COALESCE(j.data->>'sourceId', 'default')
       WHERE j.name = $1 AND j.queue = $2 AND j.status IN ('waiting', 'delayed')`,
-    [FACTS_DRAIN_JOB, FACTS_DRAIN_QUEUE, MAX_TURN_TEXT_CHARS]).catch(() => [{ chars: null }]);
-  const inputTokens = Math.ceil((row?.chars ?? MAX_TURN_TEXT_CHARS / 2) / 4) + PROMPT_OVERHEAD_TOKENS;
-  const perJob = reservationCostUsd(model, 'chat', inputTokens, Math.min(maxTokens, 300));
+    [FACTS_DRAIN_JOB, FACTS_DRAIN_QUEUE, MAX_TURN_TEXT_CHARS, FACT_WINDOW_CHARS]).catch(() => [{ chars: null, calls: null }]);
+  const calls = Math.max(1, row?.calls ?? 1);
+  const inputTokens = Math.ceil((row?.chars ?? MAX_TURN_TEXT_CHARS / 2) / 4) + Math.ceil(PROMPT_OVERHEAD_TOKENS * calls);
+  const perJob = reservationCostUsd(model, 'chat', inputTokens, Math.ceil(Math.min(maxTokens, 300) * calls));
   return perJob === null ? null : perJob * backlog;
 }
 

@@ -245,30 +245,40 @@ describe('extract_atoms persists provenance, not claims (#4706)', () => {
     expect(typographic.slice(start, end)).toBe('“ship it now” — and nobody argued.');
   });
 
-  test('a quote past max_input_chars is NOT verified — only the sent prefix counts', async () => {
-    // The model never saw this text, so a "quote" matching it is not
-    // provenance. Verifying against the whole item instead of the sent prefix
-    // would stamp a hallucination that happens to collide with unsent text as
-    // verified.
+  test('a quote outside the window the model read is NOT verified, even when the item holds it elsewhere (#6503)', async () => {
+    // The model reading the first window never saw this text, so a "quote"
+    // matching it is not provenance. Verifying against the whole item instead
+    // of the text that call received would stamp a hallucination that happens
+    // to collide with another window's text as verified.
     await engine.setConfig('cycle.extract_atoms.max_input_chars', '1000');
     try {
       const beyond = 'The quiet part nobody transmitted.';
       const content = 'A'.repeat(1200) + '\n' + beyond;
+      const quoting = chatReturning([{
+        title: 'Beyond the window',
+        atom_type: 'insight',
+        body: 'Something this call was never shown.',
+        source_quote: beyond,
+      }]);
+      const silent = chatReturning([]);
+      const prompts: string[] = [];
 
       await runPhaseExtractAtoms(engine, {
         sourceId: 'default',
         _transcripts: [{ filePath: '/tmp/q5.txt', content, contentHash: 'e5'.repeat(8) }],
         _pages: [],
-        _chat: chatReturning([{
-          title: 'Beyond the cap',
-          atom_type: 'insight',
-          body: 'Something the model was never shown.',
-          source_quote: beyond,
-        }]),
+        // Only the window WITHOUT the sentence "quotes" it; the window holding it returns nothing.
+        _chat: async (o: ChatOpts) => {
+          const prompt = String(o.messages[o.messages.length - 1]?.content);
+          prompts.push(prompt);
+          return prompt.includes(beyond) ? silent(o) : quoting(o);
+        },
       });
 
-      // Present in the ITEM, absent from the PROMPT.
-      expect(content).toContain(beyond);
+      // Present in the ITEM and in a later window, absent from the window that quoted it.
+      expect(prompts.length).toBe(2);
+      expect(prompts[0]).not.toContain(beyond);
+      expect(prompts[1]).toContain(beyond);
       const atom = await onlyAtom();
       expect(atom.frontmatter.source_quote).toBeUndefined();
       expect(atom.frontmatter.source_quote_verified).toBeUndefined();

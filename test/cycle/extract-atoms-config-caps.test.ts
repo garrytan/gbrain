@@ -59,8 +59,10 @@ function userContent(o: ChatOpts): string {
   return typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
 }
 
+const bodyOf = (o: ChatOpts): string => /<transcript>\n([\s\S]*)\n<\/transcript>/.exec(userContent(o))?.[1] ?? '';
+
 describe('extract_atoms configurable caps (#4540)', () => {
-  test('defaults unchanged: 50k input chars, 4096 output tokens', async () => {
+  test('defaults unchanged: 50k input chars per call, 4096 output tokens', async () => {
     const { calls, chat } = captureChat();
     const big = 'x'.repeat(DEFAULT_EXTRACT_MAX_INPUT_CHARS + 5_000);
     await runPhaseExtractAtoms(engine, {
@@ -69,16 +71,18 @@ describe('extract_atoms configurable caps (#4540)', () => {
       _pages: [],
       _chat: chat,
     });
-    expect(calls.length).toBe(1);
-    expect(calls[0].maxTokens).toBe(DEFAULT_EXTRACT_MAX_OUTPUT_TOKENS);
-    const content = userContent(calls[0]);
-    // Body is prefix + truncated content: the 55k payload was cut to 50k.
-    // + the preamble (source line and the default observation-date line).
-    expect(content.length).toBeLessThan(DEFAULT_EXTRACT_MAX_INPUT_CHARS + 300);
-    expect(content.length).toBeGreaterThanOrEqual(DEFAULT_EXTRACT_MAX_INPUT_CHARS);
+    // #6503: the 55k payload is read as two overlapping windows, never cut.
+    expect(calls.length).toBe(2);
+    for (const call of calls) {
+      expect(call.maxTokens).toBe(DEFAULT_EXTRACT_MAX_OUTPUT_TOKENS);
+      // Each body stays within the 50k cap; the preamble adds the source, window and observation-date lines.
+      expect(bodyOf(call).length).toBeLessThanOrEqual(DEFAULT_EXTRACT_MAX_INPUT_CHARS);
+      expect(userContent(call).length).toBeLessThan(DEFAULT_EXTRACT_MAX_INPUT_CHARS + 600);
+    }
+    expect(bodyOf(calls[0]).length).toBe(DEFAULT_EXTRACT_MAX_INPUT_CHARS);
   });
 
-  test('cycle.extract_atoms.max_input_chars / .max_output_tokens are honored', async () => {
+  test('cycle.extract_atoms.max_input_chars / .max_output_tokens are honored on every call', async () => {
     await engine.setConfig('cycle.extract_atoms.max_input_chars', '2000');
     await engine.setConfig('cycle.extract_atoms.max_output_tokens', '512');
     const { calls, chat } = captureChat();
@@ -89,13 +93,13 @@ describe('extract_atoms configurable caps (#4540)', () => {
       _pages: [],
       _chat: chat,
     });
-    expect(calls.length).toBe(1);
-    expect(calls[0].maxTokens).toBe(512);
-    const content = userContent(calls[0]);
-    // 2000 content chars + the small preamble ("Source: ..." and the observation-date line).
-    expect(content.length).toBeLessThan(2_300);
-    expect(content).toContain('y'.repeat(2_000));
-    expect(content).not.toContain('y'.repeat(2_001));
+    // #6503: 10k chars at a 2k cap with a 500-char overlap is seven windows.
+    expect(calls.length).toBe(7);
+    for (const call of calls) {
+      expect(call.maxTokens).toBe(512);
+      expect(userContent(call)).not.toContain('y'.repeat(2_001));
+    }
+    expect(bodyOf(calls[0])).toBe('y'.repeat(2_000));
   });
 
   test('garbage/too-small values fall back to defaults (floors)', async () => {
@@ -114,7 +118,7 @@ describe('extract_atoms configurable caps (#4540)', () => {
     expect(userContent(calls[0])).toContain('z'.repeat(3_000));
   });
 
-  test('input cap cuts UTF-8 safely (no lone surrogate at the boundary)', async () => {
+  test('input cap windows UTF-8 safely (no lone surrogate at any boundary)', async () => {
     await engine.setConfig('cycle.extract_atoms.max_input_chars', '2001');
     const { calls, chat } = captureChat();
     // Astral chars (2 UTF-16 units each): an odd cap on this content would
@@ -126,11 +130,15 @@ describe('extract_atoms configurable caps (#4540)', () => {
       _pages: [],
       _chat: chat,
     });
-    expect(calls.length).toBe(1);
-    const content = userContent(calls[0]);
-    // Round-tripping through UTF-8 replaces lone surrogates with U+FFFD;
-    // well-formed content survives unchanged.
-    const roundTripped = new TextDecoder().decode(new TextEncoder().encode(content));
-    expect(roundTripped).toBe(content);
+    // #6503: 4,000 UTF-16 units at a 2001 cap is several windows; no window
+    // boundary (end or overlap start) splits a pair.
+    expect(calls.length).toBe(3);
+    for (const call of calls) {
+      const content = userContent(call);
+      // Round-tripping through UTF-8 replaces lone surrogates with U+FFFD;
+      // well-formed content survives unchanged.
+      const roundTripped = new TextDecoder().decode(new TextEncoder().encode(content));
+      expect(roundTripped).toBe(content);
+    }
   });
 });

@@ -316,13 +316,13 @@ gbrain config set autopilot.auto_drain.enabled false          # stop all automat
 
 What leaves the machine while it is on: the page text of each extracted email
 thread or calendar event (message bodies, subjects, participants as rendered on
-the page, up to `cycle.extract_atoms.max_input_chars`) is sent to the
-configured `extract_atoms` chat model (`models.dream.extract_atoms`, a
-utility-tier model by default), under the caps above. Atoms already extracted
-stay; opting out only stops new extraction. A page longer than that cap is read
-once up to the cap: its head atoms are kept, the phase reports it under
-`input_truncated` with a stderr line, and the page is not marked complete; it
-is skipped (not re-spent) until you raise the cap or the page changes.
+the page) is sent to the configured `extract_atoms` chat model
+(`models.dream.extract_atoms`, a utility-tier model by default), under the caps
+above. Atoms already extracted stay; opting out only stops new extraction. Each
+call carries at most `cycle.extract_atoms.max_input_chars` characters: a longer
+page is read in full as overlapping windows, one call per window, and is marked
+complete only after every window succeeded. A window that fails leaves the page
+retryable, and the windows that succeeded are not paid for again.
 
 ### Life Chronicle: automatic event extraction
 

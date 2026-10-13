@@ -592,7 +592,7 @@ describe('#2144: zero-yield tombstone', () => {
 //   cycle.extract_atoms.page_discovery_budget caps discovery LIMIT
 //   cycle.extract_atoms.max_source_chars truncates the prompt payload
 describe('local extract-atoms config knobs', () => {
-  test('page_discovery_budget caps discovery; max_source_chars truncates the prompt slice', async () => {
+  test('page_discovery_budget caps discovery; max_source_chars bounds each window and the page is read in full (#6503)', async () => {
     await engine.setConfig('cycle.extract_atoms.page_discovery_budget', '1');
     await engine.setConfig('cycle.extract_atoms.max_source_chars', '600');
     await seedPage({ slug: 'note/knob-1', type: 'note', compiled_truth: 'z'.repeat(2000) });
@@ -620,11 +620,15 @@ describe('local extract-atoms config knobs', () => {
 
     // Discovery honored the configured budget: 2 eligible pages, 1 processed.
     expect(result.details.pages_processed).toBe(1);
-    expect(captured.length).toBe(1);
-    // Payload inside the <transcript> wrapper is sliced to the
-    // configured max_source_chars (default would have been 50_000 → 2000 z's).
-    const body = /<transcript>\n([\s\S]*)\n<\/transcript>/.exec(captured[0])?.[1] ?? '';
-    expect(body).toBe('z'.repeat(600));
+    // #6503: each payload inside the <transcript> wrapper stays within the
+    // configured max_source_chars (default would have been 50_000 → one call
+    // on 2000 z's), and the page is read in full as overlapping windows.
+    expect(captured.length).toBe(5);
+    const bodies = captured.map(c => /<transcript>\n([\s\S]*)\n<\/transcript>/.exec(c)?.[1] ?? '');
+    expect(bodies[0]).toBe('z'.repeat(600));
+    for (const body of bodies) expect(body.length).toBeLessThanOrEqual(600);
+    expect(captured[4]).toContain('window 5 of 5');
+    expect(captured[4]).toContain('-2000 of 2000');
   }, 30_000);
 });
 
@@ -699,13 +703,15 @@ describe('local extract-atoms config knobs — invalid-value fallbacks', () => {
     expect(body).toBe('z'.repeat(2000)); // default 50_000 → no truncation
   }, 30_000);
 
-  test("max_source_chars: '500' (at the floor) accepted — payload sliced to 500", async () => {
+  test("max_source_chars: '500' (at the floor) accepted — windows of at most 500", async () => {
     await engine.setConfig('cycle.extract_atoms.max_source_chars', '500');
     await seedPage({ slug: 'note/floor-accept', type: 'note', compiled_truth: 'z'.repeat(2000) });
     const captured: string[] = [];
     await runPhaseExtractAtoms(engine, { _transcripts: [], _chat: capturingChat(captured) as never });
-    expect(captured.length).toBe(1);
-    const body = /<transcript>\n([\s\S]*)\n<\/transcript>/.exec(captured[0])?.[1] ?? '';
-    expect(body).toBe('z'.repeat(500));
+    // #6503: 2000 chars at a 500 cap with a 125-char overlap is five windows.
+    expect(captured.length).toBe(5);
+    const bodies = captured.map(c => /<transcript>\n([\s\S]*)\n<\/transcript>/.exec(c)?.[1] ?? '');
+    expect(bodies[0]).toBe('z'.repeat(500));
+    for (const body of bodies) expect(body.length).toBeLessThanOrEqual(500);
   }, 30_000);
 });

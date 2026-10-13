@@ -1,26 +1,28 @@
 /**
- * #6503: the extract_atoms input cap and what a cut item becomes.
+ * #6503: the extract_atoms input cap and how an item longer than it is read.
  *
- * The model reads at most `cycle.extract_atoms.max_input_chars` characters of
- * an item (`cycle.extract_atoms.max_source_chars` is the older spelling of the
- * same knob). Before this module the cut was silent and the item was then
- * stamped complete on its full content hash, so the tail was never read and a
- * re-extraction could retire the atoms an earlier, larger-cap extraction had
- * produced from it. A cut item now gets a *partial disposition*: its head is
- * extracted once and the atoms are published, but no completion stamp is
- * written and no absent atom is retired. The disposition is recorded under
- * (content hash, cap) in `extract_atoms_page_state` /
- * `extract_atoms_transcript_state` (`partial_input_chars`) or, on a managed
- * brain, in the item's `managed-atoms` checkpoint (`partial`), so discovery
- * skips the item (it is not re-spent) until the cap rises or the content
- * changes. `releasePartialDispositions` runs before discovery with the current
- * cap and clears the records a raised cap supersedes.
+ * The model reads at most `cycle.extract_atoms.max_input_chars` characters per
+ * call (`cycle.extract_atoms.max_source_chars` is the older spelling of the
+ * same knob). An item that fits is one call on its whole text, as it always
+ * was. A longer item is split into overlapping windows that each fit the cap
+ * (text-windows.ts), one call per window, so the model reads every character:
+ * nothing is cut. Quote provenance is verified inside the window the model
+ * read and its offsets are mapped back onto the full text, and the item is
+ * stamped complete only after every window settled (extract-atoms.ts, with
+ * the per-window idempotency in extract-atoms-windows.ts).
+ *
+ * v0.60.189.0 cut such items at the cap and gave them a *partial disposition*
+ * (`partial_input_chars` in `extract_atoms_page_state` /
+ * `extract_atoms_transcript_state`, or `partial` on a managed `managed-atoms`
+ * checkpoint) so discovery skipped them until the cap rose. Windowing reads
+ * the whole item at any cap, so `releasePartialDispositions` clears every
+ * such record before discovery and those items are extracted in full.
  */
 import type { BrainEngine } from '../engine.ts';
-import type { SqlEngine } from '../persistence/model.ts';
-import { truncateUtf8 } from '../text-safe.ts';
 import { corpusTextForExtraction } from '../context/corpus-segments.ts';
-import { AtomPageStateError, type AtomPageInput } from './extract-atoms-page-state.ts';
+import { planTextWindows, type TextWindow } from '../text-windows.ts';
+import { ATOM_WINDOW_OVERLAP_CHARS } from './extract-atoms-windows.ts';
+import type { AtomPageInput } from './extract-atoms-page-state.ts';
 
 export const DEFAULT_EXTRACT_MAX_INPUT_CHARS = 50_000;
 export const EXTRACT_MAX_INPUT_CHARS_KEY = 'cycle.extract_atoms.max_input_chars';
@@ -47,53 +49,48 @@ export type ExtractAtomsItem =
   | ({ kind: 'page' } & AtomPageInput);
 
 export interface ExtractAtomsInput {
-  /** Exactly the text the model receives; quote provenance verifies against it. */
-  promptContent: string;
-  /** The text was longer than the cap: the model does not read its tail. */
-  truncated: boolean;
-  /** Characters of the text the cap applied to (post paste-strip for a transcript). */
+  /** The full extraction text (post paste-strip for a transcript); stored quote offsets index it. */
+  text: string;
+  /**
+   * The model calls. One window holding `text` unchanged when it fits the cap
+   * (the historical single call); otherwise overlapping windows, each within
+   * the cap, whose union is `text`.
+   */
+  windows: TextWindow[];
+  /** Characters of `text`. */
   inputChars: number;
 }
 
 /**
- * Bind the cut once. Pastes are stripped from a transcript first (#5812), the
- * cap is applied UTF-8-safely (#4529/#4540: a bare slice can split a
- * surrogate pair), and `truncated` is measured on the text the cap applied to.
+ * Plan the item's model calls once. Pastes are stripped from a transcript
+ * first (#5812); windows never split a surrogate pair (#4529/#4540).
  */
 export function extractAtomsInput(item: ExtractAtomsItem, maxInputChars: number): ExtractAtomsInput {
   const text = item.kind === 'transcript' ? corpusTextForExtraction(item.filePath, item.content) : item.content;
-  const promptContent = truncateUtf8(text, maxInputChars);
-  return { promptContent, truncated: promptContent.length < text.length, inputChars: text.length };
-}
-
-/** The one stderr line per cut item; names the knob that raises the cap. */
-export function inputTruncatedLine(originLabel: string, input: ExtractAtomsInput, maxInputChars: number): string {
-  return `[extract_atoms] ${originLabel}: input truncated to ${maxInputChars} of ${input.inputChars} chars; the model did not read the tail. ` +
-    `Atoms from the head are kept, the item is not marked complete and is skipped until the cap rises: gbrain config set ${EXTRACT_MAX_INPUT_CHARS_KEY} <n>`;
+  return { text, windows: planTextWindows(text, maxInputChars, ATOM_WINDOW_OVERLAP_CHARS), inputChars: text.length };
 }
 
 /**
- * Clear the partial dispositions a raised cap supersedes, so the items they
- * covered are offered again by this run's discovery. Rows recorded at or
- * above the current cap stay (the model would read the same text again).
+ * Clear every partial disposition v0.60.189.0 recorded for a cut item, so
+ * this run's discovery offers those items again and reads them in full.
  * Fail-soft: a failed release leaves the items skipped, never re-spent.
  */
-export async function releasePartialDispositions(engine: BrainEngine, sourceId: string, maxInputChars: number): Promise<void> {
+export async function releasePartialDispositions(engine: BrainEngine, sourceId: string): Promise<void> {
   try {
     await engine.executeRaw(
       `UPDATE extract_atoms_page_state scan SET partial_input_chars=NULL, updated_at=now()
-         FROM sources s WHERE s.id=$1 AND scan.source_incarnation=s.incarnation AND scan.partial_input_chars < $2`,
-      [sourceId, maxInputChars]);
+         FROM sources s WHERE s.id=$1 AND scan.source_incarnation=s.incarnation AND scan.partial_input_chars IS NOT NULL`,
+      [sourceId]);
     await engine.executeRaw(
       `UPDATE extract_atoms_transcript_state SET partial_input_chars=NULL, updated_at=now()
-        WHERE source_id=$1 AND partial_input_chars < $2`,
-      [sourceId, maxInputChars]);
+        WHERE source_id=$1 AND partial_input_chars IS NOT NULL`,
+      [sourceId]);
     await engine.executeRaw(
       `DELETE FROM op_checkpoints WHERE op='managed-atoms' AND completed_keys->0->>'sourceId'=$1
-         AND (completed_keys->0->>'partial')::integer < $2`,
-      [sourceId, maxInputChars]);
+         AND completed_keys->0->>'partial' IS NOT NULL`,
+      [sourceId]);
   } catch (err) {
-    console.error(`[extract_atoms] partial-disposition release failed (cut items stay skipped): ${err instanceof Error ? err.message : String(err)}`);
+    console.error(`[extract_atoms] partial-disposition release failed (items cut by an earlier version stay skipped): ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -114,38 +111,4 @@ export async function stampTranscriptTombstone(engine: BrainEngine, sourceId: st
        ON CONFLICT (source_id, file_path, content_hash) DO UPDATE SET tombstoned = TRUE, updated_at = now()`,
       [sourceId, filePath, contentHash.slice(0, 16)]);
   } catch { /* fail-soft: transcript stays rediscoverable */ }
-}
-
-/**
- * Record an unmanaged item's partial disposition under its current content
- * and the cap it was read under. The page row is pinned to the page identity
- * discovery read (the same predicate `writeAtomPageState` uses), so a page
- * that changed under the run records nothing and stays retryable.
- */
-export async function recordPartialDisposition(engine: SqlEngine, sourceId: string, item: ExtractAtomsItem, maxInputChars: number): Promise<void> {
-  if (item.kind === 'transcript') {
-    await engine.executeRaw(
-      `INSERT INTO extract_atoms_transcript_state (source_id, file_path, content_hash, fail_count, tombstoned, partial_input_chars, updated_at)
-       VALUES ($1, $2, $3, 0, FALSE, $4, now())
-       ON CONFLICT (source_id, file_path, content_hash) DO UPDATE SET partial_input_chars=EXCLUDED.partial_input_chars, updated_at=now()`,
-      [sourceId, item.filePath, item.contentHash.slice(0, 16), maxInputChars]);
-    return;
-  }
-  if (!item.identity) throw new AtomPageStateError('unpinned');
-  const rows = await engine.executeRaw(
-    `INSERT INTO extract_atoms_page_state (source_incarnation, page_id, content_hash, fail_count, tombstoned, partial_input_chars)
-      SELECT s.incarnation, p.id, p.content_hash, 0, false, $8::integer
-      FROM pages p JOIN sources s ON s.id=p.source_id
-      WHERE p.id=$1 AND s.incarnation=$2::uuid AND p.source_id=$3 AND p.slug=$4
-        AND p.content_hash=$5 AND p.knowledge_revision=$6::uuid AND p.compiled_truth=$7 AND p.deleted_at IS NULL
-      FOR SHARE OF p, s
-      ON CONFLICT (source_incarnation, page_id, content_hash) DO UPDATE
-        SET partial_input_chars=EXCLUDED.partial_input_chars, updated_at=now()
-      RETURNING page_id`,
-    [item.identity.pageId, item.identity.sourceIncarnation, sourceId, item.slug, item.contentHash, item.identity.revision, item.content, maxInputChars])
-    .catch((error: unknown) => {
-      const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
-      throw new AtomPageStateError(code === '42P01' ? 'schema' : code === '42501' ? 'denied' : 'storage');
-    });
-  if (!rows.length) throw new AtomPageStateError('changed');
 }

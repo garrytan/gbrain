@@ -132,29 +132,30 @@ describe('runPhaseExtractAtoms — failure classes (gbrain#4148)', () => {
     }
   });
 
-  test('prompt truncation never splits a UTF-16 surrogate pair', async () => {
+  test('a window boundary never splits a UTF-16 surrogate pair, and the tail still reaches the model (#6503)', async () => {
     await seedPage('note/surrogate-boundary');
     const content = `${'a'.repeat(49_999)}💡trailing prose`;
-    let capturedPrompt = '';
+    const capturedPrompts: string[] = [];
 
     await runPhaseExtractAtoms(engine, {
       sourceId: 'default',
       _transcripts: [],
       _pages: [{ slug: 'note/surrogate-boundary', content, contentHash: HASH_A }],
       _chat: async (opts: ChatOpts) => {
-        capturedPrompt = String(opts.messages[0]?.content);
+        capturedPrompts.push(String(opts.messages[0]?.content));
         return okChatResult('[]');
       },
     });
 
     expect(content.slice(0, 50_000).isWellFormed()).toBe(false); // positive control
-    expect(capturedPrompt.isWellFormed()).toBe(true);
-    // Truncation must actually occur (not a no-op that trivially passes well-formedness):
-    // the straddling pair moves the safe cut back to 49,999 'a's, dropping both the emoji
-    // and the trailing prose from the sent prompt entirely.
-    expect(capturedPrompt).not.toContain('trailing prose');
-    expect(capturedPrompt).toContain('a'.repeat(49_999));
-    expect(/<transcript>\n([\s\S]*)\n<\/transcript>/.exec(capturedPrompt)?.[1]).toBe('a'.repeat(49_999));
+    // Two windows: the boundary backs off the straddling pair, so the first
+    // window holds exactly the 49,999 'a's and the emoji opens nothing broken.
+    expect(capturedPrompts).toHaveLength(2);
+    for (const prompt of capturedPrompts) expect(prompt.isWellFormed()).toBe(true);
+    const bodies = capturedPrompts.map(prompt => /<transcript>\n([\s\S]*)\n<\/transcript>/.exec(prompt)?.[1]);
+    expect(bodies[0]).toBe('a'.repeat(49_999));
+    // Nothing is cut: the tail, emoji intact, is in the second window.
+    expect(bodies[1]?.endsWith('💡trailing prose')).toBe(true);
   });
 
   test('malformed output is a counted failure, NOT a zero-yield tombstone', async () => {
