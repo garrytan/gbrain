@@ -30,6 +30,7 @@ import { compileRowNormalizer } from './normalize.ts';
 import { projectionEligibleSql } from '../eligibility/sql.ts';
 import { privateProvenanceFilterFragment } from '../search/private-visibility.ts';
 import { storedTrustTier } from '../trust/tier.ts';
+import { ensureWellFormed } from '../text-safe.ts';
 
 export type EmbeddingCast = '::vector' | '::halfvec';
 
@@ -158,6 +159,77 @@ export async function expireFact(exec: SqlExecutor, id: number, opts?: { superse
     return result.affectedRows > 0;
   }
 
+/** Rows per multi-row fact INSERT: facts carries per-row triggers, and each statement runs under the publication's 5 s statement_timeout. */
+const FACT_INSERT_CHUNK = 500;
+
+const factRowKey = (slug: string, rowNum: number | null) => `${slug}\u0000${rowNum}`;
+
+/** A string bound inside a JSONB document: a lone surrogate becomes U+FFFD, as UTF-8 parameter encoding did for the per-row INSERT. */
+const wellFormed = <T extends string | null | undefined>(s: T): T => (typeof s === 'string' ? ensureWellFormed(s) as T : s);
+
+/**
+ * #6574: inserts fact rows in chunks of FACT_INSERT_CHUNK with one statement
+ * each. Returns each input's new id, aligned to `rows`, or null when the v51
+ * ON CONFLICT DO NOTHING skipped it; within a chunk the first input for a
+ * (slug, row_num) wins, as the per-row loop's order did.
+ */
+async function insertFactRows(tx: SqlExecutor, castSuffix: EmbeddingCast,
+  rows: ReadonlyArray<NewFact & { row_num: number; source_markdown_slug: string }>, sourceId: string): Promise<Array<number | null>> {
+  const rowIds: Array<number | null> = [];
+  for (let at = 0; at < rows.length; at += FACT_INSERT_CHUNK) {
+    const chunk = rows.slice(at, at + FACT_INSERT_CHUNK).map((input, ord) => {
+      const embedding = input.embedding ?? null;
+      return {
+        entity_slug: wellFormed(input.entity_slug ?? null), fact: wellFormed(input.fact), kind: input.kind ?? 'fact',
+        visibility: input.visibility ?? 'private', notability: input.notability ?? 'medium', context: wellFormed(input.context ?? null),
+        valid_from: (input.valid_from ?? new Date()).toISOString(), valid_until: input.valid_until?.toISOString() ?? null,
+        expired_at: input.expired_at?.toISOString() ?? null, source: wellFormed(input.source), source_session: wellFormed(input.source_session ?? null),
+        confidence: input.confidence ?? 1.0, embedding: embedding ? toPgVectorLiteral(embedding) : null,
+        embedded_at: embedding ? new Date().toISOString() : null, embedding_model: embedding ? wellFormed(input.embedding_model ?? null) : null,
+        hash_text: embedding && input.embedding_model ? wellFormed(input.fact) : null,
+        row_num: input.row_num, source_markdown_slug: wellFormed(input.source_markdown_slug),
+        claim_metric: wellFormed(input.claim_metric ?? null), claim_value: input.claim_value ?? null, claim_unit: wellFormed(input.claim_unit ?? null),
+        claim_period: wellFormed(input.claim_period ?? null), event_type: wellFormed(input.event_type ?? null), attributed_to: input.attributed_to ?? null, ord,
+      };
+    });
+    const inserted = (await tx.run<{ id: number; source_markdown_slug: string; row_num: number | null }>(sqlFragment`
+      INSERT INTO facts (
+        source_id, entity_slug, fact, kind, visibility, notability, context,
+        valid_from, valid_until, expired_at, source, source_session, confidence,
+        embedding, embedded_at, embedding_model, embedded_text_hash,
+        row_num, source_markdown_slug,
+        claim_metric, claim_value, claim_unit, claim_period,
+        event_type, attributed_to
+      )
+      SELECT ${sourceId}, r.entity_slug, r.fact, r.kind, r.visibility, r.notability, r.context,
+        r.valid_from::timestamptz, r.valid_until::timestamptz, r.expired_at::timestamptz, r.source, r.source_session, r.confidence,
+        ${castSuffix === '::halfvec' ? trustedSql('r.embedding::halfvec') : trustedSql('r.embedding::vector')}, r.embedded_at::timestamptz, r.embedding_model, md5(r.hash_text),
+        r.row_num, r.source_markdown_slug,
+        r.claim_metric, r.claim_value, r.claim_unit, r.claim_period,
+        r.event_type, r.attributed_to
+      FROM jsonb_to_recordset(${JSON.stringify(chunk)}::text::jsonb) AS r(
+        entity_slug text, fact text, kind text, visibility text, notability text, context text,
+        valid_from text, valid_until text, expired_at text, source text, source_session text, confidence real,
+        embedding text, embedded_at text, embedding_model text, hash_text text,
+        row_num integer, source_markdown_slug text,
+        claim_metric text, claim_value double precision, claim_unit text, claim_period text,
+        event_type text, attributed_to text, ord integer)
+      ORDER BY r.ord
+      ON CONFLICT (source_id, source_markdown_slug, row_num)
+      WHERE row_num IS NOT NULL
+      DO NOTHING
+      RETURNING id, source_markdown_slug, row_num
+    `)).rows;
+    const byKey = new Map<string, number[]>();
+    for (const row of inserted) {
+      const key = factRowKey(row.source_markdown_slug, row.row_num == null ? null : Number(row.row_num));
+      byKey.set(key, [...(byKey.get(key) ?? []), Number(row.id)]);
+    }
+    for (const input of chunk) rowIds.push(byKey.get(factRowKey(input.source_markdown_slug, input.row_num ?? null))?.shift() ?? null);
+  }
+  return rowIds;
+}
+
 export async function insertFacts(
   exec: SqlExecutor,
   resolveCast: ResolveEmbeddingCast | undefined,
@@ -176,9 +248,7 @@ export async function insertFacts(
     // deleteForPageFirst runs; stays 0 for the standalone insert path.
     let deleted = 0;
     // Single transaction so the v51 partial UNIQUE index can roll back
-    // the whole batch on constraint violation. Per-row INSERTs (not
-    // multi-row VALUES) keep the embedding-vs-no-embedding branching
-    // readable; batch sizes are small (5-30 rows per page in practice).
+    // the whole batch on constraint violation.
     // v0.46 (#3014): the fence path carries struck rows — `expired_at` is
     // stamped inline here, and `superseded by #N` references are resolved
     // to `facts.superseded_by` in a second pass below (same transaction).
@@ -214,58 +284,11 @@ export async function insertFacts(
           deleted = r.affectedRows;
         }
       }
-      const out: number[] = [];
-      // Per-input inserted id, aligned to `rows` (null when the v51
-      // ON CONFLICT DO NOTHING skipped the row) — the second pass below
-      // must not index `out` positionally, or a skipped row would shift
-      // every later UPDATE onto the wrong fact.
-      const rowIds: Array<number | null> = [];
-      for (const input of rows) {
-        const validFrom = input.valid_from ?? new Date();
-        const validUntil = input.valid_until ?? null;
-        const expiredAt = input.expired_at ?? null;
-        const kind = input.kind ?? 'fact';
-        const visibility = input.visibility ?? 'private';
-        const notability = input.notability ?? 'medium';
-        const confidence = input.confidence ?? 1.0;
-        const entitySlug = input.entity_slug ?? null;
-        const context = input.context ?? null;
-        const sourceSession = input.source_session ?? null;
-        const embedding = input.embedding ?? null;
-        const embeddedAt = embedding ? new Date() : null;
-        const embedLit = embedding ? toPgVectorLiteral(embedding) : null;
-        // v0.35.4 (D-CDX-5) — typed-claim columns. All four nullable.
-        const claimMetric = input.claim_metric ?? null;
-        const claimValue  = input.claim_value  ?? null;
-        const claimUnit   = input.claim_unit   ?? null;
-        const claimPeriod = input.claim_period ?? null;
-        // v0.40.2.0 — event_type column (Commit 1 migration v89).
-        const eventType   = input.event_type   ?? null;
-
-        const ins = (await tx.run<{ id: number }>(sqlFragment`
-          INSERT INTO facts (
-            source_id, entity_slug, fact, kind, visibility, notability, context,
-            valid_from, valid_until, expired_at, source, source_session, confidence,
-            embedding, embedded_at, embedding_model, embedded_text_hash,
-            row_num, source_markdown_slug,
-            claim_metric, claim_value, claim_unit, claim_period,
-            event_type, attributed_to
-          ) VALUES (
-            ${ctx.source_id}, ${entitySlug}, ${input.fact}, ${kind}, ${visibility}, ${notability}, ${context},
-            ${validFrom}, ${validUntil}, ${expiredAt}, ${input.source}, ${sourceSession}, ${confidence},
-            ${embedLit === null ? null : trustedSql(vectorLiteralSql(embedLit, castSuffix))}, ${embeddedAt}, ${embedding ? input.embedding_model ?? null : null}, ${embedding && input.embedding_model ? sqlFragment`md5(${input.fact})` : null},
-            ${input.row_num}, ${input.source_markdown_slug},
-            ${claimMetric}, ${claimValue}, ${claimUnit}, ${claimPeriod},
-            ${eventType}, ${input.attributed_to ?? null}
-          )
-          ON CONFLICT (source_id, source_markdown_slug, row_num)
-          WHERE row_num IS NOT NULL
-          DO NOTHING
-          RETURNING id
-        `)).rows;
-        if (ins[0]) out.push(Number(ins[0].id));
-        rowIds.push(ins[0] ? Number(ins[0].id) : null);
-      }
+      // #6574: one INSERT per chunk of rows, not one per row. A publication
+      // over a high-latency link paid a round trip per fact row; a 1,000-row
+      // fence took a minute before anything else ran.
+      const rowIds = await insertFactRows(tx, castSuffix, rows, ctx.source_id);
+      const out = rowIds.filter((id): id is number => id !== null);
 
       // v0.46 (#3014) — second pass: resolve `superseded by #N` page-local
       // references to fact ids. Same transaction so a target row inserted
@@ -274,37 +297,45 @@ export async function insertFacts(
       // against a target that already existed before this batch. A target
       // whose `expired_at` is set resolves only when it is itself superseded
       // (an A -> B -> C chain), declared in this batch or already linked in
-      // the DB.
+      // the DB. Every target is read in one statement and every link written
+      // in one more (#6574).
+      const refs = rows.flatMap((row, i) => row.superseded_by_row !== undefined && rowIds[i] !== null && isInt4RowRef(row.superseded_by_row)
+        ? [{ slug: row.source_markdown_slug, row_num: row.superseded_by_row }] : []);
+      const targets = new Map<string, { id: number; struck: boolean; next_row: number | null }>();
+      if (refs.length) {
+        const found = (await tx.run<{ slug: string; row_num: number; id: number; expired_at: Date | null; next_row: number | null }>(sqlFragment`
+          SELECT f.source_markdown_slug AS slug, f.row_num, f.id, f.expired_at, n.row_num AS next_row FROM facts f
+          JOIN (SELECT DISTINCT slug, row_num FROM jsonb_to_recordset(${JSON.stringify(refs)}::text::jsonb) AS r(slug text, row_num integer)) t
+            ON f.source_markdown_slug = t.slug AND f.row_num = t.row_num
+          LEFT JOIN facts n ON n.id = f.superseded_by
+          WHERE f.source_id = ${ctx.source_id}
+        `)).rows;
+        for (const t of found) targets.set(factRowKey(t.slug, Number(t.row_num)),
+          { id: Number(t.id), struck: t.expired_at != null, next_row: t.next_row == null ? null : Number(t.next_row) });
+      }
+      const links: Array<{ id: number; superseded_by: number }> = [];
       for (let i = 0; i < rows.length; i++) {
         const targetRow = rows[i].superseded_by_row;
         if (targetRow === undefined || rowIds[i] === null) continue;
         const slug = rows[i].source_markdown_slug;
         const chain = supersessionChainOf(rows, slug);
-        // Only look up an int4-safe target. An absurd `#N` (11+ digits)
-        // would overflow the `row_num` comparison and abort the cycle;
-        // skipping the lookup leaves `target` undefined, so
-        // resolveSupersededByRow treats it as a dangling reference (NULL +
-        // warning) instead of throwing.
-        let target: SupersedeTarget | undefined;
-        if (isInt4RowRef(targetRow)) {
-          const found = (await tx.run<{ id: number; expired_at: Date | null; next_row: number | null }>(sqlFragment`
-            SELECT f.id, f.expired_at, n.row_num AS next_row FROM facts f
-            LEFT JOIN facts n ON n.id = f.superseded_by
-            WHERE f.source_id = ${ctx.source_id}
-              AND f.source_markdown_slug = ${slug}
-              AND f.row_num = ${targetRow}
-            LIMIT 1
-          `)).rows;
-          target = found[0]
-            ? { id: Number(found[0].id), struck: found[0].expired_at != null }
-            : undefined;
-          if (found[0]?.next_row != null && !chain.has(targetRow)) chain.set(targetRow, Number(found[0].next_row));
-        }
+        // Only an int4-safe target was looked up. An absurd `#N` (11+ digits)
+        // leaves `target` undefined, so resolveSupersededByRow treats it as a
+        // dangling reference (NULL + warning) instead of throwing.
+        const found = isInt4RowRef(targetRow) ? targets.get(factRowKey(slug, targetRow)) : undefined;
+        const target: SupersedeTarget | undefined = found ? { id: found.id, struck: found.struck } : undefined;
+        if (found?.next_row != null && !chain.has(targetRow)) chain.set(targetRow, found.next_row);
         const { superseded_by, warning } = resolveSupersededByRow(rows[i].row_num, targetRow, target, slug, chain);
         if (warning) warnings.push(warning);
-        if (superseded_by !== null) {
-          (await tx.run(sqlFragment`UPDATE facts SET superseded_by = ${superseded_by} WHERE id = ${rowIds[i]}`)).rows;
-        }
+        if (superseded_by === null) continue;
+        links.push({ id: rowIds[i]!, superseded_by });
+        // A later reference to this row sees the link, as the per-row reads did.
+        const own = targets.get(factRowKey(slug, rows[i].row_num));
+        if (own) own.next_row = targetRow;
+      }
+      if (links.length) {
+        await tx.run(sqlFragment`UPDATE facts f SET superseded_by = l.superseded_by
+          FROM jsonb_to_recordset(${JSON.stringify(links)}::text::jsonb) AS l(id bigint, superseded_by bigint) WHERE f.id = l.id`);
       }
       return out;
     });

@@ -126,7 +126,9 @@ jobs:
           path: ~/.bun/install/cache
           key: bun-cache-${{ runner.os }}-${{ hashFiles('bun.lock', 'admin/bun.lock') }}
           restore-keys: bun-cache-${{ runner.os }}-
-      - run: bun install --frozen-lockfile --ignore-scripts
+      - name: Install dependencies (bounded, retried once)
+        timeout-minutes: 8
+        run: bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
       # Supply-chain: build the admin UI FRESH from admin/src so the compiled
       # binary embeds a bundle a reviewer can trace to source — not the committed
       # admin/dist bytes. `build:admin` runs `vite build` then regenerates
@@ -287,7 +289,9 @@ jobs:
           key: bun-cache-${{ runner.os }}-${{ hashFiles('bun.lock') }}
           restore-keys: bun-cache-${{ runner.os }}-
       - if: steps.gate.outputs.publish == 'true'
-        run: bun install --frozen-lockfile
+        name: Install dependencies (bounded, retried once)
+        timeout-minutes: 8
+        run: bun scripts/ci-bun-install.ts --frozen-lockfile
       - if: steps.gate.outputs.publish == 'true'
         name: Generate template tree and byte-diff against the vendored copy
         run: |
@@ -361,7 +365,9 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
           bun-version: 1.4.3
-      - run: bun install --frozen-lockfile
+      - name: Install dependencies (bounded, retried once)
+        timeout-minutes: 8
+        run: bun scripts/ci-bun-install.ts --frozen-lockfile
       - name: Drift gate — committed plugin tree matches the generator
         run: bash scripts/check-plugin-tree.sh
       - name: Assemble the plugin dist tree

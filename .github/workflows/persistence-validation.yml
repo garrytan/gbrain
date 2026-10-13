@@ -35,7 +35,9 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: ${{ matrix.bun }}
-      - run: bun install --frozen-lockfile --ignore-scripts
+      - name: Install dependencies (bounded, retried once)
+        timeout-minutes: 8
+        run: bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
       - name: Require valid workloads; report the p99 ratio as advisory
         env:
           DATABASE_URL: postgres://gbrain_test:gbrain_test@127.0.0.1:5432/gbrain_test
@@ -88,7 +90,9 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: ${{ matrix.bun }}
-      - run: bun install --frozen-lockfile --ignore-scripts
+      - name: Install dependencies (bounded, retried once)
+        timeout-minutes: 8
+        run: bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
       - name: Execute all 24 deployment cases and owner transfer fencing
         env:
           DATABASE_URL: postgres://gbrain_test:gbrain_test@127.0.0.1:5432/gbrain_test
@@ -197,7 +201,9 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: ${{ matrix.bun }}
-      - run: bun install --frozen-lockfile --ignore-scripts
+      - name: Install dependencies (bounded, retried once)
+        timeout-minutes: 8
+        run: bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
       - name: Require PostgreSQL arms of unit-lane suites
         timeout-minutes: 20
         shell: bash
@@ -281,7 +287,9 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: ${{ matrix.bun }}
-      - run: bun install --frozen-lockfile --ignore-scripts
+      - name: Install dependencies (bounded, retried once)
+        timeout-minutes: 8
+        run: bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
       # Named exception (docs/TESTING.md#event-parity): pull requests and merge-queue
       # runs soak 2,500 writes; pushes to master, the nightly Test schedule and manual
       # runs cover the full 10,000-write gate, whose PGLite run alone takes 15-28 minutes.
@@ -347,7 +355,9 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: ${{ matrix.bun }}
-      - run: bun install --frozen-lockfile --ignore-scripts
+      - name: Install dependencies (bounded, retried once)
+        timeout-minutes: 8
+        run: bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
       # The service password reaches every client through PGPASSWORD, so the URLs carry none.
       # Named exception (docs/TESTING.md#event-parity): ROBOT_SECONDS is 150 on pull
       # requests and merge-queue runs; pushes to master, the nightly Test schedule and
@@ -411,7 +421,9 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: ${{ matrix.bun }}
-      - run: bun install --frozen-lockfile --ignore-scripts
+      - name: Install dependencies (bounded, retried once)
+        timeout-minutes: 8
+        run: bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
       - name: Require all reconciliation crash boundaries before and after activation
         timeout-minutes: 12
         env:

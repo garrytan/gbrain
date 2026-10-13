@@ -48,7 +48,9 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
           bun-version: 1.4.3
-      - run: bun install --frozen-lockfile --ignore-scripts
+      - name: Install dependencies (bounded, retried once)
+        timeout-minutes: 8
+        run: bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
       # #6056: the verify step's typecheck ran cold on every nightly and was
       # killed at the 240 s cap. Restore the incremental tsbuildinfo from the
       # newest earlier run with the same bun.lock + tsconfig.json (rolling

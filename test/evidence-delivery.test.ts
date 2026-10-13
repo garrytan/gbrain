@@ -808,6 +808,13 @@ afterAll(async () => {
   await engine.disconnect();
 }, 240_000);
 
+/** The retrieval meta with its per-call stage timings removed (they differ on every call; present on every one). */
+function sansTimings(meta: Record<string, any> | null): Record<string, any> {
+  const { timings, ...rest } = meta ?? {};
+  expect(timings?.total_ms).toBeGreaterThanOrEqual(0);
+  return rest;
+}
+
 describe('ops', () => {
   test('omitted return_unit with no conversation hit is exactly the chunk response', async () => {
     lastMeta = null;
@@ -819,7 +826,7 @@ describe('ops', () => {
     const offMeta = lastMeta;
     const chunk = await op('search').handler(ctxOf(), { query: 'pricing', return_unit: 'chunk' }) as SearchResult[];
     expect(JSON.stringify(rows)).toBe(JSON.stringify(chunk));
-    expect(JSON.stringify(offMeta)).toBe(JSON.stringify(lastMeta));
+    expect(JSON.stringify(sansTimings(offMeta))).toBe(JSON.stringify(sansTimings(lastMeta)));
   });
 
   test('omitted return_unit delivers conversation pages whole and keeps other hits as their chunks', async () => {
@@ -1146,9 +1153,9 @@ describe('ops', () => {
   test('search.auto_packing selects the packing; the library override wins per call; neither touches a call without a budget', async () => {
     const baseline = async () => {
       const out: string[] = [];
-      out.push(JSON.stringify(await op('search').handler(ctxOf(), { query: 'narwhal' })), JSON.stringify(lastMeta));
-      out.push(JSON.stringify(await op('query').handler(ctxOf(), { query: 'narwhal', expand: false })), JSON.stringify(lastMeta));
-      out.push(JSON.stringify(await op('query').handler(ctxOf(), { query: 'narwhal', return_unit: 'auto', expand: false })), JSON.stringify(lastMeta));
+      out.push(JSON.stringify(await op('search').handler(ctxOf(), { query: 'narwhal' })), JSON.stringify(sansTimings(lastMeta)));
+      out.push(JSON.stringify(await op('query').handler(ctxOf(), { query: 'narwhal', expand: false })), JSON.stringify(sansTimings(lastMeta)));
+      out.push(JSON.stringify(await op('query').handler(ctxOf(), { query: 'narwhal', return_unit: 'auto', expand: false })), JSON.stringify(sansTimings(lastMeta)));
       out.push(JSON.stringify(await op('recall').handler(ctxOf(), { query: 'narwhal' })));
       const hits = await op('search').handler(ctxOf(), { query: 'narwhal', return_unit: 'chunk' }) as SearchResult[];
       out.push(JSON.stringify(await op('assemble_evidence').handler(ctxOf(), { hits: hits.map(h => ({ source_id: h.source_id, slug: h.slug, chunk_id: h.chunk_id })), return_unit: 'auto' })));

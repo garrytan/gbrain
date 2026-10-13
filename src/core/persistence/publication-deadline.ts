@@ -28,6 +28,11 @@ export const PUBLICATION_CEILING_DEFAULT_MS = 5 * 60_000;
 /** After the ceiling: how long before the publication's signal is aborted, and how long after that before `restart_required`. */
 export const PUBLICATION_GRACE_MS = 30_000;
 export const PUBLICATION_SETTLE_MS = 5_000;
+
+/** #6574: the claim lease a publication takes before it opens its transaction: past it, the owner has already reported restart_required. */
+export function publicationLeaseMs(ceilingMs: number, marginMs = 30_000): number {
+  return ceilingMs + PUBLICATION_GRACE_MS + PUBLICATION_SETTLE_MS + marginMs;
+}
 const CEILING_TTL_MS = 5_000;
 
 let ceiling = { value: PUBLICATION_CEILING_DEFAULT_MS, at: 0 };

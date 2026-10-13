@@ -3115,7 +3115,7 @@ More: [docs/guides/write-refusals.md#unclosed_ambiguous_tail](../../docs/guides/
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A canonical skill file mode changed outside publication. | The server failed; this is not a caller mistake. | Server-side failure, not a caller mistake. Run `gbrain doctor --json` on the brain host; if it repeats, report it to the user. | host_admin | `gbrain doctor --json` | 1 | no |
+| A canonical file a write was publishing (or its file mode) matches neither its recorded prior nor its published bytes, so recovery left it untouched and its worktree stays blocked. | Something outside gbrain edited, split or restored the file while its write was publishing or recovering; gbrain never overwrites bytes it cannot account for. | Do not delete the file to unblock it. Inspect the owner (gbrain sources writer status --json shows the request and its blocked reason) and ask the user which version to keep: the bytes on disk, or the request's recorded prior or published bytes. Run: gbrain sources writer status --json | user | `gbrain doctor --json` | 1 | no |
 
 ### unexpected_staging_bytes
 

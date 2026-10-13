@@ -37,7 +37,10 @@ export const KNOB_DESCRIPTIONS: Record<keyof ModeBundle, string> = {
   floor_ratio: 'Floor-ratio gate for metadata boosts (0..1, undefined = off)',
   title_boost: 'Title-phrase boost multiplier (query is a title token-run; 1.0 = off)',
   // v0.46.15 retrieval wave knobs
-  evidence_cosine_floor: 'Cosine floor for evidence high_vector_match (label-only; 0..1)',
+  evidence_cosine_floor: 'Cosine floor for evidence high_vector_match; also decides the rerank gate grade (0..1)',
+  // W3 confidence-gated reranking
+  reranker_gate: 'Confidence-gated reranking: off, or shadow (grade before the reranker, stamp meta.rerank_gate, still rerank)',
+  reranker_gate_min_gap: 'Rerank gate δ: cosine margin rank-1 needs over the best other page to count as a strong vector match (0..1, 0.05 default)',
   autocut_min_top: 'Weak-top floor — autocut no-ops when the top score is below this (0 disables)',
   // v0.36 cross-modal knobs (D3 registry)
   cross_modal_both_text_weight: "D6 'both'-mode RRF weight for text branch (0.6 default)",
@@ -63,6 +66,7 @@ export const KNOB_DESCRIPTIONS: Record<keyof ModeBundle, string> = {
   relational_planner: 'Multi-hop planner: questions chaining 2-3 typed relations walk typed hop chains with evidence (also keyless recall)',
   relational_orient_onehop: 'Typed one-hop walks read edges written on either page by the relation type signature (opt-in; null = follow relational_planner)',
   relational_chain_slots: 'When a multi-hop chain fired, up to this many chain rows (answers, then evidence pages) lead page 1 (0..10; 0 = single evidence slot)',
+  diverse_pool_depth: 'Session-diverse pool before the reranker: each arm fetches at least N candidates, one row per session, the reranker reads at least N (0..100; 0 = off)',
   // Ranker wave (Phase E2) arm-confidence fusion
   keyword_arm_confidence_floor: 'Keyword-arm confidence floor: below this margin ratio the keyword + title lists fuse at half weight (null = off; (0, 1])',
   // Ranker wave (Phase E3) metadata boost gate

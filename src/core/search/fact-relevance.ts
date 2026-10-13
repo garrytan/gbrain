@@ -75,6 +75,8 @@ export interface FactPoolFilters {
   /** Event time, COALESCE(valid_from, created_at). */
   since?: Date;
   grep?: string;
+  /** Also pool expired, superseded and lapsed facts (recall's `include_expired`). */
+  includeExpired?: boolean;
 }
 
 export interface FactPoolOpts {
@@ -120,8 +122,8 @@ function poolPredicate(scope: FactPoolScope, filters: FactPoolFilters | undefine
   const params: unknown[] = [scope.sourceIds?.length ? scope.sourceIds : [scope.sourceId ?? 'default'], [...AUDIT_ROW_SOURCES]];
   const bind = (v: unknown) => { params.push(v); return `$${params.length}`; };
   const clauses = [
-    'f.source_id = ANY($1::text[]) AND f.expired_at IS NULL AND f.superseded_by IS NULL',
-    '(f.valid_until IS NULL OR f.valid_until > now()) AND f.source != ALL($2::text[])',
+    filters?.includeExpired ? 'f.source_id = ANY($1::text[])' : 'f.source_id = ANY($1::text[]) AND f.expired_at IS NULL AND f.superseded_by IS NULL',
+    filters?.includeExpired ? 'f.source != ALL($2::text[])' : '(f.valid_until IS NULL OR f.valid_until > now()) AND f.source != ALL($2::text[])',
     quarantinedProvenanceFilterFragment('f'),
     ...(scope.remote ? [`f.visibility = 'world'`] : []),
     ...(scope.excludePrivate ? [privateProvenanceFilterFragment('f')] : []),
@@ -231,11 +233,12 @@ export async function countUncomparableFacts(engine: BrainEngine, scope: FactPoo
   const column = await factsEmbeddingColumn(engine);
   if (!column) return [];
   const declared = column.dims === dims;
+  const active = filters?.includeExpired ? '' : ' AND f.expired_at IS NULL';
   // Cheap candidates first (idx_facts_unembedded, idx_facts_embedding_model), then the read policy on those rows only.
   const uncomparable = declared
-    ? `SELECT f.id FROM facts f WHERE f.source_id = ANY($1::text[]) AND f.expired_at IS NULL AND (f.embedding IS NULL OR f.embedded_text_hash IS DISTINCT FROM md5(f.fact))
-       UNION SELECT f.id FROM facts f WHERE f.source_id = ANY($1::text[]) AND f.expired_at IS NULL AND (f.embedding_model IS NULL OR f.embedding_model < ${model} OR f.embedding_model > ${model})`
-    : `SELECT f.id FROM facts f WHERE f.source_id = ANY($1::text[]) AND f.expired_at IS NULL AND NOT (${comparable(model, `$${params.length + 2}`)})`;
+    ? `SELECT f.id FROM facts f WHERE f.source_id = ANY($1::text[])${active} AND (f.embedding IS NULL OR f.embedded_text_hash IS DISTINCT FROM md5(f.fact))
+       UNION SELECT f.id FROM facts f WHERE f.source_id = ANY($1::text[])${active} AND (f.embedding_model IS NULL OR f.embedding_model < ${model} OR f.embedding_model > ${model})`
+    : `SELECT f.id FROM facts f WHERE f.source_id = ANY($1::text[])${active} AND NOT (${comparable(model, `$${params.length + 2}`)})`;
   const rows = await customPlan<{ source_id: string; n: number | string }>(engine,
     `WITH u AS MATERIALIZED (${uncomparable})
      SELECT f.source_id, count(*) AS n FROM facts f WHERE f.id IN (SELECT id FROM u) AND ${where}

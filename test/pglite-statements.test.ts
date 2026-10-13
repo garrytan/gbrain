@@ -53,6 +53,22 @@ describe('PGLite named statement cache', () => {
     expect((await db.query<{ label: string }>(select, [3])).rows[0].label).toBe('item-3');
   });
 
+  test('ANALYZE re-prepares statements planned before the table had statistics', async () => {
+    await raw.exec(`CREATE TABLE skew (id int, k int); CREATE INDEX skew_k ON skew (k);
+      INSERT INTO skew SELECT g, CASE WHEN g % 1000 = 0 THEN g ELSE 0 END FROM generate_series(1, 20000) g`);
+    const select = 'SELECT id FROM skew WHERE k = $1';
+    const prepared = async () => (await raw.query<{ name: string }>(
+      'SELECT name FROM pg_prepared_statements WHERE statement = $1', [select])).rows.map(row => row.name);
+    for (let run = 0; run < 8; run++) await db.query(select, [5000]);
+    const before = await prepared();
+    expect(before).toHaveLength(1);
+    await db.query('ANALYZE skew');
+    for (let run = 0; run < 3; run++) expect((await db.query<{ id: number }>(select, [5000])).rows).toEqual([{ id: 5000 }]);
+    const after = await prepared();
+    expect(after).toHaveLength(1);
+    expect(after[0]).not.toBe(before[0]);
+  });
+
   test('errors keep PGlite fields, and transactions roll back and continue', async () => {
     const insert = 'INSERT INTO items(id,label) VALUES ($1,$2)';
     await db.query(insert, [10, 'ten']);

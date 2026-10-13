@@ -28,10 +28,20 @@ export const OFF_PATH_PAGES: Array<{ slug: string; body: string; timeline?: stri
   { slug: 'notes/short', body: 'A short ocelot note.' },
 ];
 
+/**
+ * Per-call stage timings (`retrieval.timings`) are additive and differ on every call; they are pinned in
+ * test/search/stage-timings-ops.test.ts, and the off path compares the rest.
+ */
+function withoutTimings(value: unknown): unknown {
+  if (value === null || typeof value !== 'object' || !('timings' in value)) return value;
+  const { timings: _timings, ...rest } = value as Record<string, unknown>;
+  return rest;
+}
+
 function ctxOf(engine: BrainEngine, meta: Record<string, unknown>[], overrides: Partial<OperationContext> = {}): OperationContext {
   return {
     engine: engine as never, config: {} as never, logger: console as never, dryRun: false, remote: false, sourceId: 'default',
-    emitResponseMeta: (key: string, value: unknown) => { meta.push({ key, value }); },
+    emitResponseMeta: (key: string, value: unknown) => { meta.push({ key, value: key === 'retrieval' ? withoutTimings(value) : value }); },
     ...overrides,
   } as OperationContext;
 }
@@ -91,7 +101,7 @@ export function offPathMcpBytes(res: { content: { type: string; text: string }[]
   // (pinned in test/search-keyword-paging.test.ts and test/search-date-labels.test.ts).
   const content = res.content.filter(c => !/^\[gbrain (notice |search\] |dates\] )/.test(c.text));
   const { gbrain_notices: _notices, ...meta } = res._meta ?? {};
-  if (meta.retrieval) meta.retrieval = withoutCounts(meta.retrieval as Record<string, unknown>);
+  if (meta.retrieval) meta.retrieval = withoutCounts(withoutTimings(meta.retrieval) as Record<string, unknown>);
   return JSON.stringify({ ...res, content, ...(res._meta ? { _meta: Object.keys(meta).length > 0 ? meta : undefined } : {}) });
 }
 

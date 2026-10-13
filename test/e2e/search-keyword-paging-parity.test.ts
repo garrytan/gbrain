@@ -88,11 +88,14 @@ for (const backend of backends) {
       await seedPage(e, 'meetings/sos-1', `${TERM} ${TERM} ${TERM} sos short one.`, { type: 'meeting' });
       await seedPage(e, 'meetings/sos-2', `${TERM} sos oversized middle. ${'Filler sentence about logistics planning. '.repeat(400)}`, { type: 'meeting' });
       await seedPage(e, 'meetings/sos-3', `${TERM} sos short three.`, { type: 'meeting' });
+      // Delivery's own omission contract, without W5's whole-page cut (default on), which stops at the oversized page.
+      await e.setConfig('search.page_rank_cut', 'off');
       try {
         const page = await callSearch(e, { query: `${TERM} sos`, match: 'keyword', types: ['meeting'], return_unit: 'page', token_budget: 60 });
         expect(page.rows.map(r => r.slug)).toEqual(['meetings/sos-1', 'meetings/sos-2', 'meetings/sos-3']);
         expect(page.rows.filter(r => r.evidence_omitted).map(r => r.slug)).toEqual(['meetings/sos-2']);
       } finally {
+        await e.unsetConfig('search.page_rank_cut');
         await e.executeRaw(`DELETE FROM pages WHERE slug LIKE 'meetings/sos-%'`);
       }
     });

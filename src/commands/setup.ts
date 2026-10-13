@@ -24,7 +24,9 @@
  */
 import { realpathSync } from 'node:fs';
 import { opError, OperationError } from '../core/ops/contract.ts';
-import { renderCliError, type Action } from '../core/agent-output.ts';
+import { cliRenderContext, renderCliError, renderNotice, type Action, type Notice } from '../core/agent-output.ts';
+import { writeCliNotices } from '../core/interop-notices.ts';
+import { setupFirstRunNotices } from './init-first-run.ts';
 import { writeJsonDocument } from '../core/cli-force-exit.ts';
 import { configDir, gbrainPath, loadConfig, type GBrainConfig } from '../core/config.ts';
 import { resolveGbrainBin } from '../core/gbrain-bin.ts';
@@ -364,7 +366,7 @@ export async function runSetup(args: string[]): Promise<number> {
     }
 
     const brainCreate = !cfg;
-    const initArgv = [launcher, 'init', '--pglite', ...(consent.providers.value === 'accepted' ? [] : ['--no-embedding']), ...(out.json ? ['--json'] : [])];
+    const initArgv = [launcher, 'init', '--pglite', ...(consent.providers.value === 'accepted' ? [] : ['--no-embedding']), '--json'];
     if (flags.dryRun) {
       const steps: SetupStep[] = [
         { step: 'receipt', action: found.prior?.status === 'installed' && found.hooksCurrent && (found.mcp.state === 'current' || !!pluginOwner) && !brainCreate ? 'keep' : 'write', detail: found.receiptPath },
@@ -376,10 +378,10 @@ export async function runSetup(args: string[]): Promise<number> {
       return finish(out, { dryRun: true, target, consent, steps, states: [], verify: null, notices: [], notes });
     }
 
-    let notices: unknown[] = [];
+    let notices: Notice[] = [];
     const result = await applyClaudeSetup(plan, consent, {
       pluginOwner, brainCreated: brainCreate, abortAfter: process.env.GBRAIN_SETUP_ABORT_AFTER,
-      beforeMcp: brainCreate ? async () => { notices = runBrainInit(initArgv, out); } : undefined,
+      beforeMcp: brainCreate ? async () => { notices = runBrainInit(initArgv, out, 'claude-code'); } : undefined,
     });
     for (const s of result.steps) say(out, `  ${s.action.padEnd(8)} ${s.step.padEnd(7)} ${s.detail}`);
     if (!result.changed) say(out, 'Nothing changed: this install is already wired.');
@@ -423,16 +425,21 @@ function liveServeConflict(live: NonNullable<Target['live_owner']>, harness: Set
         verify: verifyDryRun(harness, name) });
 }
 
-/** Run the `gbrain init` child that creates a new keyless brain; returns its JSON notices. */
-function runBrainInit(initArgv: string[], out: Out): unknown[] {
+/** Run the `gbrain init --json` child that creates a new keyless brain; returns setup's form of its first-run bundle. */
+function runBrainInit(initArgv: string[], out: Out, harness: SetupHarnessId): Notice[] {
   say(out, `Creating the brain: ${initArgv.join(' ')}`);
   const child = Bun.spawnSync(initArgv, { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', env: process.env });
   const initOut = child.stdout?.toString() ?? '';
   process.stderr.write(child.stderr?.toString() ?? '');
-  if (!out.json) process.stdout.write(initOut);
-  if (child.exitCode !== 0) throw new Error(`\`${initArgv.join(' ')}\` exited ${child.exitCode}; nothing else was written. Fix the init error above, then run setup again.`);
-  if (!out.json) return [];
-  try { return (JSON.parse(initOut) as { notices?: unknown[] }).notices ?? []; } catch { process.stderr.write(initOut); return []; }
+  if (child.exitCode !== 0) {
+    process.stderr.write(initOut);
+    throw new Error(`\`${initArgv.join(' ')}\` exited ${child.exitCode}; nothing else was written. Fix the init error above, then run setup again.`);
+  }
+  try {
+    const doc = JSON.parse(initOut) as { path?: string; notices?: unknown[] };
+    if (doc.path) say(out, `Brain ready at ${doc.path}`);
+    return setupFirstRunNotices(doc.notices ?? [], HARNESS_LABEL[harness]);
+  } catch { process.stderr.write(initOut); return []; }
 }
 
 async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainConfig | null, brainHome: string, out: Out): Promise<number> {
@@ -495,7 +502,7 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
     }
 
     const brainCreate = !cfg;
-    const initArgv = [launcher, 'init', '--pglite', ...(consent.providers.value === 'accepted' ? [] : ['--no-embedding']), ...(out.json ? ['--json'] : [])];
+    const initArgv = [launcher, 'init', '--pglite', ...(consent.providers.value === 'accepted' ? [] : ['--no-embedding']), '--json'];
     if (flags.dryRun) {
       const unchanged = found.prior?.status === 'installed' && found.hooksCurrent && found.trustCurrent && (found.mcp.state === 'current' || !!pluginOwner) && !brainCreate;
       const steps: CodexSetupStep[] = [
@@ -509,10 +516,10 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
       return finish(out, { harness: 'codex', dryRun: true, target, consent, steps, states: [], verify: null, notices: [], notes });
     }
 
-    let notices: unknown[] = [];
+    let notices: Notice[] = [];
     const result = await applyCodexSetup(plan, consent, {
       pluginOwner, brainCreated: brainCreate, abortAfter: process.env.GBRAIN_SETUP_ABORT_AFTER,
-      beforeMcp: brainCreate ? async () => { notices = runBrainInit(initArgv, out); } : undefined,
+      beforeMcp: brainCreate ? async () => { notices = runBrainInit(initArgv, out, 'codex'); } : undefined,
     });
     for (const s of result.steps) say(out, `  ${s.action.padEnd(8)} ${s.step.padEnd(7)} ${s.detail}`);
     for (const n of result.notes) say(out, `note: ${n}`);
@@ -584,7 +591,7 @@ async function runRemove(flags: SetupFlags, receipt: ClaudeSetupReceipt | null, 
 
 async function finish(out: Out, doc: {
   harness?: SetupHarnessId; dryRun: boolean; remove?: boolean; target?: Target; consent?: SetupConsent; steps: Array<{ step: string; action: string; detail: string }>; states: string[];
-  verify: { ok: boolean; reason: string; message: string } | null; notices: unknown[]; notes: string[]; preserved?: unknown[];
+  verify: { ok: boolean; reason: string; message: string } | null; notices: Notice[]; notes: string[]; preserved?: unknown[];
 }): Promise<number> {
   const harness = doc.harness ?? 'claude-code';
   const state = doc.states.at(-1) ?? null;
@@ -594,7 +601,7 @@ async function finish(out: Out, doc: {
       ...(doc.target ? { target: doc.target } : {}), ...(doc.consent ? { consent: doc.consent } : {}),
       steps: doc.steps, preserved: doc.preserved ?? [], states: doc.states, state, verify: doc.verify,
       capability: capabilityRows(harness)[0], capability_table_version: SETUP_CAPABILITY_TABLE_VERSION,
-      notes: doc.notes, notices: doc.notices,
+      notes: doc.notes, notices: doc.notices.map((n) => renderNotice(n, cliRenderContext())),
     }, null, 2)}\n`, (t) => process.stdout.write(t));
     return 0;
   }
@@ -603,5 +610,8 @@ async function finish(out: Out, doc: {
   if (state && !doc.remove) say(out, harness === 'codex'
     ? 'Next: start a new Codex session (config and hooks are read at session start) and check that /mcp lists gbrain.'
     : 'Next: open a new Claude Code session (config is read at session start) and check that /mcp lists gbrain.');
+  if (state && !doc.remove) say(out, 'Memory: save what the user asks you to remember as a fact with gbrain remember "<fact>", naming its entity and provenance (MCP tool: remember). '
+    + 'World-visible facts (the default) are pushed into new sessions; a private fact is not (local CLI recall only). capture writes a page, not a fact.');
+  writeCliNotices(doc.notices);
   return 0;
 }

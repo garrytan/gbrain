@@ -17,6 +17,7 @@ import type { ResolveSearchModeInput, ResolvedSearchKnobs } from '../mode.ts';
 import { normalizeExpansionVariantBudget } from '../fusion-lists.ts';
 import { normalizeKeywordArmConfidenceFloor } from '../arm-confidence.ts';
 import { normalizeMetadataBoostGate } from '../metadata-boost-gate.ts';
+import { normalizeRerankGate } from '../crag.ts';
 import { normalizeRelationalRerankPin } from '../relational-rerank-pin.ts';
 import { isRelationalQuery } from '../relational-plan.ts';
 import { pushDegraded } from './degraded.ts';
@@ -29,6 +30,8 @@ import { resolveCjkKeywordDeadlineMs } from '../cjk-keyword-deadline.ts';
 import { resolveSearchDateBounds } from '../date-bounds.ts';
 import { type DecideSearchContext, decideMetaFor, resolveAndLaunchDecide } from '../decide-stage.ts';
 import { applySearchIntent } from '../decide-retrieval.ts';
+import { liftModeCut } from '../page-rank-cut.ts';
+import { type StageTimer, UNTIMED } from '../stage-timings.ts';
 
 /**
  * Everything the stages read, resolved once at hybridSearch entry, plus the
@@ -72,6 +75,8 @@ export interface HybridRequest {
   rerankMeta?: { model_resolved: string };
   /** Set by the relational arm when the multi-hop planner ran (meta.relational_plan). */
   relationalPlan?: import('../relational-recall.ts').RelationalPlanMeta;
+  /** The op's stage-timing collector (`opts._timings`), or the no-op timer. */
+  timer: StageTimer;
 }
 
 const DEBUG = process.env.GBRAIN_SEARCH_DEBUG === '1';
@@ -93,7 +98,7 @@ export async function resolveHybridRequest(
   // (#4359) hybridSearchCached threads its already-loaded snapshot; reuse it.
   const { loadSearchModeConfig, resolveSearchMode } = await import('../mode.ts');
   const modeInput = opts?._searchModeInput ?? await loadSearchModeConfig(engine);
-  const resolvedMode = resolveSearchMode({
+  const resolvedMode = liftModeCut(resolveSearchMode({
     // T4/D5 — per-call mode selector (e.g. `--mode tokenmax`). The op layer
     // only passes this for trusted/local callers; remote callers leave it
     // undefined and fall through to the server-configured mode (no cost
@@ -140,8 +145,10 @@ export async function resolveHybridRequest(
       keyword_arm_confidence_floor: normalizeKeywordArmConfidenceFloor(opts?.keywordArmConfidenceFloor),
       // Ranker wave (Phase E3) — metadata boost gate per-call thread-through (eval A/B).
       metadata_boost_gate: normalizeMetadataBoostGate(opts?.metadataBoostGate),
+      // W3 — rerank gate per-call thread-through (eval A/B; knobsHash `rrg=`).
+      reranker_gate: normalizeRerankGate(opts?.rerankGate),
     },
-  });
+  }), opts?.pageRankCut);
 
   // System One: resolve the decide context and launch S2 now, alongside the
   // regex classifier (undefined when every slot is off: no decide work).
@@ -166,7 +173,7 @@ export async function resolveHybridRequest(
 
   const limit = opts?.limit || resolvedMode.searchLimit;
   const offset = opts?.offset || 0;
-  const innerLimit = perArmPoolLimit(limit, offset, PRE_FUSION_POOL_FLOOR);
+  const innerLimit = perArmPoolLimit(limit, offset, Math.max(PRE_FUSION_POOL_FLOOR, resolvedMode.diverse_pool_depth));
 
   // v0.32.x search-lite: classify intent once up front. Drives BOTH the
   // legacy auto-detail / salience / recency suggestions AND the new
@@ -306,6 +313,7 @@ export async function resolveHybridRequest(
     expansionApplied: false,
     lastResultsCount: 0,
     lastRank1Score: undefined,
+    timer: opts?._timings ?? UNTIMED,
   };
   if (decide) req.decide = decide;
   return req;

@@ -33,6 +33,12 @@ SETUP
   doctor [--json] [--fast] [--probe-pglite]  Health check (resolver, skills, pgvector, RLS, embeddings; --probe-pglite runs the scratch-store probe)
   integrations [subcommand]          Manage integration recipes (senses + reflexes)
 
+MEMORY (facts agents recall; MEMORY_VERBS v1)
+  remember "<fact>" --entity <slug>  Save a fact the user stated, with --provenance; world-visible
+                                     facts are pushed into new agent sessions (private: recall only)
+  recall [<entity>] [--query <q>]    Find saved facts
+  forget <fact-id>                   Withdraw a fact
+
 PAGES
   get <slug>                         Read a page
   put <slug> [< file.md]             Write/update a page
@@ -127,7 +133,8 @@ OPEN LOOPS (Gmail/Calendar/Contacts connector — v0.47)
   creds list|remove|export|import    Generic credential vault (redacted output; encrypted bundles)
 
 BRAIN (capture / ideate / explore — v0.37/v0.38)
-  capture [content] [--file PATH]    Single entrypoint for getting content into the brain
+  capture [content] [--file PATH]    Single entrypoint for getting content into the brain (a page;
+                                     a fact to recall later is \`remember\`)
         [--stdin] [--slug s] [--type t]   Inline content / file / stdin; writes to inbox/ by default
         [--source ID] [--quiet|--json]    Multi-source brains: route to a non-default source
   brainstorm <question> [--json]     Bisociation idea generator (hybrid search + far-set + judge)

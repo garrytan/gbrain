@@ -10,6 +10,195 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.210.0] - 2026-10-13
+
+**The Ubicloud gate's `verify` typecheck runs warm, so it no longer crosses the 120 s per-check cap on a loaded VM.** It crossed the cap at 121 s on two gates on 2026-10-13 (#6618, #6612), and both passed on rerun. The cause wasn't contention with test items: the VM that runs `verify` runs nothing else until verify is done. The cause was that every gate VM typechecked from scratch. `bun run typecheck` is `tsc --incremental` against `node_modules/.cache/gbrain-typecheck.tsbuildinfo`, and the checkout tarball never carries that file. A cold `tsc` takes 81 s on a 16-vCPU gate VM with nothing else running, so verify had 1.4x headroom before any host load. The cap is unchanged.
+
+### Itemized changes
+
+- **`scripts/ci-ubicloud.ts` + `scripts/ubicloud/typecheck-state.ts`:**
+  - When the verify lane runs, the orchestrator starts `bun run typecheck` on the local checkout (the same files it uploads) while the VMs boot, then uploads the resulting buildinfo to the control VM before `verify`.
+  - The local build takes 68-69 s cold on a 4-core runner and about 17 s warm. It overlaps VM setup (59-83 s), so it added 2 s to a cold start.
+  - tsc rereads every file and compares content hashes, so a buildinfo from another path, machine or tree changes only the time, never the result. A buildinfo that records type errors reports them again on the VM.
+  - The run log says whether verify's typecheck ran warm or cold, and why. The local build's output is in `logs/local-typecheck.log`.
+- **Docs:** `scripts/ubicloud/README.md` describes the upload. `docs/TESTING.md` no longer says CI never restores typecheck results; GitHub CI's verify job has restored them since #6056.
+- **Proof, on a 16-vCPU gate VM (`ci:ubicloud --lanes verify --vms 1`, then the gate's `bun run verify` with the cap lifted to measure):**
+
+  | Load | Cold typecheck | Warm typecheck |
+  | --- | --- | --- |
+  | typecheck alone | 81 s | 16 s |
+  | inside verify's 16-way pool (the gate's load) | 84 s | 18-19 s |
+  | + 8 busy loops | 87 s | 22 s |
+  | + 16 busy loops (a loaded host) | 126 s, 123 s, over the cap | 32 s, 31 s |
+
+  With the new code, the gate's own verify step logged `local incremental typecheck (exit 0, 69s) uploaded …; verify's typecheck runs warm`, and its typecheck took 19 s. `check:test-isolation` (61-78 s) is now verify's longest check.
+- **`test/scripts/ubicloud-typecheck-state.test.ts`** pins that the uploaded file is the one the repo's typecheck script writes, and that building it reports the script's exit code even when the typecheck fails.
+
+## [0.60.209.0] - 2026-10-13
+
+**A large page publishes in a few dozen statements instead of thousands, so a slow database link no longer blocks its source forever (#6574).** Publishing a page re-sent every canonical timeline bullet, fact row and take as its own statement on every write, even a one-word edit. Behind Supabase's transaction pooler with pipelining off (the #6543 setting), each one waited a full round trip. A reported 1.1 MB company page with about 4,100 timeline rows and 1,012 facts needed about 6,000 statements at 56 ms each, ran past the 300 s publication ceiling on every attempt, restarted from zero, and held 99 writes behind it for 16 hours. The same projection on a 2,000-row test page went from 6,036 statements to 21.
+
+### Itemized changes
+
+- **Set-based canonical projection** (`src/core/persistence/canonical-projections.ts`). Timeline rows go in one `INSERT … SELECT FROM jsonb_to_recordset` per 500 rows, straight to the page id the publication already holds locked, with the same `ON CONFLICT (page_id, date, md5(summary), source) DO NOTHING` dedupe and the same free-text sanitizing as `addTimelineEntry`. Fact field refreshes and take resolutions are each one `UPDATE … FROM jsonb_to_recordset` instead of one per row. Each statement stays well inside the publication's 5 s `statement_timeout`.
+- **`insertFacts` inserts in multi-row chunks** (`src/core/engine-sql/facts.ts`), 500 rows per statement, for every caller. Each input's id is mapped back by `(source_markdown_slug, row_num)`: a row the unique index skips stays null, and the first input wins a duplicate row number, as before. The `superseded by #N` pass now reads every target in one statement and writes every link in one more, with the same chain, cycle, int4-overflow and warning rules. Embedded rows keep their `::vector`/`::halfvec` cast, model and text hash. A lone surrogate in free text still lands as U+FFFD.
+- **Guarded fact renumbers** (`src/core/trust/fence-guard.ts`) move in one statement instead of one per row.
+- **No false "owner missing" during a long publish** (`src/core/persistence/consumer.ts`, `group-publish.ts`, `claim-lease.ts`). The publish transaction locks its request rows, so a lease renewal from another connection waited on that lock, overran its deadline, and the claim read lapsed. `gbrain sync` then stopped `drain_stalled` with `owner_missing`. Now the consumer commits one renewal before the transaction opens, stamping the claim `publishing` with a lease of the ceiling plus grace, settle and 30 s, and stops renewing until the publish ends. `sync-drain` already waits on a live `publishing` claim and reports `publication_overdue` past the ceiling. Tradeoff: an owner that crashes mid-publish holds its head until that lease ends, not 30 s.
+- **Lane groups BEGIN in manifest order** (`sync-lanes.ts`, `group-publish.ts`). A lane group marked itself begun when it stopped waiting, before its BEGIN reached the server, so the next group could BEGIN first and its `published_at` came out of order. This failed `managed-sync-bulk`'s "every page commits in manifest order" on this PR's CI. The mark is now set inside the transaction. `test/sync-lanes-begin-order.test.ts` fails on master and passes here.
+- **Slow projection log.** A projection that takes 30 s or more prints `[persistence] phase=publication reason=slow_projection source=… slug=… elapsed_ms=… timeline_rows=… fact_rows=… take_rows=… steps=timeline:…,facts:…,…`, so the slow step is named in one line.
+- **`unexpected_file_bytes` explains itself.** The registry summary said "A canonical skill file mode changed outside publication" and the docs said to run doctor. It now says the file matches neither the recorded prior nor the published bytes, and that the user picks which version to keep. A command that resolves it is a follow-up.
+- **Tests.** `test/canonical-projection-statements.test.ts` projects a 100-row and a 2,000-row page and allows only one extra statement per extra 500-row chunk (on master: 336 and 6,036; now 15 and 21), on PGLite, and checks every row lands once on PGLite and Postgres. New `insertFacts` cases cover a duplicate row number inside a batch, a 1,203-row batch with duplicates and supersession across chunks, embeddings, and hostile text. `test/e2e/publication-claim-lease-6574-postgres.test.ts` holds a put_pages group inside its open transaction and reads each member from another connection: `running`, `publishing`, leased past the ceiling. It fails on master. The SQL-text goldens for `facts` and `_driver` changed because `insertFacts` now sends one multi-row INSERT per chunk.
+
+## [0.60.208.0] - 2026-10-13
+
+**Agents can now find `remember`, a private fact says it won't be pushed, and a keyless brain no longer sends OpenAI model discovery.** Cat 41's re-measure (gbrain-evals#142, v0.60.203.0) found three misses. In two first-push runs the agent searched `gbrain --help` for a way to save the user's item, didn't find `remember`, and used `gbrain capture`, which writes a page; session push only carries world-visible facts, so the next session got nothing. In the third run the fact was saved with visibility private, which push skips by design, and nothing told the agent. In the consent-negative cell, `gbrain doctor` on an existing keyless brain that never ran setup sent `GET /v1/models` with the user's `OPENAI_API_KEY`, because discovery ran on every engine connect. Fixes #6606 and #6607.
+
+### Itemized changes
+
+- **`gbrain --help`** gains a MEMORY section (`remember`, `recall`, `forget`). The remember line says world-visible facts are pushed into new agent sessions and private ones are recall-only; the `capture` line now says it writes a page and points at `remember` for facts.
+- **`gbrain setup <harness>`** prints a `Memory:` line after `Next:` naming `gbrain remember "<fact>"` (MCP tool: remember), what reaches new sessions, and that capture writes a page.
+- **A local `gbrain remember` with visibility private** prints `note: private — local CLI recall only; not pushed into new agent sessions` and emits the `private_fact_not_pushed` info notice, which tells the agent to ask the user before saving the fact again with visibility world and then forgetting the private copy (replaces cannot change visibility). World saves, duplicates and remote callers get neither. What is saved and what is pushed are unchanged.
+- **OpenAI model discovery** (`GET /v1/models`) now runs right before the first OpenAI-routed call (chat, expansion or embedding), once per gateway reconfigure, instead of on engine connect. A brain that never calls OpenAI sends nothing, even with `OPENAI_API_KEY` set. Cache, 24-hour TTL, failure backoff, the recorded-decline gate, `GBRAIN_MODEL_DISCOVERY` and the env-plane-only endpoint are unchanged. When the refresh changes the discovered tiers, the gateway re-resolves its models before the triggering call reads them. On existing OpenAI installs, callers that pick a model before calling OpenAI read the saved list: fact extraction, content repair and the eval judges, plus `gbrain models` and the doctor display. So on the first run after the 24-hour cache expires, or with no cache yet, they can use the previously discovered model or the static fallback; the next run picks up the new one. Approved by Garry, 2026-10-13.
+- **Tests:** `test/openai-discovery-lazy.serial.test.ts` (new) counts requests at a local `OPENAI_BASE_URL`: an existing keyless brain's `doctor` and `search` send 0; connect sends nothing and the first OpenAI chat sends exactly one `GET /v1/models` and runs on the discovered tier; an Anthropic-routed chat sends none. Both main cases fail on the previous gateway. `test/doctor-provider-consent.serial.test.ts` controls now measure discovery on the OpenAI-routed embedding probe; the decline tests are unchanged. New help, setup and private-notice tests fail on the previous code and pass now.
+
+## [0.60.207.0] - 2026-10-13
+
+**The claim root probe's buffer test no longer depends on how random worktree ids happen to sort.** `test/e2e/claim-earlier-equivalence.test.ts` checks that the indexed root probe reads fewer than 0.85× the buffers of the former COALESCE key. Its fixture queued each worktree's rows as one contiguous block. The former key's scan of the pending index `(worktree_id, sequence)` can only use `sequence` as an index condition, so it skipped every root whose rows all came after the candidate. When the random ids sorted in reverse insert order, the former key read 1388 buffers against the current probe's 1309 (ratio 0.943) and the test failed. It failed in #6613's CI at 1308 against `< 1205.3`.
+
+### Itemized changes
+
+- `explainEarlierProbe` (`test/helpers/claim-earlier-fixture.ts`) now queues rows round-robin across the worktrees, the way worktrees syncing at the same time queue them. Every root ahead of the candidate in id order then holds earlier rows, which is the "walks every root's pending rows" case the 6.1 → 1.4 ms claim describes. The threshold and the assertions are unchanged. Forced probe on pg16 and pg17: before, the ratio was 0.576 with ids in insert order, 0.943 reversed and 0.55–0.76 random; after, it is 0.241, 0.248 and 0.243–0.246 over 20 random runs. No product code changed.
+
+## [0.60.206.0] - 2026-10-13
+
+**CI's Playwright browser install stops on a real stall, finishes a slow download instead of restarting it, and usually skips the CDN.** On master .204 and .205, the `admin-browser` job was cancelled at its 12-minute job timeout. `bunx playwright install --with-deps chromium` crawled through the Chrome download, which Playwright's CDN was serving at about 250 KB/s. A plain per-attempt cap doesn't fix that. The first version of this PR used a 240 s cap and failed on its own CI: the download was still moving (10%, then 30%), and Playwright doesn't resume downloads, so each retry started over from 0%. The second version failed too: its single attempt was still downloading when the 480 s budget ran out, after `apt-get update` alone took 4 minutes at 54 kB/s. So a stall now means silence, the whole step has one time budget sized to the job, only the headless shell the suite uses is downloaded, and the downloaded browser is cached. The bounded-run logic from #6594 is now one shared script, and it ends a stalled attempt together with every process the attempt started.
+
+### Itemized changes
+
+- **`scripts/ci-bounded-run.ts`** (new): `(--attempt-s <n> | --total-s <n>) [--idle-s <n>] [--retry-s <n>] [--hint <text>] -- <command…>`.
+  - It runs the command in its own process group. An attempt is stalled when it is still running at `--attempt-s`, or when it has printed nothing on stdout or stderr for `--idle-s`.
+  - A stalled attempt gets SIGTERM to the whole group, then SIGKILL after a 10 s grace period. SIGTERM goes first so that `sudo apt-get`, which sudo can't forward a SIGKILL to, still gets the signal.
+  - It retries once, and a second stall stops the step with `::error::<command> stalled: no output for <n>s (<hint>) on attempt 2 of 2; giving up` (or `no result after <n>s` for the attempt cap).
+  - `--total-s` caps every attempt and pause together. An attempt still printing progress runs until the budget ends instead of being restarted, then stops with `::error::<command> was still running when its <n>s budget ran out`. No retry starts without time left for it.
+  - A failure that isn't a stall keeps its own output, is retried once, and is reported with its exit code.
+- **`scripts/ci-bun-install.ts`** now delegates to it, with the same environment knobs and the same annotation text. One behavior change: a stalled install's child processes now end with it. Before, only the direct child got SIGKILL, so a backgrounded grandchild outlived the attempt.
+- **`admin-browser` (`test.yml`):**
+  - `bun scripts/ci-bounded-run.ts --idle-s 120 --total-s 560 --retry-s 10 … -- bunx playwright install --with-deps --only-shell chromium`, with a `timeout-minutes: 10` step cap. Playwright prints a progress line every 10% of a download, so 120 s of silence is a stall. The rest of the job takes under a minute, so the job timeout stays at 12 minutes.
+  - The admin suite runs headless (`admin/playwright.config.ts`), which uses Chrome's headless shell, so `--only-shell` skips the full 187 MiB Chrome. The download drops from 301 MiB to 116 MiB, and the cached directory from 657 MB to 266 MB. Locally, all 13 admin browser tests passed with only the headless shell installed.
+  - `~/.cache/ms-playwright` is restored before the install and saved after a miss. The cache key is `node_modules/playwright-core/browsers.json`, the browser revisions the installed Playwright pins. On a hit, Playwright finds the browsers and skips the download; the apt dependencies still install.
+- **`test/progress.test.ts` cpu_ms diagnostics (no assertion change):** the `< 100` ms check on the idle tick failed once at 101 ms on Bun 1.4.3 CI. Side-by-side probes on 1.4.2 and 1.4.3 ruled out the two version suspects: `process.threadCpuUsage` is still per-thread, and `Atomics.wait` still parks rather than spins. The cause is still unknown, so the assertion and its bound are unchanged. A failure now reports where the CPU went: the thread CPU inside the 200 ms `Atomics.wait` against the tick calls around it, plus the process's minor and major page faults, involuntary context switches and all-thread CPU during the wait. Forcing 110 ms of allocation inside the window shows the split as `112.5 ms inside the 200 ms Atomics.wait, 0.5 ms in the tick calls around it; … 1580 minor and 0 major page faults, 14 involuntary context switches`.
+- **Proof:**
+  - Slow but progressing CDN: a loopback proxy relays the real `cdn.playwright.dev` files at a throttled rate, and `bunx playwright install chromium` runs against it.
+    - Old bound (`--attempt-s 30`): both attempts were killed at 0%, and the step failed after 61 s.
+    - New flags (`--idle-s 20 --total-s 300`): the download finished in 86 s, with Chrome, FFmpeg and the headless shell all installed.
+  - Silent host: `PLAYWRIGHT_DOWNLOAD_HOST` pointed at a loopback server that accepts connections and never answers, with `--idle-s 8`. It warned, retried, and stopped with the named `no output for 8s` error after 18 s, exit 1, with no Playwright process left behind.
+  - `test/scripts/ci-bounded-run.test.ts` uses real commands that stall or crawl:
+    - A stalled attempt's backgrounded grandchild is killed with its group, and the retry succeeds.
+    - Two stalls give the named error.
+    - A non-stall failure keeps exit code 100 and its stderr.
+    - A child that ignores SIGTERM is killed after the grace period.
+    - A silent attempt is a stall at the idle bound; one that prints every 0.5 s against a 1 s idle bound finishes with no annotation.
+    - An attempt still printing when the budget runs out is ended and named, with no retry.
+    - Usage errors exit 2.
+    - A workflow check requires the Playwright step to use the idle bound and a budget that fits its step cap, between a cache restore and a save keyed on Playwright's pinned browser revisions.
+  - The old `ci-bun-install.ts` left a stalled attempt's backgrounded grandchild running; the new one does not.
+
+## [0.60.205.0] - 2026-10-13
+
+**Every `search` and `query` response now says where its time went.**
+
+### Itemized changes
+
+- `_meta.retrieval.timings` on every `search` and `query` response, including empty, degraded and keyword-only ones: `total_ms` (the whole operation, on its own clock, after the response is assembled), `stages_ms` (setup, lexical, relational, expansion, embed, vector, fuse, post_fusion, rerank, alias_fanout, anchoring, facts_arm, response), `other_ms` (time no stage claimed) and `overlapped_ms` (the keyword and title arms, which run in parallel, and `search`'s total-match count). Integer milliseconds; stages plus `other_ms` add up to `total_ms`. The alias fan-out's keyword searches count under `alias_fanout`; a retry or a CRAG re-run adds to the same stages. The timings never appear in result text.
+- `gbrain search --explain` and `gbrain query --explain` print the timings as a `timings:` header line, also on an empty result.
+- The refactor-wave-1 bench has a `timings` phase: every bench query through both operations, failing unless the unclaimed time stays within 10% of each response's total. On the 400-page bench the unclaimed time stayed at or below 1.6% of every response's total on PGLite and Postgres, and every result set matched the tree before this change (rechecked after merging master v0.60.202.0: all 40 result digests identical to master, unclaimed time 0%).
+
+## [0.60.204.0] - 2026-10-13
+
+**`recall` takes `since: "6 weeks ago"` or `"last month"`, and ranks expired facts for a `question` when you pass `include_expired: true`. Both used to be refused.**
+
+### Itemized changes
+
+- `since` on `recall` (MCP and `gbrain recall --since`) falls back to relative phrases after its existing grammar: `"N weeks|months|years ago"`, `"a week ago"`, `"an hour ago"`, compact `"3w"`, `"2mo"`, `"1y"`, and `"last month"`, `"past 2 weeks"`, `"the last 6 weeks"`. Months and years step the UTC calendar and clamp the day. Every value that parsed before gives the same instant (`src/core/facts/since-parse.ts`). In the dev-only A12 agent smoke, an agent's `since: "6 weeks ago"` was refused and it fell back to a less precise call.
+- `question` with `include_expired: true` ranks expired, superseded and lapsed facts alongside active ones, under the same read policy and filters, instead of returning `invalid_params`. Each row keeps its `expired_at` and `valid_until`. Without `include_expired`, ranking covers active facts only, as before. `question` with `supersessions` is still refused.
+- `include_expired`'s description now reads "Also expired; question ranks them." To stay inside recall's schema budget, three other strings on recall got shorter, with the same meaning. No parameter was added, renamed, retyped or made required.
+
+## [0.60.203.0] - 2026-10-13
+
+**`gbrain setup claude-code` and `gbrain setup codex` no longer end the install on a question: the first-run settings are relayed as settings in effect in the reply that reports the install.** The wave 2 Cat 41 setup run (gbrain-evals v0.10.80) missed its 60 s wired-recall target at 83.8 s because each install session wired gbrain and then asked about search mode or automatic saving; the reply session cost 13 to 33 s while the agent applied a setting the fresh session did not need. Setup had passed `gbrain init`'s standalone output through unchanged: the search-mode "ask which mode they want" banner, a stale `harness_wiring` decision, "Reply 'defaults' to keep the recommended settings" and a `claude mcp add` quickstart for a step setup had just done. The user still sees the search-mode cost matrix and still chooses; only when and how it is asked changed. No setting, default, CLI flag or MCP schema changed.
+
+### Itemized changes
+
+- **Setup's init call** (`src/commands/setup.ts`): runs `gbrain init --json` in both output modes and prints `Brain ready at <path>`, never init's banner, quickstart or `[AGENT]` block.
+- **`setupFirstRunNotices`** (`src/core/init-first-run.ts`): setup's form of the first-run bundle drops `harness_wiring` (setup just did it), keeps `search_mode` with the cost matrix, `writeback` and `skills_scaffold` with their option commands, and frames them as settings in effect that the agent relays in the install reply without holding the install open. Human output renders the block after `Next:`; `--json` puts it under `notices`. Disclosed in BEHAVIOR_CHANGES.
+- **Docs:** AGENTS.md step 3, INSTALL_FOR_AGENTS.md and `docs/guides/setup.md` ("First-run settings") say the same for the setup path; the plain-`init` rule to stop and confirm is unchanged.
+- **Tests:** two fail-first setup tests (on the old `setup.ts` the human output carried `Do this next`, `claude mcp add` and `Reply 'defaults'`, and `--json` carried `harness_wiring`), four unit cases in `test/init-first-run.test.ts`, and a Cat 41 install-text smoke ($0.55) whose install session ended with "Settings in effect (no answer needed)" and whose fresh session recalled the fact.
+- **Flake fix:** `test/chronicle-auto-decision.test.ts` no longer fails when a run crosses midnight UTC between computing the expected date and writing the receipt; a forced clock probe across midnight fails the old test and passes the new one.
+
+## [0.60.202.0] - 2026-10-13
+
+**A page-unit call with its own budget now gets whole pages that fill that budget instead of many partial ones, and search can grade its candidates before the cross-encoder to report how often the reranker was paying for an answer retrieval already found. The page cut is on by default (`gbrain config set search.page_rank_cut off` restores the old path); the grade is off by default and never changes results.**
+
+### Itemized changes
+
+- `search.reranker.gate` (off by default) grades search candidates before the cross-encoder. `shadow` records how often the reranker was paying for an answer retrieval already found, in the response's `rerank_gate` metadata, on `--explain` and in a new `rerank_gate` section of `gbrain search stats`, and leaves results unchanged. A grade is strong when the top result is a vector match with cosine at least `search.evidence_cosine_floor` and `search.reranker.gate_min_gap` ahead of every other page. There is no skip mode: on the dev sets no question reached the 0.8 floor with voyage-4 embeddings, and the reranker changed about half the delivered tokens, so skipping it is not shipped. The cache key now includes the gate keys and `search.evidence_cosine_floor`.
+- `search.page_rank_cut` (default `whole_pages`) lets a `return_unit: "page"` call's own budget decide how many pages delivery gets. Before, ranking cut hits by chunk tokens to the mode's `search.tokenBudget` whatever the caller asked for: under tokenmax delivery was handed far more pages than fit and returned them as slivers, and under a mode cut small pages under-filled the budget. Now `search`, `query` and `recall` lift the mode cut, and delivery keeps ranked pages while their whole delivered size fits `search.page_rank_cut_factor` (default 1.5) × the budget, reporting `delivery.page_rank_cut`. Calls without a budget and other units are unchanged. On 72 BEAM conversations it was non-inferior to the cut off: −0.25 points, lower bound −1.00 against a −3 margin, with delivered context at budget. Those conversations are regression evidence, not a held-out test, and the 1.5 factor was picked under a rule amended after the dev results ([gbrain-evals #126 results](https://github.com/garrytan/gbrain-evals/blob/8b764e3e/docs/benchmarks/2026-10-13-memory-proof-wave-2-results.md)).
+- `recall` with `return_unit` and `budget_tokens` fills its budget. Delivery used to be sized to the whole budget, and the facts-first packer then dropped whole delivered blocks. It also re-costed those blocks with a chars/4 estimate while delivery had counted cl100k tokens, so even a call with no facts came back about 7% short. Delivery now gets what the facts leave (except under `query_first`), and delivered blocks cost what delivery counted.
+
+## [0.60.201.0] - 2026-10-13
+
+**A long-running PGLite process picks up fresh planner statistics instead of keeping the plans it made before them.** PGLite has no autovacuum, so a freshly imported brain has no statistics until planner-stats' first-read refresh runs `ANALYZE`. But gbrain's PGLite statement cache keeps named prepared statements, and PostgreSQL keeps a prepared statement's plan across `ANALYZE`, so every statement prepared before the refresh kept its no-statistics plan for the life of the process (a `gbrain serve`, an agent session, a script). On a 55,838-page brain imported without statistics, `entity names` with 50 names stayed at 3.4 to 3.7 s for every call after the refresh. With this fix the calls after the first take 1.2 to 1.5 s, the same as a freshly started process.
+
+### Itemized changes
+
+- **`ANALYZE` and `VACUUM` clear the PGLite statement cache** (`src/core/pglite-statements.ts`), like DDL already did, so the next call re-prepares and plans with the new statistics. This covers planner-stats' refreshes, `gbrain repair planner-stats`, projection statistics and the persistence journal's `VACUUM (ANALYZE)`. Postgres is unchanged. `test/pglite-statements.test.ts` checks that a statement prepared before `ANALYZE` is re-prepared after it; the check fails without the fix.
+- **Shell jobs keep output that is read after the child's `'exit'`** (`src/core/minions/handlers/shell.ts`). The handler resolved on `'exit'` and took `stdout_tail`/`stderr_tail` right after reaping the process group, but `'exit'` can fire before the last chunk is read; only `'close'` means the pipes ended. A CI run on Bun 1.4.3 got `stdout_tail: ""` for an `echo hello` job that exited 0 (`test/e2e/minions-shell-pglite.test.ts`). After the reap, the handler now waits for `'close'`, at most 2 s, before taking the tails; #5062's reap still ends the job when its leader exits, and a process that left the group and holds a pipe costs at most those 2 s. `test/minions-shell-process-tree.test.ts` adds a writer that leaves the group and writes after the leader exits: it fails without the fix and passes with it. Diagnosis with GBRA-84.
+
+## [0.60.200.0] - 2026-10-13
+
+**CI's `bun install` is bounded and retried once, so a stalled install gets named instead of quietly using up the job budget.** On .195's master Test run (38350709199), `native-locks / darwin-x64 / Bun 1.4.3` spent 805 s in `bun install` on one macos-26-intel runner. That install normally takes 4 to 14 s. The rest of the job then ran normally until the 15-minute job timeout cancelled it, about a minute short of finishing. The only sign of the cause was an install time buried in the log. Every darwin-x64 install before and since took seconds, so this was a registry or network stall, not Bun 1.4.3.
+
+### Itemized changes
+
+- **`scripts/ci-bun-install.ts`** runs `bun install` with the flags it's given. An attempt that's still running after 180 s is killed and named in a `::warning::`, then retried once after 10 s. A second failure stops the step with `::error::bun install … stalled: no result after 180s … on attempt 2 of 2; giving up`. A failure that isn't a stall (a frozen-lockfile mismatch, an unreachable registry) keeps Bun's own output, is retried once, and is then reported with Bun's exit code. The script needs no dependencies, since it runs before they're installed, and spawns asynchronously, so it behaves the same on Linux, macOS and Windows. Its shape follows `scripts/ci-install-openclaw.sh`.
+- **Every root-package install in `.github/workflows/` uses it** (48 steps across nine workflows, plus the native musl container run). Each such step gets `timeout-minutes: 8` as a backstop; job timeouts are unchanged. The admin bundle install in `release.yml` stays as it is, since `test/release-workflow.test.ts` pins it as a supply-chain contract. `test/scripts/native-lock-prebuilds.test.ts` now requires the native matrix jobs to install through the wrapper, still with `--frozen-lockfile --ignore-scripts`.
+- **Proof.**
+  - `test/scripts/ci-bun-install.test.ts` uses a stub `bun` whose first attempt really sleeps far past a 1 s bound. The case where the second attempt installs passes in about 1 s; with two stalls, it stops with the named error in about 2 s. Bun's own error and exit code come through on a non-stall failure, and a clean install runs once and prints no annotation. A workflow scan fails if a root `bun install --frozen-lockfile` step goes unwrapped, if a wrapped step lacks the 8-minute backstop, or if the wrapper's path does not resolve from the step's `working-directory` (the two `admin/` installs in `test.yml` call `bun ../scripts/ci-bun-install.ts`).
+  - A real `bun install` pointed at a registry that accepts connections and never answers was killed at a 5 s bound, retried, and stopped with the named error in 11 s.
+  - A real install of this repository through the wrapper finished in 0.1 s.
+
+## [0.60.199.0] - 2026-10-13
+
+**A new opt-in search knob, `search.diverse_pool_depth`, gives the reranker a deeper candidate pool with one row per conversation session; it ships off because its measured gain did not clear the preregistered bar (wave 3 item S1).** The BEAM-1M failure analysis found that 30 of the 57 questions with no gold in the top 5 were semantic drift, where several chunks of one session took the reranker's slots. On BEAM-1M dev (gbrain-evals v0.10.83), depth 100 raised strict recall at 10 from 76 to 83 of 198 (+3.5 points, [0.0, 6.6]) and moved strict recall at 5 by +0.5 ([-1.5, 2.5]); answers moved +0.3, +0.3 and -0.4 points for gpt-6.1-sol, Sonnet 5.5 and Opus 5.5. The flip rule needed an interval above zero and no reader below zero, so the default is 0 in every bundle and nothing changes for any brain unless its owner sets the knob.
+
+### Itemized changes
+
+- **`search.diverse_pool_depth`** (integer 0 to 100, `off` = 0): with N > 0 on the fused embedding path of `hybridSearch`, every retrieval arm fetches at least N candidates (still capped at 100), the deduped pool keeps one row per session (`capPerSession` in the new `src/core/search/diverse-pool.ts`; a session is the chat, session or dated slug prefix, otherwise the page), and the reranker reads at least N rows. Keyword-only paths are unchanged. One range contract (`normalizeDiversePoolDepth`) serves config parsing and the `gbrain config set` refusal; the knob joins the cache knobs hash only when on, so existing cache keys are unchanged.
+- **Tests:** `test/search/diverse-pool.test.ts` and `test/search/diverse-pool-hybrid.serial.test.ts` (the session cap, pool floor and reranker width, and the off path byte-identical), plus `test/search-mode.test.ts`. Documented in `docs/architecture/RETRIEVAL.md`.
+
+## [0.60.198.0] - 2026-10-13
+
+**The lock-order race test retries a topology change that ran out of lock wait, as the product tells callers to, so a single lock timeout on a loaded runner no longer fails it (#6586).** `test/e2e/persistence-publish-lock-order-postgres.test.ts` checks that ordinary writes racing claims and topology changes never form a lock-wait cycle and never deadlock. Each topology change runs with the production 1 s `lock_timeout`. When that wait runs out, the change ends `write_pending` with "Retry the same lifecycle request_id after the current writer finishes". The race recorded that as a failure. On #6591's gate-ahead run it did, once: one topology step hit 55P03 on a loaded gate VM with `cycles: []` and `deadlocks: 0`. The rerun on the same head passed, and 60 local runs with four CPU burners passed.
+
+### Itemized changes
+
+- **The race retries a lone timeout and keeps everything else strict.** Each topology step now has a fixed `request_id`. A step that ends `write_pending` right after its own 55P03 is retried with that same `request_id`, up to three attempts. That's what the error tells a caller to do, and it matches how the file already treats writer lock timeouts. The test still requires no lock-wait cycle in its `pg_blocking_pids` sampling, no deadlock in `pg_stat_database`, no write error, and every topology change committed. The retry count appears in the `[lock-order race]` line as `topologyRetries`.
+- **Forced probes (scratch copies, not committed):**
+  - A lone lock timeout with no inversion: a separate session holds the `persistence_brain` row for 1.5 s just before one topology step. The old test fails on `write_pending`, plus two `not_found` steps that followed it. The new test passes with `topologyRetries: 1`.
+  - A real inversion: two sessions take `persistence_brain` and `sources` in opposite orders during the race. Both the old and the new test fail on it, through the sampled cycle on the old file and `deadlocks: 2` on the new one.
+  - With four CPU burners on a 4-CPU machine, the whole file passed 10 of 10 runs on Bun 1.4.3.
+
+## [0.60.197.0] - 2026-10-13
+
+**A fresh Claude Code session wired by `gbrain setup claude-code` now gets its first push, and a declined provider decision stops every provider request, `gbrain doctor`'s included.** The wave 2 Cat 41 setup run (gbrain-evals v0.10.80) found both: the SessionStart hook printed nothing in 3 of 3 fresh sessions because Claude Code starts gbrain's stdio server in parallel with the hook and the server binds its socket about 2 seconds later, and every run's `gbrain doctor` sent an unbilled `GET /v1/models` with the user's key after providers were declined.
+
+### Itemized changes
+
+- **SessionStart waits for the server it needs** (`src/core/context/session-start-pack.ts`, `src/commands/hook.ts`): on a `startup` or `resume` session of Claude Code in a directory covered by this install's `gbrain setup claude-code` receipt, the hook's deadline widens from 1.5 s to 4 s (under the 5 s harness timeout) and the context-pack request retries every 100 ms, re-resolving the socket and secret each round. The hook still never opens the brain, so there is no second PGLite owner and Postgres works the same way; a wait that runs out fails open with `serve_not_ready`. Without a setup receipt nothing changes. With real Claude Code 2.1.285 the fixed hook printed the remembered fact after a 786 ms wait; master printed nothing.
+- **A recorded provider decline holds everywhere** (`src/core/setup/local-receipts.ts`, `src/core/ai/openai-latest.ts`): OpenAI model discovery, which ran on every engine connect whenever `OPENAI_API_KEY` was set, returns before any request when this install's setup receipts record providers as declined (an unreadable record fails closed). `gbrain doctor --probe` skips the embedding probe under a decline.
+- **New doctor check `provider_consent`** (filesystem lane, also in `--fast`): reports a decline as "skipped by consent", names the provider variables present (names only) and gives `gbrain setup <harness> --providers` as the user's choice; `not_applicable` without a setup receipt.
+- **Tests:** `test/hook-session-start-serve-wait.serial.test.ts` (an IPC server bound 800 ms after SessionStart over in-memory PGLite; PGLite, Postgres keying, resume, a project receipt, a server that never comes, and no-wait controls) and `test/doctor-provider-consent.serial.test.ts` (a request counter behind `OPENAI_BASE_URL`: zero requests under a decline for `doctor --json` and `doctor --probe --yes`, 4 of 5 cases fail on master), plus a unit case in `test/openai-latest.serial.test.ts` and the doctor goldens.
+
 ## [0.60.196.0] - 2026-10-13
 
 ### Itemized changes

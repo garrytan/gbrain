@@ -114,6 +114,35 @@ export function buildInitFirstRunNotices(inputs: InitFirstRunInputs): Notice[] {
 }
 
 /**
+ * `gbrain setup <harness>`'s form of init's bundle (read from `init --json`).
+ * Setup has already wired the harness, so `harness_wiring` is dropped, and
+ * the rest is framed as settings in effect that the user can change at any
+ * time: the agent relays them in the reply that reports the install instead
+ * of ending it on a question whose answer needs another turn (Cat 41 wave 2).
+ * Open decisions keep returning in later sessions until answered or muted.
+ */
+export function setupFirstRunNotices(initNotices: readonly unknown[], harness: string): Notice[] {
+  const bundle = initNotices.find((n): n is Notice => (n as Notice | null)?.code === 'first_run_decisions');
+  const decisions = (bundle?.decisions ?? []).filter(d => d.id !== 'harness_wiring');
+  if (decisions.length === 0) return [];
+  const searchMode = decisions.find(d => d.id === 'search_mode');
+  const inEffect = [
+    ...(searchMode ? [`search mode ${searchMode.default}`] : []),
+    ...(decisions.some(d => d.id === 'writeback') ? ['agents save only what you ask them to remember, until you turn on automatic saving (gbrain recommends salient: durable facts you state, saved with provenance)'] : []),
+  ];
+  if (inEffect.length === 0) return [];
+  return [{
+    code: 'first_run_decisions',
+    kind: 'ask',
+    why: `Setup is complete: the brain is ready and ${harness} is wired, so memory works now. These first-run settings are in effect as listed; none blocks memory or needs a new session to answer. `
+      + 'Relay them once, in the reply that reports this install, as the current settings and how to change them; do not hold the install open or end it waiting on an answer. '
+      + 'When the user picks an option, run its command. Automatic saving (`writeback`) is separate from setup\'s capture decision (Stop/SessionEnd hooks); while unanswered it comes back in a later session until the user answers or mutes it.',
+    user_message: `gbrain is set up and ${harness} is wired, so memory works now. In effect: ${inEffect.join('; ')}.${searchMode ? ` ${costMatrixSentence()}` : ''} Nothing needs an answer now; tell me any time if you want to change any of these, and I'll apply it.`,
+    decisions,
+  }];
+}
+
+/**
  * The deferred-setup line init prints for `--no-embedding`: the same enable
  * command readiness gives doctor, embed and MCP (A7 `embeddingEnablement`:
  * resolved datastore, a provider that fits, pages and facts kept).

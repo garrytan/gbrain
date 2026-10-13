@@ -33,7 +33,13 @@ start here.
    default but printed a 9-cell cost matrix (mode × downstream model)
    preceded by `[AGENT]` markers. You MUST relay the matrix to the operator
    and confirm their choice before continuing. Cost spread between corners
-   is about 200x — silent acceptance is the wrong default. See
+   is about 200x — silent acceptance is the wrong default. After
+   `gbrain setup <harness>` the harness is already wired when the matrix
+   appears in setup's one first-run settings block, so there is nothing left
+   to continue: relay the matrix and the other settings in the reply that
+   reports the install, as the settings in effect and how to change them,
+   and apply the user's choice when they give it. Don't end the install on a
+   question that needs another turn before memory works. See
    [`./INSTALL_FOR_AGENTS.md`](./INSTALL_FOR_AGENTS.md) Step 3.5 for the
    exact ask-the-user protocol. The same banner fires on `gbrain post-upgrade`
    for a brain created before v0.32.3, when search modes arrived.

@@ -13,7 +13,7 @@
  * in milliseconds, with no datastore.
  */
 import { describe, expect, test } from 'bun:test';
-import { CLAIM_LOST, endLostLease, startClaimLease } from '../src/core/persistence/claim-lease.ts';
+import { CLAIM_LOST, endLostLease, holdClaimForPublication, startClaimLease } from '../src/core/persistence/claim-lease.ts';
 
 const FAST = { everyMs: 5, deadlineMs: 40 };
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
@@ -145,5 +145,36 @@ describe('startClaimLease', () => {
     const started = performance.now();
     await endLostLease(lease, 50);
     expect(performance.now() - started).toBeLessThan(1_000);
+  });
+});
+
+describe('holdClaimForPublication (#6574)', () => {
+  test('stops the cadence, lets the in-flight renewal settle first, then stamps once', async () => {
+    const order: string[] = [];
+    let renewals = 0;
+    let finishRenewal!: () => void;
+    const lease = startClaimLease(async () => {
+      renewals++;
+      order.push('renewal started');
+      await new Promise<void>(resolve => { finishRenewal = resolve; });
+      order.push('renewal settled');
+      return true;
+    }, { everyMs: 5, deadlineMs: 5_000 });
+    for (let i = 0; i < 200 && renewals === 0; i++) await sleep(5);
+    expect(renewals).toBe(1);
+    const held = holdClaimForPublication(lease, async () => { order.push('stamped'); });
+    await sleep(20);
+    expect(order).toEqual(['renewal started']);
+    finishRenewal();
+    await held;
+    expect(order).toEqual(['renewal started', 'renewal settled', 'stamped']);
+    await sleep(30);
+    expect(renewals).toBe(1);
+    expect(lease.held).toBe(true);
+  });
+
+  test('a stamp that fails leaves the publication to its own token check instead of throwing', async () => {
+    const lease = startClaimLease(async () => true, FAST);
+    await expect(holdClaimForPublication(lease, async () => { throw new Error('connection reset'); })).resolves.toBeUndefined();
   });
 });

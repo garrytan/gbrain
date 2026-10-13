@@ -271,6 +271,16 @@ export function degradedDedupNotice(cfg?: GBrainConfig | null): Notice {
   };
 }
 
+/** Local CLI remember with visibility private: recall-only, never pushed into agent sessions (#6606). */
+export function privateFactNotice(factId?: string | number): Notice {
+  const forget = factId !== undefined ? ` (then \`gbrain forget ${factId}\` drops the private copy; replaces cannot change visibility)` : '';
+  return {
+    code: 'private_fact_not_pushed',
+    kind: 'info',
+    why: `This fact is private: only local CLI recall reads it. Session hooks push world-visible facts only, so it will not reach a new agent session, and MCP agents cannot recall it. If the user wants their agents to know it without looking it up, ask them before saving it again with visibility world${forget}.`,
+  };
+}
+
 // ── dispatch producer ──────────────────────────────────────────────────────
 
 /** think's warning when the brain opted out of embedding and the question was never embedded. */

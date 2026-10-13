@@ -122,21 +122,23 @@ Retrieve saved facts and (with `query`) budget-packed page snippets.
 - `entity` scopes the FACTS arm; `query` runs the hybrid-search arm over
   pages; both present ⇒ both arms run.
 - `since`: ISO 8601 date/datetime — filters the FACTS arm only in v1. (The
-  reference implementation also accepts relative phrases like `"8 hours ago"`
-  as a convenience; only ISO 8601 is part of the frozen contract.) The window
+  reference implementation also accepts relative phrases like `"8 hours ago"`,
+  `"6 weeks ago"` and `"last month"` as a convenience; only ISO 8601 is part
+  of the frozen contract.) The window
   is measured on event time (`valid_from`, falling back to `created_at`) and
   composes with `entity` and `session_id` in the same query, before the
   per-arm limit. An unparseable value is rejected with `invalid_params`.
 - `limit` is a PER-ARM cap (facts and search results each).
 - `question`: optional string (at most 2,000 characters). The FACTS arm then
-  returns active facts ranked by relevance to the question instead of newest
+  returns active facts (every fact, expired and superseded included, with
+  `include_expired: true`) ranked by relevance to the question instead of newest
   first: cosine to the question's embedding plus whole-word term share, plus
   0.1 when the fact carries a writer-supplied date. Facts below the admission
   rule are not returned, so an empty `facts[]` is a valid answer. `entity`,
   `session_id`, `since` and `grep` filter before ranking. `question` does not
-  search pages; `query` does, and both may be passed. `supersessions: true` or
-  `include_expired: true` with `question` is `invalid_params` (ranking covers
-  active facts only); the error's `fix.mcp` is the call without them. One query
+  search pages; `query` does, and both may be passed. `supersessions: true`
+  with `question` is `invalid_params` (the supersession log is not ranked); the
+  error's `fix.mcp` is the call without it. One query
   embedding per call, no model call. Without an embedding provider, with
   embeddings turned off, or when the embed fails, facts rank by term share and
   `facts_degraded.reason` says why. A server without question ranking ignores
@@ -283,7 +285,10 @@ Save ONE fact with mandatory attribution.
   (default).
 - `visibility`: `world` (DEFAULT — readable by every agent connected to this
   brain; required for the remote remember→recall round-trip) \| `private`
-  (local CLI reads only). The init quickstart carries the consent line.
+  (local CLI reads only; session hooks push world facts only, so a private
+  fact never reaches a new agent session, and a local private save carries the
+  `private_fact_not_pushed` notice saying so). The init quickstart carries the
+  consent line.
 
 Response: `{ id, status, status_text, entity_slug, valid_until,
 protocol_version }` (+ `degraded_dedup: true` when no embedding provider —

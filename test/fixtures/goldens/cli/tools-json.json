@@ -3,7 +3,7 @@
     "exitCode": 0,
     "stderr": "",
     "stdoutBytes": 231878,
-    "stdoutSha256": "b1d2ef871d92ce9360a547ac5cc1651136a6eb12a96799fcdd317459870690b9",
+    "stdoutSha256": "483f72a8533acf46fd7ff62602c053a1d78c6b77b872d60e56b3982d63df1ed9",
     "toolNames": [
       "remember",
       "entity",
@@ -5770,7 +5770,7 @@
         "scope": "write"
       },
       {
-        "description": "MEMORY VERB (v1): read saved facts by entity, since or session_id; `query` also searches pages. Remote callers see world facts only. One card: entity; reasoning: synthesize.",
+        "description": "MEMORY VERB (v1): read facts by entity, since or session_id; `query` also searches pages. Remote callers: world facts only. One card: entity; reasoning: synthesize.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -5817,7 +5817,7 @@
               "type": "string"
             },
             "include_expired": {
-              "description": "Include expired.",
+              "description": "Also expired; question ranks them.",
               "type": "boolean"
             },
             "include_pending": {
@@ -5860,7 +5860,7 @@
               "type": "string"
             },
             "return_window": {
-              "description": "Window size 1-3.",
+              "description": "Window 1-3.",
               "type": "number"
             },
             "session_id": {
@@ -5872,7 +5872,7 @@
               "type": "string"
             },
             "source_id": {
-              "description": "One source you may read.",
+              "description": "One readable source.",
               "type": "string"
             },
             "supersessions": {

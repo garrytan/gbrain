@@ -3,7 +3,7 @@ import { parseRelationalPlan } from '../search/relational-plan.ts';
 import { loadSearchModeConfig, resolveSearchMode } from '../search/mode.ts';
 import { WRITE_REQUEST_PARAM } from '../persistence/params.ts';
 import { parseWriteRequestId } from '../persistence/preconditions.ts';
-import { deliverEvidence, effectivePlan, resolveEvidencePlan, type DeliveryMeta, type EvidencePlan } from '../search/evidence-delivery.ts';
+import { countEvidenceTokens, deliverEvidence, effectivePlan, resolveEvidencePlan, type DeliveryMeta, type EvidencePlan } from '../search/evidence-delivery.ts';
 import { withFactDateHeaders } from '../search/evidence-date.ts';
 import { randomUUID } from 'node:crypto';
 import { readHolders } from './context.ts';
@@ -27,7 +27,7 @@ import { OperationError, opError, verbError } from './contract.ts';
 import { invalidParam, paramUse } from './op-fix.ts';
 import { assertExplicitSourceLive, federatedSearchScope, parseSourceIdParam, sourceScopeOpts, stampEvidenceSafe } from './context.ts';
 import { markKeywordHits } from '../search/evidence.ts';
-import { hybridSearchCached, stampContentFlags } from '../search/hybrid.ts';
+import { hybridSearchCached, stampContentFlags, type HybridSearchOpts } from '../search/hybrid.ts';
 import { dedupResults } from '../search/dedup.ts';
 import { bumpLastRetrievedAt } from '../last-retrieved.ts';
 import { packToBudget, estimateTokens, resultTokens } from '../search/token-budget.ts';
@@ -49,6 +49,7 @@ import { activationSuppressionNotice, suppressionSummary } from '../eligibility/
 import { stampPageTrust, stampRowTrust } from '../eligibility/stamp.ts';
 import type { TrustTier } from '../trust/tier.ts';
 import { AUDIT_ROW_SOURCES } from '../facts/audit-sources.ts';
+import { parseRelativeSince } from '../facts/since-parse.ts';
 import { parseQuestionParam, questionRecallNotices, rankFactsByQuestion, recallHintNotice, unlinkedNamesakes, type EntityCandidate, type QuestionRecall } from '../facts/question-recall.ts';
 
 // ============================================================
@@ -203,9 +204,29 @@ function packingArm<T>(candidates: T[], kept: T[], cost: (item: T) => number) {
   return { candidates: candidates.length, kept: kept.length, dropped: candidates.length - kept.length, used: kept.reduce((sum, r) => sum + cost(r), 0) };
 }
 
+/**
+ * A result row's cost in recall's packing. A delivered block costs what delivery counted (its text and title in
+ * delivery's tokenizer), so recall never re-cuts a set delivery already fit using a different estimator.
+ */
+function recallResultCost(delivery: DeliveryMeta | undefined): (r: SearchResult) => number {
+  if (!delivery) return resultTokens;
+  return r => r.delivered ? r.delivered.tokens + countEvidenceTokens(r.title ?? '', delivery.tokenizer) : resultTokens(r);
+}
+
+/**
+ * Facts pack first under a budget (every policy but query_first), so delivery gets only what they leave.
+ * Sized to the whole budget, delivery filled it and recall then dropped whole delivered blocks after the facts.
+ * Null when the facts leave nothing: delivery is skipped and the results arm packs empty.
+ */
+function recallDeliveryPlan(plan: EvidencePlan | null, policy: unknown, queryText: string | null, budgetTokens: number | null, rows: Array<{ fact: string }>): EvidencePlan | null {
+  if (!plan || budgetTokens === null || (policy === 'query_first' && queryText !== null)) return plan;
+  const left = Math.min(plan.budgetTokens, budgetTokens - packToBudget(rows, r => estimateTokens(r.fact), budgetTokens).meta.used);
+  return left > 0 ? { ...plan, budgetTokens: left } : null;
+}
+
 /** recall's budget_packing meta: only policy-supplied calls carry it. */
 function recallBudgetPacking<F extends { fact: string }>(policy: unknown, queryText: string | null, budgetTokens: number | null,
-  arms: { rows: F[]; packedFacts: F[]; searchResults: SearchResult[]; packedResults: SearchResult[] }) {
+  arms: { rows: F[]; packedFacts: F[]; searchResults: SearchResult[]; packedResults: SearchResult[] }, resultCost: (r: SearchResult) => number) {
   if (policy !== 'facts_first' && policy !== 'query_first') return undefined;
   const queryFirst = policy === 'query_first' && queryText !== null && budgetTokens !== null;
   const { rows, packedFacts, searchResults, packedResults } = arms;
@@ -219,7 +240,7 @@ function recallBudgetPacking<F extends { fact: string }>(policy: unknown, queryT
             : packedFacts.length + packedResults.length === 0 ? 'first_items_exceed_budget'
               : 'packed',
     facts: packingArm(rows, packedFacts, r => estimateTokens(r.fact)),
-    results: packingArm(searchResults, packedResults, resultTokens),
+    results: packingArm(searchResults, packedResults, resultCost),
   };
 }
 
@@ -242,23 +263,23 @@ const recall: Operation = {
   mutating: false,
   idempotent: true,
   outputRedaction: { retrieval: { localVerbatim: ['facts'] } },
-  description: 'MEMORY VERB (v1): read saved facts by entity, since or session_id; `query` also searches pages. Remote callers see world facts only. One card: entity; reasoning: synthesize.',
+  description: 'MEMORY VERB (v1): read facts by entity, since or session_id; `query` also searches pages. Remote callers: world facts only. One card: entity; reasoning: synthesize.',
   params: {
     entity: { type: 'string', description: 'Entity slug; its facts.' },
     question: { type: 'string', description: 'Rank facts by relevance to it.' },
     query: { type: 'string', description: 'Also search pages (results[]).' },
     budget_tokens: { type: 'number', description: 'Token budget; facts pack first.' },
     budget_policy: { type: 'string', enum: ['facts_first', 'query_first'], description: 'Default facts_first.' },
-    source_id: { type: 'string', description: 'One source you may read.' },
+    source_id: { type: 'string', description: 'One readable source.' },
     since: { type: 'string', description: 'ISO 8601 or "8 hours ago".' },
     session_id: { type: 'string', description: "This session's facts." },
-    include_expired: { type: 'boolean', description: 'Include expired.' },
+    include_expired: { type: 'boolean', description: 'Also expired; question ranks them.' },
     supersessions: { type: 'boolean', description: 'Supersession log only.' },
     limit: { type: 'number', description: 'Per-arm max (default 50, cap 100).' },
     grep: { type: 'string', description: 'Text substring.' },
     include_pending: { type: 'boolean', description: 'Pending count.' },
     return_unit: { type: 'string', enum: ['chunk', 'window', 'section', 'page', 'auto'], description: 'results[] unit (see search).' },
-    return_window: { type: 'number', description: 'Window size 1-3.' },
+    return_window: { type: 'number', description: 'Window 1-3.' },
     min_trust: MIN_TRUST_PARAM,
   },
   scope: 'read',
@@ -355,7 +376,7 @@ const recall: Operation = {
       throw verbError(
         'invalid_params',
         `since is not a parseable timestamp or duration: "${String(p.since).slice(0, 60)}"`,
-        'Pass an ISO 8601 datetime (e.g. "2026-08-11T00:00:00Z"), Unix epoch millis, or a duration such as "8 hours ago" / "2d".',
+        'Pass an ISO 8601 datetime (e.g. "2026-08-11T00:00:00Z"), Unix epoch millis, a duration such as "8 hours ago" / "2d", or a relative phrase such as "6 weeks ago" / "last month".',
       );
     }
     const question = parseQuestionParam(p);
@@ -374,7 +395,7 @@ const recall: Operation = {
     };
 
     if (question !== null) {
-      ranking = await rankFactsByQuestion(ctx, { question, params: p, factSources, limit, entity: entityParam, sessionId: sessionParam, since, grep,
+      ranking = await rankFactsByQuestion(ctx, { question, params: p, factSources, limit, entity: entityParam, sessionId: sessionParam, since, grep, includeExpired,
         scope: { sourceIds: factSources, remote: ctx.remote !== false, excludePrivate, minTrust: eligibility.floor, suppressFlagged: eligibility.suppressFlagged } });
       ({ rows, ambiguousEntity } = ranking);
       for (const notice of questionRecallNotices(ranking)) ctx.emitNotice?.(notice);
@@ -481,6 +502,7 @@ const recall: Operation = {
     let searchDegraded: string | undefined;
     let delivery: DeliveryMeta | undefined;
     const evidencePlan = queryText ? await recallEvidencePlan(ctx, p) : null;
+    const rankCutOpts: Pick<HybridSearchOpts, 'pageRankCut'> = evidencePlan?.rankCut ? { pageRankCut: evidencePlan.rankCut } : {};
     if (queryText) {
       // #3242 parity (#4707): the page-search arm widens an unqualified
       // no-grant caller across the transport-computed federated set, exactly
@@ -492,7 +514,7 @@ const recall: Operation = {
       // untrusted callers with the excludePrivate resolved above.
       const keywordOnly = await recallKeywordOnlyReason(ctx);
       if (keywordOnly) {
-        searchResults = await keylessRecallRows(ctx, queryText, limit, excludePrivate, searchScope);
+        searchResults = await keylessRecallRows(ctx, queryText, limit, excludePrivate, searchScope, rankCutOpts);
         searchDegraded = keywordOnly;
       } else {
         searchResults = await hybridSearchCached(ctx.engine, queryText, {
@@ -502,10 +524,11 @@ const recall: Operation = {
           requireSafeChunks: ctx.remote !== false,
           takesHoldersAllowList: readHolders(ctx),
           ...searchScope,
+          ...rankCutOpts,
         });
       }
       bumpLastRetrievedAt(ctx.engine, searchResults.map(r => r.page_id));
-      const applied = effectivePlan(evidencePlan, searchResults);
+      const applied = recallDeliveryPlan(effectivePlan(evidencePlan, searchResults), p.budget_policy, queryText, budgetTokens, rows);
       if (applied) ({ results: searchResults, delivery } = await deliverEvidence(ctx.engine, searchResults, applied, { ...searchScope, excludePrivate, requireSafeChunks: ctx.remote !== false }));
       searchResults = await stampPageTrust(ctx.engine, searchResults, eligibility.floor);
     }
@@ -522,7 +545,7 @@ const recall: Operation = {
     const queryFirst = p.budget_policy === 'query_first' && queryText !== null && budgetTokens !== null;
     if (queryFirst) {
       const resultsPack = budgetTokens > 0
-        ? packToBudget(searchResults, resultTokens, budgetTokens)
+        ? packToBudget(searchResults, recallResultCost(delivery), budgetTokens)
         : { items: [] as SearchResult[], meta: { used: 0, dropped: searchResults.length } };
       packedResults = resultsPack.items;
       const remaining = budgetTokens - resultsPack.meta.used;
@@ -538,14 +561,14 @@ const recall: Operation = {
       const remaining = budgetTokens - factsPack.meta.used;
       const resultsPack =
         remaining > 0
-          ? packToBudget(searchResults, resultTokens, remaining)
+          ? packToBudget(searchResults, recallResultCost(delivery), remaining)
           : { items: [] as SearchResult[], meta: { budget: 0, used: 0, dropped: searchResults.length, kept: 0 } };
       packedResults = resultsPack.items;
       budgetUsed = factsPack.meta.used + resultsPack.meta.used;
       droppedCount = factsPack.meta.dropped + resultsPack.meta.dropped;
     }
 
-    const budgetPacking = recallBudgetPacking(p.budget_policy, queryText, budgetTokens, { rows, packedFacts, searchResults, packedResults });
+    const budgetPacking = recallBudgetPacking(p.budget_policy, queryText, budgetTokens, { rows, packedFacts, searchResults, packedResults }, recallResultCost(delivery));
 
     return {
       facts: await withFactDateHeaders(ctx.engine, await stampRowTrust(ctx.engine, 'facts', packedFacts.map(r => ({ // #5575 A6: + trust_tier, origin, unconfirmed
@@ -1240,10 +1263,11 @@ export function clampRecallLimit(raw: unknown): number {
 
 /**
  * Parse a `since` parameter into a Date. Accepts ISO 8601, plain duration
- * shorthand ("8 hours ago", "3 days ago", "30m", "1h", "2d", "7d"), or
- * Unix epoch millis. Returns null on unparseable input.
+ * shorthand ("8 hours ago", "3 days ago", "30m", "1h", "2d", "7d"), Unix
+ * epoch millis, or a relative phrase (since-parse.ts: "6 weeks ago",
+ * "last month"). Returns null on unparseable input.
  */
-function parseSinceParam(raw: unknown): Date | null {
+export function parseSinceParam(raw: unknown): Date | null {
   if (raw == null) return null;
   if (typeof raw === 'number' && Number.isFinite(raw)) return new Date(raw);
   if (typeof raw !== 'string') return null;
@@ -1266,7 +1290,7 @@ function parseSinceParam(raw: unknown): Date | null {
       n * 24 * 60 * 60 * 1000;
     return new Date(Date.now() - ms);
   }
-  return null;
+  return parseRelativeSince(s);
 }
 
 /**
@@ -1332,11 +1356,12 @@ async function recallKeywordOnlyReason(ctx: OperationContext): Promise<string | 
 async function keylessRecallRows(
   ctx: OperationContext, queryText: string, limit: number, excludePrivate: boolean,
   searchScope: { sourceId?: string; sourceIds?: string[]; minTrust?: TrustTier },
+  rankCutOpts: Pick<HybridSearchOpts, 'pageRankCut'> = {},
 ): Promise<SearchResult[]> {
   if (await keylessChainQuestion(ctx, queryText)) {
     return hybridSearchCached(ctx.engine, queryText, {
       limit, expansion: false, excludePrivate, requireSafeChunks: ctx.remote !== false,
-      takesHoldersAllowList: readHolders(ctx), ...searchScope,
+      takesHoldersAllowList: readHolders(ctx), ...searchScope, ...rankCutOpts,
     });
   }
   const rows = dedupResults(await ctx.engine.searchKeyword(queryText, { limit, excludePrivate, requireSafeChunks: ctx.remote !== false, ...searchScope }));

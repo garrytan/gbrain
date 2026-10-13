@@ -47,3 +47,27 @@ describe('formatResult --explain threads the captured retrieval meta', () => {
     expect(out).not.toContain('degraded:');
   });
 });
+
+describe('formatResult --explain prints the stage timings', () => {
+  const timings = { total_ms: 40, stages_ms: { setup: 2, lexical: 10, response: 3 }, other_ms: 25 };
+  const line = 'timings: 40ms total — setup 2, lexical 10, response 3, other 25';
+
+  test('a result list gets the timings header line', () => {
+    setCliOptions({ ...getCliOptions(), explain: true });
+    captureRetrievalMeta('retrieval', { returned_count: 1, retrieved_count: 1, degraded: [], timings });
+    expect(formatResult('search', [r('alice-foo', 1.5)], {}).startsWith(`${line}\n\n1. alice-foo`)).toBe(true);
+  });
+
+  test('an empty result names its cause, then the timings', () => {
+    setCliOptions({ ...getCliOptions(), explain: true });
+    captureRetrievalMeta('retrieval', { returned_count: 0, retrieved_count: 0, degraded: [], timings });
+    expect(formatResult('query', [], {})).toBe(`No results. (clean miss — no retrieval degradation)\n${line}\n`);
+  });
+
+  test('without --explain no timings are printed', () => {
+    captureRetrievalMeta('retrieval', { returned_count: 0, retrieved_count: 0, degraded: [], timings });
+    expect(formatResult('search', [], {})).not.toContain('timings');
+    captureRetrievalMeta('retrieval', { returned_count: 1, retrieved_count: 1, degraded: [], timings });
+    expect(formatResult('search', [r('alice-foo', 1.5)], {})).not.toContain('timings');
+  });
+});

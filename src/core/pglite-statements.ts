@@ -23,8 +23,12 @@ const { serialize } = protocol as unknown as {
 };
 const defaultParsers = types.parsers as unknown as Record<number, Parser>;
 
-/** Statements that can change a cached statement's result shape or drop session statements. */
-const SHAPE_CHANGING = /^\s*(?:ALTER|CREATE|DROP|DO|DISCARD|DEALLOCATE)\b/i;
+/**
+ * Statements that can change a cached statement's result shape or drop session statements, and
+ * statistics refreshes: PostgreSQL keeps a prepared statement's plan across ANALYZE, so a plan made
+ * before a table had statistics (PGLite has no autovacuum) would otherwise outlive the refresh.
+ */
+const SHAPE_CHANGING = /^\s*(?:ALTER|CREATE|DROP|DO|DISCARD|DEALLOCATE|ANALYZE|VACUUM)\b/i;
 const TRANSACTION_CONTROL = /^\s*(?:BEGIN|COMMIT|END|ROLLBACK|SAVEPOINT|RELEASE)\b/i;
 /** Plan-cache errors that a fresh Parse resolves: changed result type, missing statement. */
 const STALE_STATEMENT = new Set(['0A000', '26000']);
@@ -63,7 +67,7 @@ function concat(parts: Uint8Array[]): Uint8Array {
  * every call as an unnamed statement over five protocol round trips; a
  * statement seen twice is prepared once and later runs as one Bind/Execute/Sync
  * batch. PostgreSQL still replans on invalidation and rejects a changed result
- * shape, which drops the entry. Shape-changing SQL clears the cache.
+ * shape, which drops the entry. Shape-changing SQL, ANALYZE and VACUUM clear the cache.
  */
 export class PgliteStatementCache {
   private statements = new Map<string, Statement>();

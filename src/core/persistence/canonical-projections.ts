@@ -297,6 +297,32 @@ function canonicalTakeRows(body: CanonicalBody): Set<number> {
  * the shared scan refuses throws typed `invalid_fence` (wire `invalid_params`)
  * naming the first defect's fence, section and reason.
  */
+/** #6574: a canonical projection at least this slow logs its steps. */
+const SLOW_PROJECTION_MS = 30_000;
+
+/** Rows per timeline INSERT (#6574): each statement stays well inside the publication's 5 s statement_timeout. */
+const TIMELINE_INSERT_CHUNK = 500;
+
+function timelineChunks(timeline: ReadonlyMap<string, ExtractedTimelineEntry>): ExtractedTimelineEntry[][] {
+  const entries = [...timeline.values()];
+  const chunks: ExtractedTimelineEntry[][] = [];
+  for (let at = 0; at < entries.length; at += TIMELINE_INSERT_CHUNK) chunks.push(entries.slice(at, at + TIMELINE_INSERT_CHUNK));
+  return chunks;
+}
+
+/**
+ * #6574: a page's canonical timeline rows in one statement per chunk, in body order. The publication already holds the page's
+ * row lock (lockPageKeys), so the rows go straight to its id; free text is sanitized as addTimelineEntry does (#2011).
+ */
+function insertCanonicalTimeline(tx: BrainEngine, pageId: number, entries: ExtractedTimelineEntry[]) {
+  const rows = JSON.stringify(entries.map((entry, ord) => ({ ord, date: entry.date, source: sanitizeForJsonb(entry.source || ''),
+    summary: sanitizeForJsonb(entry.summary), detail: sanitizeForJsonb(entry.detail || '') })));
+  return tx.executeRaw(`INSERT INTO timeline_entries (page_id,date,source,summary,detail)
+    SELECT $1,r.date::date,r.source,r.summary,r.detail FROM jsonb_to_recordset($2::text::jsonb) AS r(ord integer,date text,source text,summary text,detail text)
+    ORDER BY r.ord
+    ON CONFLICT (page_id,date,md5(summary),source) DO NOTHING`, [pageId, rows]);
+}
+
 export function compileCanonicalProjections(page: ParsedPage, slug: string, sourceId: string) {
   const scan=scanCanonicalFences(page);
   if(scan.defects.length) throw fenceOperationError(scan.defects[0]!, slug, sourceId);
@@ -390,22 +416,33 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
         OR EXISTS (SELECT 1 FROM jsonb_to_recordset($3::text::jsonb) AS c(row_num integer) WHERE c.row_num=f.row_num))
       AND NOT EXISTS (SELECT 1 FROM jsonb_to_recordset($3::text::jsonb) AS n(row_num integer,fact text,visibility text)
         WHERE n.row_num=f.row_num AND n.fact=f.fact AND n.visibility=f.visibility)`, [sourceId, slug, incoming]);
-    const factFields = factRows.map(fact => () => tx.executeRaw(`UPDATE facts SET kind=$4,notability=$5,context=$6,
-        valid_from=COALESCE($7::timestamptz,valid_from),valid_until=$8::timestamptz,expired_at=$9::timestamptz,
-        source=$10,confidence=$11,claim_metric=$12,claim_value=$13,claim_unit=$14,claim_period=$15,attributed_to=$16
-        WHERE source_id=$1 AND source_markdown_slug=$2 AND row_num=$3`,
-      [sourceId, slug, fact.row_num, fact.kind, fact.notability, fact.context, fact.valid_from?.toISOString() ?? null,
-        fact.valid_until?.toISOString() ?? null, fact.expired_at?.toISOString() ?? null, fact.source, fact.confidence,
-        fact.claim_metric ?? null, fact.claim_value ?? null, fact.claim_unit ?? null, fact.claim_period ?? null, fact.attributed_to ?? null]));
+    // #6574: every fence row's fields refresh in one statement, not one round trip per row.
+    const fieldRows = JSON.stringify([...new Map(factRows.map(fact => [fact.row_num, fact])).values()].map(fact => ({ row_num: fact.row_num, kind: fact.kind, notability: fact.notability,
+      context: fact.context, valid_from: fact.valid_from?.toISOString() ?? null, valid_until: fact.valid_until?.toISOString() ?? null,
+      expired_at: fact.expired_at?.toISOString() ?? null, source: fact.source, confidence: fact.confidence, claim_metric: fact.claim_metric ?? null,
+      claim_value: fact.claim_value ?? null, claim_unit: fact.claim_unit ?? null, claim_period: fact.claim_period ?? null, attributed_to: fact.attributed_to ?? null })));
+    const factFields = () => factRows.length ? tx.executeRaw(`UPDATE facts f SET kind=r.kind,notability=r.notability,context=r.context,
+        valid_from=COALESCE(r.valid_from::timestamptz,f.valid_from),valid_until=r.valid_until::timestamptz,expired_at=r.expired_at::timestamptz,
+        source=r.source,confidence=r.confidence,claim_metric=r.claim_metric,claim_value=r.claim_value,claim_unit=r.claim_unit,
+        claim_period=r.claim_period,attributed_to=r.attributed_to
+      FROM jsonb_to_recordset($3::text::jsonb) AS r(row_num integer,kind text,notability text,context text,valid_from text,valid_until text,
+        expired_at text,source text,confidence real,claim_metric text,claim_value double precision,claim_unit text,claim_period text,attributed_to text)
+      WHERE f.source_id=$1 AND f.source_markdown_slug=$2 AND f.row_num=r.row_num`, [sourceId, slug, fieldRows]) : Promise.resolve([]);
     const checkTakes = () => refuseCollisions(tx, id);
     const dropTakes = () => tx.executeRaw('DELETE FROM takes WHERE page_id=$1 AND row_num=ANY($2::integer[])', [id, takeRowsGone]);
     // Full canonical versions include resolution fields; a revert restores those
     // fields from Markdown too, without the ordinary immutable-resolution API.
-    const resolveTakes = takes.map(take => () => tx.executeRaw(`UPDATE takes SET resolved_at=$3::timestamptz,
-      resolved_quality=$4,resolved_outcome=$5,resolved_source=$6,resolved_value=$7,resolved_unit=$8,resolved_by=$9
-      WHERE page_id=$1 AND row_num=$2`, [id, take.rowNum, take.resolvedAt ?? null, take.resolvedQuality ?? null,
-      take.resolvedQuality === 'correct' ? true : take.resolvedQuality === 'incorrect' ? false : null,
-      take.resolvedEvidence ?? null, take.resolvedValue ?? null, take.resolvedUnit ?? null, take.resolvedBy ?? null]));
+    const resolutions = JSON.stringify(takes.map(take => ({ row_num: take.rowNum, resolved_at: take.resolvedAt ?? null,
+      resolved_quality: take.resolvedQuality ?? null,
+      resolved_outcome: take.resolvedQuality === 'correct' ? true : take.resolvedQuality === 'incorrect' ? false : null,
+      resolved_source: take.resolvedEvidence ?? null, resolved_value: take.resolvedValue ?? null, resolved_unit: take.resolvedUnit ?? null,
+      resolved_by: take.resolvedBy ?? null })));
+    const resolveTakes = () => tx.executeRaw(`UPDATE takes k SET resolved_at=r.resolved_at::timestamptz,resolved_quality=r.resolved_quality,
+        resolved_outcome=r.resolved_outcome,resolved_source=r.resolved_source,resolved_value=r.resolved_value,resolved_unit=r.resolved_unit,
+        resolved_by=r.resolved_by
+      FROM jsonb_to_recordset($2::text::jsonb) AS r(row_num integer,resolved_at text,resolved_quality text,resolved_outcome boolean,
+        resolved_source text,resolved_value real,resolved_unit text,resolved_by text)
+      WHERE k.page_id=$1 AND k.row_num=r.row_num`, [id, resolutions]);
     // Event-page references have a different canonical origin and remain intact;
     // new rows carry their Markdown detail on insert, pinned rows refresh only from their preimage.
     const timelineRows = [
@@ -413,25 +450,44 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
         WHERE t.page_id=$1 AND t.event_page_id IS NULL AND t.id=d.id AND t.date=d.date AND t.source=d.source
           AND t.summary=d.summary AND t.detail=d.detail RETURNING t.date::text AS date, d.removed`, [id, deletions])
         .then(rows => { for (const row of rows) if (row.removed) removedDates.push(row.date); return rows; }),
-      ...[...timeline.values()].map(entry => () => tx.addTimelineEntry(slug, entry, { sourceId })),
+      ...timelineChunks(timeline).map(rows => () => insertCanonicalTimeline(tx, id, rows)),
       () => tx.executeRaw(`UPDATE timeline_entries t SET detail=r.next FROM jsonb_to_recordset($2::text::jsonb) AS r(id integer,detail text,next text)
         WHERE t.page_id=$1 AND t.event_page_id IS NULL AND t.id=r.id AND t.detail=r.detail`, [id, refreshes]),
     ];
-    if (!projectFences) {
-      await pipelined(tx, timelineRows);
-      return { timelineRowsRemoved: removedSummary(removedDates) };
+    const started = Date.now();
+    const steps: Array<[string, number]> = [];
+    const step = async <T>(name: string, run: () => Promise<T>): Promise<T> => {
+      const at = Date.now();
+      try { return await run(); } finally { steps.push([name, Date.now() - at]); }
+    };
+    try {
+      if (!projectFences) {
+        await step('timeline', () => pipelined(tx, timelineRows));
+        return { timelineRowsRemoved: removedSummary(removedDates) };
+      }
+      // #5575: rows more trusted than the writer are never expired by it, and new rows pass the write gate (trust/fence-guard.ts).
+      // The timeline rows are independent of the fact and take rows, so they ride in the first pipeline.
+      const guard = await step('timeline', () => guardFenceRows(tx, { sourceId, slug, incoming, rows: factRows, cfg: loadWriteGateConfig },
+        () => pipelined(tx, [expireFacts, ...timelineRows])));
+      if (guard.rows.length) await step('facts', () => tx.insertFacts(guard.rows, { source_id: sourceId })); // gbrain-allow-direct-insert: canonical fence projection shares the journal publication transaction
+      const contested = await step('fact_trust', () => guard.finish(tx));
+      await step('fact_fields', () => pipelined(tx, [factFields, checkTakes, dropTakes]));
+      if (takes.length) {
+        await step('takes', async () => {
+          await tx.addTakesBatch(takes.map(t => takesPreparation.toCanonicalBatchInput(id, t)));
+          await resolveTakes();
+        });
+      }
+      return { timelineRowsRemoved: removedSummary(removedDates), ...(contested.length ? { contested } : {}) };
+    } finally {
+      // #6574: a slow projection names its slow step and its row counts, so a round-trip-bound publish is visible in one line.
+      const elapsed = Date.now() - started;
+      if (elapsed >= SLOW_PROJECTION_MS) {
+        process.stderr.write(`[persistence] phase=publication reason=slow_projection source=${sourceId} slug=${slug} elapsed_ms=${elapsed}`
+          + ` timeline_rows=${timeline.size} fact_rows=${factRows.length} take_rows=${takes.length}`
+          + ` steps=${steps.map(([name, ms]) => `${name}:${ms}`).join(',')}\n`);
+      }
     }
-    // #5575: rows more trusted than the writer are never expired by it, and new rows pass the write gate (trust/fence-guard.ts).
-    // The timeline rows are independent of the fact and take rows, so they ride in the first pipeline.
-    const guard = await guardFenceRows(tx, { sourceId, slug, incoming, rows: factRows, cfg: loadWriteGateConfig }, () => pipelined(tx, [expireFacts, ...timelineRows]));
-    if (guard.rows.length) await tx.insertFacts(guard.rows, { source_id: sourceId }); // gbrain-allow-direct-insert: canonical fence projection shares the journal publication transaction
-    const contested = await guard.finish(tx);
-    await pipelined(tx, [...factFields, checkTakes, dropTakes]);
-    if (takes.length) {
-      await tx.addTakesBatch(takes.map(t => takesPreparation.toCanonicalBatchInput(id, t)));
-      await pipelined(tx, resolveTakes);
-    }
-    return { timelineRowsRemoved: removedSummary(removedDates), ...(contested.length ? { contested } : {}) };
   };
 }
 

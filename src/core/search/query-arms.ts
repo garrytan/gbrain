@@ -11,10 +11,17 @@ import type { BrainEngine } from '../engine.ts';
 import type { PageReadScope, SearchResult } from '../types.ts';
 import { anchorOpResults } from './entity-anchor.ts';
 import { applyFactsArm, applyTemporalFactReserve, hasTemporalCue, queryFactsArmEnabled, temporalFactReserveEnabled } from './facts-arm.ts';
+import { type StageTimer, UNTIMED } from './stage-timings.ts';
 
 export async function applyQueryArms(engine: BrainEngine, p: Record<string, unknown>, query: string, results: SearchResult[],
-  scope: PageReadScope & { filtered: boolean; evidencePlan: boolean; evidenceBudget?: number; remote: boolean; queryEmbedding: Float32Array | null; rowCap: () => Promise<number> }): Promise<SearchResult[]> {
-  const anchored = await anchorOpResults(engine, p, query, results, scope);
+  scope: PageReadScope & { filtered: boolean; evidencePlan: boolean; evidenceBudget?: number; remote: boolean; queryEmbedding: Float32Array | null; rowCap: () => Promise<number>; timer?: StageTimer }): Promise<SearchResult[]> {
+  const timer = scope.timer ?? UNTIMED;
+  const anchored = await timer.stage('anchoring', () => anchorOpResults(engine, p, query, results, scope));
+  return timer.stage('facts_arm', () => applyFactsStage(engine, p, query, anchored, scope));
+}
+
+async function applyFactsStage(engine: BrainEngine, p: Record<string, unknown>, query: string, anchored: SearchResult[],
+  scope: Parameters<typeof applyQueryArms>[4]): Promise<SearchResult[]> {
   if (p.offset || scope.filtered || p.since || p.until || p.lang || p.symbol_kind || p.near_symbol) return anchored;
   const tokenBudget = !scope.evidencePlan && typeof p.token_budget === 'number' ? p.token_budget : undefined;
   const opts = { sourceId: scope.sourceId, sourceIds: scope.sourceIds, remote: scope.remote, minTrust: scope.minTrust, suppressFlagged: scope.suppressFlagged, queryEmbedding: scope.queryEmbedding, rowCap: scope.rowCap, readScope: scope, tokenBudget };

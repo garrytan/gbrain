@@ -42,6 +42,7 @@ import {
   telemetryCoverage,
   TELEMETRY_COVERAGE_CAVEAT,
   type GraphSignalsStatsSection,
+  type RerankGateStats,
 } from '../core/search/telemetry.ts';
 import {
   buildModesReport,
@@ -205,6 +206,7 @@ async function runStatsSubcommand(engine: BrainEngine, args: string[]): Promise<
           total_budget_dropped: 'sum of results dropped because the call exceeded its tokenBudget',
           graph_signals_enabled: 'whether graph_signals is on for the active mode (or via search.graph_signals override)',
           graph_signals_failures_count: 'count of fail-open events in the JSONL audit over the window',
+          rerank_gate_would_skip_rate: 'rerank_gate.would_skip / rerank_gate.graded — fraction of graded searches whose pre-rerank grade was strong for a skip reason (search.reranker.gate shadow)',
         },
       },
     }, null, 2));
@@ -257,8 +259,25 @@ async function runStatsSubcommand(engine: BrainEngine, args: string[]): Promise<
     console.log('');
     console.log(`  Window: ${stats.oldest_seen ?? '?'} → ${stats.newest_seen ?? '?'}`);
   }
+  if (stats.rerank_gate.graded > 0 || Object.keys(stats.rerank_gate.ineligible).length > 0) {
+    console.log('');
+    printRerankGateSection(stats.rerank_gate);
+  }
   console.log('');
   printGraphSignalsSection(gsSection);
+}
+
+function printRerankGateSection(g: RerankGateStats): void {
+  console.log('  Rerank gate:');
+  console.log(`    graded:         ${g.graded} of ${g.eligible} eligible`);
+  console.log(`    would skip:     ${g.would_skip} (${(g.would_skip_rate * 100).toFixed(1)}%)`);
+  console.log(`    reranker calls: ${g.provider_calls}`);
+  for (const [reason, count] of Object.entries(g.by_reason).sort((a, b) => b[1] - a[1])) {
+    console.log(`      ${reason.padEnd(20)} ${count}`);
+  }
+  for (const [why, count] of Object.entries(g.ineligible).sort((a, b) => b[1] - a[1])) {
+    console.log(`    not graded (${why}): ${count}`);
+  }
 }
 
 function printGraphSignalsSection(gs: GraphSignalsStatsSection): void {

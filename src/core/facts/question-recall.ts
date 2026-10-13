@@ -1,6 +1,6 @@
 /**
  * recall's `question` ranking (MEMORY_VERBS v1 additive field): active facts
- * ranked by relevance to the question instead of by recency, inside any
+ * (every fact with `include_expired`) ranked by relevance to the question instead of by recency, inside any
  * `entity`, `session_id`, `since` or `grep` filter. The candidate pool and
  * the score are fact-relevance.ts's (shared with the temporal fact reserve);
  * the read policy is recall's own (source scope, trust floor, quarantine and
@@ -86,9 +86,9 @@ function invalidQuestionCall(message: string, suggestion: string, retry: Record<
 }
 
 /**
- * The validated `question`, or null when absent. Refuses the combinations
- * ranking cannot honor (`supersessions`, `include_expired`) and an over-long
- * question, each with the corrected call as its fix.
+ * The validated `question`, or null when absent. Refuses the combination
+ * ranking cannot honor (`supersessions`) and an over-long question, each with
+ * the corrected call as its fix. `include_expired` widens the ranked pool.
  */
 export function parseQuestionParam(p: Record<string, unknown>): string | null {
   if (p.question === undefined || p.question === null) return null;
@@ -103,11 +103,6 @@ export function parseQuestionParam(p: Record<string, unknown>): string | null {
     const { supersessions: _s, ...rest } = args;
     throw invalidQuestionCall('question cannot be combined with supersessions: the supersession log is ordered by when facts were replaced, not ranked.',
       'Drop supersessions to rank active facts, or drop question to read the supersession log.', rest, 'The same recall without supersessions.');
-  }
-  if (p.include_expired === true) {
-    const { include_expired: _e, ...rest } = args;
-    throw invalidQuestionCall('question cannot be combined with include_expired: ranking runs over active facts only.',
-      'Drop include_expired to rank active facts, or drop question to list expired facts newest first.', rest, 'The same recall without include_expired.');
   }
   if (question.length > QUESTION_MAX_CHARS) {
     throw invalidQuestionCall(`question is ${question.length} characters; the limit is ${QUESTION_MAX_CHARS}.`,
@@ -159,6 +154,8 @@ export interface QuestionRecallInput {
   sessionId: string | null;
   since: Date | null;
   grep: string | null;
+  /** Rank expired, superseded and lapsed facts too (recall's `include_expired`). */
+  includeExpired?: boolean;
 }
 
 export interface QuestionRecall {
@@ -171,13 +168,14 @@ export interface QuestionRecall {
   ambiguousEntity: EntityCandidate[] | null;
 }
 
-/** Active facts ranked by relevance to `question` under recall's read policy and filters. */
+/** Active facts (all facts with `includeExpired`) ranked by relevance to `question` under recall's read policy and filters. */
 export async function rankFactsByQuestion(ctx: OperationContext, input: QuestionRecallInput): Promise<QuestionRecall> {
   const { question, scope } = input;
   const filters: FactPoolFilters = {
     ...(input.sessionId ? { sessionId: input.sessionId } : {}),
     ...(input.since ? { since: input.since } : {}),
     ...(input.grep ? { grep: input.grep } : {}),
+    ...(input.includeExpired ? { includeExpired: true } : {}),
   };
   const empty = (degraded?: FactsDegraded, ambiguousEntity: EntityCandidate[] | null = null): QuestionRecall => ({ rows: [], relevance: new Map(), ambiguousEntity, ...(degraded ? { degraded } : {}) });
   try {

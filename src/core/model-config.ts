@@ -126,7 +126,7 @@ export function openaiStaticTierFallback(): Record<ModelTier, string> {
  * TIER_DEFAULTS unchanged (keyless installs degrade honestly downstream).
  *
  * OpenAI tiers are RESOLVED PER CALL, never pinned: the account-discovered
- * latest (openai-latest.ts cache, refreshed at gateway connect) wins, the
+ * latest (openai-latest.ts cache, refreshed before the first OpenAI-routed gateway call, #6607) wins, the
  * recipe-derived static ranking is the offline floor. The subagent tier runs
  * without prompt caching on OpenAI → enforceSubagentCapable emits the
  * degraded:no_caching cost warn.

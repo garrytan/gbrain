@@ -217,6 +217,8 @@ describe('MCP: model-visible counts and paging (content blocks only, no _meta)',
     await seedPage(engine, 'meetings/sos-1', `${TERM} ${TERM} ${TERM} sos short one.`, { type: 'meeting' });
     await seedPage(engine, 'meetings/sos-2', `${TERM} sos oversized middle. ${'Filler sentence about logistics planning. '.repeat(400)}`, { type: 'meeting' });
     await seedPage(engine, 'meetings/sos-3', `${TERM} sos short three.`, { type: 'meeting' });
+    // Delivery's own omission contract, without W5's whole-page cut (default on), which stops at the oversized page.
+    await engine.setConfig('search.page_rank_cut', 'off');
     try {
       const keyword = await callSearch(engine, { query: `${TERM} sos`, match: 'keyword', types: ['meeting'] });
       const order = keyword.rows.map(r => String(r.slug));
@@ -227,6 +229,7 @@ describe('MCP: model-visible counts and paging (content blocks only, no _meta)',
       expect(order).toEqual(['meetings/sos-1', 'meetings/sos-2', 'meetings/sos-3']);
       expect(rows.filter(r => r.evidence_omitted).map(r => r.slug)).toEqual(['meetings/sos-2']);
     } finally {
+      await engine.unsetConfig('search.page_rank_cut');
       await engine.executeRaw(`DELETE FROM pages WHERE slug LIKE 'meetings/sos-%'`);
     }
   });

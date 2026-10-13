@@ -14,6 +14,7 @@ import { describe, expect, test } from 'bun:test';
 import { KNOWN_CONFIG_KEYS } from '../src/core/config.ts';
 import { KNOB_CONFIG_KEY, SEARCH_MODE_CONFIG_KEYS, SEARCH_MODE_KEY } from '../src/core/search/mode.ts';
 import { REMOTE_PRIVATE_PAGES_KEY } from '../src/core/search/private-visibility.ts';
+import { PAGE_RANK_CUT_FACTOR_KEY, PAGE_RANK_CUT_KEY } from '../src/core/search/page-rank-cut.ts';
 
 /** search.* keys read directly via engine.getConfig (not mode-bundle knobs). */
 const DIRECTLY_READ_SINGLETONS = [
@@ -51,6 +52,8 @@ const DIRECTLY_READ_SINGLETONS = [
   'search.entity_anchoring',                 // search/entity-anchor.ts (ops/search.ts)
   'search.query_facts_arm',                  // search/facts-arm.ts (search/query-arms.ts)
   'search.temporal_fact_reserve',            // search/facts-arm.ts (search/query-arms.ts)
+  PAGE_RANK_CUT_KEY,                         // search/page-rank-cut.ts via evidence-delivery.ts (W5)
+  PAGE_RANK_CUT_FACTOR_KEY,
 ];
 
 describe('KNOWN_CONFIG_KEYS search.* rows mirror what the code reads (#4605)', () => {

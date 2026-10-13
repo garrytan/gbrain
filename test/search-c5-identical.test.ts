@@ -71,7 +71,10 @@ async function capture(engine: PGLiteEngine): Promise<Record<string, unknown>> {
   const out: Record<string, unknown> = {};
   for (const [name, args] of CALLS) {
     const res = await withEnv({ GBRAIN_BACKUP_CHECK: '0' }, () => dispatchToolCall(engine, name, args, REMOTE));
-    out[`${name} ${args.query}`] = { content: res.content.map(c => c.text), retrieval: res._meta?.retrieval };
+    // Per-call stage timings vary run to run (pinned in test/search/stage-timings-ops.test.ts); the rest is compared.
+    const { timings, ...retrieval } = (res._meta?.retrieval ?? {}) as Record<string, unknown>;
+    expect(timings).toBeDefined();
+    out[`${name} ${args.query}`] = { content: res.content.map(c => c.text), retrieval };
   }
   return out;
 }

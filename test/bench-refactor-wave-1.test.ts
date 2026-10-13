@@ -5,7 +5,7 @@
  */
 import { describe, expect, test } from 'bun:test';
 import {
-  PgFrontendCounter, benchQueries, buildCorpus, percentile, stubVector, summarize,
+  PgFrontendCounter, benchQueries, buildCorpus, percentile, stubVector, summarize, timingResidual,
 } from '../scripts/bench-refactor-wave-1.ts';
 
 function message(type: string, body: number[] = []): number[] {
@@ -26,6 +26,16 @@ describe('bench statistics', () => {
     expect(percentile(sorted, 95)).toBe(95);
     expect(percentile([7], 95)).toBe(7);
     expect(summarize([3, 1, 2])).toEqual({ n: 3, min: 1, median: 2, p95: 3, max: 3, mean: 2 });
+  });
+});
+
+describe('stage-timing gate', () => {
+  test('0 <= total - sum(stages) <= 10% of total, boundaries included', () => {
+    expect(timingResidual({ total_ms: 50, stages_ms: { lexical: 30, vector: 20 } })).toEqual({ residual_ms: 0, share: 0, ok: true });
+    expect(timingResidual({ total_ms: 50, stages_ms: { lexical: 30, vector: 15 } })).toEqual({ residual_ms: 5, share: 0.1, ok: true });
+    expect(timingResidual({ total_ms: 50, stages_ms: { lexical: 30, vector: 14 } }).ok).toBe(false);
+    expect(timingResidual({ total_ms: 50, stages_ms: { lexical: 30, vector: 21 } }).ok).toBe(false);
+    expect(timingResidual({ total_ms: 0, stages_ms: {} })).toEqual({ residual_ms: 0, share: 0, ok: true });
   });
 });
 

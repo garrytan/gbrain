@@ -40,6 +40,7 @@ import { callRemoteTool, RemoteMcpError, unpackToolResult } from '../core/mcp-cl
 import { readCursor, writeCursor } from '../core/recall-cursor-state.ts';
 import { resolveSourceId, resolveSourceIdEngineFree, SourceTargetError } from '../core/source-resolver.ts';
 import { usageError } from '../cli/cli-error.ts';
+import { parseRelativeSince } from '../core/facts/since-parse.ts';
 
 // Same kebab-case shape gate the source-resolver applies. v0.32: applied
 // locally on thin-client where the canonical resolver's assertSourceExists
@@ -204,7 +205,7 @@ function parseSinceParam(raw: string): Date | null {
       n * 24 * 60 * 60 * 1000;
     return new Date(Date.now() - ms);
   }
-  return null;
+  return parseRelativeSince(raw);
 }
 
 function validateAndNormalizeFlags(flags: ParsedFlags): void {

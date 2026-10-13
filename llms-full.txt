@@ -1734,7 +1734,13 @@ start here.
    default but printed a 9-cell cost matrix (mode × downstream model)
    preceded by `[AGENT]` markers. You MUST relay the matrix to the operator
    and confirm their choice before continuing. Cost spread between corners
-   is about 200x — silent acceptance is the wrong default. See
+   is about 200x — silent acceptance is the wrong default. After
+   `gbrain setup <harness>` the harness is already wired when the matrix
+   appears in setup's one first-run settings block, so there is nothing left
+   to continue: relay the matrix and the other settings in the reply that
+   reports the install, as the settings in effect and how to change them,
+   and apply the user's choice when they give it. Don't end the install on a
+   question that needs another turn before memory works. See
    [`./INSTALL_FOR_AGENTS.md`](./INSTALL_FOR_AGENTS.md) Step 3.5 for the
    exact ask-the-user protocol. The same banner fires on `gbrain post-upgrade`
    for a brain created before v0.32.3, when search modes arrived.
@@ -2540,7 +2546,7 @@ Read this file, then follow the path appropriate to the user’s request. Defaul
 
 > **Choose the installation path first.** Inside **[Grok Bot](docs/guides/grok-bot.md)** or **[Muse](docs/guides/muse.md)**, use their dedicated guide: the recommended shape keeps the brain on the user's own computer, published with `gbrain mcp expose --funnel` ([remote MCP](docs/guides/remote-mcp.md)), and installs the thin CLI inside the agent; `scripts/setup-in-agent.sh` is the in-agent alternative, and its receipt tracks repair and native enablement. To make a brain on this computer reachable from the user's other devices, apps, or cloud agents over MCP, follow the **[remote MCP guide](docs/guides/remote-mcp.md)** (`gbrain mcp expose`; confirm the plan before installing Tailscale or a service; `--funnel` only for cloud agents). For an **[existing hosted brain](docs/guides/hosted-harness-access.md)**, choose the harness's native OAuth/PKCE flow or a private machine handoff. Owner login, client management, permissions, and revocation use the separate [MCP administration](docs/mcp/ADMIN.md) path. This guide covers a local brain for other existing agents.
 >
-> **Memory-only path:** install → initialize → relay and confirm the Step 3.5 search-mode choice → connect the harness → verify memory. Skip identity replacement, private-repo bootstrap, automatic capture, cron installation, and paid enrichment unless requested. A keyword-only brain needs no API key. The required search-mode choice still applies; published API cost examples are not prices for the user’s harness subscription.
+> **Memory-only path:** install → initialize → relay and confirm the Step 3.5 search-mode choice → connect the harness → verify memory (with `gbrain setup <harness>`, initialize and connect are one command and the search-mode choice is relayed in the reply that reports the install). Skip identity replacement, private-repo bootstrap, automatic capture, cron installation, and paid enrichment unless requested. A keyword-only brain needs no API key. The required search-mode choice still applies; published API cost examples are not prices for the user’s harness subscription.
 >
 > Only if the user asks for a **new persistent personal agent** with identity and a private repo, follow `BOOTSTRAP_FOR_AGENTS.md`.
 
@@ -2651,9 +2657,14 @@ gbrain setup claude-code --dry-run --json   # the resolved target; writes nothin
 gbrain setup claude-code --json             # brain (if none) + MCP + read-context hooks, verified
 ```
 
-It runs `gbrain init --pglite --no-embedding` only when no brain exists, and its
-`--json` document carries init's first-run decision bundle in `notices`: relay
-the search-mode matrix (Step 3.5) and the decisions in one reply. Capture
+It runs `gbrain init --pglite --no-embedding` only when no brain exists and
+prints init's first-run decision bundle once, after the wiring and its smoke
+check (an `[AGENT]` block in human output, `notices` in `--json`), without
+`harness_wiring`, which setup just did. Relay the search-mode matrix (Step 3.5)
+and the other settings in the reply that reports the install, as the settings
+in effect and how to change them; nothing waits on the answer, so don't end
+the install on a question, and apply an answer with its option's command
+whenever the user gives one. Capture
 (`--capture`) and providers (`--providers`) stay off unless the user accepts
 them. A coded refusal (`setup_owner_conflict`, `setup_hosted_connection`) means
 another owner or a hosted brain holds the target; follow its `fix`.
@@ -2770,6 +2781,12 @@ This is the `search_mode` decision from the first-run bundle.
 and `conservative` when your subagent tier is Haiku-class or neither exists. The init output
 included the cost matrix below preceded by `[AGENT]` markers. You must NOT
 silently accept the default. Stop and ask the operator.
+
+After `gbrain setup <harness>` the harness is already wired when the matrix
+appears, so there is nothing to stop before: show the matrix and the applied
+mode in the reply that reports the install, as a choice the user can make at
+any time, and run `gbrain config set search.mode <mode>` when they pick one.
+Don't hold the install open for the answer.
 
 If you already know the operator's choice, record it at install time instead:
 `gbrain init --search-mode <conservative|balanced|tokenmax>` stores it as the
@@ -8810,21 +8827,23 @@ Retrieve saved facts and (with `query`) budget-packed page snippets.
 - `entity` scopes the FACTS arm; `query` runs the hybrid-search arm over
   pages; both present ⇒ both arms run.
 - `since`: ISO 8601 date/datetime — filters the FACTS arm only in v1. (The
-  reference implementation also accepts relative phrases like `"8 hours ago"`
-  as a convenience; only ISO 8601 is part of the frozen contract.) The window
+  reference implementation also accepts relative phrases like `"8 hours ago"`,
+  `"6 weeks ago"` and `"last month"` as a convenience; only ISO 8601 is part
+  of the frozen contract.) The window
   is measured on event time (`valid_from`, falling back to `created_at`) and
   composes with `entity` and `session_id` in the same query, before the
   per-arm limit. An unparseable value is rejected with `invalid_params`.
 - `limit` is a PER-ARM cap (facts and search results each).
 - `question`: optional string (at most 2,000 characters). The FACTS arm then
-  returns active facts ranked by relevance to the question instead of newest
+  returns active facts (every fact, expired and superseded included, with
+  `include_expired: true`) ranked by relevance to the question instead of newest
   first: cosine to the question's embedding plus whole-word term share, plus
   0.1 when the fact carries a writer-supplied date. Facts below the admission
   rule are not returned, so an empty `facts[]` is a valid answer. `entity`,
   `session_id`, `since` and `grep` filter before ranking. `question` does not
-  search pages; `query` does, and both may be passed. `supersessions: true` or
-  `include_expired: true` with `question` is `invalid_params` (ranking covers
-  active facts only); the error's `fix.mcp` is the call without them. One query
+  search pages; `query` does, and both may be passed. `supersessions: true`
+  with `question` is `invalid_params` (the supersession log is not ranked); the
+  error's `fix.mcp` is the call without it. One query
   embedding per call, no model call. Without an embedding provider, with
   embeddings turned off, or when the embed fails, facts rank by term share and
   `facts_degraded.reason` says why. A server without question ranking ignores
@@ -8971,7 +8990,10 @@ Save ONE fact with mandatory attribution.
   (default).
 - `visibility`: `world` (DEFAULT — readable by every agent connected to this
   brain; required for the remote remember→recall round-trip) \| `private`
-  (local CLI reads only). The init quickstart carries the consent line.
+  (local CLI reads only; session hooks push world facts only, so a private
+  fact never reaches a new agent session, and a local private save carries the
+  `private_fact_not_pushed` notice saying so). The init quickstart carries the
+  consent line.
 
 Response: `{ id, status, status_text, entity_slug, valid_until,
 protocol_version }` (+ `degraded_dedup: true` when no embedding provider —

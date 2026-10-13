@@ -24,7 +24,8 @@
  * doctor/status read surface.
  *
  * Events:
- *   session-start  digest to stdout from FILE reads only (≤1.5s) [A3,G4,B3,B4]
+ *   session-start  digest to stdout from FILE reads only (≤1.5s; ≤4s while a
+ *                  setup-wired harness's serve starts) [A3,G4,B3,B4]
  *   user-prompt    stdin hook JSON → IPC turn_context → additionalContext
  *                  JSON on stdout (≤800ms, ≤10000 chars) [ENG-1,S3#8,A9]
  *   stop           append to the per-session live buffer + 7-day GC [G15]
@@ -55,10 +56,10 @@ import {
   requestTurnContext,
   requestContextPack,
   hookResolveSocketForConfig,
-  CONTEXT_PACK_CLIENT_TIMEOUT_MS,
   type TurnContextResponse,
   type ContextPackResponse,
 } from '../core/context/resolve-ipc.ts';
+import { requestSessionStartPack, sessionStartAwaitsServe } from '../core/context/session-start-pack.ts';
 import type { WindowTurn } from '../core/context/entity-salience.ts';
 import {
   confineTranscriptPath,
@@ -124,6 +125,8 @@ import { isManagedFilesystemPath } from '../core/persistence/filesystem-guard.ts
 
 /** session-start self-deadline (plan D5). */
 export const SESSION_START_DEADLINE_MS = 1500;
+/** session-start self-deadline while the harness's serve starts (session-start-pack.ts); under the 5s harness timeout. */
+export const SESSION_START_SERVE_WAIT_DEADLINE_MS = 4000;
 /** user-prompt hard self-deadline (plan D5/ENG-1). */
 export const USER_PROMPT_DEADLINE_MS = 800;
 /** MEMORY.md digest budget [A3]. */
@@ -498,6 +501,9 @@ async function hookSessionStart(io: HookIo): Promise<number> {
   try {
     const j = await readStdinJson(io, 250);
     const ws = io.cwd ?? (typeof j?.cwd === 'string' ? (j.cwd as string) : process.cwd());
+    const awaitServe = sessionStartAwaitsServe(j?.source, io.harness ?? 'claude-code', ws);
+    const deadlineMs = awaitServe ? SESSION_START_SERVE_WAIT_DEADLINE_MS : SESSION_START_DEADLINE_MS;
+    let serveNotReady = false;
 
     const work = (async () => {
       // 1. MEMORY.md digest — allowlisted sections only, ≤3KB [A3].
@@ -545,44 +551,29 @@ async function hookSessionStart(io: HookIo): Promise<number> {
         const cfg = loadConfig();
         if (sanitizeSessionId(j?.session_id) !== 'unknown') await sessionCorpus(io, cfg, sanitizeSessionId(j?.session_id), ws); // #6268: freeze at start
         // Engine-uniform (#4245): same config-keyed socket/secret resolution
-        // as the user-prompt and compact arms (PGLite data dir; Postgres
-        // hash12(database_url) run-dir). Null → silent skip, as before.
-        const packSocket = await hookResolveSocketForConfig(cfg, process.env.GBRAIN_SOURCE);
-        if (packSocket) {
-          const secret = readIpcSecretForConfig(cfg);
-          if (secret) {
-            // Same sanitizer as the compact banking path — a raw vs sanitized
-            // id would split the cursor key and the warm pack would miss the
-            // banked entities (adversarial review).
-            const sessionId = sanitizeSessionId(j?.session_id);
-            const trigger = typeof j?.source === 'string' ? `session-start:${j.source as string}` : 'session-start';
-            // Clamp the IPC timeout to the REMAINING hook deadline (minus a
-            // 100ms write margin) so the pack call can never be the thing
-            // that blows SESSION_START_DEADLINE_MS.
-            const remaining = SESSION_START_DEADLINE_MS - (Date.now() - t0) - 100;
-            if (remaining > 100) {
-              const res = await requestContextPack(packSocket, {
-                secret,
-                ...(sessionId ? { sessionId } : {}),
-                ...(process.env.GBRAIN_SOURCE ? { sourceId: process.env.GBRAIN_SOURCE } : {}),
-                trigger,
-              }, { timeoutMs: Math.min(CONTEXT_PACK_CLIENT_TIMEOUT_MS, remaining) });
-              if (res !== IPC_UNAVAILABLE && !('degraded' in res)) {
-                const pack = res as ContextPackResponse;
-                if (pack.ok && pack.block?.text) out.push(pack.block.text);
-                if (pack.ok && pack.block?.core && process.env.GBRAIN_CORE !== '0') coreBox.core = pack.block.core;
-                else if (pack.ok && !pack.block?.core) coreBox.reason = 'stale_serve_no_core';
-              }
-            }
-          }
-        }
+        // as the user-prompt and compact arms; the IPC timeout is clamped to
+        // the remaining deadline. Same session-id sanitizer as the compact
+        // banking path (a raw id would split the cursor key).
+        serveNotReady = awaitServe; // still true if the deadline fires mid-wait
+        const res = await requestSessionStartPack(cfg, {
+          sourceId: process.env.GBRAIN_SOURCE || undefined,
+          sessionId: sanitizeSessionId(j?.session_id),
+          trigger: typeof j?.source === 'string' ? `session-start:${j.source as string}` : 'session-start',
+          deadlineAt: t0 + deadlineMs,
+          awaitServe,
+        });
+        serveNotReady = res.serveNotReady;
+        const pack = res.pack;
+        if (pack?.ok && pack.block?.text) out.push(pack.block.text);
+        if (pack?.ok && pack.block?.core && process.env.GBRAIN_CORE !== '0') coreBox.core = pack.block.core;
+        else if (pack?.ok && !pack.block?.core) coreBox.reason = 'stale_serve_no_core';
       } catch { /* fail-open: no pack, digest stands alone */ }
     })();
 
-    const res = await withDeadline(SESSION_START_DEADLINE_MS, work);
-    if (res === DEADLINE && outcome === 'ok') {
+    const res = await withDeadline(deadlineMs, work);
+    if ((res === DEADLINE || serveNotReady) && outcome === 'ok') {
       outcome = 'degraded';
-      reason = 'deadline';
+      reason = serveNotReady ? 'serve_not_ready' : 'deadline';
     }
     // Print whatever accumulated before the deadline — a partial digest
     // beats an empty one (the deadline bounds latency, not usefulness).

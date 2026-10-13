@@ -86,7 +86,15 @@ pool.
 The first VM to finish setup runs the
 machine-level work first: gitleaks, `verify`, then the serial lane's
 machine-exclusive files one at a time with nothing else on that VM. After that
-it joins the pool. Items run through the `ci:local` wrappers
+it joins the pool. Before `verify`, it uploads the incremental typecheck state
+(`node_modules/.cache/gbrain-typecheck.tsbuildinfo`, which the checkout
+tarball never carries). The orchestrator builds that state with
+`bun run typecheck` on the local checkout while the VMs boot
+(`scripts/ubicloud/typecheck-state.ts`). Cold, verify's typecheck took 81-84 s
+on a 16-vCPU VM and crossed the 120 s per-check cap on a loaded host; warm, it
+takes 16-19 s. tsc revalidates every file by content hash, so the state never
+changes the result. The run log says whether verify's typecheck ran warm or
+cold, and the local build's output is in `logs/local-typecheck.log`. Items run through the `ci:local` wrappers
 (`scripts/ubicloud/ci-item.sh`): `run-unit-shard.sh`, `run-serial-tests.sh` and
 `run-slow-tests.sh` accept explicit file arguments for this purpose, and
 `run-e2e.sh` runs each E2E file against its slot's own server and pooler. The

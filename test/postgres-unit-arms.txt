@@ -125,6 +125,7 @@ test/persistence-writer-fences.test.ts
 test/physical-root-birth-tolerance-6501.test.ts
 test/purge-fact.test.ts
 test/purge-global-marker.test.ts
+test/recall-page-fill.test.ts
 test/remediation-manual-only.test.ts
 test/repair-apply-pending-6543.test.ts
 test/repair-embedding-effects.test.ts
@@ -134,6 +135,9 @@ test/repair-fences.test.ts
 test/repair-frontmatter-keys-sweep-6454.test.ts
 test/repair-frontmatter.test.ts
 test/scripts/test-stress-postgres.test.ts
+test/search/page-rank-cut.test.ts
+test/search/rerank-gate-hybrid.test.ts
+test/search/rerank-gate-telemetry.test.ts
 test/shared-content-freshness.test.ts
 test/shared-skills-catalog.test.ts
 test/shared-skills-retention-capacity.test.ts

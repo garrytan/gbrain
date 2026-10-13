@@ -256,12 +256,52 @@ for (const kind of testBackends()) {
       const sup = await refusal({ question: COFFEE, supersessions: true });
       expect(sup.code).toBe('invalid_params');
       expect(sup.fix?.mcp).toEqual({ tool: 'recall', arguments: { question: COFFEE } });
-      const exp = await refusal({ question: COFFEE, include_expired: true, entity: ENTITY });
-      expect(exp.code).toBe('invalid_params');
-      expect(exp.fix?.mcp).toEqual({ tool: 'recall', arguments: { question: COFFEE, entity: ENTITY } });
       const long = await refusal({ question: 'coffee '.repeat(400) });
       expect(long.code).toBe('invalid_params');
       expect(String((long.fix?.mcp?.arguments as R).question).length).toBe(QUESTION_MAX_CHARS);
+    });
+
+    test('include_expired with question ranks expired, superseded and lapsed facts alongside active ones; without it they stay out', async () => {
+      await fact('oldroast', { text: 'OLDROAST Alice Example drank dark roast coffee every morning before the switch', daysAgo: 40 });
+      await fact('lapsed', { text: 'LAPSED Alice Example dark roast coffee morning subscription', daysAgo: 41 });
+      await fact('replaced', { text: 'REPLACED Alice Example dark roast coffee morning order', daysAgo: 42 });
+      await engine.executeRaw(`UPDATE facts SET expired_at = now() - interval '1 day' WHERE id = $1`, [ids.oldroast]);
+      await engine.executeRaw(`UPDATE facts SET valid_until = now() - interval '1 day' WHERE id = $1`, [ids.lapsed]);
+      await engine.executeRaw(`UPDATE facts SET superseded_by = $1, expired_at = now() WHERE id = $2`, [ids.roast, ids.replaced]);
+      try {
+        const active = markers((await recall(local(), { question: COFFEE, limit: 100 })).facts);
+        for (const m of ['OLDROAST', 'LAPSED', 'REPLACED']) expect(active).not.toContain(m);
+        const r = await recall(local(), { question: COFFEE, include_expired: true, limit: 100 });
+        expect(r.facts_order).toBe('relevance');
+        const all = markers(r.facts);
+        expect(all).toEqual(expect.arrayContaining(['ROAST', 'OLDROAST', 'LAPSED', 'REPLACED']));
+        const scores = r.facts.map((f: R) => f.relevance);
+        expect([...scores].sort((a, b) => b - a)).toEqual(scores);
+        expect(r.facts.find((f: R) => f.id === ids.oldroast).expired_at).not.toBeNull();
+        const newest = new Set((await recall(local(), { include_expired: true, limit: 100 })).facts.map((f: R) => f.id));
+        for (const f of r.facts) expect(newest.has(f.id)).toBe(true);
+        for (const c of untrusted()) {
+          const remote = markers((await recall(c, { question: COFFEE, include_expired: true, limit: 100 })).facts);
+          expect(remote).toContain('OLDROAST');
+          expect(remote).not.toContain('PRIVVIS');
+        }
+      } finally {
+        await engine.executeRaw('DELETE FROM facts WHERE id = ANY($1::bigint[])', [[ids.oldroast, ids.lapsed, ids.replaced]]);
+      }
+    });
+
+    test('since takes relative phrases (weeks, months, "a week ago", "last month") with or without question; an unparseable phrase is still refused', async () => {
+      const window = (r: R) => markers(r.facts);
+      expect(window(await recall(local(), { question: COFFEE, since: '3 weeks ago' }))).toContain('TEA');
+      expect(window(await recall(local(), { question: COFFEE, since: '3 weeks ago' }))).not.toContain('ROAST');
+      expect(window(await recall(local(), { question: COFFEE, since: '6 weeks ago' }))).toContain('ROAST');
+      expect(window(await recall(local(), { question: COFFEE, since: 'last month' }))).toContain('TEA');
+      expect(window(await recall(local(), { since: 'a week ago' }))).toEqual(expect.arrayContaining(['OFFSITE', 'HIRING']));
+      expect(window(await recall(local(), { since: 'a week ago' }))).not.toContain('TEA');
+      expect(window(await recall(local(), { since: '3 weeks ago' }))).toEqual(window(await recall(local(), { since: '21d' })));
+      let refused: OperationError | null = null;
+      try { await recall(local(), { question: COFFEE, since: 'a while back' }); } catch (e) { refused = e as OperationError; }
+      expect(refused?.code).toBe('invalid_params');
     });
 
     test('the admission rule is configurable between the two preregistered rule sets', async () => {

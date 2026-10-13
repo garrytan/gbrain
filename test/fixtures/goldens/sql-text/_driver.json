@@ -1614,7 +1614,7 @@
             "via": "tagged"
           },
           {
-            "paramCount": 25,
+            "paramCount": 2,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
@@ -1638,25 +1638,7 @@
             "via": "unsafe"
           },
           {
-            "paramCount": 25,
-            "unsafeOptions": {
-              "cancelFence": false,
-              "prepare": true,
-              "simple": false
-            },
-            "via": "unsafe"
-          },
-          {
-            "paramCount": 24,
-            "unsafeOptions": {
-              "cancelFence": false,
-              "prepare": true,
-              "simple": false
-            },
-            "via": "unsafe"
-          },
-          {
-            "paramCount": 3,
+            "paramCount": 2,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,

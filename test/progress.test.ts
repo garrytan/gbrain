@@ -157,15 +157,28 @@ describe('progress reporter', () => {
     const spinUntil = cpuMs() + 60;
     while (cpuMs() < spinUntil) { /* burn 60 ms of CPU */ }
     p.tick(1);
+    const usageBefore = process.resourceUsage();
+    const cpuBeforeWait = cpuMs();
     // Block the thread for 200 ms without yielding: an await would let other queued main-thread work (an earlier
     // test's timer, a GC pause) run and be billed to the phase, and the test means "the thread sat idle".
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200);
+    const cpuInWait = cpuMs() - cpuBeforeWait;
+    const usageAfter = process.resourceUsage();
     p.tick(1);
     p.finish();
     const [, worked, waited] = parseJsonl(read()) as Array<{ cpu_ms: number; elapsed_ms: number }>;
     expect(worked.cpu_ms).toBeGreaterThanOrEqual(60);
     expect(waited.elapsed_ms - worked.elapsed_ms).toBeGreaterThanOrEqual(190);
-    expect(waited.cpu_ms - worked.cpu_ms).toBeLessThan(100);
+    const waitedCpuMs = waited.cpu_ms - worked.cpu_ms;
+    expect(
+      waitedCpuMs,
+      `the second tick billed ${waitedCpuMs.toFixed(1)} ms of thread CPU (first tick, after the 60 ms spin: ${worked.cpu_ms.toFixed(1)} ms): ` +
+        `${cpuInWait.toFixed(1)} ms inside the 200 ms Atomics.wait, ${(waitedCpuMs - cpuInWait).toFixed(1)} ms in the tick calls around it; ` +
+        `process during the wait: ${usageAfter.minorPageFault - usageBefore.minorPageFault} minor and ` +
+        `${usageAfter.majorPageFault - usageBefore.majorPageFault} major page faults, ` +
+        `${usageAfter.involuntaryContextSwitches - usageBefore.involuntaryContextSwitches} involuntary context switches, ` +
+        `${((usageAfter.userCPUTime + usageAfter.systemCPUTime - usageBefore.userCPUTime - usageBefore.systemCPUTime) / 1000).toFixed(1)} ms CPU on all threads`,
+    ).toBeLessThan(100);
   });
 
   test('quiet mode emits nothing', () => {

@@ -93,7 +93,7 @@ describe('native lock distribution integrity', () => {
       const matrix = job.strategy.matrix;
       expect(matrix.bun).toEqual(['1.4.0', '1.4.3']);
       const script = job.steps.map(step => step.run ?? '').join('\n');
-      expect(script).toContain('bun install --frozen-lockfile --ignore-scripts');
+      expect(script).toContain('bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts');
       const lockTests = script.split('\n').find(line => /\bbun test\b/.test(line) && line.includes('test/native-lock.test.ts'));
       expect(lockTests).toBeDefined();
       expect(lockTests!).toMatch(/--timeout(?:=|\s+)[1-9]\d*\b/);

@@ -4,7 +4,7 @@ Read this file, then follow the path appropriate to the user’s request. Defaul
 
 > **Choose the installation path first.** Inside **[Grok Bot](docs/guides/grok-bot.md)** or **[Muse](docs/guides/muse.md)**, use their dedicated guide: the recommended shape keeps the brain on the user's own computer, published with `gbrain mcp expose --funnel` ([remote MCP](docs/guides/remote-mcp.md)), and installs the thin CLI inside the agent; `scripts/setup-in-agent.sh` is the in-agent alternative, and its receipt tracks repair and native enablement. To make a brain on this computer reachable from the user's other devices, apps, or cloud agents over MCP, follow the **[remote MCP guide](docs/guides/remote-mcp.md)** (`gbrain mcp expose`; confirm the plan before installing Tailscale or a service; `--funnel` only for cloud agents). For an **[existing hosted brain](docs/guides/hosted-harness-access.md)**, choose the harness's native OAuth/PKCE flow or a private machine handoff. Owner login, client management, permissions, and revocation use the separate [MCP administration](docs/mcp/ADMIN.md) path. This guide covers a local brain for other existing agents.
 >
-> **Memory-only path:** install → initialize → relay and confirm the Step 3.5 search-mode choice → connect the harness → verify memory. Skip identity replacement, private-repo bootstrap, automatic capture, cron installation, and paid enrichment unless requested. A keyword-only brain needs no API key. The required search-mode choice still applies; published API cost examples are not prices for the user’s harness subscription.
+> **Memory-only path:** install → initialize → relay and confirm the Step 3.5 search-mode choice → connect the harness → verify memory (with `gbrain setup <harness>`, initialize and connect are one command and the search-mode choice is relayed in the reply that reports the install). Skip identity replacement, private-repo bootstrap, automatic capture, cron installation, and paid enrichment unless requested. A keyword-only brain needs no API key. The required search-mode choice still applies; published API cost examples are not prices for the user’s harness subscription.
 >
 > Only if the user asks for a **new persistent personal agent** with identity and a private repo, follow `BOOTSTRAP_FOR_AGENTS.md`.
 
@@ -115,9 +115,14 @@ gbrain setup claude-code --dry-run --json   # the resolved target; writes nothin
 gbrain setup claude-code --json             # brain (if none) + MCP + read-context hooks, verified
 ```
 
-It runs `gbrain init --pglite --no-embedding` only when no brain exists, and its
-`--json` document carries init's first-run decision bundle in `notices`: relay
-the search-mode matrix (Step 3.5) and the decisions in one reply. Capture
+It runs `gbrain init --pglite --no-embedding` only when no brain exists and
+prints init's first-run decision bundle once, after the wiring and its smoke
+check (an `[AGENT]` block in human output, `notices` in `--json`), without
+`harness_wiring`, which setup just did. Relay the search-mode matrix (Step 3.5)
+and the other settings in the reply that reports the install, as the settings
+in effect and how to change them; nothing waits on the answer, so don't end
+the install on a question, and apply an answer with its option's command
+whenever the user gives one. Capture
 (`--capture`) and providers (`--providers`) stay off unless the user accepts
 them. A coded refusal (`setup_owner_conflict`, `setup_hosted_connection`) means
 another owner or a hosted brain holds the target; follow its `fix`.
@@ -234,6 +239,12 @@ This is the `search_mode` decision from the first-run bundle.
 and `conservative` when your subagent tier is Haiku-class or neither exists. The init output
 included the cost matrix below preceded by `[AGENT]` markers. You must NOT
 silently accept the default. Stop and ask the operator.
+
+After `gbrain setup <harness>` the harness is already wired when the matrix
+appears, so there is nothing to stop before: show the matrix and the applied
+mode in the reply that reports the install, as a choice the user can make at
+any time, and run `gbrain config set search.mode <mode>` when they pick one.
+Don't hold the install open for the answer.
 
 If you already know the operator's choice, record it at install time instead:
 `gbrain init --search-mode <conservative|balanced|tokenmax>` stores it as the

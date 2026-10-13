@@ -112,4 +112,16 @@ describePosix('#5062 shell handler process tree', () => {
       expect(alive(bg)).toBe(false);
     });
   }, 15_000);
+
+  test('output that reaches the pipe after the leader exits is still in stdout_tail', async () => {
+    if (!Bun.which('setsid')) return;
+    const d = scratch();
+    // The writer leaves the job's process group first (so the reap cannot take it), then writes after the leader exits.
+    const cmd = `setsid sh -c 'touch ${d}/left; sleep 0.3; echo late' &\nwhile [ ! -f ${d}/left ]; do sleep 0.01; done\necho early`;
+    await withEnv({ GBRAIN_ALLOW_SHELL_JOBS: '1' }, async () => {
+      const result = await shellHandler(makeCtx({ cmd, cwd: d }, new AbortController().signal)) as { exit_code: number; stdout_tail: string };
+      expect(result.exit_code).toBe(0);
+      expect(result.stdout_tail).toBe('early\nlate\n');
+    });
+  }, 15_000);
 });

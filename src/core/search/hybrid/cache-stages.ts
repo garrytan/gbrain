@@ -19,6 +19,8 @@ import { loadConfigWithEngine } from '../../config.ts';
 import { normalizeExpansionVariantBudget } from '../fusion-lists.ts';
 import { normalizeKeywordArmConfidenceFloor } from '../arm-confidence.ts';
 import { normalizeMetadataBoostGate } from '../metadata-boost-gate.ts';
+import { normalizeRerankGate } from '../crag.ts';
+import { liftModeCut } from '../page-rank-cut.ts';
 import { normalizeRelationalRerankPin } from '../relational-rerank-pin.ts';
 import { recordSearchTelemetry } from '../telemetry.ts';
 import { resolveEffectiveRecency, resolveEffectiveSalience } from './effective-modes.ts';
@@ -42,7 +44,7 @@ export async function resolveCacheSearchMode(engine: BrainEngine, opts: HybridSe
   // conservative read. See [CDX-4] in the plan.
   const { loadSearchModeConfig, resolveSearchMode, knobsHash } = await import('../mode.ts');
   const modeInputForCache = await loadSearchModeConfig(engine);
-  const resolvedForCache = resolveSearchMode({
+  const resolvedForCache = liftModeCut(resolveSearchMode({
     // T4/D5 — per-call mode folds into the cache key (resolved_mode is part
     // of knobsHash) so a per-call `--mode tokenmax` read can't be served a
     // server-default-mode cache row.
@@ -90,8 +92,10 @@ export async function resolveCacheSearchMode(engine: BrainEngine, opts: HybridSe
       keyword_arm_confidence_floor: normalizeKeywordArmConfidenceFloor(opts?.keywordArmConfidenceFloor),
       // Ranker wave (Phase E3) — threaded here too so knobsHash's `mbg=` part reflects the per-call gate.
       metadata_boost_gate: normalizeMetadataBoostGate(opts?.metadataBoostGate),
+      // W3 — rerank gate per-call thread-through (eval A/B; knobsHash `rrg=`).
+      reranker_gate: normalizeRerankGate(opts?.rerankGate),
     },
-  });
+  }), opts?.pageRankCut);
   return { modeInputForCache, resolvedForCache, knobsHash };
 }
 

@@ -186,6 +186,17 @@
     },
     {
       "details": {
+        "decision": null,
+        "provider_env": []
+      },
+      "message": "No gbrain setup receipt records a provider-use decision for this install; provider calls follow the configured keys.",
+      "name": "provider_consent",
+      "readiness_state": "not_applicable",
+      "severity": "info",
+      "status": "ok"
+    },
+    {
+      "details": {
         "reason": "no_harness_detected"
       },
       "fix": {

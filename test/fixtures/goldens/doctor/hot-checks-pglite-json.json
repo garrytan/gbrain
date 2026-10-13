@@ -395,6 +395,18 @@
           {
             "category": "ops",
             "details": {
+              "decision": null,
+              "provider_env": []
+            },
+            "message": "No gbrain setup receipt records a provider-use decision for this install; provider calls follow the configured keys.",
+            "name": "provider_consent",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "details": {
               "reason": "no_harness_detected"
             },
             "fix": {
@@ -3483,6 +3495,18 @@
             },
             "message": "No embedding key is set here (VOYAGE_API_KEY or voyage_api_key). No environment variable overrides a different config-plane provider key. This check sees only the environment `gbrain doctor` runs in; a daemon (gbrain serve, autopilot) has its own, and reports a mismatch in its log with a startup warning or embedding_auth_failed.",
             "name": "embedding_key_source",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "details": {
+              "decision": null,
+              "provider_env": []
+            },
+            "message": "No gbrain setup receipt records a provider-use decision for this install; provider calls follow the configured keys.",
+            "name": "provider_consent",
+            "readiness_state": "not_applicable",
+            "severity": "info",
             "status": "ok"
           },
           {

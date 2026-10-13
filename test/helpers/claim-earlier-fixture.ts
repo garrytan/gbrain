@@ -46,6 +46,14 @@ const planNodes = (plan: Record<string, unknown>): Array<Record<string, unknown>
  * Postgres: the scans of the `earlier` probe under the current and the former predicate, with their
  * buffer hits, over `roots` worktrees that each hold `queued` queued rows (the former key walked every
  * root's pending rows once per candidate) plus `committed` committed rows on the first.
+ *
+ * The queued rows interleave across the roots in sequence, as worktrees syncing at the same time
+ * queue them. The former probe walks the pending index in `(worktree_id, sequence)` order with only
+ * `sequence` as its index condition, so it reads the heap row of every other root's earlier entry it
+ * passes. With each root's rows in one block, which roots it passed depended on how the random
+ * worktree ids sorted against insert order: ids sorting in reverse insert order skip every other
+ * root on sequence alone and read about as much as the current probe (GBRA-40). Interleaved, every
+ * root ahead in id order holds earlier rows, whatever the ids are.
  */
 export async function explainEarlierProbe(engine: BrainEngine, roots = 8, queued = 32, committed = 20_000) {
   const host = randomUUID(), incarnation = randomUUID();
@@ -56,10 +64,8 @@ export async function explainEarlierProbe(engine: BrainEngine, roots = 8, queued
         source_id,source_incarnation,slug,worktree_id,digest,intent,authority,intent_bytes,terminal_reservation,state)
       SELECT 'local_cli','fixture',gen_random_uuid(),'put_page','fixture-source',$1::uuid,'page-'||g,$2::uuid,'d','{"kind":"managed_file_import"}'::jsonb,'{}'::jsonb,0,0,$4
       FROM generate_series(1,$3::int) g`, [incarnation, worktree, count, state]);
-    for (const worktree of worktrees) {
-      await tx.executeRaw(`INSERT INTO persistence_worktrees(id,owner_host_id,state) VALUES ($1::uuid,$2::uuid,'active')`, [worktree, host]);
-      await insert(worktree, queued, 'queued');
-    }
+    for (const worktree of worktrees) await tx.executeRaw(`INSERT INTO persistence_worktrees(id,owner_host_id,state) VALUES ($1::uuid,$2::uuid,'active')`, [worktree, host]);
+    for (let i = 0; i < queued; i++) for (const worktree of worktrees) await insert(worktree, 1, 'queued');
     await insert(worktrees[0]!, committed, 'committed');
     await tx.executeRaw('ANALYZE persistence_requests');
     const explain = async (where: string) => {

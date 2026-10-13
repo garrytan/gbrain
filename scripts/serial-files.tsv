@@ -129,6 +129,7 @@ test/doctor-engine-fit.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)
 test/doctor-eval-drift-branches.serial.test.ts	R2	R2: mock.module(../src/core/eval/drift-watch.ts) replaces modules for every file in the process
 test/doctor-keyless.serial.test.ts	global-state	global-state: configureGateway changes the process-wide AI gateway
 test/doctor-mode-matrix.serial.test.ts	R1	R1: mutates process.env (HOME, GBRAIN_HOME, GBRAIN_AUDIT_DIR, GBRAIN_SYNC_FAILURES_DIR (+1 more))
+test/doctor-provider-consent.serial.test.ts	global-state	global-state: spawns the CLI as subprocesses against a local request-logging server; binds local servers/ports
 test/doctor-remediation-plan-observational.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll
 test/doctor-remote.serial.test.ts	global-state	global-state: binds local servers/ports
 test/doctor-report-remote.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)
@@ -202,6 +203,7 @@ test/guarded-http-tls.serial.test.ts	global-state	global-state: binds local serv
 test/harness-delivery-recovery.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll; R4: PGLiteEngine without an afterAll disconnect
 test/hook-backup-notice.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, GBRAIN_BACKUP_CHECK)
 test/hook-command.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, GBRAIN_HOOKS, GBRAIN_HOOK_LANE, GBRAIN_SOURCE (+3 more))
+test/hook-session-start-serve-wait.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, CLAUDE_CONFIG_DIR, CODEX_HOME)
 test/hook-writeback-stop.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, GBRAIN_SOURCE)
 test/hybrid-adaptive-dedup-cache-plane.serial.test.ts	R2	R2: mock.module(../src/core/embedding.ts) replaces modules for every file in the process
 test/hybrid-cache-hit-limit-honors-mode.serial.test.ts	R2	R2: mock.module(../src/core/embedding.ts) replaces modules for every file in the process
@@ -272,6 +274,7 @@ test/native-base-url-fold.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME
 test/nightly-probe-compiled-binary.serial.test.ts	global-state	global-state: compiles a probe harness with bun build --compile and runs it plus a source-mode copy as subprocesses
 test/oauth-client-setup.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll; R4: PGLiteEngine without an afterAll disconnect
 test/observational-startup.serial.test.ts	R2	R2: mock.module(../src/cli/commands/repair.ts) replaces modules for every file in the process
+test/openai-discovery-lazy.serial.test.ts	global-state	global-state: withEnv holds GBRAIN_HOME and OPENAI_API_KEY across awaited gateway calls, resets gateway and discovery module state, binds a local server
 test/openai-latest.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, GBRAIN_MODEL_DISCOVERY)
 test/openclaw-compact-transcript-runtime.serial.test.ts	global-state	global-state: swaps the context engine's module-level transcript-runtime loader and SDK load state
 test/openclaw-context-engine-native.serial.test.ts	global-state	global-state: binds local servers/ports
@@ -326,6 +329,7 @@ test/search-telemetry-cache-wiring.serial.test.ts	R2	R2: mock.module(../src/core
 test/search/autocut-integration.serial.test.ts	global-state	global-state: process-wide test seams __setEmbedTransportForTests; configureGateway changes the process-wide AI gateway
 test/search/crag-escalation-limit.serial.test.ts	R2	R2: mock.module(dynamic specifier) replaces modules for every file in the process
 test/search/crag-think-source-scope.serial.test.ts	R2	R2: mock.module(../../src/core/search/hybrid.ts, ../../src/core/think/index.ts) replaces modules for every file in the process
+test/search/diverse-pool-hybrid.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME); stubs the process-wide gateway embed transport
 test/search/hybrid-reranker-integration.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, GBRAIN_AUDIT_DIR)
 test/search/operation-expansion-contract.serial.test.ts	global-state	global-state: spyOn hybrid.hybridSearchCached, console.log
 test/search/output-redaction.serial.test.ts	R2	R2: mock.module(../../src/core/eval-capture.ts, ../../src/core/search/hybrid.ts, ../../src/core/ai/gateway.ts, ../../src/core/think/index.ts) replaces modules for every file in the process

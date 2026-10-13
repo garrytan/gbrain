@@ -155,13 +155,17 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
  * Lane transactions begin in manifest order: a group whose predecessor this
  * process claimed but has not begun waits for it, so the oldest unfinished
  * group always holds a connection first (transaction-mode poolers included).
+ * Returns the group's begun mark. The caller sets it inside its transaction,
+ * once BEGIN has run, so the next group's BEGIN always comes after this one's
+ * (marking before BEGIN let two lanes race it, #6574 CI).
  */
-export async function awaitLaneBegin(state: LaneState, rows: WriteRequest[], maxMs = 10_000): Promise<void> {
+export async function awaitLaneBegin(state: LaneState, rows: WriteRequest[], maxMs = 10_000): Promise<() => void> {
   const after = predecessorOf(rows);
   const started = Date.now();
   while (after && state.claimed.has(after) && !state.begun.has(after) && Date.now() - started < maxMs) await sleep(20);
   if (after && state.claimed.has(after)) state.overlapped++;
-  state.begun.add(groupKey(rows));
+  const key = groupKey(rows);
+  return () => { state.begun.add(key); };
 }
 
 /**

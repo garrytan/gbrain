@@ -96,3 +96,14 @@ export async function endLostLease(lease: ClaimLease, boundMs = 1_000): Promise<
   if (timer) clearTimeout(timer);
 }
 
+/**
+ * #6574: before a publication. Its transaction locks the request rows it publishes, so a renewal from another connection
+ * waits on that lock until the publish ends, overruns its deadline, and the claim reads lapsed ("owner missing") for a
+ * publish that is still working. So the cadence stops here, an in-flight renewal settles, and `stamp` commits one renewal
+ * that covers the publication's whole bound. A stamp that fails leaves the claim as it was; the publication still checks
+ * its own token.
+ */
+export async function holdClaimForPublication(lease: ClaimLease, stamp: () => Promise<unknown>): Promise<void> {
+  await lease.end();
+  await stamp().catch(() => undefined);
+}

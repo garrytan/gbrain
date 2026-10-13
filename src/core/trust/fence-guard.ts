@@ -60,13 +60,17 @@ export async function guardFenceRows<T extends FenceFact>(tx: BrainEngine, input
     .map(r => Number(r.row_num)));
   let rows = input.rows;
   const contested: typeof guarded = [];
+  const moves: Array<{ id: number; row_num: number }> = [];
   for (const g of guarded) {
     const target = rows.find(r => r.fact === g.fact && r.visibility === g.visibility && !occupied.has(r.row_num));
     if (!target) { contested.push(g); continue; }
-    await tx.executeRaw('UPDATE facts SET row_num = $2 WHERE id = $1', [Number(g.id), target.row_num]);
+    moves.push({ id: Number(g.id), row_num: target.row_num });
     occupied.add(target.row_num);
     rows = rows.filter(r => r !== target);
   }
+  // #6574: every guarded row moves in one statement; each starts detached (row_num NULL), so no move collides with another.
+  if (moves.length) await tx.executeRaw(`UPDATE facts f SET row_num = m.row_num FROM jsonb_to_recordset($1::text::jsonb) AS m(id bigint, row_num integer)
+    WHERE f.id = m.id`, [JSON.stringify(moves)]);
   const gated: Array<{ row: T; decision: GatedRowDecision }> = [];
   const inserted: T[] = [];
   // Only new rows are gated; owner-tier writers (tool_observed and above) never are, so they read no gate config.

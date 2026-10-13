@@ -48,7 +48,9 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: 1.4.3
-      - run: bun install --frozen-lockfile --ignore-scripts
+      - name: Install dependencies (bounded, retried once)
+        timeout-minutes: 8
+        run: bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
       - run: npm install --prefix "${{ runner.temp }}/openclaw-host" --ignore-scripts --omit=optional --no-audit --no-fund openclaw@2026.9.4
       - name: Exercise real plugin load and fresh conversations with a loopback-only provider
         env:
@@ -75,7 +77,9 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: ${{ matrix.bun }}
-      - run: bun install --frozen-lockfile --ignore-scripts
+      - name: Install dependencies (bounded, retried once)
+        timeout-minutes: 8
+        run: bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
       # The pinned Zig archive, cached per runner OS/arch (setup-toolchain.ts re-verifies its sha256).
       - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
         with:
@@ -134,7 +138,9 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: ${{ matrix.bun }}
-      - run: bun install --frozen-lockfile --ignore-scripts
+      - name: Install dependencies (bounded, retried once)
+        timeout-minutes: 8
+        run: bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
       - run: bun scripts/native/verify.ts
       - name: Compare native hidden-window launch behavior
         shell: bash
@@ -163,7 +169,9 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: ${{ matrix.bun }}
-      - run: bun install --frozen-lockfile --ignore-scripts
+      - name: Install dependencies (bounded, retried once)
+        timeout-minutes: 8
+        run: bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
       - run: bun scripts/native/verify.ts
       - name: Compare cmdlet and direct dotnet ACL programs
         shell: bash
@@ -208,7 +216,7 @@ jobs:
           BUN_VERSION: ${{ matrix.bun }}
         run: |
           docker run --rm -v "$PWD:/work" -w /work "oven/bun:${BUN_VERSION}-alpine" sh -eu -c '
-            bun install --frozen-lockfile --ignore-scripts
+            bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
             bun scripts/native/verify.ts
             bun test --timeout=60000 test/native-lock.test.ts test/pglite-lock.test.ts test/local-ipc-path.test.ts
             bun --no-env-file test --timeout=180000 test/native-export-publication.test.ts

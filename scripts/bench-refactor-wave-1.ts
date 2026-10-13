@@ -7,7 +7,8 @@
  *     [--url <postgres-url>] [--admin-url <direct-postgres-url>] [--json]
  *     [--pages 400] [--paragraphs 6] [--import-concurrency 4] [--warmup 20]
  *     [--iterations 200] [--hybrid-iterations 50] [--count-calls 10]
- *     [--cold-runs 10] [--binary bin/gbrain] [--phases import,ops,count,hybrid-cold,connect,snapshot,version]
+ *     [--cold-runs 10] [--binary bin/gbrain] [--phases import,ops,count,hybrid-cold,connect,snapshot,version,timings]
+ *     [--results-only]
  *
  * pglite (default): a temporary file-backed PGLite data dir.
  * postgres: --url (or DATABASE_URL) is a direct server; prepared statements
@@ -26,6 +27,14 @@
  * proxy that parses the frontend protocol (Sync + simple Query messages),
  * PGLite by wrapping the instance's execProtocolRawSync (every protocol
  * exchange with the WASM backend passes through it).
+ *
+ * timings: every bench query through the `search` and `query` operations
+ * (trusted local context), one warm pass then one measured pass. Each
+ * response's `_meta.retrieval.timings` must satisfy
+ * 0 <= total_ms - sum(stages_ms) <= 10% of total_ms (the bench fails
+ * otherwise), and each result set is digested so two trees can be compared.
+ * `--results-only` skips the timing gate and records digests alone (for a
+ * tree from before the timings existed).
  */
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { arch, cpus, platform, release, tmpdir, totalmem } from 'node:os';
@@ -127,6 +136,13 @@ export function buildCorpus(pages: number, paragraphs: number): CorpusPage[] {
   return Array.from({ length: pages }, (_, i) => corpusPage(i, paragraphs));
 }
 
+/** The stage-timing gate: the time no stage claimed, as a share of the response's total. */
+export function timingResidual(t: { total_ms: number; stages_ms: Record<string, number> }): { residual_ms: number; share: number; ok: boolean } {
+  const residual = t.total_ms - Object.values(t.stages_ms).reduce((sum, ms) => sum + ms, 0);
+  const share = t.total_ms > 0 ? residual / t.total_ms : 0;
+  return { residual_ms: residual, share: Math.round(share * 1000) / 1000, ok: residual >= 0 && residual <= 0.1 * t.total_ms };
+}
+
 /** Fixed query set: two vocabulary words each, seeded. */
 export function benchQueries(count = 20): string[] {
   const words = vocabulary();
@@ -190,8 +206,8 @@ function concatBytes(a: Uint8Array, b: Uint8Array): Uint8Array {
 // ---------------------------------------------------------------------------
 
 type Backend = 'pglite' | 'postgres' | 'pgbouncer';
-type Phase = 'import' | 'ops' | 'count' | 'hybrid-cold' | 'connect' | 'snapshot' | 'version';
-const ALL_PHASES: Phase[] = ['import', 'ops', 'count', 'hybrid-cold', 'connect', 'snapshot', 'version'];
+type Phase = 'import' | 'ops' | 'count' | 'hybrid-cold' | 'connect' | 'snapshot' | 'version' | 'timings';
+const ALL_PHASES: Phase[] = ['import', 'ops', 'count', 'hybrid-cold', 'connect', 'snapshot', 'version', 'timings'];
 const CHILD_MARKER = 'BENCH_CHILD_RESULT ';
 const REPO = resolve(import.meta.dir, '..');
 const PROVIDER_KEYS = ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'VOYAGE_API_KEY', 'GOOGLE_GENERATIVE_AI_API_KEY',
@@ -440,6 +456,47 @@ async function buildOps(engine: BrainEngine, fx: Fixtures, onHybridMeta: (status
   };
 }
 
+interface TimingRow { op: string; query: string; total_ms: number | null; stages_ms: Record<string, number> | null; other_ms: number | null;
+  overlapped_ms: Record<string, number> | null; residual: ReturnType<typeof timingResidual> | null; degraded: string[]; results: number; digest: string }
+
+/** Every bench query through the search and query ops: a warm pass, then the measured pass. */
+async function measureOpTimings(engine: BrainEngine, queries: string[], resultsOnly: boolean) {
+  const { operations } = await import('../src/core/operations.ts');
+  let meta: Record<string, any> | null = null;
+  const ctx = { engine, config: {}, logger: console, dryRun: false, remote: false, sourceId: 'default',
+    emitResponseMeta: (key: string, value: unknown) => { if (key === 'retrieval') meta = value as Record<string, any>; } } as never;
+  const run = async (name: 'search' | 'query', query: string): Promise<TimingRow> => {
+    meta = null;
+    const rows = await operations.find(o => o.name === name)!.handler(ctx, name === 'query' ? { query, expand: true } : { query }) as Array<Record<string, unknown>>;
+    const m = meta as Record<string, any> | null;
+    const t = m?.timings as { total_ms: number; stages_ms: Record<string, number>; other_ms: number; overlapped_ms?: Record<string, number> } | undefined;
+    // chunk_id is an insert-order surrogate (it differs between two imports); the chunk is (source, slug, chunk_index).
+    const digest = createHash('sha256').update(JSON.stringify(rows.map(r => [r.source_id, r.slug, r.chunk_index, r.score]))).digest('hex').slice(0, 16);
+    return { op: name, query, total_ms: t?.total_ms ?? null, stages_ms: t?.stages_ms ?? null, other_ms: t?.other_ms ?? null,
+      overlapped_ms: t?.overlapped_ms ?? null, residual: t ? timingResidual(t) : null,
+      degraded: ((m?.degraded ?? []) as Array<{ stage: string; reason?: string }>).map(d => d.reason ? `${d.stage}:${d.reason}` : d.stage), results: rows.length, digest };
+  };
+  for (const name of ['search', 'query'] as const) for (const q of queries) await run(name, q);
+  const rows: TimingRow[] = [];
+  for (const name of ['search', 'query'] as const) for (const q of queries) rows.push(await run(name, q));
+  if (!resultsOnly) {
+    const missing = rows.filter(r => r.residual === null);
+    if (missing.length) throw new Error(`bench: ${missing.length} responses carry no _meta.retrieval.timings`);
+    const bad = rows.filter(r => !r.residual!.ok);
+    if (bad.length) throw new Error(`bench: timing residual outside [0, 10%] on ${bad.map(r => `${r.op} "${r.query}" (${JSON.stringify(r.residual)})`).join('; ')}`);
+  }
+  const stageTotals: Record<string, number> = {};
+  for (const r of rows) for (const [stage, ms] of Object.entries(r.stages_ms ?? {})) stageTotals[stage] = (stageTotals[stage] ?? 0) + ms;
+  return {
+    queries: queries.length, responses: rows.length, results_only: resultsOnly,
+    total_ms: summarize(rows.flatMap(r => r.total_ms === null ? [] : [r.total_ms])),
+    residual_share: summarize(rows.flatMap(r => r.residual ? [r.residual.share] : [])),
+    stage_ms_sum: stageTotals,
+    result_digest: createHash('sha256').update(rows.map(r => `${r.op}\u0000${r.query}\u0000${r.digest}`).join('\n')).digest('hex').slice(0, 16),
+    rows,
+  };
+}
+
 async function seedTargets(engine: BrainEngine, fx: Fixtures): Promise<void> {
   await engine.putPage('bench/put-target', { type: 'note', title: 'Put target', compiled_truth: 'seed' });
   await engine.putPage('bench/upsert-target', { type: 'note', title: 'Upsert target', compiled_truth: 'seed' });
@@ -684,6 +741,10 @@ async function main(): Promise<void> {
         }
       }
       report.ops = results;
+      if (phases.has('timings')) {
+        log(`[bench] stage timings: ${fx.queries.length} queries x search, query (warm pass + measured pass)`);
+        report.op_timings = await measureOpTimings(engine, fx.queries, process.argv.includes('--results-only'));
+      }
       const [{ rows: cacheRows }] = await engine.executeRaw<{ rows: number }>(`SELECT count(*)::int AS rows FROM query_cache`);
       report.semantic_result_cache = {
         semantic_result_cache_available: semanticResultCacheAvailable(),
@@ -804,6 +865,8 @@ function printTable(report: Record<string, unknown>): void {
     console.log(`${name.padEnd(40)}${fmt(r.latency_ms?.median)}${fmt(r.latency_ms?.p95)}${fmt(r.latency_ms?.max)}${fmt(range(rt?.per_call_min, rt?.per_call_max))}${fmt(rt?.first_call)}${fmt(range(rt?.parses_per_call_min, rt?.parses_per_call_max))}  ${prov ? `embed=${prov.embed} rerank=${prov.rerank} fetch=${prov.fetch}` : '-'}`);
   }
   console.log(`semantic result cache: ${JSON.stringify(report.semantic_result_cache)}`);
+  const timings = report.op_timings as Record<string, unknown> | undefined;
+  if (timings) console.log(`stage timings (${timings.responses} responses): total_ms ${JSON.stringify(timings.total_ms)}; residual share ${JSON.stringify(timings.residual_share)}; stage ms sums ${JSON.stringify(timings.stage_ms_sum)}; result digest ${timings.result_digest}`);
   for (const [name, value] of Object.entries((report.cold_start ?? {}) as Record<string, Record<string, unknown>>)) {
     const parts = Object.entries(value).filter(([, v]) => v && typeof v === 'object' && 'median' in (v as object))
       .map(([k, v]) => `${k} median=${(v as Summary).median} p95=${(v as Summary).p95} max=${(v as Summary).max}`);

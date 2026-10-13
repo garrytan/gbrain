@@ -37,11 +37,20 @@ import { DEFAULT_RERANKER_MODEL } from '../ai/defaults.ts';
 import { normalizeExpansionVariantBudget } from './fusion-lists.ts';
 import { DEFAULT_RELATIONAL_RERANK_PIN, normalizeRelationalRerankPin } from './relational-rerank-pin.ts';
 import { normalizeKeywordArmConfidenceFloor } from './arm-confidence.ts';
+import { normalizeDiversePoolDepth } from './diverse-pool.ts';
 import {
   DEFAULT_METADATA_BOOST_GATE,
   normalizeMetadataBoostGate,
   type MetadataBoostGate,
 } from './metadata-boost-gate.ts';
+import {
+  DEFAULT_RERANK_GATE,
+  DEFAULT_RERANK_GATE_MIN_GAP,
+  normalizeRerankGate,
+  normalizeRerankGateMinGap,
+  type RerankGateMode,
+} from './crag.ts';
+import { DEFAULT_HIGH_COSINE_FLOOR } from './evidence.ts';
 
 /**
  * Look up the `reranker.default_timeout_ms` declared by the resolved
@@ -199,11 +208,24 @@ export interface ModeBundle {
   /**
    * v0.46.15 — cosine floor for evidence's `high_vector_match` (see
    * evidence.ts DEFAULT_HIGH_COSINE_FLOOR). Config `search.evidence_cosine_floor`.
-   * Deliberately EXCLUDED from knobsHash: it shapes the evidence LABEL, not
-   * the result set — a floor change serves TTL-bounded stale labels on cached
-   * rows, which is acceptable for an operator tuning knob.
+   * Labels results and decides the rerank gate's `high_vector_match` grade
+   * (`reranker_gate`), so it is part of knobsHash (`ecf=`, v=31).
    */
   evidence_cosine_floor: number | undefined;
+  /**
+   * W3 — confidence-gated reranking (crag.ts `gradePreRerank`). `off` never
+   * grades; `shadow` grades the deduped candidates before the cross-encoder,
+   * stamps `meta.rerank_gate` and still reranks (results identical to `off`).
+   * `off` in every bundle. Override: per-call HybridSearchOpts.rerankGate →
+   * `search.reranker.gate` → bundle. knobsHash part `rrg=`.
+   */
+  reranker_gate: RerankGateMode;
+  /**
+   * W3 — δ: the cosine margin a `high_vector_match` rank-1 needs over the best
+   * candidate from a different page before the gate calls it strong. [0, 1].
+   * Override: `search.reranker.gate_min_gap` → bundle. knobsHash part `rrgg=`.
+   */
+  reranker_gate_min_gap: number;
 
   // v0.36 cross-modal wave knobs (D2 + D3 + D6 + D8 + D13 + LLM-intent).
   // All three mode bundles default these to the same values — cross-modal
@@ -380,6 +402,16 @@ export interface ModeBundle {
    */
   relational_chain_slots: number;
   /**
+   * Session-diverse candidate pool before the reranker (BEAM-1M S1). When N > 0:
+   * every retrieval arm fetches at least N candidates (still capped at
+   * MAX_SEARCH_LIMIT), the deduped pool keeps one row per session (pages
+   * sharing a `sessionPrefix`, otherwise one page), and the reranker reads at
+   * least N candidates, so one session's chunks cannot fill the window the
+   * gold competes for. 0 = off (every bundle). Override:
+   * `search.diverse_pool_depth` (0..100).
+   */
+  diverse_pool_depth: number;
+  /**
    * Ranker wave (Phase E2, Cat 13) — arm-confidence-weighted fusion of the
    * LEXICAL arms (arm-confidence.ts). When the keyword arm's scale-free
    * confidence `margin_ratio = top / (top + second)` over its returned rows
@@ -455,6 +487,8 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     // T2 — title-phrase boost ON by default (correctness fix, cheap + gated).
     title_boost: 1.25,
     evidence_cosine_floor: 0.8,
+    reranker_gate: DEFAULT_RERANK_GATE,
+    reranker_gate_min_gap: DEFAULT_RERANK_GATE_MIN_GAP,
     // v0.36 cross-modal defaults (same across all modes — opt-in)
     cross_modal_both_text_weight: 0.6,
     cross_modal_both_image_weight: 0.4,
@@ -483,6 +517,7 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     relational_planner: false,
     relational_orient_onehop: false,
     relational_chain_slots: 10,
+    diverse_pool_depth: 0,
     autocut_jump: 0.2,
     autocut_min_top: 0.35,
     autocut_min_keep: 1,
@@ -516,6 +551,8 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     // T2 — title-phrase boost ON by default (correctness fix, cheap + gated).
     title_boost: 1.25,
     evidence_cosine_floor: 0.8,
+    reranker_gate: DEFAULT_RERANK_GATE,
+    reranker_gate_min_gap: DEFAULT_RERANK_GATE_MIN_GAP,
     // v0.36 cross-modal defaults (same across all modes — opt-in)
     cross_modal_both_text_weight: 0.6,
     cross_modal_both_image_weight: 0.4,
@@ -549,6 +586,7 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     relational_planner: true,
     relational_orient_onehop: false,
     relational_chain_slots: 10,
+    diverse_pool_depth: 0,
     autocut_jump: 0.2,
     autocut_min_top: 0.35,
     autocut_min_keep: 1,
@@ -587,6 +625,8 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     // T2 — title-phrase boost ON by default (correctness fix, cheap + gated).
     title_boost: 1.25,
     evidence_cosine_floor: 0.8,
+    reranker_gate: DEFAULT_RERANK_GATE,
+    reranker_gate_min_gap: DEFAULT_RERANK_GATE_MIN_GAP,
     // v0.36 cross-modal defaults (same across all modes — opt-in)
     cross_modal_both_text_weight: 0.6,
     cross_modal_both_image_weight: 0.4,
@@ -615,6 +655,7 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     relational_planner: true,
     relational_orient_onehop: false,
     relational_chain_slots: 10,
+    diverse_pool_depth: 0,
     autocut_jump: 0.2,
     autocut_min_top: 0.35,
     autocut_min_keep: 1,
@@ -659,8 +700,11 @@ export interface SearchKeyOverrides {
   floor_ratio?: number;
   // T2 — title-phrase boost override.
   title_boost?: number;
-  // v0.46.15 — evidence cosine-floor override (label-only; not in knobsHash).
+  // v0.46.15 — evidence cosine-floor override (knobsHash `ecf=` since v=31).
   evidence_cosine_floor?: number;
+  // W3 — confidence-gated reranking overrides.
+  reranker_gate?: RerankGateMode;
+  reranker_gate_min_gap?: number;
   // v0.36 cross-modal overrides
   cross_modal_both_text_weight?: number;
   cross_modal_both_image_weight?: number;
@@ -683,6 +727,7 @@ export interface SearchKeyOverrides {
   relational_planner?: boolean;
   relational_orient_onehop?: boolean | null;
   relational_chain_slots?: number;
+  diverse_pool_depth?: number;
   // Ranker wave (Phase E2) — keyword-arm confidence floor override (null = off; (0, 1]).
   keyword_arm_confidence_floor?: number | null;
   // Ranker wave (Phase E3) — metadata boost gate override (`always` | `lexical`).
@@ -721,6 +766,9 @@ export interface SearchPerCallOpts {
   title_boost?: number;
   // v0.46.15 — evidence cosine-floor per-call override.
   evidence_cosine_floor?: number;
+  // W3 — confidence-gated reranking per-call override (RERANK_GATE_MODES).
+  reranker_gate?: RerankGateMode;
+  reranker_gate_min_gap?: number;
   // v0.36 cross-modal per-call overrides
   cross_modal_both_text_weight?: number;
   cross_modal_both_image_weight?: number;
@@ -750,6 +798,7 @@ export interface SearchPerCallOpts {
   relational_planner?: boolean;
   relational_orient_onehop?: boolean | null;
   relational_chain_slots?: number;
+  diverse_pool_depth?: number;
   // Ranker wave (Phase E2) — keyword-arm confidence floor per-call override (null = off; (0, 1]).
   keyword_arm_confidence_floor?: number | null;
   // Ranker wave (Phase E3) — metadata boost gate per-call override (`always` | `lexical`).
@@ -833,6 +882,8 @@ export function resolveSearchMode(input: ResolveSearchModeInput): ResolvedSearch
     floor_ratio: pick('floor_ratio'),
     title_boost: pick('title_boost'),
     evidence_cosine_floor: pick('evidence_cosine_floor'),
+    reranker_gate: pick('reranker_gate'),
+    reranker_gate_min_gap: pick('reranker_gate_min_gap'),
     // v0.36 cross-modal knobs
     cross_modal_both_text_weight: pick('cross_modal_both_text_weight'),
     cross_modal_both_image_weight: pick('cross_modal_both_image_weight'),
@@ -858,6 +909,7 @@ export function resolveSearchMode(input: ResolveSearchModeInput): ResolvedSearch
     relational_planner: pick('relational_planner'),
     relational_orient_onehop: pick('relational_orient_onehop'),
     relational_chain_slots: pick('relational_chain_slots'),
+    diverse_pool_depth: pick('diverse_pool_depth'),
     keyword_arm_confidence_floor: pick('keyword_arm_confidence_floor'),
     metadata_boost_gate: pick('metadata_boost_gate'),
     resolved_mode,
@@ -908,7 +960,7 @@ export function attributeKnob<K extends keyof ModeBundle>(
  * reorder or add a knob without bumping a constant — a hash collision would
  * mean stale cache rows silently reading the wrong shape.
  */
-export const KNOBS_HASH_VERSION = 30;
+export const KNOBS_HASH_VERSION = 31;
 
 /**
  * v0.36 (D8 / CDX-2) — second-arg context for the cache key. The
@@ -1196,6 +1248,15 @@ export function knobsHash(
     // re-orders the fused page, so a `lexical` write must never serve an
     // `always` lookup. A partial-knobs literal hashes as `always` — the deliberate pre-wave hash identity, NOT the bundle default (`lexical`).
     `mbg=${knobs.metadata_boost_gate ?? DEFAULT_METADATA_BOOST_GATE}`,
+    // v=31 additions (W3 confidence-gated reranking, append-only): the gate,
+    // its δ and the evidence cosine floor. The gate's grade rides the stored
+    // meta, and δ and the floor decide that grade, so rows written under one
+    // setting must not serve another. The floor was label-only before this
+    // block and stayed out of the hash.
+    // Partial-knobs literals hash as the bundle defaults.
+    `rrg=${knobs.reranker_gate ?? DEFAULT_RERANK_GATE}`,
+    `rrgg=${(knobs.reranker_gate_min_gap ?? DEFAULT_RERANK_GATE_MIN_GAP).toFixed(3)}`,
+    `ecf=${(knobs.evidence_cosine_floor ?? DEFAULT_HIGH_COSINE_FLOOR).toFixed(3)}`,
     // System One (append-only, emitted only when a decide slot is not off, so
     // the all-off key is unchanged and needs no version bump).
     ...(ctx?.decide ? [`dec=${ctx.decide}`] : []),
@@ -1204,6 +1265,8 @@ export function knobsHash(
     ...(knobs.relational_planner ? ['rp=1'] : []),
     ...(knobs.relational_orient_onehop ?? knobs.relational_planner ? ['ro=1'] : []),
     ...(knobs.relational_planner && knobs.relational_chain_slots ? [`rcs=${knobs.relational_chain_slots}`] : []),
+    // Session-diverse pool (append-only, emitted only when on, so every off key is unchanged).
+    ...(knobs.diverse_pool_depth ? [`dpd=${knobs.diverse_pool_depth}`] : []),
   ];
   // #5691 (append-only, no version bump): only a non-empty query prefix adds
   // a part, so every row written without one keeps its key.
@@ -1326,13 +1389,20 @@ export function loadOverridesFromConfig(
     if (Number.isFinite(n) && n >= 1.0 && n <= 5.0) out.title_boost = n;
   }
 
-  // v0.46.15 — evidence cosine floor (label-only knob; deliberately not in
-  // knobsHash). [0, 1] sanity-bounded.
+  // v0.46.15 — evidence cosine floor. [0, 1] sanity-bounded. Part of
+  // knobsHash since v=31: it also decides the rerank gate's grade.
   const ecf = get('search.evidence_cosine_floor');
   if (ecf !== undefined) {
     const n = parseFloat(ecf);
     if (Number.isFinite(n) && n >= 0 && n <= 1) out.evidence_cosine_floor = n;
   }
+
+  // W3 — confidence-gated reranking. One parse contract each (crag.ts);
+  // anything unrecognized falls through to the bundle.
+  const rrg = normalizeRerankGate(get('search.reranker.gate'));
+  if (rrg !== undefined) out.reranker_gate = rrg;
+  const rrgg = normalizeRerankGateMinGap(get('search.reranker.gate_min_gap'));
+  if (rrgg !== undefined) out.reranker_gate_min_gap = rrgg;
 
   // v0.36 cross-modal overrides (D3 registry)
   const cmbt = get('search.cross_modal.both_mode_text_weight');
@@ -1437,6 +1507,8 @@ export function loadOverridesFromConfig(
   if (roh !== undefined) out.relational_orient_onehop = roh;
   const rcs = normalizeChainSlots(get('search.relational_chain_slots'));
   if (rcs !== undefined) out.relational_chain_slots = rcs;
+  const dpd = normalizeDiversePoolDepth(get('search.diverse_pool_depth'));
+  if (dpd !== undefined) out.diverse_pool_depth = dpd;
   // Ranker wave (Phase E2) — keyword-arm confidence floor: the literal
   // `off`/`null` pins the knob off (null); a number in (0, 1] is the floor;
   // anything else falls through to the bundle. ONE range contract with the
@@ -1486,6 +1558,8 @@ export const KNOB_CONFIG_KEY: Readonly<Record<keyof ModeBundle, string>> = Objec
   floor_ratio: 'search.floor_ratio',
   title_boost: 'search.title_boost',
   evidence_cosine_floor: 'search.evidence_cosine_floor',
+  reranker_gate: 'search.reranker.gate',
+  reranker_gate_min_gap: 'search.reranker.gate_min_gap',
   cross_modal_both_text_weight: 'search.cross_modal.both_mode_text_weight',
   cross_modal_both_image_weight: 'search.cross_modal.both_mode_image_weight',
   image_query_text_refinement_weight: 'search.image_query.text_refinement_weight',
@@ -1508,6 +1582,7 @@ export const KNOB_CONFIG_KEY: Readonly<Record<keyof ModeBundle, string>> = Objec
   relational_planner: 'search.relational_planner',
   relational_orient_onehop: 'search.relational_orient_onehop',
   relational_chain_slots: 'search.relational_chain_slots',
+  diverse_pool_depth: 'search.diverse_pool_depth',
   keyword_arm_confidence_floor: 'search.keyword_arm_confidence_floor',
   metadata_boost_gate: 'search.metadata_boost_gate',
 });

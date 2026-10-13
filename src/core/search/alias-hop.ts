@@ -60,37 +60,72 @@ export function isExcludedIdentity(slug: string, opts: Pick<IdentityTierOpts, 'e
   return opts.excludeSlugPrefixes?.some((p) => slug.startsWith(p)) ?? false;
 }
 
+/**
+ * A54 — the immutable half of the alias hop: the alias table read for the
+ * normalized query (plus its tokens under `tokenHop`). It never touches a
+ * result list, so the rerank gate can read it before reranking and the apply
+ * step reuses it after, and the alias table is read once per search.
+ * `null` means the hop is a no-op for this query (empty, too long, or the
+ * table is missing / the read failed — fail-open, D9).
+ */
+export interface AliasHopLookup {
+  qNorm: string;
+  tokens: string[];
+  aliasMap: Map<string, Array<{ slug: string; source_id: string }>>;
+}
+
+export async function lookupAliasHop(
+  engine: import('../engine.ts').BrainEngine,
+  query: string,
+  opts: IdentityTierOpts & { tokenHop?: boolean },
+): Promise<AliasHopLookup | null> {
+  if (!query) return null;
+  const qNorm = normalizeAlias(query);
+  if (!qNorm || qNorm.split(' ').length > MAX_ALIAS_QUERY_TOKENS) return null;
+  const tokens = opts.tokenHop
+    ? [...new Set(qNorm.split(' '))].filter((t) => t.length >= 2 && t !== qNorm)
+    : [];
+  try {
+    return { qNorm, tokens, aliasMap: await engine.resolveAliases([qNorm, ...tokens], opts) };
+  } catch {
+    return null; // pre-v110 table-missing OR transient error -> fail-open
+  }
+}
+
+/** The full-query alias canonicals the hop would boost or inject: excludes applied, deterministic order, capped. */
+export function aliasHopCanonicals(lookup: AliasHopLookup, opts: IdentityTierOpts): Array<{ slug: string; source_id: string }> {
+  return [...(lookup.aliasMap.get(lookup.qNorm) ?? [])]
+    .filter(ref => !isExcludedIdentity(ref.slug, opts))
+    .sort((a, b) => (a.source_id === b.source_id ? a.slug.localeCompare(b.slug) : a.source_id.localeCompare(b.source_id)))
+    .slice(0, MAX_ALIAS_INJECT);
+}
+
 export async function applyAliasHop(
   engine: import('../engine.ts').BrainEngine,
   results: SearchResult[],
   query: string,
   opts: IdentityTierOpts & { tokenHop?: boolean },
 ): Promise<SearchResult[]> {
-  if (!query) return results;
-  const qNorm = normalizeAlias(query);
-  if (!qNorm || qNorm.split(' ').length > MAX_ALIAS_QUERY_TOKENS) return results;
-  const tokens = opts.tokenHop
-    ? [...new Set(qNorm.split(' '))].filter((t) => t.length >= 2 && t !== qNorm)
-    : [];
+  return applyAliasHopLookup(engine, results, await lookupAliasHop(engine, query, opts), opts);
+}
 
-  let aliasMap: Map<string, Array<{ slug: string; source_id: string }>>;
-  try {
-    aliasMap = await engine.resolveAliases([qNorm, ...tokens], opts);
-  } catch {
-    return results; // pre-v110 table-missing OR transient error -> fail-open
-  }
-  const refs = aliasMap.get(qNorm);
+/** The apply half of the alias hop: boost or inject the looked-up canonicals into `results`. */
+export async function applyAliasHopLookup(
+  engine: import('../engine.ts').BrainEngine,
+  results: SearchResult[],
+  lookup: AliasHopLookup | null,
+  opts: IdentityTierOpts,
+): Promise<SearchResult[]> {
+  if (!lookup) return results;
+  const refs = lookup.aliasMap.get(lookup.qNorm);
   if (!refs || refs.length === 0) {
-    return tokens.length > 0 ? applyAliasTokenHop(engine, results, tokens, aliasMap, opts) : results;
+    return lookup.tokens.length > 0 ? applyAliasTokenHop(engine, results, lookup.tokens, lookup.aliasMap, opts) : results;
   }
 
   // Deterministic + capped. Source-scoped: each canonical is a (source_id, slug)
   // pair so a federated caller boosts/injects the RIGHT source's page, never
   // collapsing or cross-injecting (P0 source-isolation contract).
-  const ordered = [...refs]
-    .filter(ref => !isExcludedIdentity(ref.slug, opts))
-    .sort((a, b) => (a.source_id === b.source_id ? a.slug.localeCompare(b.slug) : a.source_id.localeCompare(b.source_id)))
-    .slice(0, MAX_ALIAS_INJECT);
+  const ordered = aliasHopCanonicals(lookup, opts);
   const out = [...results];
   let injectScore = topOrganicScore(out);
 

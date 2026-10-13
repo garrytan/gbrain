@@ -71,7 +71,7 @@ export async function runLexicalArms(req: HybridRequest): Promise<LexicalArms> {
     earlyModality === 'image'
       ? [[], []]
       : await Promise.all([
-          engine.searchKeyword(query, searchOpts).catch((err: unknown) => {
+          req.timer.overlap('keyword_arm', engine.searchKeyword(query, searchOpts)).catch((err: unknown) => {
             if (isDatetimeInputError(err)) throw err;
             if (isDbAccessFailure(err)) keywordAccessError = err;
             pushDegraded(degraded, 'keyword_arm_failed', isTimeoutError(err) ? 'timeout' : 'provider_error');
@@ -82,7 +82,7 @@ export async function runLexicalArms(req: HybridRequest): Promise<LexicalArms> {
             );
             return [] as SearchResult[];
           }),
-          engine.searchTitles(query, searchOpts).catch((err: unknown) => {
+          req.timer.overlap('title_arm', engine.searchTitles(query, searchOpts)).catch((err: unknown) => {
             if (isDatetimeInputError(err)) throw err;
             if (isDbAccessFailure(err)) titleAccessError = err;
             pushDegraded(degraded, 'title_arm_failed', isTimeoutError(err) ? 'timeout' : 'provider_error');
@@ -231,7 +231,7 @@ export async function resolveModalityAndQueries(req: HybridRequest) {
   const expansionAllowed = resolvedMode.expansion && effectiveModality !== 'image';
   if (expansionAllowed && opts?.expandFn) {
     try {
-      const expanded = await opts.expandFn(query);
+      const expanded = await req.timer.stage('expansion', async () => opts.expandFn!(query));
       // INVARIANT: queries[0] IS the caller's query. Both fan-outs below tag
       // index 0 as the `original` arm (weight 1, cosine re-score vector), so
       // an expandFn that omits or reorders the original would silently hand
@@ -295,12 +295,12 @@ export async function runVectorArms(
       if (!aiIsAvailable('embedding', multimodalProviderProbe)) {
         throw new Error('gateway not configured for embedding — unified multimodal would also fail');
       }
-      const unifiedEmbedding = await embedQueryMultimodal(query);
+      const unifiedEmbedding = await req.timer.stage('embed', () => embedQueryMultimodal(query));
       const unifiedSearchOpts: SearchOpts = {
         ...searchOpts,
         embeddingColumn: 'embedding_multimodal',
       };
-      const unifiedList = await engine.searchVector(unifiedEmbedding, unifiedSearchOpts);
+      const unifiedList = await req.timer.stage('vector', () => engine.searchVector(unifiedEmbedding, unifiedSearchOpts));
       // D8 fail-open: zero rows + not strict-mode → fall through to dual-column.
       if (unifiedList.length === 0 && !resolvedMode.unified_multimodal_only) {
         console.error(
@@ -336,13 +336,13 @@ export async function runVectorArms(
       if (!aiIsAvailable('embedding', multimodalProviderProbe)) {
         throw new Error('gateway not configured for embedding — multimodal would also fail');
       }
-      const imageEmbedding = await embedQueryMultimodal(query);
+      const imageEmbedding = await req.timer.stage('embed', () => embedQueryMultimodal(query));
       imageQueryEmbedding = imageEmbedding;
       const imageSearchOpts: SearchOpts = {
         ...searchOpts,
         embeddingColumn: 'embedding_image',
       };
-      const imageList = await engine.searchVector(imageEmbedding, imageSearchOpts);
+      const imageList = await req.timer.stage('vector', () => engine.searchVector(imageEmbedding, imageSearchOpts));
       for (const r of imageList) {
         r.modality = r.modality ?? 'image';
       }
@@ -400,11 +400,11 @@ export async function runVectorArms(
       // all-or-nothing fan-outs — one variant's failure abandons every
       // embedding and falls back to keyword-only.
       try {
-        const embeddings = await Promise.all(queries.map(q => embedOneQuery(q)));
+        const embeddings = await req.timer.stage('embed', () => Promise.all(queries.map(q => embedOneQuery(q))));
         queryEmbedding = embeddings[0];
-        const textLists = await Promise.all(
+        const textLists = await req.timer.stage('vector', () => Promise.all(
           embeddings.map(emb => engine.searchVector(emb, searchOpts)),
-        );
+        ));
         for (const list of textLists) {
           for (const r of list) {
             r.modality = r.modality ?? 'text';
@@ -431,7 +431,7 @@ export async function runVectorArms(
       // WP2/T3 (ENG-15) salvage fan-outs: allSettled on BOTH the embed
       // fan-out and the searchVector fan-out so one variant's failure no
       // longer abandons the survivors (the query-vs-search asymmetry fix).
-      const settled = await Promise.allSettled(queries.map(q => embedOneQuery(q)));
+      const settled = await req.timer.stage('embed', () => Promise.allSettled(queries.map(q => embedOneQuery(q))));
       const okEmbeds: Float32Array[] = [];
       const embedFailures: unknown[] = [];
       for (const s of settled) {
@@ -464,7 +464,7 @@ export async function runVectorArms(
           queryEmbedding = null;
           pushDegraded(degraded, 'rescore_skipped', 'original_embed_failed');
         }
-        const vSettled = await Promise.allSettled(okEmbeds.map(emb => engine.searchVector(emb, searchOpts)));
+        const vSettled = await req.timer.stage('vector', () => Promise.allSettled(okEmbeds.map(emb => engine.searchVector(emb, searchOpts))));
         const okLists: SearchResult[][] = [];
         const okRoles: Array<'original' | 'variant'> = [];
         let vFirstErr: unknown;

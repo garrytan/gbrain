@@ -535,31 +535,47 @@ export function refreshGatewayEnvFromFilePlane(): void {
  * config for callers who want to inspect what landed.
  */
 export async function reconfigureGatewayWithEngine(engine: BrainEngine): Promise<AIGatewayConfig> {
+  _discoveryEngine = engine;
+  _discovery = null;
+  return resolveGatewayModels(engine);
+}
+
+let _discoveryEngine: BrainEngine | null = null;
+let _discovery: Promise<void> | null = null;
+
+/**
+ * #6607: OpenAI model discovery runs once per reconfigure, just before an
+ * OpenAI-routed call, never on connect (a brain that never calls OpenAI sends
+ * nothing). TTL, backoff, decline and kill switch live in openai-latest.ts.
+ * Changed tiers re-resolve the models first. Endpoint: OPENAI_BASE_URL (env
+ * plane), never DB-mergeable base_urls, so a shared brain cannot redirect the
+ * key. Fail-open.
+ */
+async function discoverBeforeOpenAICall(modelStr: string | undefined): Promise<void> {
+  if (!modelStr) return;
+  try { if (resolveRecipe(modelStr).recipe.id !== 'openai') return; } catch { return; }
+  _discovery ??= (async () => {
+    try {
+      const cfg = requireConfig();
+      const { refreshLatestOpenAIModels, latestOpenAITiers } = await import('./openai-latest.ts');
+      const before = JSON.stringify(latestOpenAITiers());
+      await refreshLatestOpenAIModels({ env: cfg.env ?? process.env, baseUrl: resolveNativeBaseUrl('openai', cfg) });
+      if (_discoveryEngine && JSON.stringify(latestOpenAITiers()) !== before) await resolveGatewayModels(_discoveryEngine);
+    } catch {
+      // Fail-open: the call proceeds on the models already resolved.
+    }
+  })();
+  await _discovery;
+}
+
+async function resolveGatewayModels(engine: BrainEngine): Promise<AIGatewayConfig> {
   const cfg = requireConfig();
-  // Refresh the OpenAI latest-model discovery cache BEFORE resolution so the
-  // key-aware tier defaults below see it. TTL-throttled (one fetch/24h),
-  // 3s-bounded, fail-open, disabled in test lanes via GBRAIN_MODEL_DISCOVERY
-  // — a connect never blocks on or breaks from discovery.
-  const { refreshLatestOpenAIModels } = await import('./openai-latest.ts');
-  // Discovery hits the same endpoint real native-openai calls use:
-  // OPENAI_BASE_URL via resolveNativeBaseUrl — the ENV PLANE, deliberately
-  // NOT cfg.base_urls.openai. Two reasons: (1) defaulting to api.openai.com
-  // when a custom endpoint is configured would send that endpoint's key to
-  // the official host; (2) base_urls can be DB-plane-merged from a mounted
-  // brain, and discovery fires automatically on connect — a hostile shared
-  // brain must never be able to point this process's bearer key at an
-  // attacker URL (native chat calls ignore base_urls for the same reason).
-  await refreshLatestOpenAIModels({
-    env: cfg.env ?? process.env,
-    baseUrl: resolveNativeBaseUrl('openai', cfg),
-  });
 
   // The two resolutions below each walk a 5-tier precedence chain that reads
   // up to 4 config keys, plus alias expansion. Against the engine that is
   // many sequential round trips before the CLI does any work — seconds of
   // `gbrain stats`'s wall clock on a hosted brain, for reads the server
-  // answered in microseconds. Take one snapshot of the config table (AFTER
-  // the discovery refresh above, so tier defaults see fresh discovery) and
+  // answered in microseconds. Take one snapshot of the config table and
   // resolve every model against it. Same keys, same precedence, one round
   // trip.
   const reader = await snapshotConfigReader(engine);
@@ -693,6 +709,8 @@ export function __setGatewayResetBaselineForTests(
 /** Clear every piece of module state. Shared by both reset flavors. */
 function clearGatewayState(): void {
   _config = null;
+  _discoveryEngine = null;
+  _discovery = null;
   clearGatewayModelSources();
   stashGatewayAnthropicKeyFromEnv(undefined); // gateway-owned snapshot dies with the config
   _modelCache.clear();
@@ -1406,6 +1424,7 @@ function noKeyOnce(modelStr: string, keyName: string, query: string, docCount: n
 }
 
 async function resolveEmbeddingProvider(modelStr: string): Promise<{ model: any; recipe: Recipe; modelId: string }> {
+  await discoverBeforeOpenAICall(modelStr);
   const { parsed, recipe } = resolveRecipe(modelStr);
   assertTouchpoint(recipe, 'embedding', parsed.modelId);
   const cfg = requireConfig();
@@ -2343,6 +2362,7 @@ export async function embedMultimodalSafe(
 // ---- Expansion ----
 
 async function resolveExpansionProvider(modelStr: string): Promise<{ model: any; recipe: Recipe; modelId: string }> {
+  await discoverBeforeOpenAICall(modelStr);
   const { parsed, recipe } = resolveRecipe(modelStr);
   assertTouchpoint(recipe, 'expansion', parsed.modelId);
   const cfg = requireConfig();
@@ -2500,6 +2520,7 @@ export async function expand(query: string): Promise<string[]> {
   });
 
   try {
+    await discoverBeforeOpenAICall(_config?.expansion_model);
     const requestedModelId = getExpansionModel();
     const { model, recipe, modelId } = await resolveExpansionProvider(requestedModelId);
     const modelLabel = `${recipe.id}:${modelId}`;
@@ -3265,6 +3286,7 @@ function chatSupportsPromptCache(recipe: Recipe, modelId: string): boolean {
 }
 
 async function resolveChatProvider(modelStr: string): Promise<{ model: any; recipe: Recipe; modelId: string }> {
+  await discoverBeforeOpenAICall(modelStr);
   const { parsed, recipe } = resolveRecipe(modelStr);
   assertTouchpoint(recipe, 'chat', parsed.modelId);
   const cfg = requireConfig();
@@ -3514,6 +3536,7 @@ export function toAISDKTools(tools: ChatToolDef[] | undefined): Record<string, a
 }
 
 export async function chat(opts: ChatOpts): Promise<ChatResult> {
+  await discoverBeforeOpenAICall(opts.model ?? _config?.chat_model);
   const fallbackChain = opts.allowFallback === false ? undefined : _config?.chat_fallback_chain;
   if (fallbackChain?.length) return chatWithFallback(opts, opts.model ?? getChatModel(), fallbackChain, chat, { onRefusal: _config?.chat_fallback_on_refusal !== false });
   const tracker = __budgetStore.getStore() ?? null;

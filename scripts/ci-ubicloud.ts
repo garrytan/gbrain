@@ -44,7 +44,7 @@
  */
 
 import { spawnSync, type ChildProcess } from "node:child_process";
-import { appendFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import {
@@ -62,6 +62,7 @@ import {
   type WeightTable,
 } from "./ubicloud/schedule.ts";
 import { runScript, type RunScriptOpts } from "./ubicloud/run-script.ts";
+import { buildTypecheckState, typecheckBuildInfo } from "./ubicloud/typecheck-state.ts";
 
 const ROOT = resolve(import.meta.dir, "..");
 const RUNNER = join(ROOT, "scripts/ubicloud/ubi-runner.sh");
@@ -256,6 +257,14 @@ async function main() {
   // ── Checkout tarball, packed once while the VMs boot ─────────────────────
   const tarball = join(tmpdir(), `gbrain-ci-ubicloud-${process.pid}.tgz`);
   const packed = runner(["pack", ROOT], { out: tarball, stdoutOnly: true });
+  // verify's typecheck runs warm from a buildinfo of this tree, built while the VMs boot (scripts/ubicloud/typecheck-state.ts).
+  const buildInfo = opts.lanes.has("verify") ? typecheckBuildInfo(ROOT) : null;
+  const typecheckState = buildInfo
+    ? buildTypecheckState(ROOT, join(runDir, "logs", "local-typecheck.log"), (child) => {
+      children.set(child, "typecheck");
+      child.once("close", () => children.delete(child));
+    })
+    : null;
   // Faster create and SSH polling than the runner's interactive default.
   process.env.UBI_POLL_SECONDS ??= "2";
 
@@ -392,6 +401,15 @@ async function main() {
   const runControl = async (vm: Vm) => {
     vm.control = true;
     for (const step of control) {
+      if (step.lane === "verify" && typecheckState) {
+        const { code, ms } = await typecheckState;
+        const sent = existsSync(join(ROOT, buildInfo!))
+          ? await runner(["ssh", vm.name, `mkdir -p ${quote(dirname(`${REMOTE_DIR}/${buildInfo}`))} && cat > ${quote(`${REMOTE_DIR}/${buildInfo}`)}`], { input: join(ROOT, buildInfo!) })
+          : null;
+        log(sent?.code === 0
+          ? `typecheck state: local incremental typecheck (exit ${code}, ${Math.round(ms / 1000)}s) uploaded to ${vm.name}; verify's typecheck runs warm`
+          : `typecheck state: ${sent ? `upload to ${vm.name} failed (exit ${sent.code})` : `no ${buildInfo} after the local typecheck (exit ${code})`}; verify's typecheck runs cold`);
+      }
       log(`control on ${vm.name}: ${step.lane}${step.files.length ? ` (${step.files.length} exclusive files, sequential)` : ""}`);
       const { parsed, logPath } = await runBatch(vm, 1, step.lane, step.files);
       const done = new Set(parsed.map((r) => r.file));

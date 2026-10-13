@@ -220,10 +220,13 @@ hybrid recall + fusion:
 graph augment (optional two-pass structural expansion — walkDepth > 0)
        │
        ▼
-deduplication (4-layer: per-page cap, same-page Jaccard, type diversity)
+deduplication (4-layer: per-page cap, same-page Jaccard, type diversity;
+   with search.diverse_pool_depth N > 0, one row per session — off by default,
+   src/core/search/diverse-pool.ts)
        │
        ▼
-reranker (cross-encoder — balanced/tokenmax; fail-open)
+reranker (cross-encoder — balanced/tokenmax; fail-open; reads
+   reranker.top_n_in rows, at least N with search.diverse_pool_depth)
        │
        ▼
 feedback (use-attributed page weights × the ordering score, bounded ±λ;

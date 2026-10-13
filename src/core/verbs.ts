@@ -199,6 +199,10 @@ const remember: Operation = {
       const { degradedDedupNotice } = await import('./interop-notices.ts');
       ctx.emitNotice?.(degradedDedupNotice(ctx.config));
     }
+    if (visibility === 'private' && ctx.remote === false && (result as { status?: string } | null)?.status !== 'duplicate') {
+      const { privateFactNotice } = await import('./interop-notices.ts');
+      ctx.emitNotice?.(privateFactNotice((result as { id?: string | number } | null)?.id));
+    }
     return result;
   },
   cliHints: { name: 'remember', positional: ['fact'] },

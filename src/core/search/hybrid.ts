@@ -49,7 +49,8 @@ import { prepareSemanticCache, resolveCacheSearchMode, semanticCacheSkipped, ser
 import { buildPostFusionOpts, buildRelationalList, resolveModalityAndQueries, runLexicalArms, runVectorArms } from './hybrid/arms.ts';
 import { searchVectorFallback, searchWithoutEmbeddings } from './hybrid/keyword-only.ts';
 import { factEmbeddingDisabled } from '../embedding-disabled.ts';
-import { expandStructuralNeighbors, finalizeHybridResults, fuseArms, rerankAndPin, sizeReturnPool } from './hybrid/rank.ts';
+import { capSessionPool, expandStructuralNeighbors, finalizeHybridResults, fuseArms, rerankAndPin, sizeReturnPool } from './hybrid/rank.ts';
+import { type StageTimer, UNTIMED } from './stage-timings.ts';
 
 export const RRF_K = 60;
 const COMPILED_TRUTH_BOOST = 2.0;
@@ -904,6 +905,15 @@ export interface HybridSearchOpts extends SearchOpts {
    */
   metadataBoostGate?: MetadataBoostGate;
   /**
+   * Per-call override for `search.reranker.gate` (crag.ts `gradePreRerank`):
+   * `shadow` grades before the cross-encoder and still reranks. `undefined` → config/bundle; anything else is unset via
+   * the ONE contract `normalizeRerankGate`. Threaded through resolveSearchMode
+   * in BOTH the inner search and the cache resolver (knobs hash `rrg=`).
+   */
+  rerankGate?: import('./crag.ts').RerankGateMode;
+  /** W5: page-unit ranking cut (page-rank-cut.ts): lifts the mode's tokenBudget in the inner search and the cache resolver; delivery cuts by whole pages. */
+  pageRankCut?: import('./page-rank-cut.ts').PageRankCut;
+  /**
    * explain_target (explain-target.ts): when set, each pipeline stage records
    * whether the target page was present and at what rank. Observation only —
    * never changes ranking.
@@ -957,6 +967,8 @@ export interface HybridSearchOpts extends SearchOpts {
   _queryPrefix?: string;
   /** INTERNAL — the brain opted out of embedding (factEmbeddingDisabled), read once per request: keyword-only, no query embed. */
   _embeddingOptedOut?: boolean;
+  /** INTERNAL — the op's per-request stage-timing collector (search/stage-timings.ts); absent = untimed. */
+  _timings?: StageTimer;
 
   /**
    * Hermetic eval canaries/CI — non-semantic embeddings. When set, the query
@@ -1085,25 +1097,26 @@ export async function hybridSearch(
   opts?: HybridSearchOpts,
 ): Promise<SearchResult[]> {
   if (opts?.types?.length === 0) return [];
+  const timer = opts?._timings ?? UNTIMED;
   if (opts?.type || opts?.types?.length) {
     const { expandEngineTypeFilters } = await import('../schema-pack/query-types.ts');
-    const filters = await expandEngineTypeFilters(engine, opts);
+    const filters = await timer.stage('setup', () => expandEngineTypeFilters(engine, opts!));
     if (filters.types?.length === 0) return [];
     opts = { ...opts, ...filters };
   }
-  if (opts?._queryPrefix === undefined) opts = { ...opts, _queryPrefix: await loadEmbeddingQueryPrefix(engine) };
-  if (opts._embeddingOptedOut === undefined) opts = { ...opts, _embeddingOptedOut: await factEmbeddingDisabled(engine) };
+  if (opts?._queryPrefix === undefined) opts = { ...opts, _queryPrefix: await timer.stage('setup', () => loadEmbeddingQueryPrefix(engine)) };
+  if (opts._embeddingOptedOut === undefined) opts = { ...opts, _embeddingOptedOut: await timer.stage('setup', () => factEmbeddingDisabled(engine)) };
   // Named stages (src/core/search/hybrid/): request -> lexical arms ->
   // relational arm -> [keyword-only return] -> modality + expansion ->
   // vector arms -> [keyword fallback return] -> fusion + post-fusion boosts
   // -> structural expansion -> dedup -> rerank + pin -> identity tiers +
   // return sizing -> main return. Same order of every engine/provider call.
-  const req = await resolveHybridRequest(engine, query, opts);
+  const req = await timer.stage('setup', () => resolveHybridRequest(engine, query, opts));
   const { resolvedMode, resolvedCol, cfgForColumn } = req;
-  const lexical = await runLexicalArms(req);
+  const lexical = await timer.stage('lexical', () => runLexicalArms(req));
   const { earlyModality } = lexical;
   const postFusionOpts = buildPostFusionOpts(req);
-  const relationalList = await buildRelationalList(req);
+  const relationalList = await timer.stage('relational', () => buildRelationalList(req));
 
   const { isAvailable } = await import('../ai/gateway.ts');
   const providerProbe = resolvedCol.embeddingModel || undefined;
@@ -1134,7 +1147,7 @@ export async function hybridSearch(
   // vector-arm query embedding without the gateway, so provider
   // availability is irrelevant — skip the keyword-only short-circuit.
   if (opts?.decide?.keywordOnly || (!opts?.queryEmbedFn && (opts?._embeddingOptedOut || !isAvailable('embedding', providerProbe)) && !willTryMultimodal)) {
-    return searchWithoutEmbeddings(req, lexical, relationalList, postFusionOpts, providerProbe);
+    return timer.stage('post_fusion', () => searchWithoutEmbeddings(req, lexical, relationalList, postFusionOpts, providerProbe));
   }
 
   const { effectiveModality, unifiedRouting, queries } = await resolveModalityAndQueries(req);
@@ -1142,14 +1155,14 @@ export async function hybridSearch(
     await runVectorArms(req, { effectiveModality, unifiedRouting, queries, multimodalProviderProbe: multimodalProviderProbe ?? cfgForColumn?.embedding_multimodal_model ?? 'voyage:voyage-multimodal-3' });
   if (queryEmbedding) opts?.onQueryEmbedding?.(queryEmbedding);
   if (vectorArms.length === 0) {
-    return searchVectorFallback(req, lexical, relationalList, postFusionOpts);
+    return timer.stage('post_fusion', () => searchVectorFallback(req, lexical, relationalList, postFusionOpts));
   }
 
-  const { fused, relaxedDropped, keywordArmConfidence, metadataBoostGate } = await fuseArms(req, {
+  const { fused, relaxedDropped, keywordArmConfidence, metadataBoostGate } = await timer.stage('fuse', () => fuseArms(req, {
     vectorArms, keywordResults: lexical.keywordResults, titleResults: lexical.titleResults, relationalList,
     effectiveModality, queryEmbedding, imageQueryEmbedding, unifiedDone, postFusionOpts,
-  });
-  const dedupOpts = await expandStructuralNeighbors(req, fused);
+  }));
+  const dedupOpts = await timer.stage('post_fusion', () => expandStructuralNeighbors(req, fused));
 
   // v0.27.0 PR #618 recency boost was here; v0.29.1 unifies it into
   // runPostFusionStages above so all three return paths get the same
@@ -1157,7 +1170,7 @@ export async function hybridSearch(
   // aliasing in the postFusionOpts resolver near line ~256.
 
   // Dedup
-  const deduped = dedupResults(fused, dedupOpts);
+  const deduped = await timer.stage('post_fusion', async () => capSessionPool(req, dedupResults(fused, dedupOpts)));
   opts?.explainTarget?.observe('deduped', deduped);
 
   // Auto-escalate: if detail=low returned 0, retry with high. The inner
@@ -1167,16 +1180,18 @@ export async function hybridSearch(
     return hybridSearch(engine, query, { ...opts, detail: 'high' });
   }
 
-  const { rerankPinned, relationalRerankPin } = await rerankAndPin(req, deduped, relationalList, effectiveModality);
+  const { rerankPinned, relationalRerankPin, rerankGate, identityLookups } = await timer.stage('rerank', () => rerankAndPin(req, deduped, relationalList, effectiveModality, {
+    exactLookupOpts: lexical.exactLookupOpts, multimodal: effectiveModality !== 'text' || unifiedDone,
+  }));
   opts?.explainTarget?.observe('reranked', rerankPinned);
-  const { returnPool, adaptiveDecision, autocutDecision, relationalSlotDecision } = await sizeReturnPool(req, {
-    rerankPinned, deduped, exactLookupOpts: lexical.exactLookupOpts, relationalList, effectiveModality,
-  });
+  const { returnPool, adaptiveDecision, autocutDecision, relationalSlotDecision } = await timer.stage('post_fusion', () => sizeReturnPool(req, {
+    rerankPinned, deduped, exactLookupOpts: lexical.exactLookupOpts, relationalList, effectiveModality, identityLookups,
+  }));
   opts?.explainTarget?.observe('return_pool', returnPool);
-  return finalizeHybridResults(req, returnPool, {
+  return timer.stage('post_fusion', () => finalizeHybridResults(req, returnPool, {
     relaxedDropped, adaptiveDecision, autocutDecision, relationalSlotDecision,
-    relationalRerankPin, keywordArmConfidence, metadataBoostGate,
-  });
+    relationalRerankPin, keywordArmConfidence, metadataBoostGate, rerankGate,
+  }));
 }
 
 // ----------------------------------------------------------------------
@@ -1207,9 +1222,10 @@ export async function hybridSearchCached(
   opts?: HybridSearchOpts,
 ): Promise<SearchResult[]> {
   if (opts?.types?.length === 0) return [];
-  const { modeInputForCache, resolvedForCache, knobsHash } = await resolveCacheSearchMode(engine, opts);
-  const queryPrefix = opts?._queryPrefix ?? await loadEmbeddingQueryPrefix(engine);
-  const embeddingOptedOut = opts?._embeddingOptedOut ?? await factEmbeddingDisabled(engine);
+  const timer = opts?._timings ?? UNTIMED;
+  const { modeInputForCache, resolvedForCache, knobsHash } = await timer.stage('setup', () => resolveCacheSearchMode(engine, opts));
+  const queryPrefix = opts?._queryPrefix ?? await timer.stage('setup', () => loadEmbeddingQueryPrefix(engine));
+  const embeddingOptedOut = opts?._embeddingOptedOut ?? await timer.stage('setup', () => factEmbeddingDisabled(engine));
   // Result caching is off (semanticResultCacheAvailable() === false): skip the
   // key/config setup entirely so the wrapper costs no round-trips of its own.
   const semanticCache = semanticResultCacheAvailable()
@@ -1247,7 +1263,7 @@ export async function hybridSearchCached(
         // v0.42.20.0 (Fix 3) — bounded by the shared deadline; on timeout this
         // throws → caught below → cacheStatus 'disabled' → falls through to the
         // inner hybridSearch (which reuses the same elapsed deadline).
-        queryEmbedding = await embedQueryBounded(query, queryPrefix ? { queryPrefix } : undefined, queryEmbedDl());
+        queryEmbedding = await timer.stage('embed', () => embedQueryBounded(query, queryPrefix ? { queryPrefix } : undefined, queryEmbedDl()));
       } else {
         cacheStatus = 'disabled';
       }

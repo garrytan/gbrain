@@ -103,6 +103,33 @@ Per-call params on `search`, `query`, `recall`:
   `query`'s `token_budget` still prunes chunks (chunk mode), and `recall`'s
   `budget_tokens` / `budget_policy` still pack chunks (facts first), so any of
   them keeps an implied `auto` on `chunk`.
+- `recall` with a unit and `budget_tokens` packs saved facts first (unless
+  `budget_policy` is `query_first`). Delivery gets the budget the facts leave,
+  and each delivered block costs what delivery counted (text and title, in
+  `delivery.tokenizer`), so the facts and blocks together fill
+  `budget_tokens` and no delivered block is dropped afterwards.
+- Page-unit ranking cut (`search.page_rank_cut`, default `whole_pages`). A
+  `return_unit: "page"` call that passes its own budget on `search`, `query`
+  or `recall` lifts the search mode's chunk-token cut (`search.tokenBudget`:
+  4,000 under conservative, none under tokenmax), and delivery walks the
+  ranked pages, costing each at what it would deliver whole (text, title and
+  date header in `delivery.tokenizer`, within the block char cap). It stops
+  once they fill `search.page_rank_cut_factor` (default 1.5) × the budget the
+  pages share; the page that crosses it stays only if its matching span still
+  fits what the whole pages before it leave, and later pages are dropped as
+  `rank_cut` (so a short page ranked after one that cannot be delivered even
+  in part is not reached). Without the cut, a mode cut under-filled the budget
+  on small pages, and tokenmax handed delivery more pages than it could
+  deliver whole, so each arrived as a sliver. `delivery.page_rank_cut`
+  reports `mode`, `factor`, `caller_budget`, `target`, `applied_cost` (the
+  kept pages' whole cost), `candidates` and `kept`. A page call without a
+  budget and every other unit are unchanged.
+  `gbrain config set search.page_rank_cut off` restores the old path.
+  Evidence: on 72 BEAM conversations the cut at 1.5 was non-inferior to the
+  cut off (−0.25 points, lower bound −1.00 against a −3 margin) with
+  delivered context at budget. Those conversations are regression evidence,
+  not a held-out test, and 1.5 was picked under a rule amended after the dev
+  results ([gbrain-evals #126, wave 2 results](https://github.com/garrytan/gbrain-evals/blob/8b764e3e/docs/benchmarks/2026-10-13-memory-proof-wave-2-results.md)).
 
 Think reads `think.return_unit` (default `auto`) and never
 `search.return_unit`, so changing search's default does not change `think`.
@@ -143,7 +170,7 @@ applies to `search`, `query`, `recall`, `think` and `assemble_evidence`.
 Config keys: `search.return_unit`, `search.return_window`,
 `search.return_budget_default`, `search.return_budget_conversation`,
 `search.return_budget_max_remote`, `search.evidence_date_header`, `search.auto_packing`,
-`think.return_unit`. Kill switch:
+`search.page_rank_cut`, `search.page_rank_cut_factor`, `think.return_unit`. Kill switch:
 `gbrain config set search.return_unit chunk` and
 `gbrain config set think.return_unit chunk` (or pass `return_unit: "chunk"`
 per call).

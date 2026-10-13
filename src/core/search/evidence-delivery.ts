@@ -36,6 +36,7 @@ import { loadFenceChunkOverlay, markFenceChunk, splitFenceOverlay, type FenceChu
 import { stripChunkHeader } from '../chunkers/code.ts';
 import { OperationError } from '../ops/contract.ts';
 import { blockDateHeaders, evidenceDateHeaderEnabled } from './evidence-date.ts';
+import { cutWholePages, resolvePageRankCut, type PageRankCut, type PageRankCutMeta } from './page-rank-cut.ts';
 export { pagePlanHits } from './page-plan-hits.ts';
 import { applyEffectiveDate } from '../utils.ts';
 import { configPacking, MIN_EXPLICIT_AUTO_BUDGET, parseAutoPacking, type AutoPacking } from './evidence-packing.ts';
@@ -112,6 +113,8 @@ export interface DeliveryMeta {
   date_header?: true;
   /** Present only when an explicit budget engaged the cap: the packing that ran. */
   auto_packing?: AutoPacking;
+  /** W5: present when `search.page_rank_cut` cut the page candidates (page-rank-cut.ts). */
+  page_rank_cut?: PageRankCutMeta;
 }
 
 export type DeliveredSearchResult = SearchResult & { delivered: DeliveredEvidence };
@@ -130,6 +133,8 @@ export interface EvidencePlan {
   budgetClamped?: { requested: number; max: number };
   /** `search.evidence_date_header` is on: each block starts with its date header line. */
   dateHeader?: true;
+  /** W5: page unit + caller budget + `search.page_rank_cut: whole_pages` (page-rank-cut.ts). */
+  rankCut?: PageRankCut;
 }
 
 /** The cap runs only under `auto`, with a budget the caller passed and a packing other than `off`. */
@@ -263,6 +268,7 @@ export async function resolveEvidencePlan(engine: BrainEngine, input: ResolvePla
       budget = max;
     }
   }
+  const rankCut = unit === 'page' && budgetExplicit ? await resolvePageRankCut(engine, budget) : undefined;
   return {
     requestedUnit: unit,
     unit,
@@ -273,6 +279,7 @@ export async function resolveEvidencePlan(engine: BrainEngine, input: ResolvePla
     packing,
     ...(budgetClamped ? { budgetClamped } : {}),
     ...(await evidenceDateHeaderEnabled(engine) ? { dateHeader: true as const } : {}),
+    ...(rankCut ? { rankCut } : {}),
   };
 }
 
@@ -794,6 +801,15 @@ function floorOf(b: Block, tokenizer: 'cl100k' | 'heuristic'): { tokens: number;
  * Reserve each block's floor in rank order, then enrich. `spill` (auto) takes
  * a block whose floor does not fit instead of dropping or cutting it.
  */
+/** What delivery emits for `b` with an unlimited budget: its floor, then every enrichment piece the block char cap allows. */
+function wholeCost(b: Block, tokenizer: 'cl100k' | 'heuristic', omitTok: number): number {
+  const selected = b.selected;
+  b.selected = new Set(b.anchors[0]?.pieces ?? []);
+  const cost = floorOf(b, tokenizer).tokens + Number.MAX_SAFE_INTEGER - enrichBlock(b, Number.MAX_SAFE_INTEGER, tokenizer, omitTok);
+  b.selected = selected;
+  return cost;
+}
+
 function allocate(blocks: Block[], budget: number, tokenizer: 'cl100k' | 'heuristic', dropped: Record<string, number>, spill?: (b: Block) => void): Block[] {
   const omitTok = pieceTokens(EVIDENCE_OMISSION, tokenizer);
   let remaining = budget;
@@ -1115,6 +1131,7 @@ export async function deliverEvidence(
 
   const capped = capEngaged(plan);
   let kept: Block[];
+  let rankCutMeta: PageRankCutMeta | undefined;
   let chunkItems: ChunkItem[] = [];
   if (capped) {
     ({ kept, chunks: chunkItems } = allocateCapped(planned,
@@ -1123,7 +1140,14 @@ export async function deliverEvidence(
     // Unchanged chunks are paid for first; conversations share the rest, and one
     // whose matching span no longer fits keeps its ranked chunks instead.
     const reserved = passthrough.reduce((n, p) => n + countEvidenceTokens(headerFor(p.hit) + (p.hit.chunk_text ?? ''), tokenizer) + countEvidenceTokens(p.hit.title ?? '', tokenizer), 0);
-    kept = allocate(planned, Math.max(0, plan.budgetTokens - reserved), tokenizer, dropped, auto
+    const shared = Math.max(0, plan.budgetTokens - reserved);
+    let candidates = planned;
+    if (plan.rankCut) {
+      const omitTok = pieceTokens(EVIDENCE_OMISSION, tokenizer);
+      ({ kept: candidates, meta: rankCutMeta } = cutWholePages(planned, shared, plan.rankCut, b => wholeCost(b, tokenizer, omitTok), b => floorOf(b, tokenizer).tokens));
+      if (planned.length > candidates.length) dropped.rank_cut = planned.length - candidates.length;
+    }
+    kept = allocate(candidates, shared, tokenizer, dropped, auto
       ? b => { for (const h of b.hits) passthrough.push({ rank: hits.indexOf(h), hit: h, reason: 'conversation_over_budget' }); }
       : undefined);
   }
@@ -1179,6 +1203,7 @@ export async function deliverEvidence(
     ...(plan.budgetClamped ? { budget_clamped: plan.budgetClamped } : {}),
     ...(capped ? { auto_packing: plan.packing } : {}),
     ...(plan.dateHeader ? { date_header: true as const } : {}),
+    ...(rankCutMeta ? { page_rank_cut: rankCutMeta } : {}),
   };
   return { results: capped ? capEvidenceToBudget(results, delivery) : results, delivery };
 }
