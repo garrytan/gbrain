@@ -161,7 +161,7 @@ location: Lisbon
 attendees: [people/alice-example, people/bob-example]
 status: booked
 booking_ref: JNK-ABC123
-trip_id: trip_xxx
+trip_id: "2139"
 provider: jinko
 ---
 
