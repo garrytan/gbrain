@@ -53,6 +53,9 @@ remote (OAuth) MCP, `whoami` returns it as `source_id`; on a local brain,
 `get_page`), so the trip page, its links and the timeline entries land next to
 the pages they refer to.
 
+If no brain is connected in this session, skip this section and section 4:
+ask the user for their preferences and companions directly, and book as usual.
+
 Do this once per trip request, before the first travel tool call:
 
 - `recall` / `query` the traveller's travel preferences: home airport, preferred
@@ -101,25 +104,38 @@ show the alternatives it returns and let the user choose.
    Flights, hotels and cars share one trip and one checkout.
 2. `trip` with `upsert_travelers`. Traveller names, dates of birth and contact
    details come from the user, never from guesses or placeholders.
-3. `checkout` with the `trip_id`. It returns a `checkout_url` and
-   `agent_spt_params`.
-4. Show the user the total (quote the `display` strings verbatim) and get an
-   explicit yes before any payment.
+3. `checkout` with the `trip_id`. It returns a `checkout_url`,
+   `agent_spt_params`, the total (`total_amount.display`) and the payment
+   deadline (`Payment accepted until`, usually about 15 minutes away).
+4. Show the user the total (quote the `display` string verbatim) and the
+   deadline in their local time, and get an explicit yes before any payment.
 5. Payment:
-   - The user pays at `checkout_url`. The booking completes on its own after
-     payment; there is no confirm call.
+   - The user pays at `checkout_url` before the deadline. The booking
+     completes on its own after payment; there is no confirm call.
    - Or, when the user's platform can mint a Stripe Shared Payment Token scoped
      to `agent_spt_params`, call `submit_agent_payment`. If it answers
      `payment_status: requires_authentication` (3DS), the traveller completes
      the bank challenge through the returned `authentication_url`, built as the
      `submit_agent_payment` tool description says. A declined payment falls back to
      `checkout_url`.
-6. Check `get_trip` every 30 seconds, for at most 10 minutes, until
-   `fulfillment.status` shows the booking is confirmed. If it is still pending
-   (the user has not paid, a 3DS challenge is open, or the supplier confirms
-   manually), stop and tell the user the current status; check again when they
-   ask. A `booking_ref` (`JNK-XXXXXX`) can appear before payment completes, so
-   read the status rather than the presence of the reference.
+   - If the deadline passes, or the travellers change after checkout, the quote
+     is no longer payable: call `checkout` again for a new total and link.
+6. Follow the booking with `get_trip`, once the user says they have paid or
+   after `submit_agent_payment`. Read these fields (an unpaid trip has no
+   payment attempt and no fulfillment yet):
+   - `payment_attempt.payment_status`: `pending`, `requires_authentication` or
+     `cancelling` means the payment is still in progress; `authorized` or
+     `captured` means it went through; `failed`, `declined` or `cancelled`
+     means it did not (a new payment can be made before the deadline);
+     `expired` means the quote expired (call `checkout` again).
+   - `fulfillment.status`: `completed` means everything is booked; `partial`
+     means some items are booked (say which); `failed` or `cancelled` means
+     the booking failed; `needs_review` means Jinko is checking it manually;
+     any other value means the booking is still in progress.
+   Check every 30 seconds, for at most 10 minutes. If it is still in progress
+   after that, tell the user the current status and stop; check again when
+   they ask. A `booking_ref` (`JNK-XXXXXX`) can appear before payment
+   completes, so read the statuses rather than the presence of the reference.
 
 ## 4. After a confirmed booking: file it
 
