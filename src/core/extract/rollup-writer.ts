@@ -28,6 +28,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import { isMissingRollupObject } from './schema-error.ts';
 
 /**
  * #5495: why a round halted, as a closed vocabulary stored per reason in
@@ -95,7 +96,7 @@ export async function readRecordedHaltReasons7d(engine: Pick<BrainEngine, 'execu
       recorded.set(row.kind, perKind);
     }
   } catch (err) {
-    if (!/halt_reasons/i.test((err as Error).message || String(err))) throw err;
+    if (!isMissingRollupObject(err, 'column', 'halt_reasons')) throw err;
   }
   return recorded;
 }
@@ -227,7 +228,7 @@ export async function upsertExtractRollup(
     // #5495 (no fallback by design): a brain whose schema is behind v239 has no
     // halt_reasons column. The rollup is a best-effort cache, so the row is
     // lost until the migration runs; say which fix restores it.
-    if (/halt_reasons/i.test(msg)) {
+    if (isMissingRollupObject(err, 'column', 'halt_reasons')) {
       rollupErrorLogOnce(input.kind, day, `${msg} (the schema is behind: doctor reports migrations_pending; run gbrain apply-migrations --yes --no-autopilot-install)`);
       return { ok: false, error: msg };
     }
@@ -236,7 +237,7 @@ export async function upsertExtractRollup(
     // write (best-effort would swallow it), retry the pre-v141 statement —
     // the cap stop degrades to the old conflated halt accounting until the
     // migration runs.
-    if (/expected_limit_count/i.test(msg)) {
+    if (isMissingRollupObject(err, 'column', 'expected_limit_count')) {
       try {
         await engine.executeRaw(
           `INSERT INTO extract_rollup_7d (
