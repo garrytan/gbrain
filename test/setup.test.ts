@@ -46,7 +46,7 @@ function box(): Box {
   return { root, home, gbrainHome: home, bin };
 }
 
-const CLEAN = { CLAUDE_CONFIG_DIR: undefined, CODEX_HOME: undefined, GBRAIN_SOURCE: undefined, GBRAIN_SURFACE: undefined, GBRAIN_HOOKS: undefined, GBRAIN_SETUP_ABORT_AFTER: undefined };
+const CLEAN = { CLAUDE_CONFIG_DIR: undefined, CODEX_HOME: undefined, HERMES_HOME: undefined, GBRAIN_SOURCE: undefined, GBRAIN_SURFACE: undefined, GBRAIN_HOOKS: undefined, GBRAIN_SETUP_ABORT_AFTER: undefined };
 
 async function setup(b: Box, args: string[], env: Record<string, string | undefined> = {}): Promise<CliResult & { doc: any }> {
   const r = await runCli(['setup', ...args, '--gbrain-bin', b.bin], { env: { ...CLEAN, HOME: b.home, GBRAIN_HOME: b.gbrainHome, ...env } });
@@ -367,7 +367,7 @@ describe('gbrain setup: consent and refusals', () => {
     expect(readJson(claudeJson(b)).mcpServers.gbrain).toBeDefined();
   });
 
-  for (const [harness, guide] of [['openclaw', 'docs/mcp/OPENCLAW.md'], ['hermes', 'docs/mcp/HERMES.md']] as const) {
+  for (const [harness, guide] of [['openclaw', 'docs/mcp/OPENCLAW.md']] as const) {
     test(`${harness} is a coded refusal that names its guide`, async () => {
       const b = box();
       const r = await setup(b, [harness, '--json']);

@@ -210,9 +210,10 @@ export function inspectHermesSetup(plan: HermesSetupPlan): HermesInspection {
   }
   for (const event of plan.events) if (!edited[event] && !seen[event]) hooksCurrent = false;
 
+  // Read (and so parse-check) the approval store up front: an unparseable file is refused before anything is written.
+  const file = readHermesAllowlist(paths.allowlistPath);
   let trustCurrent = hooksCurrent;
   if (trustCurrent) {
-    const file = readHermesAllowlist(paths.allowlistPath);
     const wanted = desiredPairs(Object.fromEntries(Object.entries(items).filter(([e]) => !edited[e as HermesSetupEvent])));
     for (const t of wanted) if (!isApproved(file, t)) trustCurrent = false;
     for (const rec of [...Object.entries(prior?.trust.owned ?? {}), ...Object.entries(prior?.trust.pending ?? {})] as Array<[HermesSetupEvent, TrustRecord]>) {
