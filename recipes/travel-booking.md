@@ -84,8 +84,8 @@ record, the travel server for search and booking.
 1. **GBrain installed and configured** (`gbrain doctor` passes)
 2. **`curl` and `jq`** on the machine running the setup commands
 3. **A harness that can connect a remote MCP server with a header** (Claude Code,
-   Codex, Cursor, OpenClaw, or any client that accepts a URL and an
-   `Authorization` header), or Node.js 18+ for the Jinko CLI
+   Codex, Cursor, or any client that accepts a URL and an `Authorization`
+   header), or Node.js 18+ for the Jinko CLI (OpenClaw)
 
 ## Setup Flow
 
@@ -129,7 +129,7 @@ TEXT="$(printf '%s' "$RES" | sed -n 's/^data: //p' | jq -r 'select(.id == 2) | .
 JINKO_API_KEY="$(printf '%s' "$TEXT" | jq -Rrs 'try (fromjson | .api_key // empty) catch empty')"
 if [ -n "$JINKO_API_KEY" ]; then echo "PASS: key minted"; else
   echo "FAIL: no key in the result:"
-  printf '%s' "$TEXT" | jq -Rrs '. as $t | try (fromjson | del(.api_key)) catch $t'
+  printf '%s' "$TEXT" | jq -Rrs '. as $t | try (fromjson | del(.. | .api_key?)) catch ($t | gsub("jnk_[A-Za-z0-9_]+"; "jnk_***"))'
 fi
 ```
 
@@ -179,21 +179,19 @@ Pick the block for the harness you run in:
       "url": "https://mcp.builders.gojinko.com/mcp",
       "headers": { "Authorization": "Bearer <JINKO_API_KEY>" } } } }
   ```
-- **OpenClaw** (`~/.openclaw/openclaw.json`)
-  ```json
-  { "mcpServers": { "jinko": {
-      "type": "remote",
-      "url": "https://mcp.builders.gojinko.com/mcp",
-      "headers": { "Authorization": "Bearer <JINKO_API_KEY>" } } } }
-  ```
+- **OpenClaw:** it registers stdio MCP servers only (`openclaw mcp add
+  --command …`, see docs/mcp/OPENCLAW.md) and has no remote-MCP client, so use
+  the CLI below.
 - **Any other MCP client:** URL `https://mcp.builders.gojinko.com/mcp`, header
   `Authorization: Bearer <JINKO_API_KEY>`. The server does not read `X-API-Key`.
-- **No remote MCP support:** use the CLI instead.
+- **No remote MCP support:** use the CLI instead. It reads `JINKO_API_KEY` from
+  the environment, so no login step is needed.
   ```bash
   npm install -g @gojinko/cli
-  jinko auth login --key "$JINKO_API_KEY"   # or keep JINKO_API_KEY in the environment
   jinko flight-search --help
   ```
+  The CLI commands mirror the MCP tools (`jinko flight-search`,
+  `jinko hotel-search`, `jinko trip`, `jinko checkout`, …) and print JSON.
 
 Restart the harness if it only loads MCP servers at startup, then list the
 agent's tools and confirm `flight_search`, `hotel_search`, `trip` and

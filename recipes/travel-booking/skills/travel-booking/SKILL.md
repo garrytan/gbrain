@@ -40,11 +40,12 @@ Do this once per trip request, before the first travel tool call:
 Use what you found as defaults, and say which ones you applied ("searching
 from SFO, aisle seats, as usual"). Anything the user says in the request wins.
 
-When the user states a lasting preference ("I never fly red-eyes"), save it
-with `remember`: one claim, `kind: preference`, `entity` set to the person,
-`provenance` naming where it came from (e.g. "user, travel request
-2026-04-02"), no `ttl`. Do not save one-off details of this trip as facts; they belong on the
-trip page.
+When the user states a lasting preference ("I never fly red-eyes"), use it for
+this request. Save it only when the user asks you to remember it, or when the
+brain's operator has turned on automatic capture: then call `remember` with one
+claim, `kind: preference`, `entity` set to the person, `provenance` naming
+where it came from (e.g. "user, travel request 2026-04-02"), and no `ttl`. Do
+not save one-off details of this trip as facts; they belong on the trip page.
 
 ## 2. Pick the travel tool
 
@@ -91,8 +92,19 @@ show the alternatives it returns and let the user choose.
 
 ## 4. After a confirmed booking: file it
 
-Write or update one page per trip, `trips/<yyyy-mm-dd>-<destination-slug>`
-(departure date, first destination), with `put_page`:
+Keep one page per trip, `trips/<yyyy-mm-dd>-<destination-slug>` (departure
+date, first destination). Filing trips is what this skill was installed for;
+if the user asks you not to record a trip, don't.
+
+- **New trip:** `put_page` with the full content.
+- **Existing trip page** (a second booking for the same trip, or a later
+  change): `put_page` replaces the whole page. Read it first with `get_page`
+  and `include_content: true`, merge your change into the full content, and
+  send the revision it returned as `expected_revision`. On a revision conflict,
+  read again and merge again.
+
+Each booked item carries its own status; the page's `status` describes the trip
+as a whole.
 
 ```markdown
 ---
@@ -110,11 +122,11 @@ provider: jinko
 
 Travellers: [[people/alice-example]], [[people/bob-example]]
 
-## Flights
+## Flights (booked)
 - 2026-05-14 TP 236 SFO 21:10 → LIS 15:25 (+1), economy, 1 checked bag each
 - 2026-05-18 TP 237 LIS 11:00 → SFO 15:05
 
-## Stay
+## Stay (booked)
 - Hotel Example, 2026-05-15 to 2026-05-18, 1 room, free cancellation until 2026-05-12
 
 ## Paid
@@ -142,8 +154,10 @@ Travellers: [[people/alice-example]], [[people/bob-example]]
 - Flights: `flight_refund` (refund or void) and `flight_exchange` (shop → price
   → commit → status). Hotels: `hotel_cancel`. Cars: `car_cancel`; a rental
   cannot be modified, only cancelled and rebooked.
-- After the change completes, update the trip page: new segments, or
-  `status: cancelled` / `status: refunded` with the amount returned.
+- After the change completes, update the trip page (read, merge, write with
+  `expected_revision`, as in section 4): mark the changed item as exchanged
+  (with its new segments), refunded or cancelled, with the amount returned.
+  Set the page's `status` to `cancelled` only when every item is cancelled.
 
 ## Rules that always apply
 
