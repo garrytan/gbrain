@@ -58,10 +58,11 @@ do not divide those.
 **One source for reads and writes.** `put_page`, `add_link` and
 `add_timeline_entry` write to your session's source. On a brain reached over
 remote (OAuth) MCP, `whoami` returns it as `source_id`; on a local brain,
-`gbrain sources current` shows it. In a brain with several sources, read the
-`people/` and `trips/` pages from that same source (pass its `source_id` to
-`get_page`), so the trip page, its links and the timeline entries land next to
-the pages they refer to.
+`gbrain sources current` shows it. In a brain with several sources, pass that
+`source_id` to every read in this skill (`recall`, `query`, `get_page`): an
+unscoped `query` spans every source you can read, so it can return a trip page
+that lives elsewhere and that you cannot update. The trip page, its links and
+the timeline entries then land next to the pages they refer to.
 
 If no brain is connected in this session, skip this section and section 4:
 ask the user for their preferences and companions directly, and book as usual.
@@ -73,7 +74,7 @@ Do this once per trip request, before the first travel tool call:
 - `get_page people/<slug>` for every named companion, to resolve who they are.
   Do not take passport numbers, dates of birth or document details from the
   brain for a booking; ask the user for them at booking time.
-- `query` for existing pages under `trips/` that overlap the dates. If one
+- `query` (with the `source_id`) for existing pages under `trips/` that overlap the dates. If one
   exists, ask the user whether this booking belongs to that trip; extend it
   only if they say yes.
 
@@ -208,6 +209,9 @@ Travellers: [[people/alice-example]], [[people/bob-example]]
 ## Stay (booked, JNK-ABC123)
 - Hotel Example, 2026-05-15 to 2026-05-18, 1 room, free cancellation until 2026-05-12
 
+## Car (booked, JNK-ABC123)
+- Example Rentals, compact, pick-up LIS airport 2026-05-15 10:00, drop-off LIS airport 2026-05-18 08:00, free cancellation until 2026-05-13
+
 ## Paid
 - USD 2,184.60, JNK-ABC123 (checkout 2026-04-02)
 ```
@@ -216,7 +220,9 @@ Travellers: [[people/alice-example]], [[people/bob-example]]
   a booking with its `booking_ref` and the traveller's last name, so the page
   must not be readable by clients that only have world-visible access.
 - Record only these values: flight numbers, airports, times, cabin and bags;
-  the hotel name, room, dates and cancellation deadline; the total paid; and
+  the hotel name, room, dates and cancellation deadline; for a rental car, the
+  rental company, car category, pick-up and drop-off places and times, and
+  cancellation deadline; the total paid; and
   the `booking_ref` and `trip_id` of every booking on the trip. A booking
   added to an existing trip page gets its own entry under `bookings:`, and each
   item and payment line names the `booking_ref` it belongs to; never overwrite
@@ -230,9 +236,12 @@ Travellers: [[people/alice-example]], [[people/bob-example]]
   pages; no typed edge is inferred from them. For a typed edge, call `add_link`
   from each traveller's page to the trip page with `link_type: attended`, the
   same direction gbrain uses for meeting attendees.
-- Add one `add_timeline_entry` to each traveller's page
-  (`date` = departure date, `summary` = "Trip to Lisbon", `source` = the trip
-  slug).
+- Add a timeline entry (`add_timeline_entry`: `date` = departure date,
+  `summary` = "Trip to Lisbon", `source` = the trip slug) only to a traveller
+  page that is itself `visibility: private`. A timeline row on another page
+  cannot be hidden from remote readers, so on a world-visible `people/` page it
+  would publish the dates and destination of a private trip; gbrain skips
+  private meetings' timeline rows for the same reason. Skip the entry there.
 
 ## 5. Changes, refunds and cancellations
 

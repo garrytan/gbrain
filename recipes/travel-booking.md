@@ -271,7 +271,10 @@ first (it changes the active schema for the whole brain), then run
 2. Ask: "Show me bookable fares for <a date from that answer>." It should call
    `flight_search`.
 3. Run `gbrain integrations doctor` and confirm both `travel-booking` checks
-   pass.
+   pass. They confirm only that `JINKO_API_KEY` is set and that the Jinko API
+   is reachable; they do not send the key. Steps 4.1 and 4.2 are what prove
+   the key works. If the key is later revoked or replaced, the first travel
+   call returns `401`: run the Step 1d check again and replace the key.
 
 Do not book a real trip to test the setup: a booking is a real purchase.
 
