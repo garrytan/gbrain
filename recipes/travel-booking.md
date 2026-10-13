@@ -2,7 +2,7 @@
 id: travel-booking
 name: Travel Booking
 version: 0.1.0
-description: Lets the agent search, price and book flights, hotels and rental cars, and manage those bookings (changes, refunds, cancellations), through the Jinko travel MCP server. The agent sets up its own account, reads traveler preferences from the brain before searching, and files every confirmed booking as a trips/ page.
+description: Lets the agent search, price and book flights, hotels and rental cars, and manage those bookings (changes, refunds, cancellations), through the Jinko travel MCP server. The agent sets up its own account, reads traveler preferences from the brain before searching, and files every paid booking as a trips/ page.
 category: reflex
 install_kind: copy-into-host-repo
 requires: []
@@ -28,7 +28,7 @@ and that she prefers aisle seats. Without a travel provider the agent can only
 repeat that. This recipe connects the agent to Jinko, a travel API with an MCP
 server, so it can search flights, hotels and rental cars, book them with the
 user's approval, manage the bookings afterwards (changes, refunds,
-cancellations), and file each confirmed trip as a `trips/` page.
+cancellations), and file each paid trip as a `trips/` page.
 
 ## IMPORTANT: Instructions for the Agent
 
