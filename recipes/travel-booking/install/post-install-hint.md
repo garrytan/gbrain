@@ -10,12 +10,17 @@ operator knows what to do next.
 
 **Three follow-up steps:**
 
-### 1. Confirm the Jinko MCP server is connected
+### 1. Confirm the travel tools are reachable
 
 The skill calls the Jinko travel tools (`flight_search`, `hotel_search`,
-`trip`, `checkout`, …). They come from the MCP server added in Step 2 of
-`recipes/travel-booking.md`, not from gbrain. List the agent's tools and
-check that `flight_search` is there.
+`trip`, `checkout`, …). They come from Step 2 of `recipes/travel-booking.md`,
+not from gbrain. Check the path you set up there:
+
+- **MCP:** list the agent's tools and check that `flight_search` is there.
+- **CLI** (OpenClaw and other harnesses without a remote-MCP client):
+  `jinko auth status` reports a key taken from `JINKO_API_KEY`, and
+  `jinko flight-search --help` prints the flags. The CLI adds no tools to the
+  agent's tool list.
 
 ### 2. Review the appended resolver row
 
