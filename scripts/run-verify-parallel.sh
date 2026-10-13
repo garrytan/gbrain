@@ -64,6 +64,13 @@ CHECKS=(
   # ── heavy (longest-first) ──
   "typecheck"
   "check:admin-build"
+  # Catches committed admin/dist drifting from the committed embedded
+  # fallback (src/admin-embedded.ts) — e.g. a merge that lands admin/src
+  # changes on both sides but keeps one side's stale pre-built admin/dist/,
+  # the exact bug class check-admin-embedded.sh's own header describes.
+  # Was defined but never wired into verify/CI; that gap let the 2026-10
+  # Docker admin-dashboard-blank-screen bug through (#admin-dist-drift).
+  "check:admin-embedded"
   "check:wasm"
   "check:pglite-embedded"
   # HEIC + AVIF decoders survive bun build --compile (~0.6s: the smoketest
