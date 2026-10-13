@@ -377,6 +377,36 @@ function codexHome(): string {
 }
 
 /**
+ * THE one Hermes home resolution (`gbrain setup hermes`): an explicit
+ * `--hermes-home`, else HERMES_HOME (Hermes' own profile switch), else
+ * $HOME/.hermes. HOME-env-first like claudeConfigBase: Bun's homedir() reads
+ * the password database, so a sandboxed test that remaps HOME would otherwise
+ * reach the operator's real profile. A named profile is just another home
+ * (`~/.hermes/profiles/<name>`): its config.yaml, hook allowlist and setup's
+ * receipt all live inside it.
+ */
+export function hermesHome(override?: string): string {
+  const explicit = override?.trim() || process.env.HERMES_HOME?.trim();
+  if (explicit) return explicit;
+  return join(process.env.HOME?.trim() || homedir(), '.hermes');
+}
+
+/** Hermes profile config (YAML): `mcp_servers.<name>` and `hooks.<event>` live here. */
+export function hermesConfigPath(home: string = hermesHome()): string {
+  return join(home, 'config.yaml');
+}
+
+/** Hermes' shell-hook consent store: one approval per exact (event, command) pair. */
+export function hermesAllowlistPath(home: string = hermesHome()): string {
+  return join(home, 'shell-hooks-allowlist.json');
+}
+
+/** Hermes' session store (SQLite, one per profile). */
+export function hermesStateDbPath(home: string = hermesHome()): string {
+  return join(home, 'state.db');
+}
+
+/**
  * Codex rollout store — (CODEX_HOME || ~/.codex)/sessions/YYYY/MM/DD/
  * rollout-*.jsonl (same CODEX_HOME resolution discipline as codexConfigPath;
  * the spawner of a codex hook IS codex, which owns that env). This is the
