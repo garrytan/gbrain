@@ -221,7 +221,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
   // enforcement still resolves per call. mcp.advertised_surface (file plane) narrows the tool list only.
   const fileConfig = loadConfig();
   // CLI-parity operation snapshot (restart to reload); catalog stays file-only.
-  const operationConfig = await loadConfigWithEngine(engine, fileConfig);
+  const operationConfig = isEngineDegraded(engine) ? fileConfig : await loadConfigWithEngine(engine, fileConfig);
   const strictParams = parseStrictParamsMode(fileConfig?.mcp?.strict_params) === 'reject';
   const tools = buildToolDefs(advertisedOps(surfacedOps, surface, await resolveAdvertisedSurface(null, fileConfig)), { strictParams });
 
