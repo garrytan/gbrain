@@ -3,6 +3,7 @@ import { pageReadFilter } from './read-policy-sql.ts';
 import { clampSearchLimit, type TakeHit } from '../engine.ts';
 import type { PageVersion, Link } from '../types.ts';
 import { privatePagesFilterFragment } from './private-visibility.ts';
+import { currentMemoryTakeSql } from '../pmbrain-adapters/memory-projections';
 
 export type ReadQuery = <T = Record<string, unknown>>(sql: string, params?: unknown[]) => Promise<T[]>;
 type PageRef = { slug: string; source_id: string };
@@ -45,7 +46,7 @@ export async function readTakes(query: ReadQuery, input: string | Float32Array, 
       t.claim, t.kind, t.holder, t.weight,
       ${vector ? '(1 - (t.embedding <=> $1::vector))::real' : 'similarity(t.claim, $1)::real'} AS score
     FROM takes t JOIN pages p ON p.id = t.page_id
-    WHERE t.active AND ${filter}
+    WHERE t.active AND ${filter} AND ${currentMemoryTakeSql('t','p')}
       AND ${vector ? 't.embedding IS NOT NULL' : 't.claim % $1'}
       AND ($2::text[] IS NULL OR t.holder = ANY($2::text[]))
     ORDER BY ${vector ? 't.embedding <=> $1::vector' : 'score DESC, t.weight DESC'}

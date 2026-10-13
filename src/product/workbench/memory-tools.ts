@@ -2,6 +2,7 @@ import type { ChatToolDef, ToolHandler } from '../../core/ai/gateway';
 import type { BrainEngine } from '../../core/engine';
 import { writeSingleFact } from '../../core/facts/write-single';
 import { forgetFactInFence } from '../../core/facts/forget';
+import { refreshWorkbenchMemoryArchives } from './memory-lifecycle';
 import { parseTtlShorthand } from '../../core/facts/ttl-parse';
 import { operationsByName, type OperationContext } from '../../core/operations';
 import {serializePageToMarkdown} from '../../core/markdown';
@@ -49,7 +50,10 @@ export function nativeMemoryHandlers(engine: BrainEngine, sourceId: string, conv
     }}],
     ['memory_forget', { execute: async (raw,signal) => {
       if(!memoryActionRequested(user().text,'memory_forget'))throw new Error('请明确要求遗忘记忆');
-      const p=params(raw,['fact_id']);if(!Number.isSafeInteger(p.fact_id)||Number(p.fact_id)<1)throw new Error('无效的事实身份');signal.throwIfAborted();return forgetFactInFence(engine,Number(p.fact_id),{sourceId,reason:'知识助手用户明确要求遗忘'});
+      const p=params(raw,['fact_id']);if(!Number.isSafeInteger(p.fact_id)||Number(p.fact_id)<1)throw new Error('无效的事实身份');signal.throwIfAborted();
+      const result=await forgetFactInFence(engine,Number(p.fact_id),{sourceId,reason:'知识助手用户明确要求遗忘'});
+      if(result.ok||result.path==='already_expired')await refreshWorkbenchMemoryArchives(engine,native.store,native.store.list(),sourceId);
+      return result;
     }}],
     ['knowledge_append', { execute: async (raw,signal) => {
       if(!memoryActionRequested(user().text,'knowledge_append'))throw new Error('请明确要求修改知识内容');

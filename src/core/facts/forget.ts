@@ -38,6 +38,8 @@ import { join } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { withPageLock } from '../page-lock.ts';
 import { parseFactsFence, renderFactsTable, type ParsedFact } from '../facts-fence.ts';
+import { retireInvalidMemoryTakes } from '../pmbrain-adapters/memory-projections';
+import { bumpHotMemoryCache } from './meta-hook';
 
 export interface ForgetFactResult {
   /** True iff the row was found AND a forget was applied (fence or DB). */
@@ -81,7 +83,7 @@ function todayUtc(): string {
  * argument). MCP `forget_fact` op can pass a more specific reason
  * when the user provides it.
  */
-export async function forgetFactInFence(
+async function applyForgetFactInFence(
   engine: BrainEngine,
   factId: number,
   opts: {
@@ -229,4 +231,16 @@ export async function forgetFactInFence(
 
     return { ok: true, path: 'fence', reason };
   }, { timeoutMs: 5_000 });
+}
+
+export async function forgetFactInFence(engine: BrainEngine, factId: number, opts: { reason?: string; sourceId?: string; worldOnly?: boolean } = {}): Promise<ForgetFactResult> {
+  const result = await applyForgetFactInFence(engine, factId, opts);
+  if (result.ok || result.path === 'already_expired') {
+    const [fact] = await engine.executeRaw<{ source_id: string }>('SELECT source_id FROM facts WHERE id=$1', [factId]);
+    if (fact) {
+      bumpHotMemoryCache(fact.source_id);
+      await retireInvalidMemoryTakes(engine, fact.source_id);
+    }
+  }
+  return result;
 }

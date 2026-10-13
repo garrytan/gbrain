@@ -1,3 +1,5 @@
+import { MEMORY_TAKE_PREFIX } from '../../pmbrain-adapters/memory-projections';
+
 /**
  * v0.31 — Dream-cycle `consolidate` phase: facts → takes promotion.
  *
@@ -100,7 +102,7 @@ export async function runPhaseConsolidate(
       limit: 100,
     });
     // Re-filter to unconsolidated since listFactsByEntity returns all active.
-    const unconsolidated = facts.filter(f => f.consolidated_at == null && f.visibility === 'world');
+    const unconsolidated = facts.filter(f => f.consolidated_at == null && f.visibility === 'world' && !(f.source.startsWith('PMBrain 知识助手 / ') && f.valid_until !== null));
     if (unconsolidated.length < minPerBucket) {
       bucketsSkipped += 1;
       continue;
@@ -141,6 +143,11 @@ export async function runPhaseConsolidate(
       const best = cluster.reduce((a, b) => (b.confidence > a.confidence ? b : a));
       const avgWeight = cluster.reduce((s, f) => s + f.confidence, 0) / cluster.length;
       const sources = Array.from(new Set(cluster.map(c => c.source_session ?? c.source).filter(Boolean))).join(',');
+      let memoryTakeSource: string | undefined;
+      try {
+        const origin = JSON.parse(best.context ?? 'null');
+        if (best.source.startsWith('PMBrain 知识助手 / ') && typeof origin?.conversationId === 'string' && typeof origin?.messageId === 'string' && /^[a-f0-9]{64}$/.test(origin?.hash ?? '')) memoryTakeSource = `${MEMORY_TAKE_PREFIX}${best.id}`;
+      } catch {}
       const sinceISO = cluster
         .map(c => c.valid_from)
         .reduce((min, d) => (d < min ? d : min))
@@ -161,8 +168,8 @@ export async function runPhaseConsolidate(
       // which clears `consolidated_at` on every fact. Without this lookup,
       // a second cycle run would re-INSERT a duplicate take via
       // `MAX(row_num)+1`, silently poisoning trajectory + scorecard data.
-      const existing = await engine.executeRaw<{ id: number; resolved_at: Date | null }>(
-        `SELECT id, resolved_at FROM takes
+      const existing = await engine.executeRaw<{ id: number; resolved_at: Date | null; source: string | null }>(
+        `SELECT id, resolved_at, source FROM takes
          WHERE page_id = $1 AND claim = $2 AND kind = 'fact' AND holder = 'self'
          ORDER BY id
          LIMIT 1`,
@@ -176,9 +183,9 @@ export async function runPhaseConsolidate(
         // source_session values that the prior run didn't see); leave
         // row_num + weight untouched to keep the take's identity stable.
         takeId = existing[0].id;
-        if (existing[0].resolved_at === null) await engine.executeRaw(
+        if (existing[0].resolved_at === null && (!memoryTakeSource || existing[0].source?.startsWith(MEMORY_TAKE_PREFIX))) await engine.executeRaw(
           `UPDATE takes SET source = $1, updated_at = now() WHERE id = $2`,
-          [sources.slice(0, 200), takeId],
+          [existing[0].source?.startsWith(MEMORY_TAKE_PREFIX) ? memoryTakeSource ?? existing[0].source : sources.slice(0, 200), takeId],
         );
       } else {
         const inserted = await engine.addTakesBatch([{
@@ -189,7 +196,7 @@ export async function runPhaseConsolidate(
           holder: 'self',
           weight: clamp01(avgWeight),
           since_date: sinceISO,
-          source: sources.slice(0, 200),
+          source: memoryTakeSource ?? sources.slice(0, 200),
           active: true,
         }]);
         if (inserted < 1) continue;

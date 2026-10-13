@@ -30,6 +30,7 @@
  */
 
 import { createHash } from 'node:crypto';
+import { filterCurrentMemoryHits } from '../pmbrain-adapters/memory-projections';
 import type { BrainEngine } from '../engine.ts';
 import type { SearchResult, HybridSearchMeta } from '../types.ts';
 import { buildPageGenerationsSnapshot, CACHE_GATE_WHERE_CLAUSE } from './query-cache-gate.ts';
@@ -240,7 +241,7 @@ export class SemanticQueryCache {
 
       return {
         hit: true,
-        results,
+        results: await filterCurrentMemoryHits(this.engine, results),
         meta,
         similarity,
         ageSeconds: row.age_seconds,

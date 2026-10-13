@@ -26,6 +26,7 @@ import { operationsByName, type OperationContext } from '../../core/operations';
 import type { ContextPackResult } from '../../core/context/context-pack';
 import { appendCheckpointManifest } from '../../core/context/session-state';
 import { hybridSearch } from '../../core/search/hybrid';
+import { refreshWorkbenchMemoryArchives } from './memory-lifecycle';
 export { memoryVersion } from './memory-identity';
 
 export interface WorkbenchMemoryTask { root: string; conversationId: string; messageId: string; hash: string; sourceId: string; retire?: boolean; timeoutMs?: number }
@@ -54,6 +55,7 @@ export class WorkbenchMemoryCoordinator {
     this.scanning = true;
     try {
       const conversations = id ? [this.store.get(id)] : this.store.list();
+      await refreshWorkbenchMemoryArchives(this.engine, this.store, conversations.filter(row => !row.messages.some(message => message.status==='running')));
       for (const conversation of conversations) {
         if (conversation.messages.some(message => message.status === 'running')) continue;
         const active = new Set(conversation.messages.filter(message => message.memory).map(message => `${message.id}:${message.memory!.hash}`));
@@ -95,7 +97,7 @@ async function repairWorkbenchArchiveVisibility(engine: BrainEngine, conversatio
   const pages = await engine.executeRaw<{ slug: string }>("SELECT slug FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND slug LIKE $3 AND frontmatter->>'pmbrain_memory'='true' AND frontmatter->>'id'=$2 AND frontmatter->>'visibility' IS DISTINCT FROM 'private'", [memory.sourceId, `${messageId}-${memory.hash}`, `conversations/pmbrain/${conversationId}/%`]);
   for (const page of pages) await engine.transaction(async tx => {
     await tx.executeRaw('SELECT id FROM pages WHERE source_id=$1 AND slug=$2 FOR UPDATE', [memory.sourceId, page.slug]);
-    const current = await tx.getPage(page.slug, { sourceId: memory.sourceId });
+    const current = await tx.getPage(page.slug, { sourceId: memory.sourceId, includeDeleted: true });
     if (!current || current.frontmatter.pmbrain_memory !== true || current.frontmatter.id !== `${messageId}-${memory.hash}` || current.frontmatter.source_ref !== `pmbrain://conversations/${conversationId}/${messageId}` || current.frontmatter.visibility === 'private') return;
     await tx.putPage(page.slug, { ...current, frontmatter: { ...current.frontmatter, visibility: 'private' } }, { sourceId: memory.sourceId });
   });
@@ -268,6 +270,7 @@ export async function runWorkbenchMemoryTask(engine: BrainEngine, input: Workben
       }
     }
     store.saveMemory(input.conversationId, message.id, { ...state, status: 'complete', error: undefined });
+    await refreshWorkbenchMemoryArchives(engine, store, store.list(), input.sourceId);
     return { status: 'completed', factIds: state.factIds, archiveSlug: facts.length ? archiveSlug : undefined };
   } catch (error) {
     store.saveMemory(input.conversationId, message.id, { ...state, status: 'failed', error: error instanceof Error ? error.message : String(error) });

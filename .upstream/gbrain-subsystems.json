@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "reviewed_at": "2026-10-13",
-  "product_version": "1.4.62",
+  "product_version": "1.4.63",
   "subsystem": "entity-relations",
   "status": "release-blocked-pending-package-acceptance",
   "upstream": {
@@ -20,7 +20,8 @@
     "evidence-backed entity/source relationships and final graph reconciliation",
     "Reasoning output headroom, bounded truncation retry, endpoint option rejection and durable restricted JSON ingest",
     "Authorized native Workbench memory adapter; optional transient classification, source-bound exact dedup and DB-only fact write preserving original materials",
-    "Authorized world-only Dream consolidation; private Facts remain local and are not promoted to public entity takes"
+    "Authorized world-only Dream consolidation; private Facts remain local and are not promoted to public entity takes",
+    "Authorized native memory lifecycle: source-bound live projection guards, refresh, TTL-safe takes and verified contribution retirement"
   ],
   "integrations": [
     "src/core/pglite-engine.ts",
@@ -636,8 +637,29 @@
       "path": "src/core/cycle/phases/consolidate.ts",
       "upstream_path": "src/core/cycle/phases/consolidate.ts",
       "mode": "adapted",
-      "sha256": "42169b367ce34b7f82e0eca869c15b226124c5bf9e494fb204c8b47e083230b6",
+      "sha256": "4ebcb3989d0c66fc15ab4264a906b1ba7bd8b09f438c3e9b09316cbca2a630f3",
       "upstream_sha256": "7f843fc1a1602da61a68c273ff6347d0a1e50095aced95af64a1c63af6766d5b"
+    },
+    {
+      "path": "src/core/facts/forget.ts",
+      "upstream_path": "src/core/facts/forget.ts",
+      "mode": "adapted",
+      "sha256": "87cb5c2aabd5d591fb595647b9c4e4b0eace5338b1c2929e29026b8037bc61f7",
+      "upstream_sha256": "b057026b83a8acb2d43339e6801f4da6b494f65dbaf6d5d7ce0d3a0eb4144a2e"
+    },
+    {
+      "path": "src/core/facts/meta-hook.ts",
+      "upstream_path": "src/core/facts/meta-hook.ts",
+      "mode": "adapted",
+      "sha256": "c68ac48f37936219477a68f9a7da6fb51627805a9984f428a7145572f39eb74d",
+      "upstream_sha256": "e2993843ed861cee57754c09b3eb05ddfea8aba71ea154b7944b34325a7cde3b"
+    },
+    {
+      "path": "src/core/search/sql-ranking.ts",
+      "upstream_path": "src/core/search/sql-ranking.ts",
+      "mode": "adapted",
+      "sha256": "d44502da51fab5e7b3a0fea7b327f946ec2f7e40c21e3addc8687edf82d8d3eb",
+      "upstream_sha256": "808abf46b9effbcfe4927888686ce8cb91864aef077ef2f91214dbe93cc15f71"
     }
   ],
   "migration_namespace": {

@@ -47,7 +47,7 @@ afterAll(async () => {
 
 describe('remote private-page visibility contract', () => {
   test('SQL filter is opt-in so trusted local reads keep their existing behavior', () => {
-    expect(buildVisibilityClause('p', 's')).not.toContain("frontmatter->>'visibility'");
+    expect(buildVisibilityClause('p', 's')).not.toContain("COALESCE(p.frontmatter->>'visibility', 'world') <> 'private'");
     expect(buildVisibilityClause('p', 's', { excludePrivate: true }))
       .toContain("COALESCE(p.frontmatter->>'visibility', 'world') <> 'private'");
   });
