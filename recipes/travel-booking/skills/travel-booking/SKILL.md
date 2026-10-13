@@ -121,17 +121,21 @@ show the alternatives it returns and let the user choose.
    - If the deadline passes, or the travellers change after checkout, the quote
      is no longer payable: call `checkout` again for a new total and link.
 6. Follow the booking with `get_trip`, once the user says they have paid or
-   after `submit_agent_payment`. Read these fields (an unpaid trip has no
-   payment attempt and no fulfillment yet):
+   after `submit_agent_payment`. Until the traveller presses Pay (or you call
+   `submit_agent_payment`) the trip has no `fulfillment` and no `booking_ref`:
+   nothing is booked or charged yet. Then read these fields:
    - `payment_attempt.payment_status`: `pending`, `requires_authentication` or
      `cancelling` means the payment is still in progress; `authorized` or
      `captured` means it went through; `failed`, `declined` or `cancelled`
      means it did not (a new payment can be made before the deadline);
      `expired` means the quote expired (call `checkout` again).
-   - `fulfillment.status`: `completed` means everything is booked; `partial`
-     means some items are booked (say which); `failed` or `cancelled` means
-     the booking failed; `needs_review` means Jinko is checking it manually;
-     any other value means the booking is still in progress.
+   - `fulfillment.status`: `awaiting_payment` means payment has started but
+     is not authorized yet (read `payment_attempt.payment_status`);
+     `expired_quote` means the quote expired before payment (call `checkout`
+     again); `completed` means everything is booked; `partial` means some
+     items are booked (say which); `failed` or `cancelled` means the booking
+     failed; `needs_review` means Jinko is checking it manually; any other
+     value means the payment went through and the booking is in progress.
    Check every 30 seconds, for at most 10 minutes. If it is still in progress
    after that, tell the user the current status and stop; check again when
    they ask. A `booking_ref` (`JNK-XXXXXX`) can appear before payment
