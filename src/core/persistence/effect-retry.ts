@@ -65,6 +65,20 @@ async function mountedEmbeddingSignature(engine: BrainEngine): Promise<string> {
 export async function retryParkedEffects(engine: BrainEngine, sourceId: string, requestId: string, dryRun: boolean): Promise<Record<string, unknown> | null> {
   const [request, ambiguous] = await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE source_id=$1 AND request_id=$2::uuid LIMIT 2', [sourceId, requestId]);
   if (!request || ambiguous) return null;
+  return retryParkedRequest(engine, request, dryRun);
+}
+
+/** Bulk administration already holds the internal journal identity, not the
+ * public receipt ID (which is unique only within a principal). Resolve it
+ * exactly without weakening the public caller's ambiguity check.
+ */
+export async function retryParkedEffectsByJournalId(engine: BrainEngine, sourceId: string, journalId: string, dryRun: boolean): Promise<Record<string, unknown> | null> {
+  const [request] = await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE source_id=$1 AND id=$2::uuid', [sourceId, journalId]);
+  return request ? retryParkedRequest(engine, request, dryRun) : null;
+}
+
+async function retryParkedRequest(engine: BrainEngine, request: WriteRequest, dryRun: boolean): Promise<Record<string, unknown> | null> {
+  const { source_id: sourceId, request_id: requestId } = request;
   const tracked = await engine.executeRaw<PersistenceEffect>(`SELECT * FROM persistence_effects WHERE request_id=$1::uuid
     AND kind IN ('git','withdrawal-mirror') AND (data ? 'parked' OR data ? 'retried') ORDER BY kind`, [request.id]);
   if (!tracked.length) return null;

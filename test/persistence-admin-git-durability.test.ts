@@ -35,6 +35,8 @@ import { PERSISTENCE_GIT_DURABILITY_COLUMN_SQL, PERSISTENCE_SCHEMA_STATEMENTS } 
 import { gitAsync } from './helpers/git-publication.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { reviewedWriterIntent } from './helpers/writer-admin-intent.ts';
+import { retryParkedPushes } from '../src/core/persistence/git-durability-administration.ts';
+import { retryParkedEffects } from '../src/core/persistence/effect-retry.ts';
 
 let engine: PGLiteEngine;
 const roots: string[] = [];
@@ -79,16 +81,16 @@ async function claimedSource(root: string) {
 }
 
 /** A committed page write whose Git effect is queued (the persistence-effects fixture, minus the hook). */
-async function committedWrite(root: string, sourceId: string, slug: string) {
+async function committedWrite(root: string, sourceId: string, slug: string, opts: { requestId?: string; remote?: boolean } = {}) {
   const binding = (await getWorktreeBinding(engine, sourceId, localHostId()))!;
   await engine.putPage(slug, page('Before'), { sourceId });
   const snapshot = (await engine.readPageSnapshot(slug, { sourceId }))!;
   const file = join(root, `${slug}.md`); mkdirSync(dirname(file), { recursive: true });
   writeFileSync(file, serializePageToMarkdown(snapshot.page, snapshot.tags));
-  const ctx: OperationContext = { engine, config, remote: false, dryRun: false, sourceId, logger: { info() {}, warn() {}, error() {} } };
+  const ctx: OperationContext = { engine, config, remote: opts.remote === true, dryRun: false, sourceId, logger: { info() {}, warn() {}, error() {} } };
   const authority = await submissionAuthority(ctx, 'put_page', sourceId, binding.source_incarnation, slug);
   const admitted = await admitWrite(engine, { principal: authority.principal, authority, operation: 'put_page', sourceId,
-    sourceIncarnation: binding.source_incarnation, slug, pageId: snapshot.page.id, requestId: randomUUID(),
+    sourceIncarnation: binding.source_incarnation, slug, pageId: snapshot.page.id, requestId: opts.requestId ?? randomUUID(),
     callerIntent: { content: 'After' }, intent: { content: 'After' }, worktreeId: binding.worktree_id, topologyGeneration: binding.topology_generation });
   const row = (await claimNextWrite(engine, localHostId()))!;
   expect(row.id).toBe(admitted.id);
@@ -106,6 +108,78 @@ async function runEffects() {
   await engine.executeRaw("UPDATE persistence_effects SET next_attempt_at=now() WHERE kind='git'");
   await runPersistenceEffects(engine, config, { hostId: localHostId(), limit: 10 });
 }
+
+/** #6678: credential repair must retry actual parked pushes, not silently miss
+ * internal/public ID mismatches or collapse two principals' receipt IDs. The
+ * existing verb tests only cover skipped effects, never parked credential work.
+ * Uses committed journal/effect fixtures and the production bulk entry point.
+ */
+describe('credential repair retries parked Git pushes', () => {
+  async function parked(root: string, sourceId: string, slug: string, opts: { requestId?: string; remote?: boolean } = {}, code = 'git_push_unavailable') {
+    const id = await committedWrite(root, sourceId, slug, opts);
+    await engine.executeRaw(`UPDATE persistence_effects SET state='failed',error_code='targets_parked',
+      data=data || $2::text::jsonb WHERE request_id=$1::uuid AND kind='git'`,
+    [id, JSON.stringify({ parked: [{ slug, error_code: code }], target_failures: 5 })]);
+    return id;
+  }
+
+  test('preview leaves effects parked, apply queues one retry, and other worktrees and causes stay untouched', () => isolated(async home => {
+    const root = await gitRoot(home);
+    const { sourceId, binding } = await claimedSource(root);
+    const id = await parked(root, sourceId, 'push');
+    const [request] = await engine.executeRaw<{ request_id: string }>('SELECT request_id FROM persistence_requests WHERE id=$1::uuid', [id]);
+    expect(request.request_id).not.toBe(id);
+    const otherCause = await parked(root, sourceId, 'ignored', {}, 'git_target_unsafe');
+    const otherRoot = await gitRoot(home);
+    const other = await claimedSource(otherRoot);
+    const otherId = await parked(otherRoot, other.sourceId, 'foreign');
+    expect(await retryParkedPushes(engine, binding.worktree_id, true)).toEqual({ requests: 1, queued: 1, unchanged: 0 });
+    expect(await gitOutcome(id)).toMatchObject({ state: 'failed', data: { parked: [{ error_code: 'git_push_unavailable' }] } });
+    expect(await retryParkedPushes(engine, binding.worktree_id, false)).toEqual({ requests: 1, queued: 1, unchanged: 0 });
+    expect(await gitOutcome(id)).toMatchObject({ state: 'queued', data: { retried: 1, target_failures: 4 } });
+    expect((await gitOutcome(id)).data.parked).toBeUndefined();
+    expect(await retryParkedPushes(engine, binding.worktree_id, false)).toEqual({ requests: 0, queued: 0, unchanged: 0 });
+    for (const untouched of [otherCause, otherId]) expect(await gitOutcome(untouched)).toMatchObject({ state: 'failed' });
+    await engine.executeRaw("UPDATE persistence_host_bindings SET git_durability='enabled' WHERE worktree_id=$1::uuid", [binding.worktree_id]);
+    await runEffects();
+    expect(await gitOutcome(id)).toMatchObject({ state: 'committed', outcome: { git: 'committed' } });
+    expect((await gitAsync(root, 'status', '--porcelain', '--', 'push.md')).trim()).toBe('');
+  }), 120_000);
+
+  test('distinct principals sharing one receipt ID both retry, while public-ID retry remains ambiguous', () => isolated(async home => {
+    const root = await gitRoot(home);
+    const { sourceId, binding } = await claimedSource(root);
+    const requestId = randomUUID();
+    const first = await parked(root, sourceId, 'cli', { requestId });
+    await registerLocalWriter(engine, 'stdio');
+    const second = await parked(root, sourceId, 'stdio', { requestId, remote: true });
+    expect(first).not.toBe(second);
+    expect(await retryParkedEffects(engine, sourceId, requestId, false)).toBeNull();
+    expect(await retryParkedPushes(engine, binding.worktree_id, true)).toEqual({ requests: 2, queued: 2, unchanged: 0 });
+    for (const id of [first, second]) expect(await gitOutcome(id)).toMatchObject({ state: 'failed' });
+    expect(await retryParkedPushes(engine, binding.worktree_id, false)).toEqual({ requests: 2, queued: 2, unchanged: 0 });
+    for (const id of [first, second]) expect(await gitOutcome(id)).toMatchObject({ state: 'queued', data: { retried: 1 } });
+  }), 120_000);
+
+  test('a revoked original writer refuses bulk retry without changing the parked effect', () => isolated(async home => {
+    const root = await gitRoot(home);
+    const { sourceId, binding } = await claimedSource(root);
+    const id = await parked(root, sourceId, 'revoked');
+    await engine.executeRaw(`UPDATE persistence_local_writers SET revoked_at=now()
+      WHERE id=(SELECT principal_id::uuid FROM persistence_requests WHERE id=$1::uuid)`, [id]);
+    await expect(retryParkedPushes(engine, binding.worktree_id, false)).rejects.toMatchObject({ code: 'permission_denied' });
+    expect(await gitOutcome(id)).toMatchObject({ state: 'failed', data: { target_failures: 5 } });
+  }), 120_000);
+
+  test('a foreign owner refuses bulk retry without changing the parked effect', () => isolated(async home => {
+    const root = await gitRoot(home);
+    const { sourceId, binding } = await claimedSource(root);
+    const id = await parked(root, sourceId, 'owner');
+    await engine.executeRaw('UPDATE persistence_worktrees SET owner_host_id=$2::uuid WHERE id=$1::uuid', [binding.worktree_id, randomUUID()]);
+    await expect(retryParkedPushes(engine, binding.worktree_id, false)).rejects.toMatchObject({ code: 'owner_unavailable' });
+    expect(await gitOutcome(id)).toMatchObject({ state: 'failed' });
+  }), 120_000);
+});
 
 describe('[R7i] git durability policy is tri-state and fail-closed', () => {
   const probeCalls: string[] = [];

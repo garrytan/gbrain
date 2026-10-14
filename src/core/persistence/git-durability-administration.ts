@@ -30,7 +30,7 @@ import { existingLocalHostId } from './identity.ts';
 import { getWorktreeBinding, type GitDurabilitySetting, type WorktreeBinding } from './ownership.ts';
 import { requireWriterAdminIntent, assertWriterAdminState, writerAdminState } from './admin-intent.ts';
 import { gitDurabilityPolicy, planGitDurabilityCatchUp, requeueGitDurabilityCatchUp } from './git-durability-policy.ts';
-import { retryParkedEffects } from './effect-retry.ts';
+import { retryParkedEffectsByJournalId } from './effect-retry.ts';
 import { patchManagedDurabilityBlock } from '../brain-repo-durability.ts';
 
 export const GIT_DURABILITY_PARAMS = ['source_id', 'enable', 'disable', 'pat_file', 'dry_run', 'admin_intent', 'expected_state'] as const;
@@ -165,7 +165,7 @@ export async function wireDurabilityCredential(root: string, remote: string | nu
 /**
  * #5808(a): after a credential change, one more attempt for every effect of this
  * worktree that parked on `git_push_unavailable`. Other worktrees are untouched;
- * each request goes through `retryParkedEffects`, so the original write's
+ * each request goes through the shared parked-effect retry, so the original write's
  * authority is re-checked and a claimed or settled effect is left alone.
  */
 export async function retryParkedPushes(engine: BrainEngine, worktreeId: string, dryRun: boolean): Promise<{ requests: number; queued: number; unchanged: number }> {
@@ -176,7 +176,7 @@ export async function retryParkedPushes(engine: BrainEngine, worktreeId: string,
      ORDER BY e.source_id,request_id`, [worktreeId]);
   let queued = 0, unchanged = 0;
   for (const row of rows) {
-    const result = await retryParkedEffects(engine, row.source_id, row.request_id, dryRun);
+    const result = await retryParkedEffectsByJournalId(engine, row.source_id, row.request_id, dryRun);
     const effects = (result?.effects ?? []) as Array<{ action: string }>;
     if (effects.some(effect => effect.action === 'retry_queued' || effect.action === 'would_retry')) queued++; else unchanged++;
   }
