@@ -38,8 +38,8 @@ import {
   PGVECTOR_HNSW_VECTOR_MAX_DIMS,
 } from './vector-index.ts';
 import { DELETE_BATCH_SIZE } from './engine-constants.ts';
-import { acquireLock, previousOwnerConfirmedDeadFromLock, releaseLock, type LockHandle } from './pglite-lock.ts';
-import { DatabaseAlreadyOwnedError, PgliteOpenError, isPgliteProcessStartupFailure, isPgliteToastInconsistencyError } from './pglite-errors.ts';
+import { acquireLock, clearStalePglitePostmasterPid, previousOwnerConfirmedDeadFromLock, releaseLock, type LockHandle } from './pglite-lock.ts';
+import { DatabaseAlreadyOwnedError, PgliteOpenError, isPgliteDataDirPermissionError, isPgliteProcessStartupFailure, isPgliteToastInconsistencyError } from './pglite-errors.ts';
 import {
   GIN_REPAIR_DB_UNUSABLE_MESSAGE,
   GinIndexUnusableError,
@@ -220,7 +220,7 @@ export function classifyPgliteInitError(
   platform: NodeJS.Platform = process.platform,
 ): PgliteInitFailure {
   if (/\$\$bunfs|ENOENT[\s\S]*pglite\.data/i.test(message)) return 'bunfs';
-  if (/EPERM|EACCES|operation not permitted|access is denied/i.test(message)) return 'permission';
+  if (isPgliteDataDirPermissionError(message)) return 'permission';
   if (/58P01|internal_load_library|type\s+"vector"\s+does\s+not\s+exist|catalog.*corrupt|corrupt/i.test(message)) {
     return 'corrupt';
   }
@@ -354,9 +354,12 @@ export function buildPgliteInitErrorMessage(
         `  ${GIN_REPAIR_DB_UNUSABLE_MESSAGE}`;
       break;
     case 'permission':
-      hint =
-        '  无法访问数据库路径（权限不足）。请检查目录权限、杀毒软件占用与当前用户是否可写。';
-      break;
+      return [
+        '数据库目录无法写入启动锁 postmaster.pid（权限不足）。',
+        '这不是知识库内容损坏，不会重置 WAL，也不会删除页面或原始资料。',
+        '请关闭占用该文件的程序，确认当前 Windows 用户对这个数据库路径可写后重试。',
+        `Original error: ${original}`,
+      ].join('\n');
     case 'unknown':
     default:
       hint =
@@ -461,19 +464,23 @@ export class PGLiteEngine implements BrainEngine {
       }
     }
 
-    const openPersistent = () => preservingProcessExitCode(() =>
-      PGlite.create({
+    const openPersistent = () => preservingProcessExitCode(() => {
+      if (dataDir) clearStalePglitePostmasterPid(dataDir);
+      return PGlite.create({
         dataDir,
         loadDataDir,
         extensions: { vector, pg_trgm },
         ...this.runtimeAssets,
-      }),
-    );
-    const openAfterRepair = () => preservingProcessExitCode(() => PGlite.create({
-      dataDir,
-      extensions: { vector, pg_trgm },
-      ...this.runtimeAssets,
-    }));
+      });
+    });
+    const openAfterRepair = () => preservingProcessExitCode(() => {
+      if (dataDir) clearStalePglitePostmasterPid(dataDir);
+      return PGlite.create({
+        dataDir,
+        extensions: { vector, pg_trgm },
+        ...this.runtimeAssets,
+      });
+    });
 
     try {
       if (dataDir && shouldRepairWalBeforeFirstOpen(dataDir)) {
@@ -537,7 +544,9 @@ export class PGLiteEngine implements BrainEngine {
           }
         }
       }
-      process.stderr.write(`${GIN_REPAIR_DB_UNUSABLE_MESSAGE}\n`);
+      process.stderr.write(verdict === 'permission'
+        ? '数据库目录无法写入启动锁 postmaster.pid，知识库内容没有被修改。\n'
+        : `${GIN_REPAIR_DB_UNUSABLE_MESSAGE}\n`);
       const wrapped = new PgliteOpenError(buildPgliteInitErrorMessage(verdict, original, process.platform, ctx), {
         databasePath: dataDir ?? null,
         cause: err,
@@ -615,11 +624,14 @@ export class PGLiteEngine implements BrainEngine {
       await this.closeHandleKeepLock();
       const attempt = await attemptWalRepairAndRetry(
         this._dataDir,
-        () => preservingProcessExitCode(() => PGlite.create({
-          dataDir: this._dataDir,
-          extensions: { vector, pg_trgm },
-          ...this.runtimeAssets,
-        })),
+        () => preservingProcessExitCode(() => {
+          if (this._dataDir) clearStalePglitePostmasterPid(this._dataDir);
+          return PGlite.create({
+            dataDir: this._dataDir,
+            extensions: { vector, pg_trgm },
+            ...this.runtimeAssets,
+          });
+        }),
         walRepairOptsFromLock(this._lock),
       );
       if (attempt.status !== 'repaired') throw err;

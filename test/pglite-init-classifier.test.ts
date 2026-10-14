@@ -68,6 +68,15 @@ describe('classifyPgliteInitError', () => {
     expect(classifyPgliteInitError('EPERM: operation not permitted, open brain.pglite', 'win32')).toBe('permission');
   });
 
+  test('PGLite lock file permission denied is not sent to WAL reset', () => {
+    const msg = 'PGlite failed to initialize properly\n2026-10-14 18:50:43.696 +08 [42] FATAL: could not create lock file "postmaster.pid": Permission denied';
+    expect(classifyPgliteInitError(msg, 'win32')).toBe('permission');
+    const shown = buildPgliteInitErrorMessage('permission', msg, 'win32');
+    expect(shown).toContain('postmaster.pid');
+    expect(shown).not.toContain('数据库本身异常');
+    expect(shown).not.toContain('WASM runtime');
+  });
+
   test('PGLite process exit without Aborted() still uses guarded WAL repair', () => {
     const msg = 'PGlite failed to initialize properly';
     expect(classifyPgliteInitError(msg, 'win32')).toBe('wasm-abort');
@@ -156,10 +165,12 @@ describe('buildPgliteInitErrorMessage — hint routing', () => {
   });
 
   test('all verdicts produce the canonical header line', () => {
-    for (const v of ['bunfs', 'wasm-abort', 'windows-aborted', 'macos-26-3', 'permission', 'corrupt', 'unknown'] as const) {
+    for (const v of ['bunfs', 'wasm-abort', 'windows-aborted', 'macos-26-3', 'corrupt', 'unknown'] as const) {
       const msg = buildPgliteInitErrorMessage(v, original);
       expect(msg.startsWith('PGLite failed to initialize its WASM runtime.')).toBe(true);
     }
+    const permission = buildPgliteInitErrorMessage('permission', original);
+    expect(permission.startsWith('数据库目录无法写入启动锁 postmaster.pid')).toBe(true);
   });
 });
 

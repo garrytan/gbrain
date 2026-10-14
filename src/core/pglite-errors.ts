@@ -334,6 +334,10 @@ export function isPgliteProcessStartupFailure(message: string): boolean {
   return /PGlite failed to initialize properly/i.test(message);
 }
 
+export function isPgliteDataDirPermissionError(message: string): boolean {
+  return /EPERM|EACCES|operation not permitted|access is denied|permission denied/i.test(message);
+}
+
 function extractErrorText(error: unknown): string {
   if (error instanceof Error) {
     const cause = (error as Error & { cause?: unknown }).cause;

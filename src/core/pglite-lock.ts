@@ -30,6 +30,8 @@ import {
   statSync,
   lstatSync,
   rmSync,
+  chmodSync,
+  unlinkSync,
 } from 'fs';
 import { dirname, join } from 'path';
 import { randomBytes } from 'crypto';
@@ -310,6 +312,37 @@ export function isProcessAlive(pid: number): boolean {
     return true;
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+export function clearStalePglitePostmasterPid(dataDir: string): boolean {
+  const pidFile = join(dataDir, 'postmaster.pid');
+  let info: ReturnType<typeof lstatSync>;
+  try {
+    info = lstatSync(pidFile);
+  } catch {
+    return false;
+  }
+  if (info.isSymbolicLink() || !info.isFile()) return false;
+  let recordedPid = Number.NaN;
+  try {
+    recordedPid = Number(readFileSync(pidFile, 'utf8').split(/\r?\n/, 1)[0]?.trim());
+  } catch {
+    return false;
+  }
+  if (isProcessAlive(recordedPid)) return false;
+  try {
+    const dirMode = statSync(dataDir).mode;
+    chmodSync(dataDir, (dirMode | 0o200) & 0o777);
+  } catch { /* directory mode is best-effort */ }
+  try {
+    chmodSync(pidFile, 0o666);
+  } catch { /* still attempt removal */ }
+  try {
+    unlinkSync(pidFile);
+    return true;
+  } catch {
+    return false;
   }
 }
 

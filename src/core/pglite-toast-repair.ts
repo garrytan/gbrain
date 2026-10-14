@@ -18,7 +18,7 @@ import {
   type PgliteToastErrorLocation,
 } from './pglite-errors.ts';
 import { attemptWalRepairAndRetry, clearRepairAttemptSidecar } from './pglite-repair.ts';
-import { clearReapMarker } from './pglite-lock.ts';
+import { clearReapMarker, clearStalePglitePostmasterPid } from './pglite-lock.ts';
 
 const TOASTABLE_TYPES = /^(text|json|jsonb|bytea|xml|tsvector|vector|character varying|varchar|character|char|text\[\]|jsonb\[\]|bytea\[\])/i;
 const EXTERNAL_STORAGE = new Set(['x', 'e', 'm']);
@@ -217,10 +217,13 @@ async function openStagingEngine(
   } catch (error) {
     if (!forensicWalReset || !isPgliteToastInconsistencyError(error)) throw error;
     steps.push('connect failed with toast-corrupt; attempting one forensic WAL reset on staging only');
-    const open = () => preservingProcessExitCode(() => PGlite.create({
-      dataDir: stagingPath,
-      extensions: { vector, pg_trgm },
-    }));
+    const open = () => preservingProcessExitCode(() => {
+      clearStalePglitePostmasterPid(stagingPath);
+      return PGlite.create({
+        dataDir: stagingPath,
+        extensions: { vector, pg_trgm },
+      });
+    });
     const attempt = await attemptWalRepairAndRetry(stagingPath, open);
     if (attempt.status !== 'repaired') {
       throw error;

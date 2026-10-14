@@ -1,5 +1,18 @@
 # Bug 修复台账
 
+## 2026-10-14 PMBrain 1.4.67 PGLite 启动锁 postmaster.pid 权限被拒绝
+
+- 时间：2026-10-14
+- 版本号：PMBrain 1.4.67（统一产品版本，Schema 134 未变）
+- 标题：1.4.65 安装后服务仍不能启动，原因为 postmaster.pid Permission denied
+- 编程工具：Grok 大模型：Grok 4.7
+- 描述：吴淑川安装 1.4.65 后，界面仍显示知识库服务没有启动。日志路径是 `E:\AI\PMBrain\PGLite\brain.pglite`。PGLite 原错是 `could not remove old lock file "postmaster.pid": Permission denied`，以及 `could not create lock file "postmaster.pid": Permission denied`。升级副本校验也是同一句。该错误被当成 WASM/WAL 故障，自动 WAL 修复没有打开数据库，原 WAL 已恢复，随后进入一小时冷却。
+- 修复：打开 PGLite 前，若 postmaster.pid 不指向仍在运行的本机进程，先去掉该文件和所在目录的只读标记，再只删除这个启动锁。权限拒绝不再进入 WAL 修复，也不再显示成数据库内容损坏。指向当前进程的锁保留。不删除知识页面、原始资料或向量。
+- 是否完成：定向测试和发布资源已完成。用户那台机器的正式库未打开，安装包未打包。
+- 最终结果：启动锁与错误分类 41 项通过，发布说明 6 项通过。`check-version-sync` 为统一 1.4.67。`bun run build:admin` 完成，发布清单 `ad16ce34fac6`。只读的失效 postmaster.pid 会在测试目录中被删除，当前进程的锁会保留。正式库 `E:\AI\PMBrain\PGLite\brain.pglite` 未参与测试。
+- 与规划差异：若文件夹的访问控制仍拒绝创建文件，软件无法替用户改权限，界面会说明是启动锁权限问题。这次不能保证 `E:\AI\PMBrain\PGLite\brain.pglite` 一定能打开。
+- Skill/插件与工作流：无。未运行 build:win。
+
 ## 2026-10-14 PMBrain 1.4.66 启动失败修复的三项 CI 失败
 
 - 时间：2026-10-14

@@ -18,8 +18,8 @@ import { PGlite } from '@electric-sql/pglite';
 import { vector } from '@electric-sql/pglite/vector';
 import { pg_trgm } from '@electric-sql/pglite/contrib/pg_trgm';
 import { configDir } from './config.ts';
-import { acquireLock, clearReapMarker, releaseLock } from './pglite-lock.ts';
-import { isPgliteProcessStartupFailure, isPgliteToastInconsistencyError } from './pglite-errors.ts';
+import { acquireLock, clearReapMarker, clearStalePglitePostmasterPid, releaseLock } from './pglite-lock.ts';
+import { isPgliteDataDirPermissionError, isPgliteProcessStartupFailure, isPgliteToastInconsistencyError } from './pglite-errors.ts';
 import { attemptWalRepairAndRetry, clearRepairAttemptSidecar } from './pglite-repair.ts';
 import { pgControlLooksCleanlyShutdown } from './pglite-resetwal.ts';
 import { PGLITE_DATA_PROTECTION_POLICY } from './pglite-data-policy.ts';
@@ -263,7 +263,7 @@ async function preservingProcessExitCode<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 function isWasmAbortMessage(message: string): boolean {
-  if (isPgliteToastInconsistencyError(message)) return false;
+  if (isPgliteToastInconsistencyError(message) || isPgliteDataDirPermissionError(message)) return false;
   return /aborted\s*\(\)|RuntimeError|unreachable|abort.*runtime|wasm.*runtime/i.test(message)
     || isPgliteProcessStartupFailure(message);
 }
@@ -305,10 +305,13 @@ async function openVerifiedRestoreCopy(
 
 async function inspectRestoreCopy(databasePath: string): Promise<PgliteRecoveryValidation> {
   return preservingProcessExitCode(async () => {
-    const open = () => PGlite.create({
-      dataDir: databasePath,
-      extensions: { vector, pg_trgm },
-    });
+    const open = () => {
+      clearStalePglitePostmasterPid(databasePath);
+      return PGlite.create({
+        dataDir: databasePath,
+        extensions: { vector, pg_trgm },
+      });
+    };
     const db = await openVerifiedRestoreCopy(databasePath, open);
     try {
       const tableResult = await db.query<{ tablename: string }>(
