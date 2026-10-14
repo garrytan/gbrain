@@ -399,6 +399,22 @@ export function normalizeClaimWhitespace(text: string): string {
 }
 
 /**
+ * #6650: why a parsed fence cell does not read back as the legacy fact the
+ * fact-fence adoption assigns to it, or null when it does. The planner runs it
+ * on the whole fence it renders and the publisher re-checks it before
+ * adopting, so the two can never disagree.
+ */
+export function fenceCellReadBackProblem(cell: ParsedFact | undefined, fact: { fact: string; visibility: string }):
+  'row_missing' | 'struck' | 'empty' | 'visibility' | 'text' | null {
+  if (!cell) return 'row_missing';
+  if (!cell.active) return 'struck';
+  if (cell.claim === '') return 'empty';
+  if (cell.visibility !== fact.visibility) return 'visibility';
+  if (normalizeClaimWhitespace(cell.claim) !== normalizeClaimWhitespace(fact.fact)) return 'text';
+  return null;
+}
+
+/**
  * Render an instant for a `valid_from` / `valid_until` cell. A UTC-midnight
  * value keeps the `YYYY-MM-DD` shape (date-only cells never churn); any other
  * instant is written as a UTC timestamp to the second, so a TTL or a default

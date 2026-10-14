@@ -69,6 +69,7 @@ export const OPERATION_LOADERS: Record<string, readonly [() => Promise<Record<st
   "put_pages": [load_page_batch, "pageBatchOperations"],
   "get_write_request": [load_persistence, "persistenceOperations"],
   "list_write_requests": [load_persistence, "persistenceOperations"],
+  "list_write_conflicts": [load_persistence, "persistenceOperations"],
   "cancel_write_request": [load_persistence, "persistenceOperations"],
   "search": [load_search, "searchOperations"],
   "query": [load_search, "searchOperations"],

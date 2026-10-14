@@ -28,6 +28,7 @@ import { opError, OperationError } from '../core/ops/contract.ts';
 import { cliRenderContext, renderCliError, renderNotice, type Action, type Notice } from '../core/agent-output.ts';
 import { writeCliNotices } from '../core/interop-notices.ts';
 import { setupFirstRunNotices } from './init-first-run.ts';
+import { hostedOptionMuted, hostedOptionNotice, writeHostedOption } from '../core/onboard/hosted-option.ts';
 import { writeJsonDocument } from '../core/cli-force-exit.ts';
 import { configDir, gbrainPath, loadConfig, loadConfigFileOnly, type GBrainConfig } from '../core/config.ts';
 import { resolveGbrainBin } from '../core/gbrain-bin.ts';
@@ -38,6 +39,7 @@ import { claudePluginProvidesName, codexPluginProvidesName } from '../core/boots
 import { claudeUserSettingsPath, hermesHome, type ClaudeHookEvent } from '../core/bootstrap/host-specs.ts';
 import { readHarnessReceiptState } from '../core/bootstrap/format.ts';
 import { smokeStdioRegistration } from './doctor/checks/harness-wiring.ts';
+import { finishFreshSetupMigrations } from './setup-migrations.ts';
 import type { McpSurface } from '../mcp/surface.ts';
 import {
   SETUP_CAPABILITIES,
@@ -474,16 +476,19 @@ function runBrainInit(initArgv: string[], out: Out, harness: SetupHarnessId): No
   say(out, `Creating the brain: ${initArgv.join(' ')}`);
   const child = Bun.spawnSync(initArgv, { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', env: process.env });
   const initOut = child.stdout?.toString() ?? '';
-  process.stderr.write(child.stderr?.toString() ?? '');
+  const initErr = child.stderr?.toString() ?? '';
   if (child.exitCode !== 0) {
+    process.stderr.write(initErr);
     process.stderr.write(initOut);
     throw new Error(`\`${initArgv.join(' ')}\` exited ${child.exitCode}; nothing else was written. Fix the init error above, then run setup again.`);
   }
+  process.stderr.write(finishFreshSetupMigrations(initArgv[0]!, initErr));
+  const hosted = hostedOptionNotice('setup', hostedOptionMuted());
   try {
     const doc = JSON.parse(initOut) as { path?: string; notices?: unknown[] };
     if (doc.path) say(out, `Brain ready at ${doc.path}`);
-    return setupFirstRunNotices(doc.notices ?? [], HARNESS_LABEL[harness]);
-  } catch { process.stderr.write(initOut); return []; }
+    return [...setupFirstRunNotices(doc.notices ?? [], HARNESS_LABEL[harness]), ...(hosted ? [hosted] : [])];
+  } catch { process.stderr.write(initOut); return hosted ? [hosted] : []; }
 }
 
 async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainConfig | null, brainHome: string, out: Out): Promise<number> {
@@ -671,7 +676,8 @@ async function finish(out: Out, doc: {
       : 'Next: open a new Claude Code session (config is read at session start) and check that /mcp lists gbrain.');
   if (state && !doc.remove) say(out, 'Memory: save what the user asks you to remember as a fact with gbrain remember "<fact>", naming its entity and provenance (MCP tool: remember). '
     + 'World-visible facts (the default) are pushed into new sessions; a private fact is not (local CLI recall only). capture writes a page, not a fact.');
-  writeCliNotices(doc.notices);
+  writeCliNotices(doc.notices.filter((n) => n.code !== 'hosted_option'));
+  if (doc.notices.some((n) => n.code === 'hosted_option')) writeHostedOption('setup', new Set());
   return 0;
 }
 

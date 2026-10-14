@@ -361,6 +361,12 @@ export const CODES = {
   preview_changed: { class: 'caller', summary: "The state changed since the approved preview." },
   profile_incompatible: { class: 'caller', summary: "The stored profile is incompatible with this operation." },
   projection_owner_resident: { class: 'host_only', summary: "A resident owner holds the projection." },
+  // #6643: a managed sync stopped re-freezing pages that only waited on another page of the same sync.
+  knock_on_exhausted: { class: 'server', summary: "A managed sync kept re-freezing a page that only waited on another page of the same sync, and stopped at its limit because that earlier page still did not commit.",
+    why: "A page cancelled or refused only because an earlier page of its sync did not commit published nothing, so the sync re-freezes it under a fresh request by itself; the limit stops a loop when the earlier page keeps failing.",
+    docs: 'docs/guides/sync-unblock-runbook.md#decision-table',
+    suggestion: 'Read gbrain sync status --source <id> --json: last_error.root_cause names the request that keeps failing. Fix that request, or raise sync.knock_on_refreeze_limit / sync.knock_on_run_limit, then rerun the same sync.',
+    fix: { argv: ['gbrain', 'sync', 'status', '--source', '{source_id}', '--json'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Names the root request, its page and error; read-only.' } },
   keyword_candidates_incomplete: { class: 'unavailable', summary: "Hybrid search's CJK keyword arm hit its deadline or candidate cap on a large corpus, so some keyword matches can be missing.", why: 'The CJK fallback is an unindexed LIKE scan; the arm is bounded so a large brain cannot stall every hybrid search. An incomplete keyword search is not evidence of absence.', docs: 'docs/guides/multi-language-fts.md#cjk-keyword-budget', suggestion: 'Narrow the search with --source-id (MCP source_id), or ask the user to raise search.cjk_keyword_deadline_ms.', fix: { argv: ['gbrain', 'config', 'get', 'search.cjk_keyword_deadline_ms'], consent: [], actor: 'agent', why: 'Shows the deadline in effect (unset means 3000 ms); read-only.', requires_exclusive: false } },
   projection_pending: { class: 'retryable', summary: "The current text projection is not ready." },
   provenance_required: { class: 'caller', summary: "provenance is required and must be non-empty." },
@@ -538,6 +544,7 @@ export interface NoticeEntry {
 /** Notice codes. Mute (`gbrain notices mute`, `mute_notice`) accepts only coaching/info codes. */
 export const NOTICE_CODES = {
   atom_drain_budget: { kind: 'info', summary: 'An atom drain (`gbrain dream --drain`) stopped at its per-run spending cap (`cycle.extract_atoms.budget_usd`): the notice names the spend, the cap and the pages left; the fix raises the cap (paid, ask first).' },
+  hosted_option: { kind: 'coaching', summary: 'Shown when gbrain setup or an in-agent install creates a brain, and when gbrain mcp expose writes its first receipt or stops at a Tailscale or service step: gbrain.io is hosted GBrain. Mute with `gbrain notices mute hosted_option`.' },
   backup_coverage: { kind: 'coaching', summary: 'Some knowledge assets have no off-machine backup.' },
   empty_retrieval: { kind: 'info', summary: 'A retrieval returned no results; the notice says whether recall was degraded.' },
   first_run_decisions: { kind: 'ask', summary: 'init finished (or a stdio MCP session started on a brain with open decisions); the first-run decisions (search mode, writeback, harness wiring, skills) carry defaults the user may change. The one muteable ask.' },

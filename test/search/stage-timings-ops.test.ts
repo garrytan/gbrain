@@ -56,6 +56,14 @@ function withEmbeddings(): void {
   configureGateway({ embedding_model: 'openai:text-embedding-3-large', embedding_dimensions: DIMS, env: { OPENAI_API_KEY: 'stub-not-a-key' } });
 }
 
+const stubTransport = (async (input: { values: string[] }) => ({ embeddings: input.values.map(stubVector) })) as never;
+
+/** Swap the embed transport for one call; restore the stub after. */
+async function withEmbedTransport<T>(transport: (input: { values: string[] }) => Promise<{ embeddings: number[][] }>, fn: () => Promise<T>): Promise<T> {
+  __setEmbedTransportForTests(transport as never);
+  try { return await fn(); } finally { __setEmbedTransportForTests(stubTransport); }
+}
+
 /** Delay both lexical engine reads on this engine instance; restore after. */
 async function withSlowLexicalArms<T>(ms: number, fn: () => Promise<T>): Promise<T> {
   const keyword = engine.searchKeyword.bind(engine);
@@ -70,7 +78,7 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
-  __setEmbedTransportForTests((async (input: { values: string[] }) => ({ embeddings: input.values.map(stubVector) })) as never);
+  __setEmbedTransportForTests(stubTransport);
   withEmbeddings();
   const pages: Array<[string, string]> = [
     ['notes/widget-roadmap', '---\ntitle: Widget roadmap\n---\nThe quarterly widget roadmap covers pricing, renewal dates and the launch plan.\n'],
@@ -96,7 +104,7 @@ describe('timings ride every search and query response', () => {
     for (const stage of ['setup', 'lexical', 'relational', 'embed', 'vector', 'fuse', 'post_fusion', 'rerank', 'alias_fanout', 'anchoring', 'response']) {
       expect(t.stages_ms).toHaveProperty(stage);
     }
-    expect(Object.keys(t.overlapped_ms ?? {}).sort()).toEqual(['keyword_arm', 'keyword_count', 'title_arm']);
+    expect(Object.keys(t.overlapped_ms ?? {}).sort()).toEqual(['embed', 'keyword_arm', 'keyword_count', 'title_arm', 'vector']);
   });
 
   test('query adds the facts arm and expansion stages', async () => {
@@ -149,6 +157,39 @@ describe('critical-path accounting', () => {
     expect(t.stages_ms.lexical).toBeGreaterThanOrEqual(DELAY - 5);
     expect(t.stages_ms.lexical).toBeLessThan(2 * DELAY - 20);
     expect(wall).toBeLessThan(2 * DELAY + t.total_ms - t.stages_ms.lexical!);
+  });
+
+  test('the query embed runs alongside the lexical arms: one delay of wall time, not two', async () => {
+    withEmbeddings();
+    const DELAY = 300;
+    const slowEmbed = async (input: { values: string[] }) => {
+      await new Promise(resolve => setTimeout(resolve, DELAY));
+      return { embeddings: input.values.map(stubVector) };
+    };
+    const t = expectTimings((await withEmbedTransport(slowEmbed, () => withSlowLexicalArms(DELAY, () => run('search', { query: 'widget pricing' })))).timings);
+    expect(t.stages_ms.lexical).toBeGreaterThanOrEqual(DELAY - 5);
+    expect(t.overlapped_ms!.embed).toBeGreaterThanOrEqual(DELAY - 50);
+    expect(t.stages_ms.embed! + t.overlapped_ms!.embed).toBeGreaterThanOrEqual(DELAY - 5);
+    expect(t.total_ms).toBeLessThan(2 * DELAY - 50);
+  });
+
+  test('degraded stamps keep the sequential order when the vector side fails first', async () => {
+    withEmbeddings();
+    const keyword = engine.searchKeyword.bind(engine);
+    engine.searchKeyword = (async () => {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      throw new Error('keyword arm down (simulated)');
+    }) as typeof engine.searchKeyword;
+    try {
+      const failingEmbed = async () => { throw new Error('embed provider down (simulated)'); };
+      const { meta } = await withEmbedTransport(failingEmbed, () => run('search', { query: 'widget pricing' }));
+      const stages = meta.degraded.map((d: { stage: string }) => d.stage);
+      expect(stages).toContain('keyword_arm_failed');
+      expect(stages).toContain('embed_unavailable');
+      expect(stages.indexOf('keyword_arm_failed')).toBeLessThan(stages.indexOf('embed_unavailable'));
+    } finally {
+      engine.searchKeyword = keyword;
+    }
   });
 
   test("an alias fan-out's keyword search is booked under alias_fanout, outside lexical and the arms", async () => {

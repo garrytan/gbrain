@@ -2,7 +2,7 @@
 import { OperationError, opError, type Operation, type OperationContext } from './contract.ts';
 import { invalidParam, readFix } from './op-fix.ts';
 import { isValidSourceId } from '../source-id.ts';
-import { enforceBoundClientOpAllowList, enforceClientSlugFence, enforceSubagentSlugFence, normalizeSlugPrefix, parseSourceIdParam } from './context.ts';
+import { enforceBoundClientOpAllowList, enforceClientSlugFence, enforceSubagentSlugFence, normalizeSlugPrefix, parseSourceIdParam, readPolicyOpts } from './context.ts';
 import { hasScope } from '../scope.ts';
 import { normalizeTokenScopes } from '../legacy-token-scope.ts';
 import { parseWriteRequestId } from '../persistence/preconditions.ts';
@@ -184,6 +184,38 @@ export const persistenceOperations: Operation[] = [
       const { writeHealthFacts } = await import('../persistence/journal.ts');
       const facts = await writeHealthFacts(ctx.engine, result.requests);
       return { requests: await Promise.all(result.requests.map(row => publicReceipt(ctx, row, facts.get(row.id)))), next: result.next };
+    },
+  },
+  {
+    // #6643 (B0): the conflict pile grouped by slug. Database-derived fields only for remote callers, filtered by source grant, slug fence
+    // and page visibility in the aggregating SQL; the live file check runs only for the trusted local CLI on the canonical owner host.
+    name: 'list_write_conflicts',
+    idempotent: true,
+    outputRedaction: 'no_stored_text',
+    description: 'Pages whose writes keep ending in a source_changed conflict, grouped by slug.',
+    params: {
+      source_id: { type: 'string', description: 'Default: yours.' },
+      limit: { type: 'number', default: 25, description: '1-100 slugs (default 25).' },
+      cursor: { type: 'string', description: "Previous page's next." },
+    },
+    scope: 'read', mutating: false, area: 'pages',
+    cliHints: { name: 'write-conflicts' },
+    handler: async (ctx, params) => {
+      const sourceId = parseSourceIdParam(params.source_id ?? ctx.sourceId, 'list_write_conflicts') ?? 'default';
+      const limit = params.limit ?? 25;
+      if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1 || limit > 100) throw invalidParam(ctx, 'list_write_conflicts', 'limit', 'limit must be an integer from 1 to 100.', { example: 25 });
+      if (params.cursor !== undefined && typeof params.cursor !== 'string') throw opError('invalid_params', 'Invalid conflict cursor.', "Pass `cursor` exactly as the previous response's `next` value.");
+      const policy = await readPolicyOpts(ctx);
+      const trusted = ctx.remote === false;
+      const sourceIds = policy.sourceIds ?? (!trusted && policy.sourceId ? [policy.sourceId] : undefined);
+      const subagent = ctx.viaSubagent !== true ? undefined : ctx.allowedSlugPrefixes?.length ? ctx.allowedSlugPrefixes
+        : typeof ctx.subagentId === 'number' ? [`wiki/agents/${ctx.subagentId}/`] : [];
+      const bound = ctx.auth?.boundSlugPrefixes?.map(normalizeSlugPrefix);
+      // Both fences apply: a slug must sit under each confinement this caller carries.
+      const slugPrefixes = bound && subagent ? intersectPrefixes(bound, subagent) : bound ?? subagent?.map(normalizeSlugPrefix);
+      const { auditDriftConflicts } = await import('../persistence/drift-conflicts.ts');
+      return auditDriftConflicts(ctx.engine, sourceId, { trusted, sourceIds, slugPrefixes, excludePrivate: policy.excludePrivate === true },
+        { limit, cursor: params.cursor as string | undefined });
     },
   },
   {

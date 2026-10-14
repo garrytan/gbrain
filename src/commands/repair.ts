@@ -63,6 +63,10 @@ export const REPAIR_HELP = `Usage: gbrain repair [<kind>] [--apply] [--source <i
                                  [--apply --expect <preview-hash> --yes] [--json]
        gbrain repair fences [--source <id>] [--only <path>]... [--skip <path>]... [--slug <slug>]... [--diff]
                             [--no-llm] [--max-usd <n>] [--apply [--expect <preview-hash>]] [--limit <n>] [--json]
+       gbrain repair file-drift --source <id> (--slug <slug>... | --request <id>... | --all-drifted [--class <name>])
+                                --prefer file|database [--apply --expect <preview-hash>] [--json]
+       gbrain repair stuck-recovery [--source <id>] [--request-id <uuid>]
+                                    [--keep prior|disk --apply --expect <preview-hash> --yes] [--json]
 ${REPAIR_CONTENT_HELP}
 
 Repair residual damage that \`gbrain doctor\` reports. Dry run unless --apply.
@@ -88,13 +92,20 @@ Options:
                  Explicit-only kinds: widen the preview to ambiguous items (its hash covers them).
   --only <path>, --skip <path>
                  frontmatter, fences, slug-conflicts, content: select source-relative files (repeatable); the hash covers the selection.
-  --slug <slug>  fences: select a database page by slug (repeatable); the hash covers the selection.
+  --slug <slug>  fences, file-drift: select a database page by slug (repeatable); the hash covers the selection.
+  --prefer file|database, --request <id>, --all-drifted, --class <name>
+                 file-drift: the side that wins; select conflict receipts by request id (repeatable), or every page
+                 still drifted (refused across mixed drift classes unless --class keeps one).
   --diff         frontmatter, fences, slug-conflicts, content: print every per-file diff, not one sample per class or tier.
   --no-llm       Kinds that may call a paid model (${llmKinds}) and the content lane: use only the free tiers;
                  model-tier items stay held with llm_disabled.
   --max-usd <n>  Kinds that may call a paid model (${llmKinds}) and the content lane: spend at most n USD on the
                  model in this run. It only lowers the cap (the daily fences.repair cap still applies); never raises it.
-  --yes          frontmatter, conversation-labels --apply: the user agreed to the previewed changes (destructive
+  --keep prior|disk
+                 stuck-recovery --apply: the version of each blocked file to keep (the user's choice from the preview).
+  --request-id <uuid>
+                 stuck-recovery: resolve only this request's recovery (default: every blocked record of the source).
+  --yes          frontmatter, conversation-labels, stuck-recovery --apply: the user agreed to the previewed changes (destructive
                  consent; without it a terminal asks, and a non-interactive run exits 3 with the consent payload).
   --json         Machine-readable output with a stable shape (frontmatter: every per-file diff).
 
@@ -103,23 +114,28 @@ paid embedding work, preview gbrain doctor --remediation-plan --json and, after 
 run gbrain doctor --remediate --yes --include-repairs --max-usd <n> --expect <plan_hash>.
 With no kind, previews every kind. Run it on the brain host.
 Held files (the content lane, then the two-pass frontmatter repair): docs/guides/repair.md#held-files.
-Malformed facts/takes fences (preview, apply, undo): docs/guides/repair.md#fences.`;
+Malformed facts/takes fences (preview, apply, undo): docs/guides/repair.md#fences.
+A write recovery blocked on unexpected_file_bytes: docs/guides/repair.md#stuck-recovery.`;
 
-const BOOLEAN_FLAGS = new Set(['--apply', '--all', '--json', '--no-embed', '--include-ambiguous', '--diff', '--yes', '--no-llm']);
-const VALUE_FLAGS = new Set(['--source', '--limit', '--expect', '--only', '--skip', '--slug', '--max-usd']);
+const BOOLEAN_FLAGS = new Set(['--apply', '--all', '--json', '--no-embed', '--include-ambiguous', '--diff', '--yes', '--no-llm', '--all-drifted']);
+const VALUE_FLAGS = new Set(['--source', '--limit', '--expect', '--only', '--skip', '--slug', '--max-usd', '--prefer', '--request', '--class', '--keep', '--request-id']);
 /** Flags only some kinds accept, with the kinds that do. */
 const KIND_FLAGS: Record<string, readonly string[]> = {
-  '--only': ['frontmatter', 'fences', 'slug-conflicts', CONTENT_LANE], '--skip': ['frontmatter', 'fences', 'slug-conflicts', CONTENT_LANE], '--diff': ['frontmatter', 'fences', 'slug-conflicts', CONTENT_LANE], '--yes': ['frontmatter', 'conversation-labels'],
-  '--slug': ['fences'],
+  '--only': ['frontmatter', 'fences', 'slug-conflicts', CONTENT_LANE], '--skip': ['frontmatter', 'fences', 'slug-conflicts', CONTENT_LANE], '--diff': ['frontmatter', 'fences', 'slug-conflicts', CONTENT_LANE], '--yes': ['frontmatter', 'conversation-labels', 'stuck-recovery'],
+  '--slug': ['fences', 'file-drift'], '--prefer': ['file-drift'], '--request': ['file-drift'], '--all-drifted': ['file-drift'], '--class': ['file-drift'],
+  '--keep': ['stuck-recovery'], '--request-id': ['stuck-recovery'],
 };
 const VALUE_EXAMPLES: Record<string, string> = { '--source': 'default', '--limit': '50', '--expect': 'PLAN_HASH', '--only': 'notes/a.md', '--skip': 'notes/a.md',
-  '--slug': 'notes/a', '--max-usd': '0.50' };
+  '--slug': 'notes/a', '--max-usd': '0.50', '--prefer': 'file', '--request': 'REQUEST_UUID', '--class': 'review_required', '--keep': 'prior',
+  '--request-id': '123e4567-e89b-42d3-a456-426614174000' };
 /** A usage refusal whose fix is the read-only preview (gbrain repair without --apply writes nothing). */
 const invalid = (message: string, suggestion: string, preview: string[] = ['gbrain', 'repair', '--json']) => opError('invalid_params', message, suggestion,
   { fix: readFix('Previews the repair; without --apply it writes nothing.', { argv: preview }) });
 
 interface RepairArgs { kind?: string; apply: boolean; all: boolean; json: boolean; noEmbed: boolean; includeAmbiguous: boolean; diff: boolean; yes: boolean;
-  noLlm: boolean; source?: string; limit?: string; expect?: string; maxUsd?: number; only: string[]; skip: string[]; slugs: string[] }
+  noLlm: boolean; source?: string; limit?: string; expect?: string; maxUsd?: number; only: string[]; skip: string[]; slugs: string[];
+  allDrifted: boolean; prefer?: 'file' | 'database'; requests: string[]; driftClass?: string;
+  keep?: 'prior' | 'disk'; requestId?: string }
 
 /** `--max-usd` on a kind that never calls a paid model: the cap belongs to the doctor remediation run. */
 function maxUsdRefusal(flag: string, cap: string | undefined, kind: string | undefined): OperationError {
@@ -131,7 +147,8 @@ function maxUsdRefusal(flag: string, cap: string | undefined, kind: string | und
 
 /** Strict parse: every flag is known, value flags carry a value, at most one kind. */
 export function parseRepairArgs(args: string[]): RepairArgs {
-  const parsed: RepairArgs = { apply: false, all: false, json: false, noEmbed: false, includeAmbiguous: false, diff: false, yes: false, noLlm: false, only: [], skip: [], slugs: [] };
+  const parsed: RepairArgs = { apply: false, all: false, json: false, noEmbed: false, includeAmbiguous: false, diff: false, yes: false, noLlm: false, only: [], skip: [], slugs: [],
+    allDrifted: false, requests: [] };
   const used = new Set<string>();
   const positional: string[] = [];
   let maxUsdText: string | undefined;
@@ -156,6 +173,7 @@ export function parseRepairArgs(args: string[]): RepairArgs {
       else if (flag === '--diff') parsed.diff = true;
       else if (flag === '--yes') parsed.yes = true;
       else if (flag === '--no-llm') parsed.noLlm = true;
+      else if (flag === '--all-drifted') parsed.allDrifted = true;
       else parsed.noEmbed = true;
       continue;
     }
@@ -168,6 +186,22 @@ export function parseRepairArgs(args: string[]): RepairArgs {
     else if (flag === '--skip') parsed.skip.push(value);
     else if (flag === '--slug') parsed.slugs.push(value);
     else if (flag === '--max-usd') { maxUsdText = value; maxUsdFlag = flag; }
+    else if (flag === '--prefer') {
+      if (value !== 'file' && value !== 'database') throw invalid('--prefer takes file or database.', 'Pass --prefer file (the canonical file wins) or --prefer database (the database copy wins).',
+        ['gbrain', 'repair', 'file-drift', ...(parsed.source ? ['--source', parsed.source] : []), '--json']);
+      parsed.prefer = value;
+    }
+    else if (flag === '--request') parsed.requests.push(value);
+    else if (flag === '--class') parsed.driftClass = value;
+    else if (flag === '--keep') {
+      if (value !== 'prior' && value !== 'disk') throw invalid(`--keep must be prior or disk (got "${value}").`,
+        'Pass --keep prior to write the recorded prior bytes back, or --keep disk to keep the bytes on disk; the preview lists which are available.', ['gbrain', 'repair', 'stuck-recovery', '--json']);
+      parsed.keep = value;
+    } else if (flag === '--request-id') {
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) throw invalid(`--request-id must be a request UUID (got "${value}").`,
+        'Pass the request_id the stuck-recovery preview (or gbrain sources writer status --json) lists, e.g. --request-id 123e4567-e89b-42d3-a456-426614174000.', ['gbrain', 'repair', 'stuck-recovery', '--json']);
+      parsed.requestId = value.toLowerCase();
+    }
     else parsed.limit = value;
   }
   if (positional.length > 1) throw new OperationError('invalid_params', `Unexpected argument '${positional[1]}'; gbrain repair takes at most one kind.`,
@@ -245,7 +279,8 @@ export function renderRepairResult(result: RepairResult, opts: { diff: boolean }
 
 export async function runRepairCommand(engine: BrainEngine, args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) { console.log(REPAIR_HELP); return; }
-  const { kind, apply, all, json, noEmbed, includeAmbiguous, source, expect, only, skip, slugs, diff, noLlm, maxUsd, limit: limitText } = parseRepairArgs(args);
+  const { kind, apply, all, json, noEmbed, includeAmbiguous, source, expect, only, skip, slugs, diff, noLlm, maxUsd, limit: limitText,
+    prefer, requests, allDrifted, driftClass, keep, requestId } = parseRepairArgs(args);
   const limit = limitText === undefined ? undefined : Number(limitText);
   if (limit !== undefined && (!Number.isSafeInteger(limit) || limit < 1)) throw invalid('--limit must be a positive integer.', 'Pass --limit as a positive whole number, e.g. --limit 50, or omit it to repair every item.');
   if (kind === CONTENT_LANE) {
@@ -266,15 +301,15 @@ export async function runRepairCommand(engine: BrainEngine, args: string[]): Pro
   const scope = await resolveRepairScope(engine, source);
   if (apply && kind && expect && repairSpec(kind as RepairKind).consent === 'destructive') {
     const preview = ['gbrain', 'repair', kind, ...(source ? ['--source', source] : []), ...only.flatMap(path => ['--only', path]), ...skip.flatMap(path => ['--skip', path]),
-      ...(includeAmbiguous ? ['--include-ambiguous'] : [])];
+      ...(includeAmbiguous ? ['--include-ambiguous'] : []), ...(requestId ? ['--request-id', requestId] : [])];
     const custom = repairSpec(kind as RepairKind).consentText;
-    const text = custom ? { ...custom, why: `Preview ${expect}: ${custom.why}`, user_message: `${custom.user_message} (preview ${expect.slice(0, 12)})` } : {
+    const text = custom ? { ...custom, why: `Preview ${expect}: ${custom.why}`, user_message: `${custom.user_message} (preview ${expect.slice(0, 12)}${keep ? `, keep ${keep}` : ''})` } : {
       what: `Rewrite the previewed ${kind} changes on disk and import them`,
       why: `The preview ${expect} listed each file change; applying it rewrites those files in place and publishes them.`,
       risk: 'Only the previewed lines change; a file that changed since the preview is skipped. Managed sources commit through the Git effect (undo with git revert); legacy sources keep a backup under ~/.gbrain/backups/frontmatter/.',
       user_message: `Apply the previewed ${kind} repair (preview ${expect.slice(0, 12)})? Each listed file is rewritten on disk exactly as the preview showed and imported again.` };
     const auth = await consentGate({ command: `repair ${kind}`, effects: ['destructive'], actor: 'agent', ...text,
-      argv: [...preview, '--apply', '--expect', expect, ...(json ? ['--json'] : [])], preview_argv: [...preview, '--json'], plan_hash: expect, args }, { json, env: engineConsentEnv(engine) });
+      argv: [...preview, ...(keep ? ['--keep', keep] : []), '--apply', '--expect', expect, ...(json ? ['--json'] : [])], preview_argv: [...preview, '--json'], plan_hash: expect, args }, { json, env: engineConsentEnv(engine) });
     if (!auth) return;
   }
   const runner = await repairRunner(engine, { apply, noEmbed });
@@ -282,7 +317,9 @@ export async function runRepairCommand(engine: BrainEngine, args: string[]): Pro
   for (const k of kinds) {
     const result = await runner.run(k, scope, { limit, sourceFlag: source, explicit: k === kind, expect, includeAmbiguous,
       ...(k === kind && KIND_FLAGS['--only']!.includes(k) ? { only, skip } : {}), ...(k === kind && slugs.length ? { slugs } : {}),
-      ...(k === kind && noLlm ? { noLlm } : {}), ...(k === kind && maxUsd !== undefined ? { maxLlmUsd: maxUsd } : {}) });
+      ...(k === kind && noLlm ? { noLlm } : {}), ...(k === kind && maxUsd !== undefined ? { maxLlmUsd: maxUsd } : {}),
+      ...(k === kind && k === 'file-drift' ? { prefer, requests, allDrifted, driftClass } : {}),
+      ...(k === kind && keep ? { keep } : {}), ...(k === kind && requestId ? { requestId } : {}) });
     results.push({ ...result, paid: repairMaySpend(repairSpec(k), noEmbed) });
     if (result.stopped) break;
   }

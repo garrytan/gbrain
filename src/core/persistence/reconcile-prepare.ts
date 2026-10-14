@@ -137,7 +137,10 @@ export async function prepareReconcileMutation(engine: BrainEngine, row: WriteRe
   assertAutoDecisions(artifact.auto_decisions ?? [], state.file, reconcileCanonical(state.snapshot.page, state.snapshot.tags), artifact.decisions);
   const prepared = await prepareReconcileResult(engine, state, artifact.decisions);
   if (!prepared.ready || digest(prepared.result) !== artifact.result_digest) staleReconcile('canonical policy result changed');
-  const content = serializePageToMarkdown({ ...state.snapshot.page, ...prepared.result }, prepared.result.tags);
+  // #6643: a request that asks to keep the file's bytes (repair file-drift --prefer file) leaves a file that already parses to the
+  // reviewed result as it is; any other difference (a protected key, a tag union, a kept private row) renders the result.
+  const keep = row.intent.keep_file_bytes === true && digest(reconcileCanonical(state.file, state.file.tags)) === artifact.result_digest;
+  const content = keep ? state.raw.toString('utf8') : serializePageToMarkdown({ ...state.snapshot.page, ...prepared.result }, prepared.result.tags);
   const ready = prepared.ready;
   return {
     observedRevision: state.snapshot.revision, trust: await ownerImportTrust(engine, row, prepared.result.frontmatter, state.path),

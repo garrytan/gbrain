@@ -493,7 +493,8 @@ export function syncFingerprint(p: { sourceId?: string; lastCommit: string }): s
  * census (candidates and scan cursors), paid fence-repair attempt claims
  * and memos, and uncommitted legacy fence-repair notices of a live source
  * incarnation leave only on resolution (or with
- * the incarnation), and connector hold-retry requests never expire (#5988).
+ * the incarnation), and connector hold-retry requests and stuck-recovery
+ * resolution audit entries never expire (#5988, #6650).
  */
 export async function purgeStaleCheckpoints(
   engine: BrainEngine,
@@ -509,6 +510,7 @@ export async function purgeStaleCheckpoints(
          WHERE updated_at < now() - ($1 || ' days')::interval
            AND op NOT IN ('managed-atoms','managed-atoms-generation','managed-connector','managed-connector-retry','managed-connector-state','managed-connector-migration')
            AND op<>'connector-hold-retry'
+           AND op<>'stuck-recovery-resolution'
            AND NOT (op IN ('sync-hold','sync-hold-retry','sync-import-provenance','sync-hold-summary','sync-conversions','${FENCE_CANDIDATE_OP}','${FENCE_SCAN_OP}','${FENCE_REPAIR_ATTEMPT_OP}','${FENCE_UNCOMMITTED_OP}')
              AND NOT (op='sync-hold-summary' AND COALESCE((completed_keys->0->>'count')::int,0)=0)
              AND EXISTS (SELECT 1 FROM sources s WHERE s.id=op_checkpoints.completed_keys->0->>'source_id'

@@ -55,6 +55,8 @@ const HELP_WITHOUT_BRAIN = [
   'core',
   // #6114: router commands print their usage from cli.ts before dispatch (src/cli/router-help.ts).
   'config',
+  // Cat 41 run 4: recall's usage (incl. --question) prints before the engine.
+  'recall',
 ];
 
 /**

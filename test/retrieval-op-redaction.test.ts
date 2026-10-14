@@ -208,6 +208,7 @@ const SWEEP: Record<string, Row> = {
   schema_graph: { args: {} },
   schema_explain_type: { args: { type: 'note' } },
   schema_review_orphans: { args: { limit: 50 } },
+  list_write_conflicts: { args: {} },
   // no_stored_text — write receipts (the planted content is the caller's own
   // input here; the receipt must not echo it)
   remember: { args: { fact: planted('remembered'), provenance: 'test:sweep', request_id: randomUUID() } },

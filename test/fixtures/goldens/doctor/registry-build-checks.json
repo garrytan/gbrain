@@ -486,6 +486,10 @@
         "name": "stale_frontmatter_keys"
       },
       {
+        "category": "ops",
+        "name": "maintenance_write_drift"
+      },
+      {
         "category": "brain",
         "name": "extraction_date_grounding"
       },

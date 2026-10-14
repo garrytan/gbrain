@@ -408,6 +408,7 @@ describe('D3: shadowed handler help and curated help are reachable', () => {
     founder: 'Usage: gbrain founder scorecard <entity-slug>',
     'graph-query': 'Usage: gbrain graph-query <slug>',
     mounts: 'gbrain mounts',
+    recall: 'Usage: gbrain recall [<entity>] [options]',
     think: 'Usage: gbrain think',
   };
   for (const [command, marker] of Object.entries(SELF_HELP_MARKERS)) {

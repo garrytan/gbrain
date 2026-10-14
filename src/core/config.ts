@@ -1736,6 +1736,9 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'sync.hold_escalate_count',
   'sync.hold_escalate_pct',
   'sync.parser_regression',
+  // #6643: knock-on re-freezes in a row at one index (default 3; 0 turns automatic re-freeze off) and per run (default 25).
+  'sync.knock_on_refreeze_limit',
+  'sync.knock_on_run_limit',
   'fences.normalize', // #6188: inline Tier 1 fence normalization (fence-repair/config.ts); default on
   'fences.repair.enabled', 'fences.repair.llm', // #6188: the fence_repair cycle phase and its Tier 3 model step (fence-repair/config.ts); default on
   'fences.repair.max_usd_per_page', 'fences.repair.max_usd_per_day', // #6188: Tier 3 fence repair caps; 0 = no model spend

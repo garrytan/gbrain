@@ -46,7 +46,7 @@ import {
 } from './query-cache.ts';
 import { resolveHybridRequest } from './hybrid/request.ts';
 import { prepareSemanticCache, resolveCacheSearchMode, semanticCacheSkipped, serveSemanticCacheHit } from './hybrid/cache-stages.ts';
-import { buildPostFusionOpts, buildRelationalList, resolveModalityAndQueries, runLexicalArms, runVectorArms } from './hybrid/arms.ts';
+import { buildPostFusionOpts, joinVectorSide, resolveEarlyModality, runLexicalAndRelational, startVectorSide } from './hybrid/arms.ts';
 import { searchVectorFallback, searchWithoutEmbeddings } from './hybrid/keyword-only.ts';
 import { factEmbeddingDisabled } from '../embedding-disabled.ts';
 import { capSessionPool, expandStructuralNeighbors, finalizeHybridResults, fuseArms, rerankAndPin, sizeReturnPool } from './hybrid/rank.ts';
@@ -1106,17 +1106,15 @@ export async function hybridSearch(
   }
   if (opts?._queryPrefix === undefined) opts = { ...opts, _queryPrefix: await timer.stage('setup', () => loadEmbeddingQueryPrefix(engine)) };
   if (opts._embeddingOptedOut === undefined) opts = { ...opts, _embeddingOptedOut: await timer.stage('setup', () => factEmbeddingDisabled(engine)) };
-  // Named stages (src/core/search/hybrid/): request -> lexical arms ->
-  // relational arm -> [keyword-only return] -> modality + expansion ->
-  // vector arms -> [keyword fallback return] -> fusion + post-fusion boosts
-  // -> structural expansion -> dedup -> rerank + pin -> identity tiers +
-  // return sizing -> main return. Same order of every engine/provider call.
+  // Named stages (src/core/search/hybrid/): request -> start the vector side
+  // (modality + expansion -> vector arms) -> lexical arms -> relational arm ->
+  // [keyword-only return] -> join the vector side -> [keyword fallback return]
+  // -> fusion + post-fusion boosts -> structural expansion -> dedup -> rerank
+  // + pin -> identity tiers + return sizing -> main return. The vector side
+  // runs alongside the lexical arms; joinVectorSide merges it in sequential order.
   const req = await timer.stage('setup', () => resolveHybridRequest(engine, query, opts));
   const { resolvedMode, resolvedCol, cfgForColumn } = req;
-  const lexical = await timer.stage('lexical', () => runLexicalArms(req));
-  const { earlyModality } = lexical;
-  const postFusionOpts = buildPostFusionOpts(req);
-  const relationalList = await timer.stage('relational', () => buildRelationalList(req));
+  const earlyModality = await timer.stage('setup', () => resolveEarlyModality(req));
 
   const { isAvailable } = await import('../ai/gateway.ts');
   const providerProbe = resolvedCol.embeddingModel || undefined;
@@ -1146,13 +1144,15 @@ export async function hybridSearch(
   // Hermetic eval canaries/CI: a caller-supplied queryEmbedFn produces the
   // vector-arm query embedding without the gateway, so provider
   // availability is irrelevant — skip the keyword-only short-circuit.
-  if (opts?.decide?.keywordOnly || (!opts?.queryEmbedFn && (opts?._embeddingOptedOut || !isAvailable('embedding', providerProbe)) && !willTryMultimodal)) {
+  const keywordOnly = opts?.decide?.keywordOnly || (!opts?.queryEmbedFn && (opts?._embeddingOptedOut || !isAvailable('embedding', providerProbe)) && !willTryMultimodal);
+  const vectorSide = keywordOnly ? null : startVectorSide(req, multimodalProviderProbe ?? cfgForColumn?.embedding_multimodal_model ?? 'voyage:voyage-multimodal-3');
+  const { lexical, relationalList } = await runLexicalAndRelational(req, earlyModality, vectorSide);
+  const postFusionOpts = buildPostFusionOpts(req);
+  if (!vectorSide) {
     return timer.stage('post_fusion', () => searchWithoutEmbeddings(req, lexical, relationalList, postFusionOpts, providerProbe));
   }
 
-  const { effectiveModality, unifiedRouting, queries } = await resolveModalityAndQueries(req);
-  const { vectorArms, queryEmbedding, imageQueryEmbedding, unifiedDone } =
-    await runVectorArms(req, { effectiveModality, unifiedRouting, queries, multimodalProviderProbe: multimodalProviderProbe ?? cfgForColumn?.embedding_multimodal_model ?? 'voyage:voyage-multimodal-3' });
+  const { effectiveModality, vectorArms, queryEmbedding, imageQueryEmbedding, unifiedDone } = await joinVectorSide(req, vectorSide);
   if (queryEmbedding) opts?.onQueryEmbedding?.(queryEmbedding);
   if (vectorArms.length === 0) {
     return timer.stage('post_fusion', () => searchVectorFallback(req, lexical, relationalList, postFusionOpts));

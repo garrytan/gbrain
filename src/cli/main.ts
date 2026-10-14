@@ -118,6 +118,7 @@ export function normalizeLocalResult(rawResult: unknown): unknown {
 const SELF_HELP_WITHOUT_ENGINE: Record<string, true | (() => Promise<(engine: never, args: string[]) => unknown>)> = {
   export: async () => (await import('../commands/export.ts')).runExport as never,
   models: async () => (await import('../commands/models.ts')).runModels as never,
+  recall: async () => (await import('../commands/recall.ts')).runRecall as never,
   watch: async () => (await import('../commands/watch.ts')).runWatch as never,
   skillopt: async () => (await import('../commands/skillopt.ts')).runSkillOptCommand as never,
   maintain: async () => (await import('../commands/maintain.ts')).runMaintain as never,

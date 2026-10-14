@@ -49,6 +49,7 @@ const LEDGER: Record<string, string> = {
   get_write_request: 'test/persistence-receipt-operations.test.ts',
   list_write_requests: 'test/persistence-receipt-operations.test.ts',
   cancel_write_request: 'test/persistence-receipt-operations.test.ts',
+  list_write_conflicts: 'test/maintenance-file-drift-6643.test.ts',
   search: 'test/cli-search-dispatch.test.ts',
   query: 'test/query-image-flag.serial.test.ts',
   search_stats: 'test/search-introspection-ops.test.ts',

@@ -59,7 +59,7 @@ timings: 74ms total — setup 1, lexical 12, relational 0, embed 0, vector 16, f
 | `total_ms` | Wall time of the whole operation, measured on its own clock after the response is assembled. |
 | `stages_ms` | Time the request spent blocked in each stage that ran: `setup` (scope, config, mode), `lexical`, `relational`, `expansion`, `embed`, `vector`, `fuse`, `post_fusion` (boosts, dedup, identity tiers, return sizing), `rerank`, `alias_fanout`, `anchoring`, `facts_arm` (query), `response` (evidence delivery, response metadata, redaction). A second search the operation runs (a retry, a CRAG re-run) adds to the same stages; the alias fan-out's keyword searches count under `alias_fanout`. |
 | `other_ms` | Time no stage claimed. `sum(stages_ms) + other_ms = total_ms`. |
-| `overlapped_ms` | Work that ran alongside a stage, so it is not added to the total: the keyword and title arms run in parallel inside `lexical` (`keyword_arm`, `title_arm`), and `search`'s total-match count runs alongside the whole request (`keyword_count`). |
+| `overlapped_ms` | Work that ran alongside a stage, so it is not added to the total: the keyword and title arms run in parallel inside `lexical` (`keyword_arm`, `title_arm`), `search`'s total-match count runs alongside the whole request (`keyword_count`), and the vector side (query expansion, the query embed and the vector search) starts with the lexical arms, so the part of `expansion`, `embed` and `vector` that finished while they ran is listed here under the stage's name. The rest of those stages, the part the request had to wait for, stays in `stages_ms`. |
 
 All values are integer milliseconds.
 

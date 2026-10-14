@@ -29,7 +29,16 @@ export interface ManagedSyncFailure {
   processingOptions?: Partial<SyncProcessingOptions>;
   /** #6513: the receipt's public failure detail (`publicFailureDetail`: fixed identifiers and the closed `reason`), when the receipt stored one. */
   write_error_detail?: Record<string, unknown>;
+  /**
+   * #6643: the request whose failure this one is a knock-on of (or, for a checkpoint, the receipt that blocks it),
+   * followed through recorded knock-on roots. `request_id` null with `unknown` true: the canceller recorded no root
+   * (a receipt from before #6643); the victim is then the only request named.
+   */
+  root_cause?: ManagedSyncRootCause;
 }
+export interface ManagedSyncRootCause { request_id: string | null; slug: string | null; state: string | null; code: string | null; message: string | null;
+  /** The cursor fence cause when the root is a cursor refusal (`outside_fence`, `run_replaced`, `window_dropped`). */
+  cause?: string; unknown?: true }
 
 export async function recordManagedSyncFailure(engine: BrainEngine, value: Omit<ManagedSyncFailure, 'first_seen' | 'attempts'> & { first_seen?: string }): Promise<{ failure: ManagedSyncFailure; ledgerRecorded: boolean }> {
   const failure = { ...value, first_seen: value.first_seen ?? new Date().toISOString(), attempts: 1 };
@@ -184,7 +193,13 @@ export async function readManagedSyncFailures(engine: BrainEngine, sourceIds?: s
 
 export function formatManagedSyncFailure(failure: ManagedSyncFailure): string {
   const clean = (value: string) => value.replace(/[\x00-\x1f\x7f-\x9f]/g, ' ').slice(0, 1000);
-  return `source=${clean(failure.source_id)} path=${clean(failure.path)} code=${clean(failure.code)}: ${clean(failure.message)} request=${failure.request_id ?? '<not-admitted>'} run=${failure.run_id} target=${failure.target ?? '<undiscovered>'}${publicationDetailText(failure.write_error_detail)}`;
+  return `source=${clean(failure.source_id)} path=${clean(failure.path)} code=${clean(failure.code)}: ${clean(failure.message)} request=${failure.request_id ?? '<not-admitted>'} run=${failure.run_id} target=${failure.target ?? '<undiscovered>'}${publicationDetailText(failure.write_error_detail)}${rootCauseText(failure.root_cause, clean)}`;
+}
+/** #6643: the root-cause clause of a failure line: the request, page and error that caused it, or that none was recorded. */
+export function rootCauseText(root: ManagedSyncRootCause | undefined, clean: (value: string) => string = value => value): string {
+  if (!root) return '';
+  if (!root.request_id) return ' root_cause=<not recorded: this receipt predates root tracking>';
+  return ` root_cause=request ${root.request_id}${root.slug ? ` (${clean(root.slug)})` : ''}: ${root.state ?? 'missing'}${root.code ? ` ${clean(root.code)}` : ''}${root.cause ? ` cause=${root.cause}` : ''}${root.message ? ` ${clean(root.message)}` : ''}`;
 }
 const IDENT = /^[A-Za-z_][A-Za-z0-9_.:-]{0,79}$/;
 /** #6513: the fixed identifiers of a public failure detail (`raiser`, `table`) and its closed `reason`, as ` key=value` text; nothing else of it. */

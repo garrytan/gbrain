@@ -56,7 +56,7 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import type { BrainEngine } from '../engine.ts';
 import { sanitizeText } from '../batch-rows.ts';
 import { isDurabilityHardened } from '../brain-repo-durability.ts';
-import { formatFenceDate, normalizeClaimWhitespace, parseFactsFence, renderFactsTable, replaceOrInsertFactsFence, type ParsedFact } from '../facts-fence.ts';
+import { fenceCellReadBackProblem, formatFenceDate, normalizeClaimWhitespace, parseFactsFence, renderFactsTable, replaceOrInsertFactsFence, type FactAttribution, type ParsedFact } from '../facts-fence.ts';
 import { FENCE_SOURCE_DEFAULT } from './extract-from-fence.ts';
 import { parseMarkdown, serializePageToMarkdown } from '../markdown.ts';
 import { assertSourceFilesystemActive, hasSourceFilesystemLock, withSourceFilesystemLock } from '../minions/source-filesystem.ts';
@@ -64,7 +64,7 @@ import { withPageLock } from '../page-lock.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { assertLifetimeIdHeadroom } from '../persistence/journal.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
-import { maintenancePreflight, submitFactFenceAdoption, type MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
+import { maintenancePreflight, planFactFenceAdoption, submitPlannedFactFenceAdoption, type MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
 import { contentHash } from '../utils.ts';
 import { resolvePageWriteTarget } from '../write-through.ts';
 import { commitFactFenceFile, gitPathState } from './fence-write.ts';
@@ -86,6 +86,8 @@ export interface UnfencedFactRow {
   claim_value: number | null;
   claim_unit: string | null;
   claim_period: string | null;
+  /** Speaker attribution; the fence carries it in its 15th column, so adoption keeps it. */
+  attributed_to?: FactAttribution | null;
   page_exists: boolean;
 }
 
@@ -113,9 +115,14 @@ export interface UnfencedFactsOutcome {
  * inactive), `line_break_markup` (a literal `<br>` reads back as a newline),
  * `claim` (any other change to the text), `kind` / `visibility` /
  * `validity` / `source` (another column reads back different), `parse` (the
- * single-row fence does not parse at all).
+ * single-row fence does not parse at all), `whole_fence` (the row passes alone
+ * but does not read back from the page's whole rendered fence; the page
+ * submits nothing), `prior_refusal` (a managed adoption of the same intent was
+ * refused in the last day; it is retried a day after the refusal, or at once
+ * when `FACT_FENCE_PLANNER` changes).
  */
-export type UnrenderableClass = 'empty' | 'struck' | 'line_break_markup' | 'claim' | 'kind' | 'visibility' | 'validity' | 'source' | 'parse';
+export type UnrenderableClass = 'empty' | 'struck' | 'line_break_markup' | 'claim' | 'kind' | 'visibility' | 'validity' | 'source' | 'parse'
+  | 'whole_fence' | 'prior_refusal';
 
 /** One legacy row left unadopted, by location only: the claim text is never copied into a diagnostic. */
 export interface UnadoptableFactRecord {
@@ -124,6 +131,8 @@ export interface UnadoptableFactRecord {
   fact_id: number;
   reason: 'fence_unrenderable' | 'duplicate_claim';
   class: UnrenderableClass | 'duplicate_claim';
+  /** `prior_refusal`: the refused request, readable with `gbrain write-request -- <id>`. */
+  request_id?: string;
 }
 
 function fenceRowOf(row: UnfencedFactRow, rowNum: number, claim: string): ParsedFact {
@@ -149,6 +158,7 @@ function fenceRowOf(row: UnfencedFactRow, rowNum: number, claim: string): Parsed
     ...(row.claim_value != null ? { claimValue: Number(row.claim_value) } : {}),
     ...(row.claim_unit ? { claimUnit: row.claim_unit } : {}),
     ...(row.claim_period ? { claimPeriod: row.claim_period } : {}),
+    ...(row.attributed_to ? { attributedTo: row.attributed_to } : {}),
   };
 }
 
@@ -215,7 +225,7 @@ export async function planUnfencedFacts(engine: BrainEngine, opts: { sourceId?: 
   const rows = await engine.executeRaw<UnfencedFactRow>(
     `SELECT id, source_id, entity_slug, fact, kind, visibility, notability,
             context, valid_from, valid_until, source, confidence,
-            claim_metric, claim_value, claim_unit, claim_period,
+            claim_metric, claim_value, claim_unit, claim_period, attributed_to,
             EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id
               AND p.slug = f.entity_slug AND p.deleted_at IS NULL) AS page_exists
        FROM facts f
@@ -302,16 +312,23 @@ export async function planFence(engine: BrainEngine, sourceId: string, entitySlu
       continue;
     }
     planned.add(key);
-    const existing = existingFence.facts.find(f => {
+    // #6650: a leftover cell is reused only when re-rendering it from the
+    // legacy row cannot widen its visibility (a private cell never becomes
+    // world), and it is re-rendered from the row: publication refreshes the
+    // fact's kind, validity and metadata from its fence cell, so a stale
+    // cell would otherwise overwrite them.
+    const existingAt = existingFence.facts.findIndex(f => {
       const owner = occupied.get(f.rowNum);
       return f.active && !claimed.has(f.rowNum) && f.claim === oracle.claim &&
-        (f.source ?? '') === (row.source ?? '') &&
+        (f.source ?? '') === (row.source ?? '') && (f.visibility === row.visibility || row.visibility === 'private') &&
         (!owner || owner.fact !== f.claim || (owner.source ?? '') !== (f.source ?? ''));
     });
-    if (existing) {
-      if (occupied.has(existing.rowNum)) existing.rowNum = nextRowNum++;
-      assignments.push({ id: row.id, row_num: existing.rowNum, fact: oracle.claim });
-      claimed.add(existing.rowNum);
+    if (existingAt >= 0) {
+      const at = existingFence.facts[existingAt].rowNum;
+      const rowNum = occupied.has(at) ? nextRowNum++ : at;
+      existingFence.facts[existingAt] = fenceRowOf(row, rowNum, oracle.claim);
+      assignments.push({ id: row.id, row_num: rowNum, fact: oracle.claim });
+      claimed.add(rowNum);
       continue;
     }
     const rowNum = nextRowNum++;
@@ -319,7 +336,34 @@ export async function planFence(engine: BrainEngine, sourceId: string, entitySlu
     assignments.push({ id: row.id, row_num: rowNum, fact: oracle.claim });
     claimed.add(rowNum);
   }
-  return { body: replaceOrInsertFactsFence(body, renderFactsTable(existingFence.facts)), assignments, rejected };
+  const rendered = replaceOrInsertFactsFence(body, renderFactsTable(existingFence.facts));
+  if (assignments.length === 0) return { body: rendered, assignments, rejected };
+  // #6650: the page is published only when every assignment reads back from
+  // the whole rendered fence the way the publisher will check it.
+  const readBack = parseFactsFence(rendered);
+  const cells = new Map(readBack.facts.map(f => [f.rowNum, f]));
+  const byId = new Map(group.map(row => [row.id, row]));
+  if (readBack.warnings.length > 0 || assignments.some(a => fenceCellReadBackProblem(cells.get(a.row_num), byId.get(a.id)!) !== null)) {
+    return { body, assignments: [], rejected: [...rejected, ...assignments.map(a => ({ source_id: sourceId, slug: entitySlug, fact_id: Number(a.id),
+      reason: 'fence_unrenderable' as const, class: 'whole_fence' as const }))] };
+  }
+  return { body: rendered, assignments, rejected };
+}
+
+/**
+ * #6650: whether a fact the adoption pins (read just now) no longer renders
+ * as the fence row planned from the earlier read. The pins are the request's
+ * hashes, so publishing such a plan would write the older metadata back over
+ * the newer row; the page is skipped and replanned next run instead.
+ */
+function factsChangedSincePlanning(body: string, assignments: Array<{ id: string; row_num: number }>, pinned: Array<{ id: number; value: Record<string, unknown> }>): boolean {
+  const cells = new Map(parseFactsFence(body).facts.map(f => [f.rowNum, f]));
+  return assignments.some(a => {
+    const cell = cells.get(a.row_num);
+    const now = pinned.find(f => f.id === Number(a.id))?.value as unknown as UnfencedFactRow | undefined;
+    if (!cell || !now || normalizeClaimWhitespace(String(now.fact)) !== normalizeClaimWhitespace(cell.claim)) return true;
+    return renderFactsTable([fenceRowOf(now, cell.rowNum, cell.claim)]) !== renderFactsTable([cell]);
+  });
 }
 
 /** Keep the typed records and name the page once in `failed_pages` with the stable token; the rows stay as they are. */
@@ -359,14 +403,24 @@ async function fenceManaged(engine: BrainEngine, plan: UnfencedFactsPlan): Promi
         outcome.failed_pages.push(`${entitySlug} (${fence.warnings.join('; ')})`);
         continue;
       }
-      recordUnadoptable(outcome, entitySlug, fence.rejected);
-      if (fence.assignments.length === 0) continue;
-      const target = await resolvePageWriteTarget(engine, entitySlug, sourceId);
-      await submitFactFenceAdoption(engine, authority, entitySlug, {
+      if (fence.assignments.length === 0) { recordUnadoptable(outcome, entitySlug, fence.rejected); continue; }
+      const request = await planFactFenceAdoption(engine, authority, entitySlug, {
         content: fence.body, expectedRevision: snapshot.revision,
         assignments: fence.assignments.map(a => ({ id: Number(a.id), row_num: a.row_num })),
-        file: Boolean(snapshot.page.source_path) || snapshot.page.source_uri?.startsWith('file:') === true || (target.ok && existsSync(target.filePath)),
       });
+      if (request.kind === 'suppressed') {
+        recordUnadoptable(outcome, entitySlug, [...fence.rejected, ...fence.assignments.map(a => ({ source_id: sourceId, slug: entitySlug,
+          fact_id: Number(a.id), reason: 'fence_unrenderable' as const, class: 'prior_refusal' as const, request_id: request.prior.request_id }))]);
+        continue;
+      }
+      if (factsChangedSincePlanning(fence.body, fence.assignments, request.facts)) {
+        outcome.failed_pages.push(`${entitySlug} (a legacy fact changed after its fence row was planned; nothing was submitted and the next run replans it)`);
+        continue;
+      }
+      recordUnadoptable(outcome, entitySlug, fence.rejected);
+      const target = await resolvePageWriteTarget(engine, entitySlug, sourceId);
+      await submitPlannedFactFenceAdoption(engine, authority, entitySlug, request,
+        Boolean(snapshot.page.source_path) || snapshot.page.source_uri?.startsWith('file:') === true || (target.ok && existsSync(target.filePath)));
       outcome.fenced += fence.assignments.length;
       outcome.pages_touched += 1;
       outcome.fenced_slugs.push(entitySlug);

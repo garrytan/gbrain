@@ -1,5 +1,6 @@
 import { OperationError } from '../ops/contract.ts';
 import { writerStamp } from './writer-versions.ts';
+import { cursorFenceCause } from './sync-knock-on.ts';
 import type { FenceFailureDetail } from '../fence-repair/refusal.ts';
 import type { WithdrawalFailureDetail } from '../facts/withdrawal.ts';
 import type { Action } from '../agent-output.ts';
@@ -193,14 +194,16 @@ export function withAttempt(failure: PublicationFailure, stage: PublicationStage
  * reason and problem classes; its row numbers stay owner-side (they can
  * number rows a remote caller never saw).
  */
-const PUBLIC_DETAIL_KEYS: ReadonlySet<string> = new Set(['origin', 'sqlstate', 'raiser', 'table', 'op', 'branch', 'relationship', 'reason', 'stage', 'fence']);
+const PUBLIC_DETAIL_KEYS: ReadonlySet<string> = new Set(['origin', 'sqlstate', 'raiser', 'table', 'op', 'branch', 'relationship', 'reason', 'stage', 'fence', 'cause']);
 
 export function publicFailureDetail(detail: unknown): Record<string, unknown> | undefined {
   if (!detail || typeof detail !== 'object' || Array.isArray(detail)) return undefined;
   // #5929: an allow-list, so a key added to a stored detail is owner-only unless it is listed here.
   // #6513: `reason` is public only as a member of the closed enum, whatever a stored detail holds under that key.
   const rest = Object.fromEntries(Object.entries(detail).filter(([key, value]) => PUBLIC_DETAIL_KEYS.has(key)
-    && (key !== 'reason' || (PUBLICATION_REASONS as readonly unknown[]).includes(value))));
+    && (key !== 'reason' || (PUBLICATION_REASONS as readonly unknown[]).includes(value))
+    // #6643: a cursor fence refusal's `cause` is public only as a member of its closed enum.
+    && (key !== 'cause' || cursorFenceCause({ cause: value }) !== null)));
   if ((rest as { origin?: unknown }).origin === 'fence') {
     const { rows: _rows, issues, ...fence } = ((rest as unknown as FenceFailureDetail).fence ?? {}) as FenceFailureDetail['fence'];
     const publicIssues = Array.isArray(issues) ? issues.map(({ row: _row, ...issue }) => issue) : undefined;

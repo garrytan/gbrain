@@ -605,6 +605,22 @@ gbrain eval longmemeval ~/datasets/longmemeval/longmemeval_s_cleaned.json \
 # (not bundled): python evaluate_qa.py ~/lme-receipts/judged.ndjson
 ```
 
+### Pricing a run before it starts (`--call-plan`)
+
+`--call-plan FILE` writes gstack's eval call plan (wire format GSTACK_EVAL_CALLS v1)
+for the exact run the other flags describe and exits 0, with no provider call and
+no brain: one line per active lane (model, calls, input and output tokens, the
+per-call output cap), the gate command, the commit, and the preconditions the
+numbers rest on. `gstack-eval-plan price-gate` prices it. Counts are exact for the
+claim extractor and synopsis lanes and upper bounds elsewhere (reader context =
+the K largest sessions of each haystack); caches and retries are not subtracted.
+Lanes it cannot bound (`--decide*`, `--via-operation`) refuse.
+
+```bash
+gbrain eval longmemeval ~/datasets/longmemeval/longmemeval_s_cleaned.json \
+  --mode tokenmax --judge --call-plan ~/lme-receipts/tokenmax-judge.calls
+```
+
 ### Judged answer accuracy (`--judge`)
 
 **Protocol (v0.48.4.0).** Retrieval = the release default (`balanced`,

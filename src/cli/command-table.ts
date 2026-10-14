@@ -362,7 +362,7 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   { name: 'onboard', phase: 'post-connect', thinClient: 'none', help: () => import('./help/onboard.ts'), load: () => import('./commands/onboard.ts') },
   { name: 'founder', phase: 'post-connect', thinClient: 'none', selfHelp: true, load: () => import('./commands/founder.ts') },
   { name: 'think', phase: 'post-connect', thinClient: 'none', selfHelp: true, routes_source: true, load: () => import('./commands/think.ts') },
-  { name: 'recall', phase: 'post-connect', thinClient: 'none', routes_source: true, load: () => import('./commands/recall.ts') },
+  { name: 'recall', phase: 'post-connect', thinClient: 'none', selfHelp: true, routes_source: true, load: () => import('./commands/recall.ts') },
   // CLI_ONLY: v0.42.58 (#2035 class, caught by the handleCliOnly reachability sweep): full handler
   // at `case 'notability-eval'` but never dispatchable.
   { name: 'notability-eval', phase: 'post-connect', thinClient: 'none', load: () => import('./commands/notability-eval.ts') },

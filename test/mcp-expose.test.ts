@@ -150,6 +150,7 @@ function fakeTailnet(o: TailnetOpts = {}): Fake {
     platform: 'linux', env: { HOME: home, USER: 'alice-example', PATH: '/usr/bin' }, home, user: 'alice-example', uid: 1000,
     serveDir, gbrainEnvFile: join(home, '.gbrain', 'env'), plistPath: join(home, 'LaunchAgents', 'com.gbrain.serve.plist'), unitPath: join(home, '.config', 'systemd', 'user', 'gbrain-serve.service'),
     loadConfig: () => ({ engine: 'pglite', database_path: join(home, 'brain.pglite') } as never), executionEnv: 'local', run,
+    mutedNotices: () => new Set(),
     which: (n) => (n === 'tailscale' ? TS : n === 'systemctl' ? '/usr/bin/systemctl' : n === 'gbrain' ? '/usr/local/bin/gbrain' : null),
     fileExists: hermeticExists(home, (p) => p === ts),
     fetch: async (url) => {
@@ -694,6 +695,50 @@ describe('happy path: linux-systemd', () => {
     expect(second.created_at).toBe(first.created_at);
     expect(second.updated_at).toBe('2026-06-02T00:00:00.000Z');
     expect(checkOf(jsonDoc(f), 'admin_token')?.detail).toContain('reused');
+  });
+});
+
+describe('hosted_option', () => {
+  const hostedOf = (doc: { notices?: { code: string; user_message?: string }[] }) => doc.notices?.find(n => n.code === 'hosted_option');
+  test('the run that writes the first receipt carries it; consent-pending, --dry-run, re-publish, --status and --remove do not', async () => {
+    const f = fakeTailnet();
+    expect(await runMcpExpose(['--dry-run', '--json'], f.deps)).toBe(0);
+    expect(hostedOf(jsonDoc(f))).toBeUndefined();
+    f.stdout.length = 0;
+    expect(await runMcpExpose(['--json'], f.deps)).toBe(2);
+    const pending = jsonDoc(f);
+    expect(pending.reason).toBe('confirmation_required');
+    expect(hostedOf(pending)).toBeUndefined();
+    expect(pending.user_message).not.toContain('gbrain.io');
+    f.stdout.length = 0;
+    expect(await runMcpExpose(['--yes', '--json'], f.deps)).toBe(0);
+    const first = jsonDoc(f);
+    expect(first.status).toBe('exposed');
+    expect(hostedOf(first)).toMatchObject({ kind: 'coaching', contract_version: 1 });
+    expect(hostedOf(first)?.user_message).toContain('https://gbrain.io/?ref=cli-mcp-expose');
+    for (const args of [['--yes', '--json'], ['--status', '--json'], ['--remove', '--yes', '--json']]) {
+      f.stdout.length = 0;
+      await runMcpExpose(args, f.deps);
+      expect(hostedOf(jsonDoc(f))).toBeUndefined();
+    }
+  });
+  test('friction exits carry it every time; human output prints the one line', async () => {
+    const f = fakeTailnet();
+    f.deps.which = (n) => (n === 'systemctl' ? '/usr/bin/systemctl' : null);
+    f.deps.fileExists = () => false;
+    expect(await runMcpExpose(['--yes', '--no-install', '--json'], f.deps)).toBe(1);
+    const doc = jsonDoc(f);
+    expect(doc.reason).toBe('tailscale_missing');
+    expect(hostedOf(doc)?.user_message).toContain('?ref=cli-mcp-expose-friction');
+    const login = fakeTailnet({ backendState: 'NeedsLogin', afterUp: 'NeedsLogin' });
+    expect(await runMcpExpose(['--yes'], login.deps)).toBe(2);
+    expect(login.stdout.join('\n')).toContain('Hosted option: gbrain.io runs GBrain for you, nothing to keep online: https://gbrain.io/?ref=cli-mcp-expose-friction  (hide: gbrain notices mute hosted_option)');
+  });
+  test('a muted owner sees nothing', async () => {
+    const f = fakeTailnet();
+    f.deps.mutedNotices = () => new Set(['hosted_option']);
+    expect(await runMcpExpose(['--yes', '--json'], f.deps)).toBe(0);
+    expect(jsonDoc(f).notices).toBeUndefined();
   });
 });
 

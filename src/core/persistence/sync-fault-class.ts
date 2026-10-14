@@ -64,6 +64,14 @@ export const SYNC_FAULT_TABLE: ReadonlyArray<SyncFaultRule> = [
   { code: 'pinned_git_worktree_conflict', class: 'page', safe_actions: ['retry'], needs_human: false, escalate: 'the same path fails again after a rerun' },
   { code: 'source_changed', class: 'page', safe_actions: ['retry'], needs_human: false, escalate: 'the same path fails again after a rerun' },
   { code: 'cancelled', class: 'page', safe_actions: ['retry'], needs_human: false, escalate: 'the same group is cancelled again after a rerun' },
+  // #6643: refinements of `cancelled` / `revision_conflict` by the receipt's recorded cause; they take precedence over the code.
+  { code: 'knock_on', class: 'page', safe_actions: ['retry'], needs_human: false, escalate: 'the same root request is named again after a rerun',
+    human_reason: 'This page only waited on another page of the same sync; the next sync re-freezes it by itself. Fix the root request the error names.' },
+  { code: 'run_replaced', class: 'page', safe_actions: ['retry'], needs_human: false, escalate: 'never: another run of the source superseded this one and covers its pages' },
+  { code: 'outside_fence', class: 'systemic', safe_actions: ['none'], needs_human: true, escalate: 'always: a request published outside the cursor that admitted it',
+    human_reason: 'A sync request was not the entry its cursor held (two drains of one cursor, or a writer defect). gbrain sync status --source <source> --json lists the live cursors; stop the extra drain (pause autopilot with gbrain autopilot pause) and report the fence snapshot the error carries.' },
+  { code: 'knock_on_exhausted', class: 'systemic', safe_actions: ['none'], needs_human: true, escalate: 'always: re-freezing did not get past the failing page',
+    human_reason: 'The same page kept being cancelled because an earlier page of the sync never committed. Fix the root request the error names, or raise sync.knock_on_refreeze_limit (per page) or sync.knock_on_run_limit (per sync), then rerun the sync; the per-page count resets when the page commits.' },
   { code: 'sync_incomplete', class: 'page', safe_actions: ['retry'], needs_human: false, escalate: 'never: an unfinished cursor resumes with the same command' },
   // Connection class: transport only; the cursor and manifest stand.
   { code: 'connection_lost', class: 'connection', safe_actions: ['retry'], needs_human: false, escalate: 'three reruns in a row end connection_lost (the database is unreachable from this host)' },

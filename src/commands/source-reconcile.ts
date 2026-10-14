@@ -29,6 +29,7 @@ export const RECONCILE_HELP = `Usage:
   gbrain sources reconcile <source> <slug> --brain <id> --apply <resolved-preview-file>
     --request-id <uuid> [--json]
   gbrain sources reconcile <source> --brain <id> --audit [--classify] [--limit <1-100>] [--after <slug>] [--json]
+  gbrain sources reconcile <source> --brain <id> --audit --conflicts [--window <n>] [--limit <1-100>] [--after <cursor>] [--json]
   gbrain sources reconcile <source> <slug> --brain <id> --backups [--limit <1-100>] [--after <request-uuid>] [--json]
   gbrain sources reconcile <source> <slug> --brain <id> --remove-backup <exact-reference> [--json]
 
@@ -65,6 +66,12 @@ many applies at once only queues them (commits coalesce); reconcile a large set
 from one client, one or two at a time.
 Audit is bounded and read-only; its cursor is not a sync checkpoint. --classify
 adds each drifted page's structural classification and counts, never values.
+--conflicts lists the source_changed conflict receipts grouped by slug instead
+(what keeps refusing, which producer wrote it, the last committed request, and on
+the owner host whether the file still differs and its drift class), scanning the
+newest --window request sequences (default 100000, at most 1000000); --after takes
+the previous page's next cursor and complete is true only when the window reached
+the oldest receipt. Resolve the listed pages with gbrain repair file-drift.
 Backups persist until explicitly removed. Removal deletes that private history,
 not the page or immutable receipt, and refuses nonterminal/recovering requests.`;
 
@@ -81,8 +88,8 @@ export interface ReconcileCliArgs {
 export function parseReconcileArgs(args: string[]): ReconcileCliArgs {
   const flags = new Map<string, string | true>();
   const positional: string[] = [];
-  const boolean = new Set(['--preview', '--audit', '--backups', '--json', '--auto-additive', '--accept-suggested', '--classify', '--adopt-slug-path']);
-  const values = new Set(['--brain', '--out', '--from', '--decisions', '--apply', '--request-id', '--limit', '--after', '--remove-backup']);
+  const boolean = new Set(['--preview', '--audit', '--backups', '--json', '--auto-additive', '--accept-suggested', '--classify', '--adopt-slug-path', '--conflicts']);
+  const values = new Set(['--brain', '--out', '--from', '--decisions', '--apply', '--request-id', '--limit', '--after', '--remove-backup', '--window']);
   for (let i = 0; i < args.length; i++) {
     const token = args[i];
     if (!token.startsWith('-')) { positional.push(token); continue; }
@@ -95,7 +102,7 @@ export function parseReconcileArgs(args: string[]): ReconcileCliArgs {
       continue;
     }
     if (!values.has(flag)) throw opError('invalid_params', `Unknown reconciliation option: ${flag}.`,
-      'Reconciliation accepts --brain, --preview, --adopt-slug-path, --out, --from, --decisions, --apply, --request-id, --audit, --backups, --remove-backup, --limit, --after and --json; the help in fix shows which forms combine.',
+      'Reconciliation accepts --brain, --preview, --adopt-slug-path, --out, --from, --decisions, --apply, --request-id, --audit, --conflicts, --window, --classify, --backups, --remove-backup, --limit, --after and --json; the help in fix shows which forms combine.',
       { fix: readFix('Lists every reconciliation form and its options.', { argv: ['gbrain', 'sources', 'reconcile', '--help'] }) });
     const value = equal >= 0 ? token.slice(equal + 1) : args[++i];
     if (!value || value.startsWith('-') || value.includes('\0')) throw opError('invalid_params', `${flag} requires a value.`,
@@ -136,6 +143,12 @@ export function parseReconcileArgs(args: string[]): ReconcileCliArgs {
     'Run the audit without --preview, --out, --from, --decisions, --auto-additive or --accept-suggested, then preview a page it lists in a separate command.');
   if (flags.has('--classify') && !audit) throw opError('invalid_params', '--classify is only valid with --audit.',
     'Add --audit (with --source), or drop --classify.');
+  if (flags.has('--conflicts') && !audit) throw opError('invalid_params', '--conflicts is only valid with --audit.',
+    `Add --audit: gbrain sources reconcile ${source} --brain host --audit --conflicts.`);
+  if (flags.has('--conflicts') && flags.has('--classify')) throw opError('invalid_params', '--conflicts and --classify are separate audits.',
+    'Run --audit --conflicts for the conflict receipts grouped by slug (it classifies pages whose file still differs), or --audit --classify for the page-by-page drift scan.');
+  if (flags.has('--window') && !flags.has('--conflicts')) throw opError('invalid_params', '--window is only valid with --audit --conflicts.',
+    'Add --audit --conflicts, or drop --window.');
   if ((applying || backups || audit) && flags.has('--adopt-slug-path')) throw opError('invalid_params', '--adopt-slug-path only shapes a preview.',
     'Use --adopt-slug-path with --preview; apply adopts the file the written preview pinned.');
   if ((applying || backups) && (flags.has('--auto-additive') || flags.has('--accept-suggested'))) throw opError('invalid_params', '--auto-additive and --accept-suggested only shape a preview.',
@@ -164,6 +177,13 @@ export function parseReconcileArgs(args: string[]): ReconcileCliArgs {
   if (flags.has('--adopt-slug-path')) params.adopt_slug_path = true;
   if (flags.has('--accept-suggested')) params.accept_suggested = true;
   if (flags.has('--classify')) params.classify = true;
+  if (flags.has('--conflicts')) params.conflicts = true;
+  if (flags.has('--window')) {
+    const window = Number(flags.get('--window'));
+    if (!Number.isInteger(window) || window < 1 || window > 1_000_000) throw opError('invalid_params', 'The conflict window must be an integer from 1 to 1000000.',
+      'Pass --window as the number of newest request sequences to scan (default 100000), or omit it.');
+    params.window = window;
+  }
   if (flags.has('--limit')) {
     const limit = Number(flags.get('--limit'));
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw opError('invalid_params', 'Audit limit must be an integer from 1 to 100.',

@@ -1,0 +1,76 @@
+{
+  "dependencies": {
+    "test/**/*.serial.test.ts": [
+      "test/scripts/serial-files.test.ts"
+    ],
+    "scripts/serial-files.tsv": [
+      "test/scripts/serial-files.test.ts"
+    ],
+    "src/cli.ts": [
+      "test/cli-goldens.test.ts"
+    ],
+    "src/commands/**": [
+      "test/cli-goldens.test.ts"
+    ],
+    "src/core/operations*.ts": [
+      "test/cli-goldens.test.ts"
+    ]
+  },
+  "guards": [
+    {
+      "id": "serial-manifest",
+      "when": [
+        "test/**/*.serial.test.ts",
+        "scripts/serial-files.tsv",
+        "scripts/run-serial-tests.sh"
+      ],
+      "command": "bun test test/scripts/serial-files.test.ts",
+      "fix": "add the serial file's row to scripts/serial-files.tsv"
+    },
+    {
+      "id": "cli-goldens",
+      "when": [
+        "src/cli.ts",
+        "src/cli/**",
+        "src/commands/**",
+        "src/core/operations*.ts",
+        "src/core/ops/**"
+      ],
+      "command": "bun test --timeout=60000 test/cli-goldens.test.ts test/cli-dispatch-phase.test.ts test/export-surface-golden.test.ts",
+      "fix": "bun run regen:all, then justify each changed golden in the PR body"
+    },
+    {
+      "id": "regen-check",
+      "when": [
+        "src/**",
+        "skills/**",
+        "templates/**",
+        "plugin/**"
+      ],
+      "command": "bun scripts/regen-all.ts --check",
+      "fix": "bun run regen:all and commit the regenerated files"
+    },
+    {
+      "id": "migration-order",
+      "when": [
+        "src/core/schema-migrations/**"
+      ],
+      "command": "bun scripts/check-schema-migration-order.ts",
+      "fix": "renumber the migration to the next free number on master"
+    }
+  ],
+  "sealed": {
+    "paths": [
+      "eval/reports/**",
+      "**/sealed-confirmation/**",
+      "**/hard-sealed/**",
+      "**/counted/**"
+    ],
+    "transcripts": [
+      "**/results.jsonl",
+      "**/results.jsonl.gz",
+      "**/usage.jsonl.gz"
+    ],
+    "visibility": "public"
+  }
+}

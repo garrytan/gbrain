@@ -312,6 +312,13 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     impact: 'Some pages store a parser-reserved frontmatter key (type, title, tags, slug) left by an older import; writes compare around it, the sweep is hygiene',
     run: async (engine, scope) => (await import('./checks/frontmatter-keys.ts')).staleFrontmatterKeysCheck(engine, scope.sourceIds),
   },
+  {
+    id: 'maintenance_write_drift', resolution: 'repair', registration: 'wave',
+    hostOnly: 'The live file check reads the canonical checkout on the brain host; resolving drift is a host-side, explicit-only repair.',
+    count: d => Number(d.count ?? 0) + Number(d.concept_skips ?? 0),
+    impact: 'Some pages have a canonical file that differs from the database, so every coordinated write to them refuses source_changed until someone resolves them',
+    run: async (engine, scope) => (await import('./checks/maintenance-drift.ts')).maintenanceWriteDriftCheck(engine, scope.sourceIds),
+  },
 ];
 
 /** A check that could not run reports unknown, never ok. */

@@ -17,6 +17,7 @@ import { readReconcileState } from './reconcile-state.ts';
 import { reconcileCanonical } from './reconcile-merge.ts';
 import { classifyDrift } from './reconcile-additive.ts';
 import { isDatabaseOnlyPage, slugDerivedOrigin } from './unbound-pages.ts';
+import { auditDriftConflicts, type ConflictAuditReport } from './drift-conflicts.ts';
 
 export interface ReconcileAuditReport extends Record<string, unknown> {
   source_id: string;
@@ -138,11 +139,14 @@ async function classifyFinding(engine: BrainEngine, sourceId: string, slug: stri
   }
 }
 
-export async function runReconcileAudit(engine: BrainEngine, params: Record<string, unknown>): Promise<ReconcileAuditReport> {
-  if (Object.keys(params).some(key => !['source_id', 'limit', 'after', 'classify'].includes(key)) || !isValidSourceId(params.source_id)
-    || params.classify !== undefined && typeof params.classify !== 'boolean') {
-    throw opError('invalid_params', 'Audit accepts only source_id, limit, after, and classify.',
-      'Pass a registered source_id, and optionally limit (1 to 100), after (the previous next_after slug) and classify (true or false), with no other fields.');
+export async function runReconcileAudit(engine: BrainEngine, params: Record<string, unknown> & { conflicts: true }): Promise<ConflictAuditReport>;
+export async function runReconcileAudit(engine: BrainEngine, params: Record<string, unknown>): Promise<ReconcileAuditReport>;
+export async function runReconcileAudit(engine: BrainEngine, params: Record<string, unknown>): Promise<ReconcileAuditReport | ConflictAuditReport> {
+  if (Object.keys(params).some(key => !['source_id', 'limit', 'after', 'classify', 'conflicts', 'window'].includes(key)) || !isValidSourceId(params.source_id)
+    || params.classify !== undefined && typeof params.classify !== 'boolean' || params.conflicts !== undefined && typeof params.conflicts !== 'boolean'
+    || params.window !== undefined && params.conflicts !== true || params.classify === true && params.conflicts === true) {
+    throw opError('invalid_params', 'Audit accepts only source_id, limit, after, classify, conflicts and window.',
+      'Pass a registered source_id, and optionally limit (1 to 100), after (the previous next_after slug, or with conflicts the previous next cursor), classify (true or false) or conflicts (true, with an optional window), with no other fields.');
   }
   const writer = currentVerifiedLocalWriter() ?? await verifyLocalWriter(engine, await readLocalWriter(engine, 'cli'));
   if (writer.remote || writer.principal.kind !== 'local_cli' || writer.grant.slugPrefixes !== null) {
@@ -159,8 +163,12 @@ export async function runReconcileAudit(engine: BrainEngine, params: Record<stri
     { fix: readFix('Lists registered sources, archived ones included.', { argv: ['gbrain', 'sources', 'list', '--json'] }) });
   await submissionAuthority({ engine, remote: false, sourceId: params.source_id } as OperationContext,
     'put_page', params.source_id, source.incarnation, '__reconciliation_audit__');
-  const report = await auditCanonicalSource(engine, params.source_id, { limit: params.limit as number | undefined, after: params.after as string | undefined,
-    classify: params.classify === true });
+  // #6643 (B0): the conflict pile, grouped by slug; the live file check runs only on the canonical owner host.
+  const report = params.conflicts === true
+    ? await auditDriftConflicts(engine, params.source_id, { trusted: true, excludePrivate: false },
+      { limit: params.limit as number | undefined, cursor: params.after as string | undefined, window: params.window as number | undefined })
+    : await auditCanonicalSource(engine, params.source_id, { limit: params.limit as number | undefined, after: params.after as string | undefined,
+      classify: params.classify === true });
   await submissionAuthority({ engine, remote: false, sourceId: params.source_id } as OperationContext,
     'put_page', params.source_id, source.incarnation, '__reconciliation_audit__');
   return report;

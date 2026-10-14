@@ -128,6 +128,74 @@ describe('timing never serializes execution', () => {
     expect(s.total_ms).toBeLessThan(s.overlapped_ms!.keyword_arm + s.overlapped_ms!.title_arm);
   });
 
+  test('a branch runs alongside: overlapped until joined, then the wait is booked to its current stage', async () => {
+    const c = manualClock();
+    const t = new SearchTimings(c.now);
+    const b = t.branch();
+    const gates = [0, 1, 2].map(() => { let open!: () => void; const p = new Promise<void>(r => { open = r; }); return { p, open }; });
+    const side = (async () => {
+      await b.stage('expansion', () => gates[0].p);
+      await b.stage('embed', () => gates[1].p);
+      await b.stage('vector', () => gates[2].p);
+      return 'side';
+    })();
+    await t.stage('lexical', async () => {
+      c.tick(30);
+      gates[0].open();
+      await sleep(0);
+      c.tick(10);
+    });
+    const joined = t.join(b, side);
+    c.tick(15);
+    gates[1].open();
+    await sleep(0);
+    c.tick(8);
+    gates[2].open();
+    expect(await joined).toBe('side');
+    await t.stage('fuse', async () => { c.tick(2); });
+    const s = t.snapshot();
+    expect(s.overlapped_ms).toEqual({ expansion: 30, embed: 10 });
+    expect(s.stages_ms).toEqual({ expansion: 0, embed: 15, vector: 8, lexical: 40, fuse: 2 });
+    expect(s.other_ms).toBe(0);
+    expect(s.total_ms).toBe(65);
+  });
+
+  test('a branch that finished before the join books nothing to the critical path but keeps its stage keys', async () => {
+    const c = manualClock();
+    const t = new SearchTimings(c.now);
+    const b = t.branch();
+    const side = b.stage('embed', async () => { c.tick(12); return 1; });
+    await side;
+    await t.stage('lexical', async () => { c.tick(30); });
+    await t.join(b, side);
+    const s = t.snapshot();
+    expect(s.stages_ms).toEqual({ embed: 0, lexical: 30 });
+    expect(s.overlapped_ms).toEqual({ embed: 12 });
+    expect(s.total_ms).toBe(42);
+    expect(s.other_ms).toBe(12);
+  });
+
+  test('a join inside a stage hands the clock back to that stage, also between branch stages', async () => {
+    const c = manualClock();
+    const t = new SearchTimings(c.now);
+    await t.stage('alias_fanout', async () => {
+      const b = t.branch();
+      let release!: () => void;
+      const gate = new Promise<void>(resolve => { release = resolve; });
+      const side = (async () => { await gate; c.tick(3); await b.stage('embed', async () => { c.tick(9); }); })();
+      const joined = t.join(b, side);
+      release();
+      await joined;
+      c.tick(1);
+    });
+    expect(t.snapshot().stages_ms).toEqual({ alias_fanout: 4, embed: 9 });
+  });
+
+  test("the untimed timer's branch and join pass work straight through", async () => {
+    const b = UNTIMED.branch();
+    expect(await UNTIMED.join(b, b.stage('embed', async () => 7))).toBe(7);
+  });
+
   test('the untimed timer passes work straight through', async () => {
     const p = Promise.resolve(7);
     expect(UNTIMED.overlap('keyword_arm', p)).toBe(p);

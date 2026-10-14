@@ -265,6 +265,7 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'persistence_write_stall',
   'lost_caller_writes',
   'stale_frontmatter_keys',
+  'maintenance_write_drift',
   'managed_sync_not_moving',
   'persistence_session_timeouts',
   // #6317: consumer heartbeat rows and host identity (doctor/checks/persistence-consumers.ts).

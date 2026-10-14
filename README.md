@@ -1,6 +1,9 @@
-# GBrain
+<h1><picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/brand/gbrain-wordmark-light.svg"><img src="docs/images/brand/gbrain-wordmark.svg" alt="GBrain" height="52"></picture></h1>
 
 **Give the agent you already use a memory you control.** GBrain stores explicit facts with their sources, supports corrections and withdrawal, and makes the same memory available across your agents. Start with keyless memory and keyword retrieval; add semantic search, synthesis, and background enrichment when you need them.
+
+> [!TIP]
+> **Need hosted? First time running an agent?** Try **[gbrain.io](https://gbrain.io/?ref=readme)**, hosted GBrain, for the easiest experience: one brain for you and your team, connected to ChatGPT, Claude and Cursor, with nothing to install or keep online. Stuck? Email support@gbrain.io and a person will set it up with you, free.
 
 **Keep skills beside knowledge.** New local brains include memory skills in their
 content root. Agents can join an authorized catalog; only approved editors can
@@ -178,7 +181,7 @@ https://raw.githubusercontent.com/garrytan/gbrain/master/INSTALL_FOR_AGENTS.md
 
 The agent starts with keyless memory and verifies it. API keys, automatic capture, paid enrichment, and the dream cycle are separate opt-in choices; the install prompt does not authorize all of them.
 
-> **Never set up an AI agent platform before?** The [personal-brain tutorial](docs/tutorials/personal-brain.md) walks the whole path end-to-end — picking OpenClaw vs Hermes, deploying it, pointing it at INSTALL_FOR_AGENTS.md, getting the API keys, and verifying the first query. Start there if any of the above is new.
+> **Never set up an AI agent platform before?** The [personal-brain tutorial](docs/tutorials/personal-brain.md) walks the whole path end-to-end — picking OpenClaw vs Hermes, deploying it, pointing it at INSTALL_FOR_AGENTS.md, getting the API keys, and verifying the first query. Start there if any of the above is new. Or skip the platform: [gbrain.io](https://gbrain.io/?ref=readme) is hosted GBrain.
 
 ### Lighter ways in
 
@@ -217,12 +220,7 @@ For a hosted brain, start with the [native OAuth and private machine connection 
 
 Choose the connection instructions for your actual product:
 
-**Upgrading a brain indexed before v0.48.3.0:** its search chunks need rebuilding
-before remote chunk retrieval returns them. Semantic result caching is temporarily disabled;
-stored contradiction reports and code-inspection tools have local-only limits.
-Follow the [upgrade recovery guide](skills/migrations/v0.48.3.0.md) for rebuild
-commands, embedding costs, and the restrictions that remain after rebuilding.
-**Say to your agent:** *"Upgrade gbrain and check whether my search index needs rebuilding."*
+**Upgrading a brain indexed before v0.48.3.0?** Rebuild its search chunks first: [upgrade recovery guide](skills/migrations/v0.48.3.0.md). **Say to your agent:** *"Upgrade gbrain and check whether my search index needs rebuilding."*
 
 - **[Claude Code](docs/mcp/CLAUDE_CODE.md)** — plugin: `/plugin marketplace add garrytan/gbrain` + `/plugin install gbrain@gbrain` (MCP + skills; persona variants `gbrain-coding` / `gbrain-daily` install curated subsets; pick one). Marketplace-free skills: `gbrain skillpack scaffold --harness claude-code` copies a persona-curated skill set into your user-scope skills dir. Or local one-liner: `claude mcp add gbrain -- "$(command -v gbrain)" serve`. Remote with just a bearer token: `gbrain connect https://your-host/mcp --token gbrain_xxx` prints a paste-ready block (or `--install` wires it up and smoke-tests the token).
 - **[Codex](docs/mcp/CODEX.md)** — plugin (recommended): `codex plugin marketplace add garrytan/gbrain@codex-plugin` + `codex plugin add gbrain@gbrain` installs the MCP server AND the curated skill set. Or connect-only: `gbrain connect https://your-host/mcp --token gbrain_xxx --agent codex` (or `--install`); the token path reads `$GBRAIN_REMOTE_TOKEN` at runtime, while the private-handoff installer writes a private managed HTTP header so the connection survives a new shell.
@@ -252,7 +250,7 @@ gbrain mcp expose --funnel  # same name, public HTTPS — for agents that run in
 
 The HTTP server includes optional dynamic client registration, scope-gated access (`read` / `write` / `admin` / `agent`), owner-approved OAuth authorization, and rate limiting. Dynamic registration cannot grant delegation; `admin` implies neither `agent` nor owner administration. Start with the [MCP task guide](docs/mcp/README.md) for deployment, client setup, administration, and alternatives to Tailscale (ngrok, Railway, Fly.io).
 
-Running several brains behind one tool catalog? Give each one an identity: `gbrain config set mcp.instructions "Team wiki brain — route product and roadmap questions here"` rides every transport's initialize response under a `Deployment identity:` banner, so a connected agent can tell your brains apart. Restart `gbrain serve` to pick it up; `GBRAIN_MCP_INSTRUCTIONS` in the serve process's environment overrides it for that process, and `gbrain config unset mcp.instructions` returns to the bare contract. **Say to your agent:** *"Tell connected agents which brain this is"* — your agent runs `gbrain config set mcp.instructions "<identity>"`.
+Running several brains behind one tool catalog? Give each one an identity with `gbrain config set mcp.instructions "<identity>"` so a connected agent can tell them apart ([details](docs/mcp/DEPLOY.md#operations)). **Say to your agent:** *"Tell connected agents which brain this is"*.
 
 ## Two ways to query your brain
 

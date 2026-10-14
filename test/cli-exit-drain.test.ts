@@ -19,12 +19,17 @@ import { resolve } from 'path';
 const HARNESS = resolve(import.meta.dir, 'fixtures', 'exit-drain-harness.ts');
 const GRACE_MS = 5_000;
 
-function runHarness(env: Record<string, string>, readerDelayMs: number): Promise<{
+interface HarnessRun {
   stdout: number;
   stderr: number;
   code: number | null;
   durationMs: number;
-}> {
+  /** Stream end state at 'close', for the one-off 0-byte stdout read (run 38352625321): tells a stream that
+   * errored or was destroyed under its reader apart from one that ended cleanly with nothing in it. */
+  streams: string;
+}
+
+function runHarness(env: Record<string, string>, readerDelayMs: number): Promise<HarnessRun> {
   return new Promise((resolveOut, reject) => {
     const t0 = Date.now();
     const child = spawn(process.execPath, [HARNESS], {
@@ -33,6 +38,14 @@ function runHarness(env: Record<string, string>, readerDelayMs: number): Promise
     });
     let stdout = 0;
     let stderr = 0;
+    const events: string[] = [];
+    const note = (what: string) => events.push(`${what}@${Date.now() - t0}ms`);
+    for (const [name, stream] of [['stdout', child.stdout], ['stderr', child.stderr]] as const) {
+      stream.on('end', () => note(`${name}.end`));
+      stream.on('error', (e: NodeJS.ErrnoException) => note(`${name}.error:${e.code ?? e.message}`));
+      stream.on('close', () => note(`${name}.close`));
+    }
+    child.on('exit', (code, signal) => note(`exit:${code ?? signal}`));
     child.stdout.pause();
     child.stderr.pause();
     setTimeout(() => {
@@ -47,7 +60,10 @@ function runHarness(env: Record<string, string>, readerDelayMs: number): Promise
     }, 30_000);
     child.on('close', (code) => {
       clearTimeout(killer);
-      resolveOut({ stdout, stderr, code, durationMs: Date.now() - t0 });
+      const state = (s: NodeJS.ReadableStream & { readableEnded?: boolean; destroyed?: boolean; errored?: unknown }) =>
+        `ended=${s.readableEnded} destroyed=${s.destroyed} errored=${s.errored ? String(s.errored) : 'no'}`;
+      const streams = `stdout[${state(child.stdout)}] stderr[${state(child.stderr)}] ${events.join(' ')}`;
+      resolveOut({ stdout, stderr, code, durationMs: Date.now() - t0, streams });
     });
   });
 }
@@ -56,8 +72,7 @@ describe('exit seam waits for delivery, not a fixed grace (real Bun pipes)', () 
   test('nothing queued: exits right after the fence, output complete', async () => {
     const run = await runHarness({ HARNESS_STDOUT_BYTES: '100', HARNESS_STDERR_BYTES: '100', HARNESS_EXIT_CODE: '3' }, 0);
     expect(run.code).toBe(3);
-    expect(run.stdout).toBe(100);
-    expect(run.stderr).toBe(100);
+    expect({ stdout: run.stdout, stderr: run.stderr, streams: run.streams }).toEqual({ stdout: 100, stderr: 100, streams: run.streams });
     expect(run.durationMs).toBeLessThan(GRACE_MS / 2);
   }, 40_000);
 

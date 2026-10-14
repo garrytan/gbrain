@@ -1189,6 +1189,20 @@
           "status": "ok"
         },
         {
+          "category": "ops",
+          "details": {
+            "concept_skips": 0,
+            "count": 0,
+            "docs": "docs/guides/troubleshooting.md#maintenance-write-drift",
+            "repair": "file-drift",
+            "sources": [],
+            "window_sequences": 20000
+          },
+          "message": "No page whose writes refuse source_changed still has a canonical file that differs from the database.",
+          "name": "maintenance_write_drift",
+          "status": "ok"
+        },
+        {
           "category": "brain",
           "message": "Relative dates resolve against each source's observation date in fact extraction, dream synthesis, extract_atoms and propose_takes (the default). life chronicle events keep their current prompt unless extraction.date_grounding is set to true. Facts extracted before this was on keep their original wording; re-extract a source only with the user's consent (gbrain extract-conversation-facts --source-id <id> --dry-run previews it).",
           "name": "extraction_date_grounding",

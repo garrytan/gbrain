@@ -15,7 +15,16 @@ import { runBounded } from '../../scripts/ci-bounded-run.ts';
 
 const ROOT = join(import.meta.dir, '..', '..');
 const SCRIPT = join(ROOT, 'scripts', 'ci-bounded-run.ts');
-const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+/** Running, as opposed to gone or a zombie: a killed grandchild is a zombie until init reaps it, and `kill -0`
+ * still answers for a zombie, so the state field of /proc/<pid>/stat decides (Z and X are dead). */
+const alive = (pid: number) => {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+    return !['Z', 'X'].includes(stat.slice(stat.lastIndexOf(')') + 2).split(' ')[0]!);
+  } catch {
+    try { process.kill(pid, 0); return true; } catch { return false; }
+  }
+};
 
 describe.skipIf(process.platform === 'win32')('scripts/ci-bounded-run.ts', () => {
   const dirs: string[] = [];

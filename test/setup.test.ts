@@ -105,10 +105,23 @@ describe('gbrain setup claude-code: install lifecycle', () => {
     const block = r.stdout.indexOf('[AGENT]');
     expect(next).toBeGreaterThan(-1);
     expect(block).toBeGreaterThan(next);
-    expect(r.stdout.match(/\[AGENT\]/g)).toHaveLength(1);
-    expect(r.stdout.slice(block)).toContain('in the reply that reports this install');
-    expect(r.stdout.slice(block)).toContain('(id: search_mode)');
+    expect(r.stdout.match(/\[AGENT\]/g)).toHaveLength(2);
+    const hosted = r.stdout.indexOf('[hosted_option]');
+    expect(r.stdout.indexOf('[first_run_decisions]')).toBeGreaterThan(next);
+    expect(hosted).toBeGreaterThan(r.stdout.indexOf('[first_run_decisions]'));
+    expect(r.stdout.slice(block, hosted)).toContain('in the reply that reports this install');
+    expect(r.stdout.slice(block, hosted)).toContain('(id: search_mode)');
+    expect(r.stdout.slice(hosted)).toContain('https://gbrain.io/?ref=cli-setup');
     expect(r.stdout.trimEnd().endsWith('[/AGENT]')).toBe(true);
+  });
+
+  test('hosted_option rides only the run that created the brain', async () => {
+    const b = box();
+    const first = await setup(b, ['claude-code', '--json']);
+    expect(first.doc.notices.map((n: any) => n.code)).toEqual(['first_run_decisions', 'hosted_option']);
+    expect(first.doc.notices[1].user_message).toContain('https://gbrain.io/?ref=cli-setup');
+    const second = await setup(b, ['claude-code', '--json']);
+    expect(second.doc.notices.map((n: any) => n.code)).not.toContain('hosted_option');
   });
 
   test('#6606: after Next, setup names remember as the way to save a fact and what reaches new sessions', async () => {
@@ -236,6 +249,47 @@ describe('gbrain setup claude-code: install lifecycle', () => {
     expect(entries(a, 'SessionStart')).toEqual(aOnly);
     expect(existsSync(receipt(a))).toBe(true);
     expect(existsSync(receipt(a, 'gbrain-b'))).toBe(false);
+  });
+});
+
+describe('gbrain setup: setup migrations on the brain it creates (Cat 41 run 4)', () => {
+  const pendingSetupMigrations = async (b: Box): Promise<string[]> => {
+    const r = await runCli(['apply-migrations', '--list', '--json'], { env: { ...CLEAN, HOME: b.home, GBRAIN_HOME: b.gbrainHome } });
+    return JSON.parse(r.stdout).plan.pending_fresh_install;
+  };
+
+  test('a fresh setup applies them itself: 0 pending, doctor shows none, no hand-off line', async () => {
+    const b = box();
+    const r = await setup(b, ['claude-code']);
+    expect(r.exitCode).toBe(0);
+    expect(r.stderr).toMatch(/\[setup\] Migrations: \d+ recorded as not needed on a new brain; \d+ setup migration\(s\) applied by setup without installing services \([^)]+\); none pending\./);
+    expect(r.stdout + r.stderr).not.toContain('Finish setup: gbrain apply-migrations');
+    expect(r.stdout).toContain('Verify: ok (smoke_passed)');
+    expect(await pendingSetupMigrations(b)).toEqual([]);
+    const doctor = await runCli(['doctor', '--json'], { env: { ...CLEAN, HOME: b.home, GBRAIN_HOME: b.gbrainHome } });
+    expect(JSON.parse(doctor.stdout).checks.map((c: any) => c.name)).not.toContain('minions_migration');
+  });
+
+  test('an existing brain is left as it is: setup runs no migrations and prints no migrations line', async () => {
+    const b = box();
+    expect((await runCli(['init', '--pglite', '--no-embedding', '--json'], { env: { ...CLEAN, HOME: b.home, GBRAIN_HOME: b.gbrainHome } })).exitCode).toBe(0);
+    const before = await pendingSetupMigrations(b);
+    expect(before.length).toBeGreaterThan(0);
+    const r = await setup(b, ['claude-code']);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout + r.stderr).not.toContain('Migrations:');
+    expect(await pendingSetupMigrations(b)).toEqual(before);
+  });
+
+  test('a host AGENTS.md v0.11.0 would edit keeps v0.11.0 pending with the hand-off; the file is untouched', async () => {
+    const b = box();
+    mkdirSync(join(b.home, '.claude'), { recursive: true });
+    writeFileSync(join(b.home, '.claude', 'AGENTS.md'), '# my agent\n');
+    const r = await setup(b, ['claude-code']);
+    expect(r.exitCode).toBe(0);
+    expect(r.stderr).toContain(`0.11.0 left pending because it edits ${join(b.home, '.claude', 'AGENTS.md')}, which setup does not own. Finish it: gbrain apply-migrations --yes --no-autopilot-install`);
+    expect(readFileSync(join(b.home, '.claude', 'AGENTS.md'), 'utf8')).toBe('# my agent\n');
+    expect(await pendingSetupMigrations(b)).toEqual(['0.11.0']);
   });
 });
 

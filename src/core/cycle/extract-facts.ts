@@ -664,6 +664,8 @@ export interface ExtractFactsResult {
   phantomsRedirected: number;
   phantomsAmbiguous: number;
   phantomsSkippedDrift: number;
+  /** #6650: phantoms held because they own legacy (unfenced) fact rows. */
+  phantomsHeldLegacyRows: number;
   phantomsLockBusy: boolean;
   phantomsMorePending: boolean;
 }
@@ -809,6 +811,7 @@ export async function runExtractFacts(
     phantomsRedirected: 0,
     phantomsAmbiguous: 0,
     phantomsSkippedDrift: 0,
+    phantomsHeldLegacyRows: 0,
     phantomsLockBusy: false,
     phantomsMorePending: false,
   };
@@ -847,7 +850,7 @@ export async function runExtractFacts(
         : 'could not be fenced this run, so those pages keep their fact index and skip reconciliation while the other pages reconcile. ' +
           'The FACTS_FENCE_FAILED warnings name each page and why; ' +
           'a page whose canonical file does not exist on this host is fenced by the cycle on the host that holds the file; ' +
-          'a row the fence codec cannot render stays active and searchable (doctor fence_integrity lists it); the phantom-redirect pass waits until the source has no unfenced rows. ' +
+          'a row the fence codec cannot render stays active and searchable (doctor fence_integrity lists it); the phantom-redirect pass holds only the phantoms that own such rows. ' +
           'Individual rows can instead be drained via `forget_fact`.'),
     );
     // #3683: a guard-triggered run books its halt here for doctor
@@ -875,10 +878,17 @@ export async function runExtractFacts(
   // IS NOT NULL` so a half-redirected page (soft-deleted, .md still on
   // disk) won't be re-redirected.
   // #6278: the pass moves rows by their fence position and would strand a
-  // legacy row (no position) on a deleted phantom, so it still waits for the
-  // whole source to be fenced; the reconcile walk below is per page.
+  // legacy row (no position) on a deleted phantom. #6650: only the phantoms
+  // that own legacy rows are held, so one unadoptable row no longer stops
+  // the pass for the whole source. A phantom that is the provenance page of
+  // an ontology observation is held too: the move would rewrite the
+  // observation's subject and expire it.
   let phantomResult: PhantomPassResult = emptyPhantomPassResult();
-  if (opts.brainDir && legacyCount === 0) {
+  if (opts.brainDir) {
+    const holdSlugs = new Set([...legacySlugs, ...(await engine.executeRaw<{ slug: string }>(
+      `SELECT DISTINCT source_markdown_slug AS slug FROM facts
+        WHERE source_id = $1 AND dimension IS NOT NULL AND expired_at IS NULL AND source_markdown_slug NOT LIKE '%/%'`,
+      [sourceId])).map(row => row.slug)]);
     try {
       phantomResult = await runPhantomRedirectPass(
         engine,
@@ -886,6 +896,7 @@ export async function runExtractFacts(
         sourceId,
         opts.dryRun ?? false,
         opts.signal,
+        holdSlugs,
       );
     } catch (e) {
       // The pass owns its own per-phantom try/catch; reaching this catch
@@ -899,6 +910,7 @@ export async function runExtractFacts(
   result.phantomsRedirected = phantomResult.redirected;
   result.phantomsAmbiguous = phantomResult.ambiguous;
   result.phantomsSkippedDrift = phantomResult.skipped_drift;
+  result.phantomsHeldLegacyRows = phantomResult.held_legacy_rows;
   result.phantomsLockBusy = phantomResult.lock_busy;
   result.phantomsMorePending = phantomResult.more_pending;
 

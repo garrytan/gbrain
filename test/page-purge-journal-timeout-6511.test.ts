@@ -268,8 +268,11 @@ for (const backend of backends) describe(`[${backend}] #6511 page purge journal 
       const cancelled = await cancelWriteRequest(engine, { kind: principal.principal_kind as never, id: principal.principal_id }, cancelledId);
       expect(cancelled?.state).toBe('cancelled');
       queuedWrite = call('put_page', { slug: `race/queued-${n}`, content: `---\ntitle: Q\ntype: note\n---\nLater: ${CLAIM}.\n`, request_id: queuedId });
-      await Bun.sleep(50);
-      expect((await engine.executeRaw<{ state: string }>('SELECT state FROM persistence_requests WHERE request_id=$1::uuid', [queuedId]))[0]!.state).toBe('queued');
+      let queuedRows: { state: string }[] = [];
+      for (const deadline = Date.now() + 10_000; queuedRows.length === 0 && Date.now() < deadline; await Bun.sleep(25)) {
+        queuedRows = await engine.executeRaw<{ state: string }>('SELECT state FROM persistence_requests WHERE request_id=$1::uuid', [queuedId]);
+      }
+      expect(queuedRows[0]?.state).toBe('queued');
     } }, requestId);
     const purged = await purge(slug, requestId);
     expect(purged).toMatchObject({ status: 'purged', state: 'committed' });

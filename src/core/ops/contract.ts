@@ -94,6 +94,8 @@ export class OperationError extends Error {
   public fenceIssues?: Array<Record<string, unknown>>;
   /** A `fact_withdrawn` refusal's withdrawal: when and for which subject the exact claim was forgotten. Absence carries no meaning. */
   public withdrawn?: WithdrawnDetail;
+  /** #6643: a managed-sync refusal's owner-side classification (knock-on root, cursor fence snapshot); stored as the receipt's error_detail, never in the envelope. */
+  public syncRefusal?: Record<string, unknown>;
   /** Set to 1 by opError(); toJSON() emits `contract_version` only when set. */
   public contractVersion?: 1;
   /**

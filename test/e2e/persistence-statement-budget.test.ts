@@ -26,6 +26,8 @@ import { claimWorktree } from '../../src/core/persistence/ownership.ts';
 import { registerLocalWriter, withVerifiedLocalRegistration, type LocalRegistration } from '../../src/core/persistence/identity.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 import { _resetWriteThroughCacheForTest } from '../../src/core/write-through.ts';
+import { readWriteSwitchSnapshot } from '../../src/core/persistence/switches.ts';
+import { readPublicationCeilingMs } from '../../src/core/persistence/publication-deadline.ts';
 
 interface TraceRecord { t: number; ms: number; conn: number; kind: string; sql: string }
 type Phase = 'admission' | 'claim' | 'prepare' | 'recovery_record' | 'publication' | 'completion' | 'consumer_scan' | 'wait_poll' | 'effects' | 'other';
@@ -50,6 +52,7 @@ const SCAN = [
   /persistence_host_bindings h JOIN persistence_source_bindings/, /r\.recovery IS NOT NULL AND NOT\(r\.worktree_id/,
   /FROM persistence_effects e JOIN persistence_worktrees w ON w\.id=e\.worktree_id WHERE e\.recovery IS NOT NULL/,
   /FROM persistence_topology_changes c/, /FROM persistence_worktree_refreshes f JOIN/, /^WITH expired AS/, /page_projection_jobs/,
+  /^WITH purged AS \( DELETE FROM persistence_consumers/,
 ];
 const statementKinds = new Set(['execute', 'simple']);
 const flat = (sql: string) => sql.replace(/\s+/g, ' ').trim();
@@ -163,6 +166,9 @@ d('#6007 put_page statement budget (Postgres)', () => {
         const windows: { put: [number, number]; receipt: [number, number] }[] = [];
         for (let i = 0; i < 5; i++) {
           await settle();
+          // The 5 s config snapshots (write switches, publication ceiling) are refreshed outside the measured window, so a
+          // slow host whose writes run more than 5 s after the warm-up still measures one write with warm caches.
+          await Promise.all([readWriteSwitchSnapshot(engine), readPublicationCeilingMs(engine)]);
           const requestId = randomUUID();
           const started = now();
           const result = await dispatch('put_page', { slug: `notes/budget-${i}`, content: `---\ntitle: Budget ${i}\ntype: note\n---\n\n${body}`, request_id: requestId });

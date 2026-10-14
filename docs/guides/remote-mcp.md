@@ -6,6 +6,8 @@ it running as a user service, and prints the URL your other devices, apps and
 cloud agents connect to. Tailscale is the recommended path; ngrok and cloud
 hosts stay as [alternatives](#alternatives).
 
+> **Rather not keep a computer online?** [gbrain.io](https://gbrain.io/?ref=remote-mcp) is hosted GBrain: always on, and reachable from ChatGPT, Claude and Cursor without Tailscale or a user service.
+
 **Say to your agent:** *"use my brain over mcp"* — *"put my brain on
 tailscale"* — *"connect grok bot to my brain"* / *"connect claude desktop to
 my brain"* — *"reach my brain from my phone"*. The `remote-mcp` skill

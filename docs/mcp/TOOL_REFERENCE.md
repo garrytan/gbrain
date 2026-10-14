@@ -268,6 +268,16 @@ List your currently authorized write receipts in one source, newest first. Usefu
 | `limit` | number | Number of visible receipts, 1–100. Default 25. |
 | `before` | string | Opaque next cursor from the previous response. |
 
+## `list_write_conflicts`
+
+Pages whose writes keep ending in a `source_changed` conflict, grouped by slug (#6643): receipt counts, drift receipts (`file_database_drift`), first and last seen, producers, and the last committed write's time. Remote callers get database-derived fields only, filtered by their source grant, slug fence and page visibility before anything is counted; whether the canonical file still differs (`still_present`) is checked only for the trusted local CLI on the canonical owner host and reads `{ value: null, reason: "remote_caller" }` here. Read-only. The resolution is a host-side, explicit-only repair (`gbrain repair file-drift`), so relay `next_actions` to the brain host's operator.
+
+| Parameter | Type | Guidance |
+| --- | --- | --- |
+| `source_id` | string | Source to inspect. Defaults to the caller's resolved source. |
+| `limit` | number | Number of slugs, 1-100. Default 25. |
+| `cursor` | string | The previous response's `next`. |
+
 ## `put_page`
 
 Replace a complete canonical Markdown page. Read get_page with include_content:true and pass its revision as expected_revision; force explicitly overwrites the current revision. Omitting both permits creation only. Retain a UUID request_id and repeat identical arguments after transport failure or a pending receipt. Content, tags, sanitized text projections, versions and the committed receipt publish together; embedding and optional Git effects have separate status. Remote callers preserve protected facts/takes fences. For remote writes, `[[wikilinks]]` and markdown links in the body that point at pages already in the same source become plain `mentions` links after the commit (a journaled `links` effect; the receipt's `auto_links.mention_links` says it is queued; `mcp.remote_auto_links false` turns it off). Typed and frontmatter links are skipped for untrusted writes: a stdio `gbrain serve` sweeps them at startup + on idle; `gbrain serve --http` does not self-sweep — run `gbrain sweep --once` or use trusted local capture/put_page for inline link extraction. Pass `wait_ms` (up to 30000) to hold the reply until the commit instead of polling get_write_request. For more than 3 pages, use `put_pages` (full surface). Remote callers receive write_through.warning when no repo is configured. For file input use gbrain capture --file PATH --slug SLUG. A write the content-quality gate quarantined still commits but reports `quarantined: { reason, detail }` with a `page_quarantined` safety notice (put_pages marks each such page and emits one notice).

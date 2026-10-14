@@ -105,6 +105,7 @@ const MATRIX: Row[] = [
   { name: 'entity', mode: 'skip', reason: 'MEMORY_VERBS conformance suite owns it; LLM-shaped output' },
   { name: 'synthesize', mode: 'skip', reason: 'LLM-dependent; keyless envs cannot run it — verbs conformance owns the error path' },
   { name: 'think', mode: 'skip', reason: 'LLM-dependent; think-source-isolation-pglite e2e owns its scoping' },
+  { name: 'list_write_conflicts', mode: 'skip', reason: 'needs source_changed conflict receipts from a bound canonical checkout; test/maintenance-file-drift-6643.test.ts owns its source-grant and slug-fence filtering' },
   { name: 'search_by_image', mode: 'skip', reason: 'needs image-embedding infra; cross-modal suites own it' },
   { name: 'volunteer_context', mode: 'skip', reason: 'session/reflex machinery; volunteer-context suites own scoping' },
   { name: 'context_pack', mode: 'skip', reason: 'verbs conformance owns it; budget-packed composite of scoped reads' },

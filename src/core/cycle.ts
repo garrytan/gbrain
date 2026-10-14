@@ -1491,8 +1491,9 @@ async function runPhaseExtractFacts(
     // so the daily cycle report makes the cleanup visible.
     const phantomSummary = (result.phantomsRedirected
       || result.phantomsAmbiguous
-      || result.phantomsSkippedDrift)
-      ? `, ${result.phantomsRedirected} phantom(s) redirected (${result.phantomsAmbiguous} ambiguous, ${result.phantomsSkippedDrift} drift-skipped)`
+      || result.phantomsSkippedDrift
+      || result.phantomsHeldLegacyRows)
+      ? `, ${result.phantomsRedirected} phantom(s) redirected (${result.phantomsAmbiguous} ambiguous, ${result.phantomsSkippedDrift} drift-skipped${result.phantomsHeldLegacyRows ? `, ${result.phantomsHeldLegacyRows} held for unfenced fact rows` : ''})`
       : '';
     // #1928: a reconcile that deletes far more facts than it reinserts is the
     // signature of the conversation-facts wipe (factsDeleted 1829, inserted 0
@@ -1541,6 +1542,7 @@ async function runPhaseExtractFacts(
         phantoms_redirected: result.phantomsRedirected,
         phantoms_ambiguous: result.phantomsAmbiguous,
         phantoms_skipped_drift: result.phantomsSkippedDrift,
+        phantoms_held_legacy_rows: result.phantomsHeldLegacyRows,
         phantoms_lock_busy: result.phantomsLockBusy,
         phantoms_more_pending: result.phantomsMorePending,
         ...(decideConflict ? { decide_conflict: decideConflict } : {}),

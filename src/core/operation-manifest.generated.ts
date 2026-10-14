@@ -841,6 +841,33 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     }
   },
   {
+    "name": "list_write_conflicts",
+    "idempotent": true,
+    "outputRedaction": "no_stored_text",
+    "description": "Pages whose writes keep ending in a source_changed conflict, grouped by slug.",
+    "params": {
+      "source_id": {
+        "type": "string",
+        "description": "Default: yours."
+      },
+      "limit": {
+        "type": "number",
+        "default": 25,
+        "description": "1-100 slugs (default 25)."
+      },
+      "cursor": {
+        "type": "string",
+        "description": "Previous page's next."
+      }
+    },
+    "scope": "read",
+    "mutating": false,
+    "area": "pages",
+    "cliHints": {
+      "name": "write-conflicts"
+    }
+  },
+  {
     "name": "cancel_write_request",
     "idempotent": true,
     "outputRedaction": "no_stored_text",

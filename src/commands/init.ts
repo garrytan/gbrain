@@ -1277,7 +1277,7 @@ export async function initPGLite(opts: {
     if (opts.jsonOutput) {
       setInitJsonResult({ status: 'success', engine: 'pglite', path: dbPath, pages: stats.page_count, embedding_check: embedCheck, content: contentReceipt, ...firstRunJson(await firstRunBundle(engine, searchMode, registrationSurface)) });
     } else if (process.env.GBRAIN_IN_AGENT_SETUP === '1') {
-      printInAgentReady(dbPath);
+      printInAgentReady(dbPath, freshContentDatabase);
     } else {
       console.log(`\nBrain ready at ${dbPath}`);
       console.log(`${stats.page_count} pages. Engine: PGLite (local Postgres).`);

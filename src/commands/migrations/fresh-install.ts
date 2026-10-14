@@ -15,6 +15,14 @@ import { appendCompletedMigration } from '../../core/preferences.ts';
 import { compareVersions } from '../../core/migration-ledger.ts';
 import { migrations } from './index.ts';
 
+/** The command that finishes the setup migrations init leaves pending (no service installed). */
+export const FINISH_SETUP_ARGV = ['gbrain', 'apply-migrations', '--yes', '--no-autopilot-install'] as const;
+export const FINISH_SETUP_COMMAND = FINISH_SETUP_ARGV.join(' ');
+/** `gbrain setup`'s machine-readable run of it, optionally limited to one migration. */
+export function setupMigrationsArgv(launcher: string, version?: string): string[] {
+  return [launcher, ...FINISH_SETUP_ARGV.slice(1), '--json', ...(version ? ['--migration', version] : [])];
+}
+
 export interface FreshInstallStamp {
   installed_version: string;
   stamped: string[];
@@ -47,8 +55,8 @@ export function recordFreshInstallMigrations(): void {
     const receipt = stampFreshInstallMigrations();
     const pending = receipt.pending_fresh_install;
     console.error(`[init] Migrations: ${receipt.stamped.length} recorded as not needed on a new brain; `
-      + (pending.length ? `${pending.length} setup migration(s) pending (${pending.join(', ')}). Finish setup: gbrain apply-migrations --yes --no-autopilot-install` : 'none pending.'));
+      + (pending.length ? `${pending.length} setup migration(s) pending (${pending.join(', ')}). Finish setup: ${FINISH_SETUP_COMMAND}` : 'none pending.'));
   } catch (error) {
-    console.error(`[init] Migrations: could not record fresh-install migrations (${error instanceof Error ? error.message : String(error)}); all list as pending. Finish setup: gbrain apply-migrations --yes --no-autopilot-install`);
+    console.error(`[init] Migrations: could not record fresh-install migrations (${error instanceof Error ? error.message : String(error)}); all list as pending. Finish setup: ${FINISH_SETUP_COMMAND}`);
   }
 }

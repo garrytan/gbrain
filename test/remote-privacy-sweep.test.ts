@@ -356,6 +356,7 @@ const EXPECTED_OUTCOME: Record<string, Outcome> = {
   add_timeline_entry: 'ok',
   get_write_request: 'error',
   list_write_requests: 'ok',
+  list_write_conflicts: 'ok',
   cancel_write_request: 'error',
   revert_version: 'error',
   edit_page: 'error',

@@ -9,7 +9,7 @@ fixes those and the other kinds listed in
 [What each kind fixes](#what-each-kind-fixes). Every run is a preview unless
 you pass `--apply`.
 The explicit-only kinds, among them `google-file-modes`, `stale-atoms`, `extractor-facts`,
-`captured-facts`, `loop-facts`, `ontology-facts`, `orphan-children`, `failed-writes`, `frontmatter` and `managed-sync-orphans`, run only when you name them (see [Explicit-only repair kinds](#explicit-only-repair-kinds)).
+`captured-facts`, `loop-facts`, `ontology-facts`, `orphan-children`, `failed-writes`, `frontmatter`, `managed-sync-orphans` and `stuck-recovery`, run only when you name them (see [Explicit-only repair kinds](#explicit-only-repair-kinds)).
 `gbrain doctor --remediation-plan` lists the same kinds as repair steps, and
 `gbrain doctor --remediate --yes --include-repairs --expect <plan_hash>` runs them under a budget
 (see [Run repairs through doctor](#run-repairs-through-doctor)).
@@ -134,6 +134,7 @@ work behind exits 0, so scripts should also check `results[].complete`.
 | `connector-checkpoints` | `connector_checkpoints` | Deletes managed connector checkpoint rows and retry pointers that no registered connector source can load and that are older than 7 days. They accumulate after a content setting such as `g_history_days` changes, or when a connector host older than v0.60.11.0 runs during an upgrade. Cleanup only: it never copies or re-keys a checkpoint, takes no journal admission and runs brain-wide (`--source` does not narrow it). | Rows a queued or running connector write, or a connector's recorded pending set, still references. |
 | `orphan-bindings` | `orphan_persistence_bindings` | Deletes persistence source bindings whose source was removed, or that belong to an earlier incarnation of a source re-added under the same id. `gbrain sources remove` and `gbrain sources purge` delete the binding; one an older gbrain left behind makes the re-added source read as claimed, so every `gbrain sync --source <id>` fails with `writer_coordinator_required`. Bookkeeping only: no journal admission, no page or file changes, and it runs brain-wide (`--source` does not narrow it). See [orphan bindings](#orphan-bindings). | A binding that a queued, running or recovering write request of the same source incarnation still references. |
 | `managed-sync-orphans` | `sync_failures` | Explicit-only, preview-bound. Retires managed sync bookkeeping nothing current can resume or clear: a `managed-sync-failure` row whose cursor key has no cursor, and an unfinished `managed-sync` cursor recorded by a principal that is no longer an active local writer (or a pre-options cursor a later run superseded) whose pending request is terminal. `op_checkpoints` rows only; no journal admission, no page or file changes. The preview prints a hash; `--apply --expect <hash>` retires exactly that set. See [managed sync orphans](#managed-sync-orphans). | An unfinished cursor whose pending request is still queued, running or recovering, or one the live writer can resume with its recorded options (doctor prints that sync command). |
+| `stuck-recovery` | none (`gbrain sources writer status` shows the request `recovering` with `unexpected_file_bytes`) | Explicit-only, preview-bound, destructive consent. Resolves a live page publication recovery whose file matches neither its recorded prior nor its published bytes, which stops every write on its worktree. The preview lists each blocked file with both fingerprints and writes a private diff; `--apply --expect <hash> --keep prior\|disk --yes` backs up both versions, then restores the prior (the write publishes again) or keeps the edit and abandons the write. See [stuck recovery](#stuck-recovery). | A terminal request with its recovery still set (listed as refused, `recovery_choice_refused`), a withdrawal-mirror effect recovery (listed as refused, `recovery_effect_unsupported`), a shared-skill bundle recovery (`recovery_bundle_unsupported`), a recovery blocked on staging bytes, and a recovery whose file already matches a recorded version (the resident writer finishes those). |
 | `frontmatter-keys` | `stale_frontmatter_keys` | Explicit-only, preview-bound. Strips the parser's reserved top-level keys (`type`, `title`, `tags`, `slug`) that an older import stored inside `pages.frontmatter`. Since v0.60.176.0 those keys are not file/database drift and never render (#6454), so this is hygiene: database rows only, in source-scoped coordinated batches of up to 1,000 pages, no file, body or embedding change. Each swept page advances its `knowledge_revision` once, so a client holding an older revision of a swept page gets one `revision_conflict` and re-reads. See [frontmatter keys](#frontmatter-keys). | A page whose keys were cleared by a write between preview and apply (`already_clean`). |
 | `embedding-effects` | `stale_embedding_effects` | Settles stale queued and failed embedding effects of committed writes, which block receipt compaction and activation: `reconciled` when current vectors pass the effect verifier, `superseded` when the page was deleted or a newer revision owns its own effect, `retry_queued` for the owner (paid; a used-up retry allowance gets one new bounded cycle per explicit apply). See [stale queued embedding effects](#stale-queued-embedding-effects). | `blocked` effects, counted by reason (`owner_unavailable`, `embedding_disabled`, `embedding_unconfigured`, `projection_pending`, `no_replacement_obligation`). |
 | `attribution-backfill` | none | Fills write attribution (who wrote it) on pages, page versions and facts written before attribution was recorded, only where exactly one committed request in the write journal proves the writer: the page write whose recorded result is the row's revision, or the `remember` that inserted the fact. Fills NULLs only, in committed batches of 1,000 that resume after an interruption; no content, revision, page file or request ID changes. See [write attribution](../mcp/ADMIN.md#write-attribution). | `unrecorded_pages`, `unrecorded_page_versions`, `unrecorded_facts`: rows the journal cannot prove. They stay `unrecorded`; nothing is inferred. |
@@ -141,6 +142,7 @@ work behind exits 0, so scripts should also check `results[].complete`.
 | `orphan-children` | `child_table_orphans` (also a `storage_corrupt` error) | Explicit-only. Deletes rows of page child tables (chunks, versions, tags, takes, raw data, timeline, links) whose page row no longer exists, and clears dangling `links.origin_page_id` and `files.page_id` references, each in one statement that rechecks the orphan condition. See [orphan children](#orphan-children). | `torn_pages`: page rows whose stored body cannot be read (torn TOAST). The preview names them; the repair never changes them. |
 | `planner-stats` | `planner_stats_stale` | Runs `ANALYZE` on the hot tables (pages, links, facts, takes, content_chunks, timeline_entries) whose planner statistics are stale, so search and graph reads stop planning as slow nested loops. PGLite also resets each table's pending row count; Postgres runs each `ANALYZE` with a 60 s statement timeout and a 2 s lock timeout. No journal admission, no user data changes, brain-wide. | none |
 | `contextual-mode` | `contextual_retrieval_coverage` (pages with no recorded mode) | Stamps the contextual retrieval mode on markdown pages imported without one (for example by a large `--no-embed` sync, or by a connector source on an older gbrain), exactly as a fresh import of the page would: the page, source and brain settings decide, and the per-chunk synopsis tier lands at the free title tier. It rebuilds projections only: no page write, no new page version and no request ID. A page whose stored vectors already match the stamped convention keeps them and queues no re-embedding; a page whose embedding input changes has only those vectors cleared and is re-embedded once, unless you pass `--no-embed`. | `unsealed_projection`: pages whose chunks lag their text; `gbrain embed --stale` or `safe-chunks` seals them first, and the next run stamps them. `embed_skip`: pages marked to skip embedding keep their stored vectors and are not stamped. |
+| `file-drift` | `maintenance_write_drift` | Explicit-only, preview-bound. Resolves pages whose canonical file differs from the database copy (`source_changed` / `file_database_drift`) through canonical reconciliation, preferring the file or the database copy within reconcile's protections. `--all-drifted` refuses mixed drift classes unless `--class` keeps one. See [file drift](#file-drift). | Protected metadata, the tag union and protected takes or private fact rows, listed per page as `exceptions`; pages changed after the preview (`changed_since_preview`). |
 
 Timeline rows that an earlier version of a page produced and its current text
 no longer has are removals, not history, so `timeline` neither counts nor
@@ -433,6 +435,82 @@ predicate in the deleting statement and removes the cursor, its same-key
 failure row and its manifest (when no other cursor shares the run) in one
 transaction, so a cursor the writer picked up meanwhile is left alone. Do not
 delete `op_checkpoints` rows by hand.
+
+### Stuck recovery
+
+<a id="stuck-recovery"></a>
+
+**Say to your agent:** *"Every write to my notes source has been pending for an
+hour and writer status says a request is recovering with unexpected_file_bytes.
+Show me what changed and let me pick which version to keep."*
+
+A page write records its file's prior bytes before it publishes. If the
+process dies mid-publication, the owner's recovery pass restores the prior
+bytes or finishes the write. When the file matches neither the recorded prior
+nor the published bytes (usually a hand edit made while the write was
+publishing), recovery refuses to overwrite it: the request stays `recovering`
+with `unexpected_file_bytes`, no write on that worktree is claimed, and the
+resident writer re-checks it every 30 seconds without progress. Do not delete
+the file to unblock it.
+
+`gbrain repair stuck-recovery` is the sanctioned exit. Run it on the host that
+owns the source.
+
+```bash
+gbrain repair stuck-recovery --source notes                    # preview: each blocked file, its diff, the choices
+gbrain repair stuck-recovery --source notes --request-id <uuid>   # only one request
+gbrain repair stuck-recovery --source notes --keep prior --apply --expect <hash> --yes
+gbrain repair stuck-recovery --source notes --keep disk --apply --expect <hash> --yes
+```
+
+The preview starts from the blocker of the source's queued head and lists
+every recovery record on the worktree. For each file it prints the prior
+(hash, size, mode, or `absent: prior was a create`), the bytes on disk (or
+`deleted on disk`), what recovery sees, and a private diff written under
+`~/.gbrain/backups/stuck-recovery/<request>/` with the exact `diff -u`
+command that reproduces it. It prints only the choices available for every
+listed record. The hash binds each record's identity, each file's disk bytes
+and the page's database revision, so an edit or a page write after the
+preview refuses the apply with `preview_changed`.
+
+The choice is the user's: there is no default `--keep`, the kind never runs
+from `--all`, `gbrain doctor --remediate` or a remediation step, and a
+non-interactive apply without `--yes` exits 3 with the consent payload and
+changes nothing. The backups never authorize an apply by themselves.
+
+What a choice does depends on the request's state:
+
+| Request state | `--keep prior` | `--keep disk` (#6640's `drop`) |
+|---|---|---|
+| Live (`recovering`), no recorded failure: the publication was interrupted and its database transaction never committed | Backs up both versions, writes the recorded prior bytes back through the writer's own durable, confined publication (staged at the record's reserved restoration path; an absent prior unlinks the file); recovery then requeues the request and the accepted write publishes again on the next pass. | Backs up both versions and ends the request `conflict` with `source_changed` instead of requeueing a write that would conflict again; recovery then only cleans its staging and clears the record, releasing the recovery bytes it reserved. The record itself is never rewritten. |
+| Live with a recorded failure (`publication_failed`) | Prior bytes back; the request ends `failed` or `conflict` with that failure. | Disk bytes kept; the request ends with that failure. |
+| Terminal (`committed`, `failed`, `conflict`, `cancelled`) with its recovery record still set | Refused (`recovery_choice_refused`): recovery never restores a terminal request's file, so this would roll back committed bytes. | Refused (`recovery_choice_refused`): a terminal outcome is immutable and there is no publication to abandon. |
+
+The preview lists a terminal request as `refused` with the reason and offers
+no choice for it. After `--keep disk` the database page still holds the
+content from before the write, so the page shows as file/database drift until
+you reconcile it: `gbrain sources reconcile <source> <slug> --brain host
+--preview`. The command never reports the page as repaired.
+
+The apply runs under the worktree lock, so the resident recovery pass cannot
+interleave. Each step is journaled (`op_checkpoints`, op
+`stuck-recovery-resolution`): a run killed at any point resumes with the same
+command, and a resident writer of any version can finish a resolution this
+command started, because the recovery rule it uses is unchanged. Running the
+same apply again after it finished replays the recorded result; the same hash
+with the other `--keep` refuses `idempotency_conflict`. The finished journal
+row is the resolution's audit entry and does not expire; the request's own
+receipt is never rewritten by this command (`--keep disk` completes the live
+request; it never changes a terminal one). A shared-skill bundle recovery is
+refused with [`recovery_bundle_unsupported`](#recovery-bundle-unsupported), and
+a withdrawal-mirror effect recovery on the worktree is listed as refused with
+[`recovery_effect_unsupported`](#recovery-effect-unsupported). The apply waits
+at most 10 seconds for the worktree lock, then refuses `writer_lock_unavailable`
+with nothing changed; `--keep prior` on a record that predates reserved staging
+first reserves it and refuses `queue_capacity` when the recovery budget is full,
+also with nothing changed.
+#6640's `drop` (abandon the blocked publication and keep the disk bytes) is
+`--keep disk` on a live request; there is no separate flag.
 
 ### Frontmatter keys
 
@@ -869,6 +947,65 @@ apply never writes it twice (`pending_elsewhere` when another writer holds that
 request). Attribution names the original writer. A replay the
 brain refuses reports `refused` with the code. The failed receipts stay as
 history.
+
+<a id="file-drift"></a>
+### File drift
+
+A page whose canonical file differs from its database copy refuses every
+coordinated write with `source_changed` (detail `file_database_drift`) until
+someone resolves it. Before #6643 nothing resolved them in bulk, and
+`synthesize_concepts` paid for a new narrative for each drifted concept on
+every cycle, then left another conflict receipt behind. Now maintenance checks
+the file before it spends or admits anything: a drifted concept is skipped
+(recorded in `dream.concepts.drift_skips`, released once the file and database
+agree), and a maintenance write to a drifted page refuses before admission
+without a request row. Doctor's `maintenance_write_drift` counts the drifted
+pages and the skips.
+
+`gbrain repair file-drift` resolves them through the same canonical
+reconciliation as `gbrain sources reconcile`, preferring one side. It is
+explicit-only, preview-bound and runs only from the trusted local CLI on the
+canonical owner host.
+
+**Say to your agent:** *"List the pages whose writes keep refusing
+source_changed, preview resolving them with the file winning, show me the
+exceptions, then apply after I agree."*
+
+```bash
+gbrain sources reconcile <id> --brain host --audit --conflicts   # read-only: receipts per slug, still drifted?, class
+gbrain repair file-drift --source <id> --slug notes/a --prefer file        # preview one page
+gbrain repair file-drift --source <id> --all-drifted --class structurally_additive --prefer file
+gbrain repair file-drift --source <id> --all-drifted --class structurally_additive --prefer file --apply --expect <hash>
+```
+
+Select pages with `--slug` (repeatable), `--request <id>` (a conflict receipt,
+repeatable) or `--all-drifted` (every page the conflict audit still finds
+drifted, up to 1,000). `--prefer file` takes the canonical file, `--prefer
+database` the database copy. The preferred side wins the title, type, body,
+timeline and ordinary frontmatter (a key only the other side has is dropped)
+inside reconcile's existing protections: protected metadata (provenance,
+trust, source and scan fields) stays as the database holds it, tags are the
+union of both sides, and protected takes and private fact rows are kept as
+stored. Each page's preview lists `exceptions`, the places where the result
+differs from the preferred side and why (`protected_metadata`, `scan_state`,
+`tags_union`, `protected_takes_or_private_facts`).
+
+The audit gives every drifted page one class: `structurally_additive`,
+`additive_with_suggestions`, `review_required`, `formatting_only` or `error`.
+`--all-drifted` refuses a selection that mixes classes (the message counts
+each one) unless `--class <name>` keeps exactly one, so a single `--prefer`
+never resolves differently shaped drift in bulk. Review `review_required`
+pages one at a time with `--slug`.
+
+The preview writes each page's resolved result to a private artifact under
+the gbrain config directory (`repair-previews/file-drift/<hash>.json`,
+outside every checkout) and prints the hash. `--apply --expect <hash>`
+applies exactly that set through the reconcile apply, with its preimage
+checks and retained backups, under request ids derived from the hash, so an
+interrupted apply resumes and never writes a page twice. Each page reports
+`repaired`, `refused` (with the code) or `changed_since_preview` (the file or
+the page changed after the preview; preview again). A changed set refuses
+with `preview_changed`.
 
 <a id="held-files"></a>
 ### Held files
@@ -1847,7 +1984,7 @@ Each heading below is the `docs` anchor a refusal carries.
 ### Explicit-only repair kinds
 
 `google-file-modes`, `stale-atoms`, `extractor-facts`, `captured-facts`,
-`loop-facts` and `ontology-facts` run only when named: `gbrain repair <kind>` previews, and
+`loop-facts`, `ontology-facts` and `file-drift` run only when named: `gbrain repair <kind>` previews, and
 `gbrain repair <kind> --apply` applies (every kind but `google-file-modes`
 also needs `--expect <hash>`, so it applies exactly the previewed set; `google-file-modes` re-checks each file's owner,
 type and mode at apply time). They are excluded everywhere else:
@@ -1878,6 +2015,41 @@ hash." Re-run the printed preview command and apply with the new hash. It
 applies to `gbrain jobs authorize-legacy --select`, `gbrain jobs cancel
 --select`, `gbrain repair stale-atoms`, `gbrain repair extractor-facts`,
 `gbrain repair captured-facts` and `gbrain repair loop-facts`.
+
+### Recovery bundle unsupported
+
+`recovery_bundle_unsupported`: `gbrain repair stuck-recovery` found a
+shared-skill bundle recovery record (several skill files published together)
+among the selected requests. It resolves page recoveries only, so nothing was
+changed. Inspect the request read-only with `gbrain sources writer status
+--source <id> --json`, ask the user which version of each skill file to keep,
+put those bytes in place by hand, and let the resident writer finish the
+recovery. Pass `--request-id` to resolve the page recoveries on the same
+source.
+
+### Recovery choice refused
+
+`recovery_choice_refused`: `gbrain repair stuck-recovery` will not apply that
+`--keep` choice to that request, and nothing was changed. Either the request is
+terminal while its recovery record is still set (its outcome is immutable,
+recovery never restores its file, and `--keep prior` would roll back committed
+bytes; the record only waits for staging cleanup, see `gbrain sources writer
+status --source <id> --json`), or the record cannot support the choice
+(`--keep prior` without stored prior bytes, or a blocked path that is not a
+regular file). The preview lists only the choices it can make safe.
+
+### Recovery effect unsupported
+
+`recovery_effect_unsupported`: a withdrawal-mirror effect recovery blocks the
+source's worktree, and `gbrain repair stuck-recovery` does not resolve it.
+That recovery only finishes forward (it never restores the bytes from before a
+withdrawal), so either `--keep` choice could put withdrawn content back on
+disk. Nothing was changed. Inspect the effect read-only with `gbrain sources
+writer status --source <id> --json` and ask the user whether the edited file
+may be replaced by its withdrawn version; the resident writer finishes the
+effect once the file matches one of its recorded versions. The preview lists
+the effect as `refused`; naming its request with `--request-id` refuses with
+this code.
 
 ### Legacy job authority
 

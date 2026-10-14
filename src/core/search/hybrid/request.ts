@@ -34,6 +34,21 @@ import { liftModeCut } from '../page-rank-cut.ts';
 import { type StageTimer, UNTIMED } from '../stage-timings.ts';
 
 /**
+ * searchVector's bounded-escalation exhaustion signal: stamped on `degraded`,
+ * accumulated on `req` (the vector side passes its own stamp list).
+ */
+export function vectorPoolMetaSink(req: HybridRequest, degraded: DegradedStageEntry[]): NonNullable<SearchOpts['onVectorPoolMeta']> {
+  return (m) => {
+    if (!m.underfilled) return;
+    pushDegraded(degraded, 'vector_candidates_incomplete', m.reason === 'deadline' ? 'timeout' : m.reason ?? 'candidate_budget');
+    if (!req.vectorPoolUnderfill || m.escalations >= req.vectorPoolUnderfill.escalations) {
+      const { underfilled, ...detail } = m;
+      req.vectorPoolUnderfill = { ...detail, incomplete: true };
+    }
+  };
+}
+
+/**
  * Everything the stages read, resolved once at hybridSearch entry, plus the
  * per-request accumulators they write (vectorPoolUnderfill, expansionApplied,
  * lastResultsCount, lastRank1Score — read by emitHybridMeta at each return).
@@ -275,14 +290,7 @@ export async function resolveHybridRequest(
     // ACCUMULATES across vector calls (adversarial F8): expansion runs N
     // sub-queries through this one opts object — last-write-wins would
     // under-report multi-query exhaustion. Keep the max-escalations event.
-    onVectorPoolMeta: (m) => {
-      if (!m.underfilled) return;
-      pushDegraded(degraded, 'vector_candidates_incomplete', m.reason === 'deadline' ? 'timeout' : m.reason ?? 'candidate_budget');
-      if (!req.vectorPoolUnderfill || m.escalations >= req.vectorPoolUnderfill.escalations) {
-        const { underfilled, ...detail } = m;
-        req.vectorPoolUnderfill = { ...detail, incomplete: true };
-      }
-    },
+    onVectorPoolMeta: (m) => vectorPoolMetaSink(req, degraded)(m),
   };
   // Post-arm identity injections re-apply the arms' exclude contract.
   const identityTierOpts: IdentityTierOpts = {

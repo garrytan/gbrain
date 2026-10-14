@@ -10,7 +10,11 @@
  * `alias_fanout` books its lexical time once, under `lexical`. Retries and
  * discarded escalations run through the same collector and accumulate. Work
  * that runs alongside the critical path (the parallel lexical arms) is reported
- * per label in `overlapped_ms` and never added to a stage. `total_ms` is its
+ * per label in `overlapped_ms` and never added to a stage. A branch (`branch()`)
+ * runs whole stages alongside the critical path (the vector side next to the
+ * lexical arms): until the request `join`s it, its stage time is reported in
+ * `overlapped_ms` under the stage's name; from the join on, the wait is booked
+ * to whichever stage the branch is in. `total_ms` is its
  * own monotonic span from the collector's start to the snapshot, so
  * `sum(stages_ms) + other_ms === total_ms` and `other_ms >= 0`.
  *
@@ -32,12 +36,18 @@ export interface SearchTimingsMeta {
 export interface StageTimer {
   stage<T>(stage: SearchStage, work: () => Promise<T>): Promise<T>;
   overlap<T>(label: string, work: Promise<T>): Promise<T>;
+  /** A timer for stages that run alongside the critical path until `join` waits on them. */
+  branch(): StageTimer;
+  /** Wait on work timed by `branch`: the wait is booked to the branch's current stage. */
+  join<T>(branch: StageTimer, work: Promise<T>): Promise<T>;
 }
 
 /** The timer for calls nobody measures (bare hybrid callers, internal searches). */
 export const UNTIMED: StageTimer = {
   stage: (_stage, work) => work(),
   overlap: (_label, work) => work,
+  branch: () => UNTIMED,
+  join: (_branch, work) => work,
 };
 
 export class SearchTimings implements StageTimer {
@@ -77,6 +87,37 @@ export class SearchTimings implements StageTimer {
     return work;
   }
 
+  branch(): StageTimer {
+    return new BranchTimer(this, this.now);
+  }
+
+  async join<T>(branch: StageTimer, work: Promise<T>): Promise<T> {
+    if (!(branch instanceof BranchTimer) || branch.parent !== this) return work;
+    const base = this.current;
+    this.switchTo(branch.attach(base) ?? base);
+    try {
+      return await work;
+    } finally {
+      branch.detach();
+      this.switchTo(base);
+    }
+  }
+
+  /** @internal BranchTimer bookkeeping. */
+  declare(stage: SearchStage): void {
+    if (!this.spent.has(stage)) this.spent.set(stage, 0);
+  }
+
+  /** @internal BranchTimer bookkeeping. */
+  follow(stage: SearchStage | null): void {
+    this.switchTo(stage);
+  }
+
+  /** @internal BranchTimer bookkeeping. */
+  bookOverlapped(label: string, ms: number): void {
+    this.overlapped.set(label, (this.overlapped.get(label) ?? 0) + ms);
+  }
+
   /** Integer milliseconds; stages and `other` are apportioned so they sum to `total_ms` exactly. */
   snapshot(): SearchTimingsMeta {
     const at = this.now();
@@ -93,6 +134,64 @@ export class SearchTimings implements StageTimer {
       other_ms: ints[ints.length - 1],
       ...(this.overlapped.size > 0 ? { overlapped_ms: overlappedMs } : {}),
     };
+  }
+}
+
+/** Stages run off the critical path: overlapped until joined, then booked to the parent's stages. */
+class BranchTimer implements StageTimer {
+  private current: SearchStage | null = null;
+  private since: number;
+  private joinedBase: SearchStage | null | undefined;
+
+  constructor(readonly parent: SearchTimings, private readonly now: () => number) {
+    this.since = now();
+  }
+
+  private enter(stage: SearchStage | null): SearchStage | null {
+    const at = this.now();
+    if (this.joinedBase === undefined && this.current) this.parent.bookOverlapped(this.current, at - this.since);
+    this.since = at;
+    const previous = this.current;
+    this.current = stage;
+    if (this.joinedBase !== undefined) this.parent.follow(stage ?? this.joinedBase);
+    return previous;
+  }
+
+  async stage<T>(stage: SearchStage, work: () => Promise<T>): Promise<T> {
+    this.parent.declare(stage);
+    const previous = this.enter(stage);
+    try {
+      return await work();
+    } finally {
+      this.enter(previous);
+    }
+  }
+
+  overlap<T>(label: string, work: Promise<T>): Promise<T> {
+    return this.parent.overlap(label, work);
+  }
+
+  /** A branch's own branches are untimed. */
+  branch(): StageTimer {
+    return UNTIMED;
+  }
+
+  join<T>(_branch: StageTimer, work: Promise<T>): Promise<T> {
+    return work;
+  }
+
+  /** The parent starts waiting: book the overlapped part so far and hand the clock the current stage. */
+  attach(base: SearchStage | null): SearchStage | null {
+    const at = this.now();
+    if (this.current) this.parent.bookOverlapped(this.current, at - this.since);
+    this.since = at;
+    this.joinedBase = base;
+    return this.current;
+  }
+
+  detach(): void {
+    this.joinedBase = undefined;
+    this.since = this.now();
   }
 }
 

@@ -1,0 +1,21 @@
+{
+  "bump": "patch",
+  "queue_mode": "stamp-at-merge",
+  "changelog": "CHANGELOG.md",
+  "stamp_files": [
+    "VERSION", "package.json", "CHANGELOG.md", "openclaw.plugin.json",
+    ".claude-plugin/plugin.json", ".codex-plugin/plugin.json",
+    "plugin-variants/*/.claude-plugin/plugin.json", "plugin-variants/*/.codex-plugin/plugin.json",
+    "plugin-variants/*/README.md", "plugin/README.md",
+    "BOOTSTRAP_FOR_AGENTS.md", "templates/bootstrap/template-repo/README.md",
+    "src/core/behavior-change-notice.ts"
+  ],
+  "stamp_patterns": [
+    "\"version\": \"{version}\"",
+    "since: '{version}'",
+    "<!-- gbrain-plugin-tree-stamp: {version} -->",
+    "<!-- gbrain-template-stamp: {version} -->",
+    "<!-- gbrain-runbook-stamp: {version} -->"
+  ],
+  "migrations": { "dir": "src/core/schema-migrations", "id": "^v(\\d+)-" }
+}

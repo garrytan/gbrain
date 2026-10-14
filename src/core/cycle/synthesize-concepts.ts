@@ -49,6 +49,7 @@ import {
 } from './concept-publication.ts';
 import { readPhaseConfigNumber, SYNTHESIZE_CONCEPTS_BUDGET_KEY, SYNTHESIZE_CONCEPTS_DEFAULT_BUDGET_USD } from './phase-config-values.ts';
 import { ConceptRetryBound, MAX_CONCEPT_ATTEMPTS } from './concept-retry-bound.ts';
+import { ConceptDriftSkips } from '../persistence/drift-conflicts.ts';
 
 // Miss policy for the shared resolver (`priceFor`: operator overrides, the
 // claude-cli → Anthropic sibling, canonical rows): assume Sonnet-tier
@@ -340,6 +341,8 @@ export async function runPhaseSynthesizeConcepts(
   const pricingFallbackModels = new Set<string>();
   const retries = await ConceptRetryBound.load(engine); // #6260: bounded paid retries per member hash
   const skippedRetryBound: string[] = [];
+  const driftSkips = await ConceptDriftSkips.load(engine, opts.sourceId ?? 'default', !!maintenance?.binding, !!opts.dryRun);
+  const skippedFileDrift = driftSkips.skipped;
   for (const group of atomGroups) {
     const conceptSlug = `concepts/${group.conceptSlug}`;
     // A concept page this phase did not write belongs to a human (or another
@@ -369,6 +372,8 @@ export async function runPhaseSynthesizeConcepts(
       skippedUnchanged.push(conceptSlug);
       continue;
     }
+    // #6643 (B1): a drifted concept would only add a conflict receipt per publication; checked live before any spend.
+    if (await driftSkips.skip(conceptSlug, existingSnapshot)) continue;
     // A page hashed by the pre-D-N3 formula (full atom bodies) whose inputs are
     // provably unchanged keeps its narrative: only the hash is rewritten, no spend.
     const grandfathered = realNarrative && existing?.frontmatter?.member_hash === hashOf(synthModel, group.atomBodies);
@@ -575,6 +580,7 @@ export async function runPhaseSynthesizeConcepts(
   // survives only as the fallback for legacy unscoped callers. Receipt only
   // fires when concepts were actually written; rollup always fires so doctor
   // sees the phase ran.
+  const driftActions = await driftSkips.finish();
   const warnings = budgetWarnings(budget.warning, budgetCapped, budgetCap);
   if (!opts.dryRun) await retries.save(engine);
   // Managed brains skip the receipt page (a legacy putPage), like extract_atoms;
@@ -613,7 +619,7 @@ export async function runPhaseSynthesizeConcepts(
 
   return {
     phase: 'synthesize_concepts',
-    status: failures.length > 0 || linkWarnings.length > 0 || publicationDeferred.length > 0 || publicationHeld.length > 0 ? 'warn' : 'ok',
+    status: failures.length > 0 || linkWarnings.length > 0 || publicationDeferred.length > 0 || publicationHeld.length > 0 || skippedFileDrift.length > 0 ? 'warn' : 'ok',
     duration_ms: 0,
     summary:
       `synthesize_concepts: ${conceptsWritten} concepts ` +
@@ -627,7 +633,8 @@ export async function runPhaseSynthesizeConcepts(
       (keptExistingNarrative.length > 0 ? ` (${keptExistingNarrative.length} existing narrative(s) kept)` : '') +
       (skippedRetryBound.length > 0 ? ` (${skippedRetryBound.length} skipped after ${MAX_CONCEPT_ATTEMPTS} failed attempts on unchanged members)` : '') +
       (publicationDeferred.length > 0 ? ` (${publicationDeferred.length} publication(s) deferred: page changed, retried next run)` : '') +
-      (publicationHeld.length > 0 ? ` (${publicationHeld.length} publication(s) held: existing page needs import/repair)` : ''),
+      (publicationHeld.length > 0 ? ` (${publicationHeld.length} publication(s) held: existing page needs import/repair)` : '') +
+      (skippedFileDrift.length > 0 ? ` (${skippedFileDrift.length} skipped before synthesis: canonical file differs from the database; ${driftActions.join('; ')})` : ''),
     details: {
       concepts_written: conceptsWritten,
       tier_counts: tierCounts,
@@ -643,6 +650,8 @@ export async function runPhaseSynthesizeConcepts(
       rehashed,
       kept_existing_narrative: keptExistingNarrative,
       skipped_retry_bound: skippedRetryBound,
+      skipped_file_drift: skippedFileDrift,
+      ...(driftActions.length ? { file_drift_next_actions: driftActions } : {}),
       folded_spellings: foldedSpellings,
       publication_deferred: publicationDeferred,
       publication_held: publicationHeld,

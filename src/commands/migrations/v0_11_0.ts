@@ -235,6 +235,12 @@ function findCronManifests(opts: OrchestratorOpts): string[] {
   return found;
 }
 
+/** Host files Phase E would edit (an AGENTS.md marker, cron manifests); `gbrain setup` leaves this migration to the explicit command when any exist. */
+export function hostRewriteTargets(): string[] {
+  const opts = {} as OrchestratorOpts;
+  return [...findAgentsMdFiles(opts), ...findCronManifests(opts)];
+}
+
 function rewriteCronManifest(
   path: string,
   opts: OrchestratorOpts,

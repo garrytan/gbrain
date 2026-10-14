@@ -130,7 +130,7 @@ export { fileHash as persistenceFileHash, publishFile as publishPersistenceFile 
 function requestError(error: unknown): PublicationFailure {
   if (error instanceof OperationError) {
     // #6188: a typed fence refusal keeps its location in the bounded detail, which outlives receipt compaction.
-    const detail = fenceFailureDetail(error) ?? withdrawalFailureDetail(error);
+    const detail = fenceFailureDetail(error) ?? withdrawalFailureDetail(error) ?? (error.syncRefusal as PublicationFailure['detail'] | undefined);
     return { code: error.code, message: error.message, ...(detail ? { detail } : {}) };
   }
   const refusal = databaseRefusal(error);

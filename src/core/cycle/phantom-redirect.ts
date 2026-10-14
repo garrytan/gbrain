@@ -85,6 +85,12 @@ export interface PhantomPassResult {
   skipped_drift: number;
   no_canonical: number;
   not_phantom: number;
+  /**
+   * #6650: top-level pages held this pass because they own legacy (unfenced)
+   * fact rows: the redirect moves rows by fence position and would strand
+   * them on the deleted phantom. Every other phantom of the source proceeds.
+   */
+  held_legacy_rows: number;
   /** True iff the pass was skipped wholesale because the writer lock was busy. */
   lock_busy: boolean;
   /** True iff more phantoms exist than the per-cycle cap — caller surfaces to operator. */
@@ -119,6 +125,7 @@ export function emptyPhantomPassResult(): PhantomPassResult {
     skipped_drift: 0,
     no_canonical: 0,
     not_phantom: 0,
+    held_legacy_rows: 0,
     lock_busy: false,
     more_pending: false,
     touched_canonicals: [],
@@ -659,6 +666,7 @@ export async function runPhantomRedirectPass(
   sourceId: string,
   dryRun: boolean,
   signal?: AbortSignal,
+  holdSlugs: ReadonlySet<string> = new Set(),
 ): Promise<PhantomPassResult> {
   const result = emptyPhantomPassResult();
   const limitRaw = process.env.GBRAIN_PHANTOM_REDIRECT_LIMIT;
@@ -682,14 +690,19 @@ export async function runPhantomRedirectPass(
   try {
     // Find unprefixed phantoms in this source. We over-fetch by 1 so
     // `more_pending` reflects whether the cap actually clipped work.
+    // #6650: held phantoms are excluded before the cap, so they never use up
+    // the pass's candidate positions.
+    const held = [...holdSlugs].filter(slug => !slug.includes('/'));
+    result.held_legacy_rows = held.length;
     const rows = await engine.executeRaw<{ slug: string }>(
       `SELECT slug FROM pages
        WHERE source_id = $1
          AND deleted_at IS NULL
          AND slug NOT LIKE '%/%'
+         AND slug <> ALL($3::text[])
        ORDER BY slug ASC
        LIMIT $2`,
-      [sourceId, limit + 1],
+      [sourceId, limit + 1, held],
     );
     result.more_pending = rows.length > limit;
 

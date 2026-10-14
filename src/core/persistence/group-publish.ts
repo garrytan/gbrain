@@ -39,6 +39,7 @@ import { acquireWorktree, acquireWorktreeShared, getWorktreeBinding, guardOwners
 import { isLockOpenFailure, type NativeLockHandle } from './native-lock.ts';
 import { awaitLaneBegin, awaitLaneTurn, LaneAbort, laneApplyBegin, laneClaimed, laneFinished, lanePolicy, stepDownLanes, type LaneState } from './sync-lanes.ts';
 import { cancelRows, laneFaultBlockedReason, laneFaultCancelMessage, windowPredecessor } from './sync-window.ts';
+import { BULK_GROUP_CANCEL_MESSAGE, knockOnDetail } from './sync-knock-on.ts';
 import { clearResolvedRecoveries, completeWrite, ENSURE_COUNTERS_SQL, getWriteRequestById, LOCK_COUNTERS_SQL, markDispatched, markRecovering, prepareRecoveries,
   foregroundPriority, independentGroup, publicationGroupKey, reclaimReleasedWrite, releaseUnpublishedClaim, renewGroupClaims } from './journal.ts';
 import { principalKey, requestPrincipal, type FileRecoveryRecord, type WriteRequest } from './model.ts';
@@ -455,7 +456,8 @@ async function laneFallback(engine: BrainEngine, rows: WriteRequest[], reason: G
   // claimed again as a lane head; publishing its members one at a time would hold the lanes back.
   if (prior === 'committed' && reason !== 'busy') return null;
   if (prior !== null && ['failed', 'conflict', 'cancelled'].includes(prior)) {
-    for (const done of await cancelRows(engine, rows, laneFault ? laneFaultCancelMessage(laneFault) : undefined)) run.settled(done);
+    for (const done of await cancelRows(engine, rows, laneFault ? laneFaultCancelMessage(laneFault) : undefined,
+      knockOnDetail(laneFault ? 'lane_fault' : 'window_predecessor', after))) run.settled(done);
     return true;
   }
   for (const row of rows) await releaseUnpublishedClaim(engine, row, laneFault ? laneFaultBlockedReason(laneFault) : 'group_member_waiting');
@@ -680,6 +682,8 @@ export async function executeClaimedGroup(engine: BrainEngine, rows: WriteReques
       if (settled !== null) return settled || progressed;
     }
     let stop: 'cancel' | 'release' | null = null;
+    /** #6643: the member whose non-commit cancels the rest of the group (the cancel's knock-on root). */
+    let stopRoot: string | null = null;
     for (const { row: member, i } of live) {
       let row = member;
       let current = await getWriteRequestById(engine, row.id);
@@ -689,14 +693,14 @@ export async function executeClaimedGroup(engine: BrainEngine, rows: WriteReques
         if (reclaimed) { row = reclaimed; current = reclaimed; }
       }
       if (!current || current.execution_token !== row.execution_token || current.state !== 'running') {
-        if (current && ['committed', 'conflict', 'failed', 'cancelled'].includes(current.state)) { run.settled(current); progressed = true; if (current.state !== 'committed' && !independent) stop ??= 'cancel'; }
+        if (current && ['committed', 'conflict', 'failed', 'cancelled'].includes(current.state)) { run.settled(current); progressed = true; if (current.state !== 'committed' && !independent && stop === null) { stop = 'cancel'; stopRoot = current.request_id; } }
         else if (independent) stop ??= 'release';
         continue;
       }
       if (stop === 'release') { await releaseUnpublishedClaim(engine, row, 'group_member_waiting'); continue; }
       if (stop === 'cancel') {
         const cancelled = await engine.transaction(tx => completeWrite(tx, current, 'cancelled', {}, { code: 'cancelled',
-          message: 'An earlier page of the same bulk sync group failed; this page was not published and is re-frozen after that failure is resolved.' }));
+          message: BULK_GROUP_CANCEL_MESSAGE, detail: knockOnDetail('bulk_group', stopRoot) }));
         run.settled(cancelled); progressed = true; continue;
       }
       const p = prepared[i]!;
@@ -705,7 +709,7 @@ export async function executeClaimedGroup(engine: BrainEngine, rows: WriteReques
       const done = 'ok' in p ? await bounded(() => publishMutation(engine, row, p.ok, run.hostId)) : await finishUnpublishedFailure(engine, current, p.error, 'preparation');
       run.settled(done);
       if (done.state === 'committed') { progressed = true; continue; }
-      if (['conflict', 'failed', 'cancelled'].includes(done.state)) { progressed = true; if (!independent) stop = 'cancel'; } else stop = 'release';
+      if (['conflict', 'failed', 'cancelled'].includes(done.state)) { progressed = true; if (!independent) { stop = 'cancel'; stopRoot ??= done.request_id; } } else stop = 'release';
     }
     return progressed;
   } finally {

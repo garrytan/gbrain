@@ -330,6 +330,7 @@ test/serve-http-github-webhook.test.ts	handler wiring (source pin)	1	source-surf
 test/serve-http-mcp-transport-cleanup.test.ts	POST /mcp transport cleanup (#2844)	2	source-surface-helper
 test/serve-http-metrics.test.ts	serve-http.ts wiring (structural — the two defects of the original PR)	2	source-surface-helper
 test/serve-stdin-eof-drain.test.ts	serve-sync-runner stays off the boot path (#4409)	1	readFileSync
+test/setup.test.ts	gbrain setup: setup migrations on the brain it creates (Cat 41 run 4)	3	readFileSync
 test/shared-skills-catalog.test.ts	(file-level)	22	readFileSync
 test/shared-skills-export.serial.test.ts	(file-level)	7	readFileSync
 test/shared-skills-init.serial.test.ts	real combined brain initialization	4	readFileSync

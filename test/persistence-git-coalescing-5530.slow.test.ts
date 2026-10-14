@@ -352,8 +352,12 @@ for (const kind of testBackends()) describe(`#5530 Git effect coalescing (${kind
     try {
       await submitPageMutation(ctx('default'), { operation: 'put_page', waitMs: 1500,
         params: { slug: 'notes/lock-held', request_id: randomUUID(), content: pageContent(7777) } }).catch(() => undefined);
-      const [row] = await engine.executeRaw<{ state: string; blocked_reason: string | null; claim_phase: unknown }>(
-        "SELECT state,blocked_reason,claim_phase FROM persistence_requests ORDER BY created_at DESC LIMIT 1");
+      // The wait can end while the consumer still holds the write (a loaded runner claims it late): the outcome under test is
+      // where the write lands once the consumer lets it go, so read it after it leaves `running`.
+      const latest = async () => (await engine.executeRaw<{ state: string; blocked_reason: string | null; claim_phase: unknown }>(
+        "SELECT state,blocked_reason,claim_phase FROM persistence_requests ORDER BY created_at DESC LIMIT 1"))[0];
+      let row = await latest();
+      for (let i = 0; i < 600 && row?.state === 'running'; i++) { await Bun.sleep(50); row = await latest(); }
       expect(row).toEqual({ state: 'queued', blocked_reason: 'writer_busy', claim_phase: null });
     } finally { await held.release(); await disposePersistenceConsumer(engine); }
   }), 300_000);

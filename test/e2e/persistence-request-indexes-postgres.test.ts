@@ -74,7 +74,7 @@ test('#5762 on a 512k-row request table every probe is an index scan, and the fo
   await engine.executeRaw('ANALYZE persistence_requests');
   const runId = randomUUID();
   const [{ 'QUERY PLAN': [probe] }] = await engine.executeRaw<{ 'QUERY PLAN': Array<{ Plan: Record<string, unknown> }> }>(
-    `EXPLAIN (FORMAT JSON) ${INCOMPLETE_SYNC_RECEIPT_SQL}`, [binding.worktree_id, runId]);
+    `EXPLAIN (FORMAT JSON) ${INCOMPLETE_SYNC_RECEIPT_SQL}`, [binding.worktree_id, runId, [], [], [], 0]);
   const nodes = planNodes(probe.Plan);
   expect(nodes.filter(node => node['Node Type'] === 'Seq Scan' && node['Relation Name'] === 'persistence_requests')).toEqual([]);
   const used = new Set(nodes.map(node => node['Index Name']).filter(Boolean));

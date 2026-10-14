@@ -92,7 +92,7 @@ export const SYNOPSIS_DOC_MAX_CHARS = (() => {
  */
 export const SYNOPSIS_PROMPT_VERSION = 1;
 
-const SYSTEM_PROMPT = [
+export const SYNOPSIS_SYSTEM_PROMPT = [
   'You generate one-sentence chunk synopses for a personal knowledge brain.',
   '',
   'Given a document (the FULL_DOCUMENT block) and a chunk from it (the CHUNK',
@@ -168,7 +168,7 @@ export async function generatePerChunkSynopsis(
     // #3813: key-aware tier default, not the hardcoded hash anchor above —
     // an OPENAI_API_KEY-only install must not route to Anthropic.
     model: args.model ?? resolveTierDefault('utility'),
-    system: SYSTEM_PROMPT,
+    system: SYNOPSIS_SYSTEM_PROMPT,
     // PR #6341: the title + document block is the only prefix every chunk of
     // a page shares (the ~190-token system prompt is below every published
     // minimum cacheable length), so it rides on its own `cache: true` block
@@ -262,7 +262,7 @@ export async function generatePerChunkSynopsis(
   return { kind: 'success', synopsis, usage: result.usage };
 }
 
-function buildPagePrompt(pageTitle: string, documentText: string): string {
+export function buildPagePrompt(pageTitle: string, documentText: string): string {
   // Tail-truncate `documentText` to `SYNOPSIS_DOC_MAX_CHARS` so small local
   // chat models don't stall on >100KB pages. Head preserved (title block,
   // frontmatter, intro paragraphs carry the document-level anchor).
@@ -281,7 +281,7 @@ function buildPagePrompt(pageTitle: string, documentText: string): string {
   ].join('\n');
 }
 
-function buildChunkPrompt(chunkText: string): string {
+export function buildChunkPrompt(chunkText: string): string {
   return [
     '',
     '<chunk>',

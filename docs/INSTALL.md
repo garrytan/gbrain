@@ -3,6 +3,7 @@
 Start by choosing the setup you need:
 
 - **Add memory to the agent you already use (recommended):** [Grok Bot](guides/grok-bot.md), [Muse](guides/muse.md), or [Codex / Claude Code](tutorials/connect-coding-agent.md). Keep the existing identity; start keyless, without a personal-agent repository.
+- **Don't want to run anything yourself:** [gbrain.io](https://gbrain.io/?ref=install-md) is hosted GBrain, the easiest start for a first agent or a team.
 - **Connect to your existing hosted brain:** [private handoff and harness access](guides/hosted-harness-access.md). Provision on the host, install in the client environment.
 
 

@@ -162,6 +162,7 @@ test/embedding-rejection-refund.serial.test.ts	global-state	global-state: proces
 test/embedding-truth-predicates.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)
 test/embedding-zero-norm-4616.serial.test.ts	global-state	global-state: process-wide test seams __setEmbedTransportForTests; configureGateway changes the process-wide AI gateway
 test/eval-brainbench-decide.serial.test.ts	R1	R1: mutates process.env (GBRAIN_DECIDE_SLOTS)
+test/eval-longmemeval-call-plan.serial.test.ts	R1	R1: mutates process.env (GBRAIN_CONTEXTUAL_SYNOPSIS_MODEL); process-wide gateway transports (__setChatTransportForTests, __setEmbedTransportForTests, __setRerankTransportForTests)
 test/eval-longmemeval-decide.serial.test.ts	R1	R1: mutates process.env (GBRAIN_DECIDE_SLOTS)
 test/eval-longmemeval-synopsis-tier.serial.test.ts	R1	R1: mutates process.env (GBRAIN_CONTEXTUAL_SYNOPSIS_MODEL)
 test/eval-retrieval-quality-decide.serial.test.ts	R1	R1: mutates process.env (GBRAIN_DECIDE_SLOTS)

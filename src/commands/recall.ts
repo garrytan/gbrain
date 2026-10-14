@@ -271,7 +271,26 @@ async function resolveSourceForRecall(
   }
 }
 
+const RECALL_HELP = `Usage: gbrain recall [<entity>] [options]
+
+Find saved facts (MEMORY_VERBS v1). A question goes in --question; the bare
+positional is an entity name, then a literal piece of fact text.
+
+  gbrain recall <entity>                 facts about one entity (person, company, "user")
+  gbrain recall --question "<q>"         facts ranked by relevance to a natural-language question
+  gbrain recall --query "<q>"            facts plus matching pages
+  gbrain recall --grep <text>            facts whose text contains <text>
+  gbrain recall --since "8 hours ago"    facts from a time window (--today: today, rendered by kind)
+  gbrain recall --session <id>           facts from one session
+
+Options: --limit N, --include-expired, --json, --as-context, --source <id>,
+--budget-tokens N, --budget-policy facts_first|query_first, --supersessions,
+--since-last-run, --pending, --rollup, --watch [SECONDS].
+Withdraw a fact with gbrain forget <fact-id>.
+`;
+
 export async function runRecall(engine: BrainEngine, args: string[]): Promise<void> {
+  if (args.includes('--help') || args.includes('-h')) { process.stdout.write(RECALL_HELP); return; }
   const flags = parseFlags(args);
   if (flags.budgetPolicy !== null || flags.question !== null) {
     const { MEMORY_VERBS_VERSION, operationsByName, verbError } = await import('../core/operations.ts');
@@ -443,6 +462,28 @@ function noteEntityTextFallback(entity: string, matched: number): void {
   );
 }
 
+/**
+ * Cat 41 run 4: agents ask `gbrain recall "how do I take my coffee?"`. The
+ * positional is an entity, then a literal fact-text substring (#4720), so a
+ * question matches neither and recall answered "No matching facts." while
+ * `--question` ranked the fact first. On a brain without embeddings (opted
+ * out or no provider), where question ranking is keyword-only anyway, a
+ * multi-word positional that matched nothing is ranked as a question, with a
+ * note. Brains with embeddings keep their output and get a hint instead.
+ */
+async function keylessQuestionFallback(engine: BrainEngine, flags: ParsedFlags, sourceId: string): Promise<boolean> {
+  const question = flags.entity?.trim() ?? '';
+  if (!/\s/.test(question) || !entityTextFallbackApplies(flags, 0) || flags.since || flags.sinceLastRun || flags.today || flags.asContext || flags.rollup) return false;
+  const { factRecallIsKeywordOnly } = await import('../core/facts/keyword-only.ts');
+  if (!await factRecallIsKeywordOnly(engine, loadConfig())) {
+    process.stderr.write(`[recall] no entity or fact text matched '${question}'. To rank facts against it as a question: gbrain recall --question ${JSON.stringify(question)}\n`);
+    return false;
+  }
+  process.stderr.write(`[recall] no entity or fact text matched '${question}'; ranked facts by relevance to it as a question (keyword-only: this brain has no embeddings).\n`);
+  await runRecallVerb(engine, { ...flags, entity: null, question }, sourceId);
+  return true;
+}
+
 async function runRecallOnce(
   engine: BrainEngine,
   flags: ParsedFlags,
@@ -518,6 +559,7 @@ async function runRecallOnce(
     }
   } else {
     rows = await fetchRowsLocal(engine, flags, sourceId, resolvedSince);
+    if (rows.length === 0 && cursorVariant === 'briefing' && await keylessQuestionFallback(engine, flags, sourceId)) return tStart;
     if (flags.pending) {
       pendingCount = await engine.countUnconsolidatedFacts(sourceId);
     }

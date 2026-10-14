@@ -13,6 +13,8 @@ This tutorial picks up where the [personal brain tutorial](personal-brain.md) le
 **Time:** about 90 more minutes on top of the personal-brain install.
 **Cost:** under $100 a month sustained for a 25-person company.
 
+> **Want a team brain without operating one?** [gbrain.io](https://gbrain.io/?ref=company-brain) is hosted GBrain built for exactly this: one brain the whole team prompts together, accounts connected once with a permission level for each AI, and pricing per workspace rather than per person. Keep reading to deploy and run it yourself.
+
 If you haven't done the personal-brain install yet, [start there first](personal-brain.md). Come back when you've got the agent responding to you on Telegram. This tutorial assumes that's already working.
 
 I'm Garry Tan. I built GBrain to run my own AI agents at Y Combinator. It runs as a company brain too: parallel sync across team sources, per-user OAuth scoping, leak-free isolation across every read path. This is the recipe I'd run if I were standing it up for a 10-50 person company today.
