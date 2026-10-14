@@ -107,6 +107,7 @@ const PER_TASK_KEYS: PerTaskModelRoute[] = [
     description: 'Atom extraction from transcripts/pages (extract_atoms phase)',
     narrowResolver: resolveExtractAtomsModelWithSource,
   },
+  { key: 'models.dream.edge_contradictions', tier: 'utility', description: 'Edge-contradiction judge (edge_contradictions phase)' },
   { key: 'models.drift',                    tier: 'reasoning', description: 'Drift LLM judge (v0.29 scaffold)' },
   { key: 'models.standing_questions',       tier: 'deep',      description: 'Pinned-question answers (standing_questions phase, questions_pin/refresh)' },
   { key: 'models.think',                    tier: 'deep',      description: '`gbrain think` synthesis op' },
@@ -144,6 +145,19 @@ const PER_TASK_KEYS: PerTaskModelRoute[] = [
     envVar: 'GBRAIN_CONTEXTUAL_SYNOPSIS_MODEL',
   },
   { key: 'models.chat',                     tier: 'reasoning', description: 'Default `gateway.chat()` model' },
+  {
+    key: 'models.brainstorm.judge',
+    tier: 'reasoning',
+    description: '`gbrain brainstorm` judge; unset: the run\'s --model, else the default `gateway.chat()` model (models.chat)',
+    // resolveBrainstormJudgeModel reads only this key; unset, the judge runs
+    // the gateway's chat model, which resolves through models.chat.
+    narrowResolver: async engine => {
+      const own = (await engine.getConfig('models.brainstorm.judge'))?.trim();
+      if (own) return { model: await resolveAlias(engine, own), source: 'config' };
+      const chat = await resolveModelDetailed(engine, { configKey: 'models.chat', tier: 'reasoning', fallback: TIER_DEFAULTS.reasoning });
+      return { model: chat.model, source: 'tier_default', label: `models.chat (${sourceLabel(chat.source, { configKey: 'models.chat', tier: 'reasoning' }, 'tier.reasoning')})` };
+    },
+  },
 ];
 
 interface NewerAvailable {

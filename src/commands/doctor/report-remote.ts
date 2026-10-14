@@ -22,6 +22,7 @@ import { schemaVersionHealth } from '../../core/schema-version-health.ts';
 import { checkProjectionReadiness } from './checks/projection-readiness.ts';
 import { remoteUnlinkedFactsCheck } from './checks/unlinked-facts.ts';
 import { checkChatFallbackChain } from './checks/chat-fallback.ts';
+import { checkSubscriptionRouting } from './checks/subscription-routing.ts';
 import { resolveExcludePrivatePages } from '../../core/search/private-visibility.ts';
 import {
   type Check,
@@ -405,6 +406,7 @@ export async function doctorReportRemote(
   // things when reranker is on vs off.
   checks.push(await checkRerankerHealth(engine));
   checks.push(await checkChatFallbackChain(engine, { remote: opts.remote !== false }));
+  checks.push(await checkSubscriptionRouting(engine, { remote: opts.remote !== false }));
 
   // 9a. v0.40.4 graph_signals_coverage: when graph_signals is enabled
   // (via mode bundle default or explicit config override), surface

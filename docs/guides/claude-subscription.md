@@ -53,6 +53,8 @@ The preset sets, in the brain's DB config plane:
 | `models.aliases.haiku` / `sonnet` / `opus` | the matching `claude-cli:` id | an alias in any other key stays on the route |
 | `facts.extraction_model` | `claude-cli:claude-haiku-5-5` | fact extraction otherwise follows the reasoning tier |
 | `models.dream.extract_atoms` | `claude-cli:claude-haiku-5-5` | atom extraction reads its own key before any tier |
+| `models.dream.edge_contradictions` | `claude-cli:claude-haiku-5-5` | the edge-contradiction judge reads its own key before any tier |
+| `models.brainstorm.judge` | `claude-cli:claude-sonnet-5-5` | the brainstorm judge reads its own key before any tier |
 | `models.route` | `claude-cli` | tells `gbrain doctor` which provider to check against |
 
 It changes nothing else. Pricing stays at the recipe's nominal API-list rate,

@@ -40,7 +40,7 @@ class StubConfigEngine {
   async getPage(): Promise<{ source_id: string }> { return { source_id: 'default' }; }
 }
 
-const PINNED = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GOOGLE_API_KEY', 'GEMINI_API_KEY', 'GBRAIN_HOME', 'GBRAIN_MODEL'] as const;
+const PINNED = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GOOGLE_API_KEY', 'GEMINI_API_KEY', 'GBRAIN_HOME', 'GBRAIN_MODEL', 'TYPESAFE_API_KEY', 'JEV_TYPESAFE_API_KEY'] as const;
 let saved: Record<string, string | undefined>;
 beforeEach(() => {
   saved = {};
@@ -156,6 +156,20 @@ describe('gbrain models route claude-cli', () => {
     expect(atoms).toMatchObject({ resolved: 'claude-cli:claude-haiku-5-5', source: 'config: models.dream.extract_atoms' });
     const facts = report.per_task.find(r => r.key === 'facts.extraction_model');
     expect(facts).toMatchObject({ resolved: 'claude-cli:claude-haiku-5-5', source: 'config: facts.extraction_model' });
+    // Both read their own key at runtime (runPhaseEdgeContradictions, resolveBrainstormJudgeModel).
+    expect(report.per_task.find(r => r.key === 'models.dream.edge_contradictions')).toMatchObject({ resolved: 'claude-cli:claude-haiku-5-5', source: 'config: models.dream.edge_contradictions' });
+    expect(report.per_task.find(r => r.key === 'models.brainstorm.judge')).toMatchObject({ resolved: 'claude-cli:claude-sonnet-5-5', source: 'config: models.brainstorm.judge' });
+  });
+
+  test('--apply overwrites a pinned edge-contradictions or brainstorm-judge model', async () => {
+    const engine = new StubConfigEngine();
+    engine.config.set('models.dream.edge_contradictions', 'openai:gpt-5-mini');
+    engine.config.set('models.brainstorm.judge', 'anthropic:claude-sonnet-4-6');
+    await run(engine, ['claude-cli', '--apply']);
+    expect(engine.config.get('models.dream.edge_contradictions')).toBe('claude-cli:claude-haiku-5-5');
+    expect(engine.config.get('models.brainstorm.judge')).toBe('claude-cli:claude-sonnet-5-5');
+    const snapshot = JSON.parse(engine.config.get(ROUTE_UNDO_KEY)!) as Record<string, string | null>;
+    expect(snapshot['models.brainstorm.judge']).toBe('anthropic:claude-sonnet-4-6');
   });
 });
 
@@ -193,5 +207,27 @@ describe('routeSurfaces', () => {
     expect(scan.nightly_probe).toBe('on');
     expect(scan.leaving.find(s => s.surface === 'chat_fallback_chain[0]')).toMatchObject({ model: 'anthropic:claude-sonnet-4-6', standing: 'fails_no_key' });
     expect(scan.surfaces.find(s => s.surface === 'nightly_probe.reader')).toMatchObject({ standing: 'stays' });
+  });
+
+  test('a pinned edge-contradictions or brainstorm-judge model is a surface that leaves', async () => {
+    const engine = new StubConfigEngine();
+    await run(engine, ['claude-cli', '--apply']);
+    engine.config.set('models.dream.edge_contradictions', 'openai:gpt-5-mini');
+    engine.config.set('models.brainstorm.judge', 'anthropic:claude-sonnet-4-6');
+    const scan = await routeSurfaces(engine as never, 'claude-cli');
+    expect(scan.leaving.find(s => s.surface === 'models.dream.edge_contradictions')).toMatchObject({ provider: 'openai', standing: 'fails_no_key' });
+    expect(scan.leaving.find(s => s.surface === 'models.brainstorm.judge')).toMatchObject({ provider: 'anthropic', standing: 'fails_no_key' });
+  });
+
+  test('a TypeSafe reranker keyed through the JEV_TYPESAFE_API_KEY alias bills TypeSafe, not off', async () => {
+    const engine = new StubConfigEngine();
+    await run(engine, ['claude-cli', '--apply']);
+    engine.config.set('search.reranker.enabled', 'true');
+    engine.config.set('search.reranker.model', 'typesafe:jev-1.13.0');
+    let scan = await routeSurfaces(engine as never, 'claude-cli');
+    expect(scan.surfaces.find(s => s.surface === 'reranker')).toMatchObject({ provider: 'typesafe', standing: 'off' });
+    process.env.JEV_TYPESAFE_API_KEY = 'ts-test-not-real';
+    scan = await routeSurfaces(engine as never, 'claude-cli');
+    expect(scan.leaving.find(s => s.surface === 'reranker')).toMatchObject({ provider: 'typesafe', standing: 'bills_other_provider' });
   });
 });

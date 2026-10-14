@@ -138,6 +138,10 @@
         "name": "chat_fallback_chain"
       },
       {
+        "category": "ops",
+        "name": "subscription_routing"
+      },
+      {
         "category": "brain",
         "name": "graph_signals_coverage"
       },

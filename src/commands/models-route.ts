@@ -5,8 +5,9 @@
  * dry run, and applies it.
  *
  * The one preset today is `claude-cli`: every tier, the global default, the
- * `haiku`/`sonnet`/`opus` aliases and the two caller-specific routes (fact
- * extraction, atom extraction) go to the local `claude` binary, which
+ * `haiku`/`sonnet`/`opus` aliases and the caller-specific routes that read
+ * their own key first (fact extraction, atom extraction, the edge-contradiction
+ * judge, the brainstorm judge) go to the local `claude` binary, which
  * authenticates with the user's own Claude Code login. Every call on that
  * route, background jobs included, draws on the user's Claude plan usage
  * limits; the guide (docs/guides/claude-subscription.md) says so and points
@@ -80,6 +81,10 @@ export const CLAUDE_CLI_ROUTE_PRESET: RoutePreset = {
     // The extract_atoms phase resolves its own key before any tier, so the
     // preset writes it rather than rely on the tier falling through.
     { key: 'models.dream.extract_atoms', value: CLAUDE_CLI_HAIKU, why: 'atom extraction reads its own key first' },
+    // These two callers also read their own key before any tier, so a pin
+    // left there would keep billing its provider after the preset.
+    { key: 'models.dream.edge_contradictions', value: CLAUDE_CLI_HAIKU, why: 'the edge-contradiction judge reads its own key first' },
+    { key: 'models.brainstorm.judge', value: CLAUDE_CLI_SONNET, why: 'the brainstorm judge reads its own key first' },
   ],
 };
 
@@ -216,13 +221,26 @@ function throwSafeConfig(): GBrainConfig | null {
   try { return loadConfig(); } catch { return null; }
 }
 
+/**
+ * The credential a provider lacks here, or null when it has one (or needs
+ * none). A recipe with its own `authPresent` (TypeSafe accepts
+ * JEV_TYPESAFE_API_KEY as well as TYPESAFE_API_KEY) decides by that, the way
+ * the gateway's no-key preflight does.
+ */
+function missingCredential(providerId: string | null, env: Record<string, string>): string | null {
+  const recipe = providerId ? RECIPES.get(providerId) : undefined;
+  const required = recipe?.auth_env?.required ?? [];
+  if (required.length === 0) return null;
+  if (recipe?.authPresent) return recipe.authPresent(env) ? null : required[0]!;
+  return required.find(k => !env[k]) ?? null;
+}
+
 function standingFor(model: string, provider: string, env: Record<string, string>): Pick<RouteSurface, 'provider' | 'standing' | 'missing_key'> {
   const { provider: p } = splitProviderModelId(model);
   const id = p?.trim().toLowerCase() ?? null;
   if (model === 'none') return { provider: id, standing: 'off' };
   if (id === provider) return { provider: id, standing: 'stays' };
-  const required = id ? RECIPES.get(id)?.auth_env?.required ?? [] : [];
-  const missing = required.find(k => !env[k]);
+  const missing = missingCredential(id, env);
   return missing ? { provider: id, standing: 'fails_no_key', missing_key: missing } : { provider: id, standing: 'bills_other_provider' };
 }
 
@@ -272,7 +290,7 @@ export async function routeSurfaces(engine: BrainEngine, provider: string): Prom
   const embeddingModel = cfg?.embedding_model?.trim() || null;
   const embeddingProvider = embeddingModel ? splitProviderModelId(embeddingModel).provider?.trim().toLowerCase() ?? null : null;
   const embeddingRequired = embeddingProvider ? RECIPES.get(embeddingProvider)?.auth_env?.required ?? [] : [];
-  const embeddingMissing = embeddingRequired.find(k => !env[k]);
+  const embeddingMissing = missingCredential(embeddingProvider, env);
   const embedding: EmbeddingStanding = {
     model: embeddingModel,
     provider: embeddingProvider,
