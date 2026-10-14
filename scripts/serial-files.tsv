@@ -202,8 +202,10 @@ test/graduation-serve-guard.serial.test.ts	global-state	global-state: spawns rea
 test/graph-query-thin-client-source-flag.serial.test.ts	R2	R2: mock.module(../src/core/config.ts, ../src/core/mcp-client.ts) replaces modules for every file in the process
 test/guarded-http-tls.serial.test.ts	global-state	global-state: binds local servers/ports
 test/harness-delivery-recovery.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll; R4: PGLiteEngine without an afterAll disconnect
+test/harness-wiring-hermes.serial.test.ts	R1	R1: mutates process.env (HERMES_HOME, GBRAIN_HOME, HOME, CODEX_HOME (+1 more))
 test/hook-backup-notice.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, GBRAIN_BACKUP_CHECK)
 test/hook-command.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, GBRAIN_HOOKS, GBRAIN_HOOK_LANE, GBRAIN_SOURCE (+3 more))
+test/hook-hermes.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, HERMES_HOME, DATABASE_URL, GBRAIN_DATABASE_URL (+4 more))
 test/hook-session-start-serve-wait.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, CLAUDE_CONFIG_DIR, CODEX_HOME)
 test/hook-writeback-stop.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, GBRAIN_SOURCE)
 test/hybrid-adaptive-dedup-cache-plane.serial.test.ts	R2	R2: mock.module(../src/core/embedding.ts) replaces modules for every file in the process

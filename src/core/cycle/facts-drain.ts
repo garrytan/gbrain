@@ -23,12 +23,18 @@ export async function runPhaseFactsDrain(engine: BrainEngine | null, opts: { dry
   const r = await runFactsDrain(engine, { owner: 'cycle', signal: opts.signal, wallClockMs: Math.min(FACTS_DRAIN_WALL_MS, remaining) });
   const details: Record<string, unknown> = {
     outcome: r.outcome, completed: r.completed, failed: r.failed, deferred: r.deferred, facts_inserted: r.facts_inserted,
-    spent_usd: r.spent_usd, unpriced_calls: r.unpriced_calls, backlog_before: r.backlog_before, backlog_after: r.backlog_after, model: r.model,
+    spent_usd: r.spent_usd, unpriced_calls: r.unpriced_calls, backlog_before: r.backlog_before, backlog_after: r.backlog_after,
+    waiting_after: r.waiting_after, delayed_after: r.delayed_after, active_after: r.active_after,
+    waiting_children_after: r.waiting_children_after, paused_after: r.paused_after, remaining_after: r.remaining_after, model: r.model,
     ...(r.error ? { code: r.error.code, reason: r.error.reason, fix: r.error.fix } : {}),
   };
   if (r.outcome === 'disabled') return { ...base, status: 'skipped', summary: 'facts extraction is off (facts.extraction_enabled false)', details };
-  if (r.outcome === 'idle' || r.outcome === 'not_applicable') return { ...base, status: 'ok', summary: 'no queued facts-absorb jobs', details };
-  const summary = `${r.completed} page(s) extracted (${r.facts_inserted} facts, $${r.spent_usd.toFixed(3)}), ${r.backlog_after ?? '?'} still queued` +
+  if (r.outcome === 'not_applicable') return { ...base, status: 'skipped', summary: 'facts drain unavailable; queue completion not verified', details };
+  const remainingJobs = r.remaining_after ?? r.backlog_after;
+  const hasRemaining = remainingJobs !== null && remainingJobs > 0;
+  if (r.outcome === 'idle' && remainingJobs === 0) return { ...base, status: 'ok', summary: 'no queued facts-absorb jobs', details };
+  const summary = `${r.completed} page(s) extracted (${r.facts_inserted} facts, $${r.spent_usd.toFixed(3)}), ${remainingJobs ?? '?'} facts-absorb job(s) remain` +
+    (hasRemaining ? ` (${r.waiting_after ?? 0} waiting, ${r.delayed_after ?? 0} delayed, ${r.active_after ?? 0} active, ${r.waiting_children_after ?? 0} waiting-children, ${r.paused_after ?? 0} paused)` : '') +
     (r.error ? `: ${r.error.message}` : '');
-  return { ...base, status: FACTS_DRAIN_DEFERRALS.has(r.outcome) || r.failed > 0 ? 'warn' : 'ok', summary, details };
+  return { ...base, status: hasRemaining || FACTS_DRAIN_DEFERRALS.has(r.outcome) || r.failed > 0 ? 'warn' : 'ok', summary, details };
 }

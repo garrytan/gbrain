@@ -542,7 +542,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "name": "capture",
     "idempotent": true,
     "outputRedaction": "no_stored_text",
-    "description": "Quick note (\"just remember this\"): slugged under inbox/ by date + content hash, so recapturing is idempotent. put_page controls slug or type; remember is for facts about entities.",
+    "description": "Quick notes, idempotent: slug inbox/<date>-<hash>. put_page sets slug/type; remember saves entity facts.",
     "params": {
       "source_id": {
         "type": "string",
@@ -611,7 +611,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       "content": {
         "type": "string",
         "required": true,
-        "description": "Markdown or text (not a file path)."
+        "description": "Text/Markdown, not a path."
       },
       "local_file": {
         "type": "string",
@@ -626,7 +626,11 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       "type": {
         "type": "string",
         "required": false,
-        "description": "Page type (default note)."
+        "description": "Schema type; default note."
+      },
+      "ambient": {
+        "type": "boolean",
+        "description": "Auto-capture; needs auto_writeback."
       }
     },
     "scope": "write",

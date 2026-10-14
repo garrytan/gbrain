@@ -10,6 +10,8 @@ import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { runTranscriptsIngest } from '../src/core/transcripts/ingest.ts';
+import { Database } from 'bun:sqlite';
+import { buildHermesFixture } from './fixtures/transcripts/hermes-fixture-builder.ts';
 
 let engine: PGLiteEngine;
 let dir: string;
@@ -94,5 +96,43 @@ describe('re-ingest keeps frontmatter it does not render (#5431)', () => {
 
     const again = await runTranscriptsIngest(engine, { paths: [b], sourceId: 'default', format: 'chatgpt' });
     expect(again.pages).toMatchObject({ imported: 0, skipped: 1 });
+  });
+});
+
+describe('message cutover preserves prior archives', () => {
+  // Existing rename coverage exercises a full replacement. This checks the
+  // opposite boundary: a cutoff view must never reuse that full archive's
+  // identity, replace its text, or stale-delete its parts. Real persistence
+  // and an unchanged rerun exercise the production identity and hash gates.
+  test('full Hermes parts survive cutoff ingest, and the independent view rerun skips', async () => {
+    const path = buildHermesFixture(dir);
+    const db = new Database(path);
+    try {
+      const insert = db.prepare('INSERT INTO messages(session_id, role, content, timestamp) VALUES (?, ?, ?, ?)');
+      for (let i = 0; i < 12; i++) insert.run('hermes-fixture-1', i % 2 ? 'assistant' : 'user',
+        'ARCHIVE-BEFORE-MARKER '.repeat(450), 1785916806);
+    } finally { db.close(); }
+    const options = { paths: [path], sourceId: 'default', format: 'hermes' as const,
+      sessionSources: ['cli'], userPatternsPath: join(dir, 'no-private-patterns.txt') };
+    const full = await runTranscriptsIngest(engine, options);
+    expect(full.pages.imported).toBeGreaterThan(1);
+    const before = await engine.executeRaw<{ slug: string; compiled_truth: string }>(
+      'SELECT slug, compiled_truth FROM pages WHERE source_id = $1 AND deleted_at IS NULL ORDER BY slug', ['default']);
+    const viewOptions = { ...options, messagesSinceIso: '2026-08-05T08:00:07Z' };
+    const view = await runTranscriptsIngest(engine, viewOptions);
+    expect(view.pages.imported).toBe(1);
+    expect(view.partsDeleted).toBe(0);
+    const viewSlug = view.files[0].sessions[0].baseSlug;
+    expect(before.some(row => row.slug === viewSlug)).toBe(false);
+    const after = await engine.executeRaw<{ slug: string; compiled_truth: string }>(
+      'SELECT slug, compiled_truth FROM pages WHERE source_id = $1 AND deleted_at IS NULL ORDER BY slug', ['default']);
+    expect(after.filter(row => row.slug !== viewSlug)).toEqual(before);
+    const page = after.find(row => row.slug === viewSlug)!;
+    expect(page.compiled_truth).toContain('Launch checklist drafted');
+    expect(page.compiled_truth).not.toContain('ARCHIVE-BEFORE-MARKER');
+    const rerun = await runTranscriptsIngest(engine, viewOptions);
+    expect(rerun.pages).toMatchObject({ imported: 0, skipped: 1 });
+    expect(rerun.partsDeleted).toBe(0);
+    expect(await engine.executeRaw('SELECT slug, compiled_truth FROM pages WHERE source_id = $1 AND deleted_at IS NULL ORDER BY slug', ['default'])).toEqual(after);
   });
 });

@@ -78,6 +78,8 @@ import type {
   SweepStatusRequest,
   SweepStatusResponse,
 } from './sweep-ipc.ts';
+import type { HermesStartRequest, HermesStartResponse, HermesStatusRequest, HermesStatusResponse,
+  HermesAbortRequest, HermesAbortResponse } from './hermes-ipc.ts';
 
 const SOCK_NAME = '.gbrain-resolve.sock';
 const SECRET_NAME = '.gbrain-ipc-secret';
@@ -242,7 +244,8 @@ export type IpcRequest =
   | SyncStatusRequest
   | SyncAbortRequest
   | SweepStartRequest
-  | SweepStatusRequest;
+  | SweepStatusRequest
+  | HermesStartRequest | HermesStatusRequest | HermesAbortRequest;
 
 export interface ResolveResponse {
   ok: boolean;
@@ -288,6 +291,9 @@ export interface IpcHandlers {
   sync_abort?: SyncAbortIpcHandler;
   sweep_start?: SweepStartIpcHandler;
   sweep_status?: SweepStatusIpcHandler;
+  hermes_start?: (req: HermesStartRequest) => Promise<HermesStartResponse>;
+  hermes_status?: (req: HermesStatusRequest) => HermesStatusResponse;
+  hermes_abort?: (req: HermesAbortRequest) => HermesAbortResponse;
 }
 
 export interface IpcServerOpts {
@@ -687,6 +693,16 @@ export async function requestSweepStatus(
   return syncRoundTrip<SweepStatusResponse>(socketPath, line, opts.timeoutMs ?? SWEEP_STATUS_CLIENT_TIMEOUT_MS);
 }
 
+export async function requestHermesStart(socketPath: string, req: Omit<HermesStartRequest, 'kind' | 'protocol'>) {
+  return syncRoundTrip<HermesStartResponse>(socketPath, JSON.stringify({ kind: 'hermes_start', protocol: 2, ...req }), 2000);
+}
+export async function requestHermesStatus(socketPath: string, req: Omit<HermesStatusRequest, 'kind' | 'protocol'>) {
+  return syncRoundTrip<HermesStatusResponse>(socketPath, JSON.stringify({ kind: 'hermes_status', protocol: 2, ...req }), 1500);
+}
+export async function requestHermesAbort(socketPath: string, req: Omit<HermesAbortRequest, 'kind' | 'protocol'>) {
+  return syncRoundTrip<HermesAbortResponse>(socketPath, JSON.stringify({ kind: 'hermes_abort', protocol: 2, ...req }), 1500);
+}
+
 async function syncRoundTrip<Resp extends { ok: boolean; protocol: 2 }>(
   socketPath: string,
   line: string,
@@ -884,6 +900,12 @@ export async function startResolveIpcServer(
             resp = JSON.stringify(
               await handleSyncKind(parsed as SweepStatusRequest, handlers.sweep_status, opts),
             );
+          } else if (kind === 'hermes_start') {
+            resp = JSON.stringify(await handleSyncKind(parsed as HermesStartRequest, handlers.hermes_start, opts));
+          } else if (kind === 'hermes_status') {
+            resp = JSON.stringify(await handleSyncKind(parsed as HermesStatusRequest, handlers.hermes_status, opts));
+          } else if (kind === 'hermes_abort') {
+            resp = JSON.stringify(await handleSyncKind(parsed as HermesAbortRequest, handlers.hermes_abort, opts));
           } else {
             resp = JSON.stringify({ ok: false, error: `unknown_kind:${String(kind)}` });
           }

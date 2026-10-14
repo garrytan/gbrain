@@ -33,7 +33,7 @@ function childEnv(extra: Record<string, string> = {}): Record<string, string> {
   for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v;
   for (const [, name] of CONFIG_API_KEY_ENV) delete env[name];
   for (const k of ['GEMINI_API_KEY', 'GBRAIN_MODEL_DISCOVERY', 'GBRAIN_DATABASE_URL', 'DATABASE_URL', 'GBRAIN_EMBEDDING_MODEL', 'OPENAI_BASE_URL', 'CLAUDE_CONFIG_DIR', 'GBRAIN_SOURCE']) delete env[k];
-  return { ...env, HOME: home, GBRAIN_HOME: home, CODEX_HOME: join(home, 'codex'), ...extra };
+  return { ...env, HOME: home, GBRAIN_HOME: home, CODEX_HOME: join(home, 'codex'), HERMES_HOME: join(home, '.hermes'), ...extra };
 }
 
 async function gbrain(args: string[], extra: Record<string, string> = {}): Promise<{ code: number; stdout: string; stderr: string }> {
@@ -61,9 +61,11 @@ function setConfig(patch: Record<string, unknown>, drop: string[] = []): void {
 }
 
 /** What `gbrain setup claude-code` leaves beside ~/.claude.json. */
-function writeReceipt(providers: 'accepted' | 'declined'): void {
-  writeFileSync(join(home, '.gbrain-connection-claude-code-gbrain.json'), JSON.stringify({
-    harness: 'claude-code', connection: 'local-stdio', setup_receipt_version: 1, status: 'installed', name: 'gbrain',
+function writeReceipt(providers: 'accepted' | 'declined', harness: 'claude-code' | 'hermes' = 'claude-code'): void {
+  const dir = harness === 'hermes' ? join(home, '.hermes') : home;
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `.gbrain-connection-${harness}-gbrain.json`), JSON.stringify({
+    harness, connection: 'local-stdio', setup_receipt_version: harness === 'hermes' ? 3 : 1, status: 'installed', name: 'gbrain',
     gbrain_home: join(home, '.gbrain'), scope: 'user',
     consent: { providers: { value: providers, source: 'default' }, capture: { value: 'declined', source: 'default' } },
   }));
@@ -95,6 +97,7 @@ beforeEach(() => {
   requests = [];
   rmSync(join(home, '.gbrain', 'model-cache.json'), { force: true });
   rmSync(join(home, '.gbrain-connection-claude-code-gbrain.json'), { force: true });
+  rmSync(join(home, '.hermes'), { recursive: true, force: true });
   setConfig({ embedding_disabled: true }, ['embedding_model', 'embedding_dimensions']);
 });
 
@@ -143,6 +146,21 @@ describe('doctor with provider keys present', () => {
     expect(check.readiness_state).toBe('disabled_by_choice');
     expect(String(check.message)).toContain('skipped by consent');
     expect((check.fix as { argv: string[] }).argv).toEqual(['gbrain', 'setup', 'claude-code', '--providers']);
+  }, 180_000);
+
+  test('a Hermes setup receipt that declined provider use is honored too: zero outbound requests, and the fix names `gbrain setup hermes --providers`', async () => {
+    writeReceipt('declined', 'hermes');
+    const run = await gbrain(['doctor', '--json'], providerEnv());
+    expect(requests).toEqual([]);
+    // Since #6607 plain doctor sends nothing either way; the OpenAI-routed embedding probe is what the decline gates.
+    setConfig({ embedding_model: 'openai:text-embedding-3-large', embedding_dimensions: 1536 }, ['embedding_disabled']);
+    await gbrain(['doctor', '--only', 'embedding_provider', '--probe', '--yes', '--json'], providerEnv());
+    expect(requests).toEqual([]);
+    const check = checksOf(run.stdout).find((c) => c.name === 'provider_consent')!;
+    expect(check.readiness_state).toBe('disabled_by_choice');
+    expect(String(check.message)).toContain('.hermes');
+    expect((check.fix as { argv: string[] }).argv).toEqual(['gbrain', 'setup', 'hermes', '--providers']);
+    expect((check.details as { harness: string }).harness).toBe('hermes');
   }, 180_000);
 
   test('setup accepted provider use: discovery runs before the first OpenAI-routed call', async () => {

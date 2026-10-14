@@ -217,6 +217,7 @@
   "test/e2e/harness-access.test.ts": 2880,
   "test/e2e/health-entity-types-pack.test.ts": 6730,
   "test/e2e/health-parity-postgres.test.ts": 2080,
+  "test/e2e/hermes-local-subagent-postgres.test.ts": 2700,
   "test/e2e/hnsw-iterative-scan-recall-postgres.test.ts": 7750,
   "test/e2e/hot-memory-invalidation-postgres.test.ts": 3010,
   "test/e2e/http-transport.test.ts": 2000,

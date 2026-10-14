@@ -7,6 +7,9 @@
  * transcripts-lane citizens only — never discover.ts (it imports
  * BrainEngine), never an engine module.
  *
+ * Hermes is a member with a twist: its sessions live in one SQLite store (state.db),
+ * so confine pins that store under the Hermes home and parse takes the session id.
+ *
  * OpenClaw is deliberately NOT a member: its capture is IN-PROCESS from the
  * context-engine's compact() lifecycle, where the sessionFile is trusted-
  * plane input from the host gateway (context-engine.ts documents why no
@@ -23,8 +26,9 @@
 import type { ConfineTranscriptResult, ParsedTranscript } from './claude-code-jsonl.ts';
 import { confineTranscriptPath, parseTranscript } from './claude-code-jsonl.ts';
 import { confineCodexTranscriptPath, discoverNewestCodexRollout, parseCodexHookTranscript } from './codex-hook-lane.ts';
+import { confineHermesStateDb, parseHermesHookSession } from './hermes-hook-lane.ts';
 
-export type CaptureHarness = 'claude-code' | 'codex';
+export type CaptureHarness = 'claude-code' | 'codex' | 'hermes';
 
 export interface HarnessCaptureSpec {
   /** Validate an untrusted transcript path against THIS harness's pinned root. */
@@ -33,7 +37,7 @@ export interface HarnessCaptureSpec {
    * `collectToolCalls: false` (the memorable-off default path) skips the
    * tool-call/result collection + join entirely — that data exists only for
    * the receipt, and the gate answer is known before the parse. */
-  parse(path: string, opts?: { maxBytes?: number; collectToolCalls?: boolean }): ParsedTranscript;
+  parse(path: string, opts?: { maxBytes?: number; collectToolCalls?: boolean; sessionId?: string }): ParsedTranscript;
   /** Optional bounded fallback when the payload carries no usable path.
    * `opts.root` is the same TEST SEAM as confine's — production callers walk
    * the harness's pinned store. */
@@ -50,8 +54,13 @@ export const CAPTURE_SPECS = {
     parse: (path, opts) => parseCodexHookTranscript(path, opts),
     discover: (sessionId, opts) => discoverNewestCodexRollout(sessionId, opts),
   },
+  // Hermes has no transcript file: the "path" is the profile's state.db and the session id selects rows.
+  hermes: {
+    confine: (p, opts) => confineHermesStateDb(p, opts),
+    parse: (path, opts) => parseHermesHookSession(path, opts),
+  },
 } as const satisfies Record<CaptureHarness, HarnessCaptureSpec>;
 
 export function captureSpecFor(harness: string | undefined): HarnessCaptureSpec {
-  return harness === 'codex' ? CAPTURE_SPECS.codex : CAPTURE_SPECS['claude-code'];
+  return harness === 'codex' ? CAPTURE_SPECS.codex : harness === 'hermes' ? CAPTURE_SPECS.hermes : CAPTURE_SPECS['claude-code'];
 }

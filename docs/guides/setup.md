@@ -1,17 +1,17 @@
 # Connect an agent with `gbrain setup`
 
-`gbrain setup claude-code` and `gbrain setup codex` give Claude Code or Codex
-memory in one command: a brain (the existing one, or a new keyless local
+`gbrain setup claude-code`, `gbrain setup codex` and `gbrain setup hermes` give
+Claude Code, Codex or a Hermes profile memory in one command: a brain (the existing one, or a new keyless local
 brain), a stdio MCP entry, and the read-context hooks, verified with the same
 smoke test `gbrain doctor --only harness_wiring` runs. Setup changes only what
 it records, and `--remove` undoes exactly that.
 
-**Say to your agent:** *"set up gbrain memory for Claude Code"* (or *"for Codex"*) — *"preview what gbrain setup would change"* — *"remove the gbrain setup from Codex"*. The agent runs `gbrain setup claude-code` or `gbrain setup codex` (with `--dry-run` or `--remove`).
+**Say to your agent:** *"set up gbrain memory for Claude Code"* (or *"for Codex"*, *"for this Hermes profile"*) — *"preview what gbrain setup would change"* — *"remove the gbrain setup from Codex"*. The agent runs `gbrain setup claude-code`, `gbrain setup codex` or `gbrain setup hermes` (with `--dry-run` or `--remove`).
 
 ```bash
 bun install -g github:garrytan/gbrain
 gbrain setup codex --dry-run   # the resolved target and every step; writes nothing
-gbrain setup codex             # wire and verify (or: gbrain setup claude-code)
+gbrain setup codex             # wire and verify (or: gbrain setup claude-code | hermes)
 gbrain setup codex --remove    # remove only what setup wrote
 ```
 
@@ -27,13 +27,17 @@ Before it writes anything, setup resolves and prints:
 | Launcher | `--gbrain-bin`, else the absolute `gbrain` on `PATH` (GUI-launched hosts inherit no `PATH`, so a bare name is never written). |
 | Surface | `--surface`, else `GBRAIN_SURFACE`, else the surface already registered, else `full`. |
 | Owner | Who owns the MCP name now: nobody, this setup (its receipt), or the gbrain Claude Code or Codex plugin (setup then adds hooks only). |
+| Profile | Hermes only: `--hermes-home DIR`, else `HERMES_HOME`, else `~/.hermes`. Setup writes only that profile. |
 
 It refuses with a coded error, before any write, when the target is not safe:
 a hosted brain is already connected (`setup_hosted_connection`: setup never
 creates a second, local brain), or another owner holds the target
 (`setup_owner_conflict`: a live PGLite server it did not register, an entry it
 did not write, another install's receipt, or the `bootstrap harness` lane;
-for Codex also the bootstrap Codex hook lane on an event setup would wire).
+for Codex also the bootstrap Codex hook lane on an event setup would wire; for
+Hermes also a hand-written gbrain hook on an event setup would wire). For
+Hermes, a profile that already holds an HTTP gbrain entry or the hosted
+provider (`gbrain hermes setup --url …`) is a hosted connection too.
 Each code's fix is in [setup refusals](repair.md#setup-refusals).
 
 ## Three decisions
@@ -43,8 +47,8 @@ the recorded answers; a flag changes one.
 
 | Decision | Default | Change it |
 |---|---|---|
-| Wiring scope | User scope (every session), read-context hooks `SessionStart` and `UserPromptSubmit` | `--scope project` (Claude Code only: sessions in this directory), `--no-hooks` (MCP only; `GBRAIN_HOOKS=0` counts as the same opt-out) |
-| Automatic capture | Declined: no capture hook (Claude Code `Stop` and `SessionEnd`, Codex `SessionEnd`), so no transcript capture | `--capture`. An existing `memory.auto_writeback: off` wins over `--capture`. |
+| Wiring scope | User scope (every session), read-context hooks: `SessionStart` and `UserPromptSubmit` (Claude Code, Codex), `pre_llm_call` (Hermes, which has no session-start injection: the first turn carries the digest) | `--scope project` (Claude Code only: sessions in this directory; Codex and Hermes are user scope, Hermes per profile), `--no-hooks` (MCP only; `GBRAIN_HOOKS=0` counts as the same opt-out) |
+| Automatic capture | Declined: no capture hook (Claude Code `Stop` and `SessionEnd`, Codex `SessionEnd`, Hermes `on_session_finalize`), so no transcript capture | `--capture`. An existing `memory.auto_writeback: off` wins over `--capture`. |
 | Provider use | Declined: a new brain is keyless, and setup configures no paid provider | `--providers` (a new brain is then created with embeddings) |
 
 Provider keys in the environment do not change these defaults.
@@ -57,7 +61,7 @@ use. OpenAI model discovery (`GET /v1/models`, which otherwise runs only before
 the first OpenAI-routed call) is skipped,
 and `gbrain doctor --probe` does not probe the embedding provider. `gbrain
 doctor` reports the decision as `provider_consent` ("skipped by consent").
-Only the user changes it: `gbrain setup claude-code --providers` records
+Only the user changes it: `gbrain setup claude-code --providers` (or `codex`, `hermes`) records
 provider use as accepted for this install. A decline in any of this install's
 setup receipts wins.
 
@@ -95,7 +99,9 @@ the serve binds its socket about 2 seconds after spawn.
 4. `native-verified`: the capability table records an observed push for the
    harness, and setup wired and trusted that event. Codex reaches it when
    setup owns the trusted `UserPromptSubmit` hook (observed on codex-cli
-   0.162.1, see the table below); Claude Code stays `native-pending`.
+   0.162.1, see the table below), and Hermes when setup owns the approved
+   `pre_llm_call` hook (observed on hermes-agent v0.21.7); Claude Code stays
+   `native-pending`.
 
 ## Ownership and removal
 
@@ -146,9 +152,90 @@ leaves it alone. The brain, its notes, unrelated MCP servers and hooks stay.
 Two installs on one machine (different `GBRAIN_HOME`) each use their own
 `--name` and remove only their own entries.
 
+### Hermes
+
+Hermes keeps everything in the profile directory (`$HERMES_HOME`, default
+`~/.hermes`; a named profile is `~/.hermes/profiles/<name>`, so pass
+`--hermes-home` for it). Setup edits that profile's `config.yaml` as text, one
+entry at a time, so comments, key order and every other entry stay byte for
+byte. `gbrain setup hermes` writes:
+
+- `mcp_servers.<name>` with `command`, `args: [serve, --surface, <surface>]` and
+  `env`. Hermes filters a stdio server's environment to a safe baseline plus the
+  entry's own `env`, so `GBRAIN_HOME` is always pinned there (and
+  `GBRAIN_SOURCE` when set). For a profile other than `~/.hermes` it also pins
+  `HERMES_HOME`: Hermes strips that variable from a stdio child, and without it
+  the serve could not find that profile's setup receipt, so a recorded
+  `providers: declined` would be ignored. With `--providers`, each provider key
+  gbrain needs (the configured embedding model's, else those set in your
+  environment, unless `config.json` already holds it) is added as a
+  `${OPENAI_API_KEY}`-style reference, never a value: put the key in the
+  profile's `.env` or export it where Hermes starts. No `memory.provider` (that slot is exclusive and
+  belongs to the hosted provider lane), and none of Hermes' optional keys
+  (`connect_timeout`, `enabled`, `tools`): they keep Hermes' defaults, and a key
+  you add later makes the entry yours (kept on `--remove`);
+- one shell-hook item under `hooks.pre_llm_call`, running
+  `/usr/bin/env GBRAIN_HOOK_LANE=setup GBRAIN_HOME=… <launcher> hook user-prompt --harness hermes`
+  (10 s; the absolute `env` is the first path-like token Hermes inspects, so
+  `hermes hooks doctor` finds an executable and records its mtime; `GBRAIN_SOURCE`
+  and, for a non-default profile, `HERMES_HOME` ride the same command).
+  The hook skips cron, kanban and subagent turns and child sessions
+  (`parent_session_id`); gateway senders are people and are not skipped, and
+  reads stay world-visibility only. It reads Hermes' whole stdin (a long
+  session's history passes 4 MB) and waits for a starting serve only on a
+  session's first turn. Hermes runs it before each turn and appends its `{"context": "…"}`
+  answer to the user message, so gbrain's context reaches the model without a
+  tool call. The first turn of a session (and the first turn gbrain sees of a
+  resumed one) also carries the session-start digest. The block stays under
+  8 KB, below Hermes' 10 000-character spill threshold, and private facts are
+  never pushed;
+- only after `--capture`, one item under `hooks.on_session_finalize` running the
+  detached `hook session-end --harness hermes` (5 s). Hermes passes no
+  transcript, so the hook reads that one session from the profile's `state.db`
+  (read-only, human sessions only: cron, subagent and kanban sessions are
+  skipped), secret-scans it, and spools it like the other capture lanes;
+- the approval Hermes requires before it runs a user shell hook: one
+  `(event, command)` entry per hook in `$HERMES_HOME/shell-hooks-allowlist.json`
+  (the same entry `hermes hooks` writes at its consent prompt). Without it a
+  non-interactive Hermes silently skips the hook. Setup writes approvals only
+  for the hooks it wrote, merges with the ones you already have, keeps the file
+  `0600`, and never touches `hooks_auto_accept`.
+
+Each entry is owned by the sha256 fingerprint of its parsed value, in
+`$HERMES_HOME/.gbrain-connection-hermes-<name>.json`
+(`setup_receipt_version: 3`). The write order is receipt `prepared`, brain, MCP
+entry, hook items (inert until approved), approvals (activation, last), receipt
+`installed`; `--remove` runs it backwards. A hook command, an approval, or an
+MCP entry you edited is preserved and reported; setup refuses a `config.yaml`
+or allowlist it cannot parse, and a block it cannot edit safely (a non-empty
+inline `mcp_servers: {…}`, `hooks:` as a list), rather than rewrite it. Every
+planned edit is dry-run in memory first, so a refusal happens before the brain,
+the receipt or any file is written; an empty `mcp_servers: null` (what Hermes
+writes after `hermes mcp remove`) is fine. A `config.yaml` that changes while
+setup runs aborts it with `configuration_conflict` (rerun to converge). Setup
+refuses a profile with `memory.provider: gbrain` (the hosted lane already pushes
+context): remove that lane with `gbrain hermes setup --remove` first. Hermes reads its config and
+hooks at process start, so restart Hermes (a running gateway needs a restart)
+and check `hermes mcp test <name>`. `gbrain hook … --harness hermes` also
+answers `hermes hooks test pre_llm_call`, which needs no model call.
+
+An existing `~/.hermes/plugins/gbrain-session-corpus` plugin already exports
+sessions on `on_session_finalize`; `--capture` prints a note, since both paths
+would ingest the same session.
+
+**Concurrency.** Every Hermes process (each CLI or TUI session, the gateway,
+cron, `hermes -z`) starts its own stdio `gbrain serve`. A PGLite brain has one
+writer: the second server comes up status-only (`gbrain_status`, no `recall`),
+as with several Claude Code sessions. For a gateway plus CLI sessions, or
+several profiles on one brain, run one `gbrain serve --http` and connect
+Hermes to it through the hosted/HTTP lane, `gbrain hermes setup --hermes-home
+DIR --url <mcp-url>` ([Hermes guide](../mcp/HERMES.md)), or use Postgres.
+`gbrain setup hermes` refuses while another server holds the brain
+(`live_serve`) and points there.
+
 ## Harness capability table
 
-The table is data (`src/core/setup/capabilities.ts`, version 2). Push is never
+The table is data (`src/core/setup/capabilities.ts`, version 3). Push is never
 claimed from documentation alone.
 
 | Harness | Transport | Setup | Push |
@@ -157,7 +244,7 @@ claimed from documentation alone.
 | codex | local stdio | supported | native-verified: on codex-cli 0.162.1, after a fresh `gbrain setup codex`, the `UserPromptSubmit` hook put a randomized brain item into a fresh native `codex exec` session, which answered it with no tool call (3 of 3 installs); a `--no-hooks` control answered NONE |
 | openclaw | local context engine | refusal with [its guide](../mcp/OPENCLAW.md) | native-pending |
 | openclaw | thin client | refusal with [its guide](../mcp/OPENCLAW.md) | unsupported |
-| hermes | local stdio | refusal with [its guide](../mcp/HERMES.md) | unsupported |
+| hermes | local stdio | supported (`pre_llm_call` read hook; `on_session_finalize` capture on `--capture`) | native-verified: on hermes-agent v0.21.7 (427d605d), after a fresh `gbrain setup hermes`, the approved `pre_llm_call` hook put a randomized brain item into a fresh native `hermes -z` session, which answered it with no tool call (3 of 3 installs; `state.db` shows the item only in the hook-appended user content); a `--no-hooks` control answered NONE |
 
 ## How setup relates to the other entry points
 
@@ -167,9 +254,11 @@ claimed from documentation alone.
   the same stdio entry and the same `gbrain hook` commands, without the
   personal-agent workspace, and owns them by hash instead of a marker.
 - `gbrain connect <url> --install`: the path for a hosted brain; setup refuses
-  rather than replace it.
+  rather than replace it. For Hermes the hosted/HTTP lane is
+  `gbrain hermes setup --url <mcp-url>` (provider, HTTP MCP entry, skills).
 - `gbrain bootstrap harness`: the path for a shared `gbrain serve --http`; setup
-  points to it when a live HTTP server owns the brain.
+  points to it when a live HTTP server owns the brain (Hermes: the
+  `gbrain hermes setup --url` lane, since bootstrap does not wire Hermes).
 - `gbrain mcp expose` and `gbrain agent register`: host-side steps that publish
   a brain to other devices or mint scoped clients; setup does not run them.
 - `gbrain onboard`: improves an existing brain's content (link and timeline

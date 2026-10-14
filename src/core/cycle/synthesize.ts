@@ -63,6 +63,7 @@ import { basename, join, dirname, isAbsolute, resolve } from 'node:path';
 import { parseLlmJson } from '../llm-json.ts';
 import type { BrainEngine, DreamVerdict, TriageSegment } from '../engine.ts';
 import type { PhaseResult, PhaseError } from '../cycle.ts';
+import { childSubmitAuthority, type LocalSubagentSubmit } from './synthesize-child-submit.ts';
 import { DEFAULT_PRIVATE_QUEUE_LEASE_MS, MinionQueue } from '../minions/queue.ts';
 import { clampSubagentBudgets, CYCLE_DEADLINE_RESERVE_MS, MIN_PATTERNS_SUBAGENT_BUDGET_MS, loadPatternsOutputSlugPrefix } from './patterns.ts';
 import { claudeCliSelfSessionIds } from '../ai/providers/claude-cli-scratch.ts';
@@ -332,6 +333,7 @@ export function rewriteChunkedSlug(slug: string, hash6: string, idx: number): st
 // ── Public entry ──────────────────────────────────────────────────────
 
 export interface SynthesizePhaseOpts {
+  localSubagentSubmit?: LocalSubagentSubmit;
   brainDir: string;
   dryRun: boolean;
   /** #4077: cooperative cancellation from the enclosing cycle/minion job. A
@@ -951,14 +953,12 @@ async function runPhaseSynthesizeInner(
           private_queue_owner_token: privateQueueOwnerToken,
           private_queue_lease_ms: DEFAULT_PRIVATE_QUEUE_LEASE_MS,
         };
+        // Explicit producer mints a payload-bound capability; legacy producers stay unchanged.
+        const trustedSubmit = await childSubmitAuthority(opts.localSubagentSubmit, childData as unknown as Record<string, unknown>, allowedSlugPrefixes);
+        const submitChild = () => queue.add('subagent', childData as unknown as Record<string, unknown>, submitOpts, trustedSubmit);
         let child: Awaited<ReturnType<typeof queue.add>>;
         try {
-          child = await queue.add(
-            'subagent',
-            childData as unknown as Record<string, unknown>,
-            submitOpts,
-            { allowProtectedSubmit: true },
-          );
+          child = await submitChild();
         } catch (e) {
           // Admission quota (minions.quota_max_waiting.subagent, config-only):
           // a rejected submit is a recorded phase skip, never a phase crash —
@@ -998,12 +998,7 @@ async function runPhaseSynthesizeInner(
         if (foreignQueueAge !== null && foreignQueueAge > DREAM_INLINE_LIVE_GRACE_MS) {
           const cancelled = await queue.cancelJob(child.id);
           if (cancelled) {
-            child = await queue.add(
-              'subagent',
-              childData as unknown as Record<string, unknown>,
-              submitOpts,
-              { allowProtectedSubmit: true },
-            );
+            child = await submitChild();
           }
         }
         if (child.coalesced !== true) {

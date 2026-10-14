@@ -2179,10 +2179,9 @@ codes when that target is not safe to wire. A refusal writes nothing. Guide:
 
 ### Setup harness unsupported
 
-`setup_harness_unsupported`: setup wires Claude Code and Codex in this release.
-The message names the guide for the harness you asked for (OpenClaw:
-[docs/mcp/OPENCLAW.md](../mcp/OPENCLAW.md), Hermes:
-[docs/mcp/HERMES.md](../mcp/HERMES.md)); follow its manual steps.
+`setup_harness_unsupported`: setup wires Claude Code, Codex and Hermes in this
+release. The message names the guide for the harness you asked for (OpenClaw:
+[docs/mcp/OPENCLAW.md](../mcp/OPENCLAW.md)); follow its manual steps.
 `gbrain setup --help` lists the supported harnesses.
 
 ### Setup owner conflict
@@ -2195,7 +2194,9 @@ The message names the guide for the harness you asked for (OpenClaw:
   registration would start a second server that fails on the lock. Stop that
   server (quit the agent session that started it), or keep it and connect
   through it: a shared `gbrain serve --http` is wired with
-  `gbrain bootstrap harness --harness <claude-code|codex>`.
+  `gbrain bootstrap harness --harness <claude-code|codex>`, and for Hermes
+  (which bootstrap does not wire) with `gbrain hermes setup --hermes-home DIR
+  --url <its /mcp URL>`.
 - `unowned_entry`: the harness configuration already has an entry under the
   same MCP server name, and its hash is not one this setup recorded (you or
   another tool wrote it, or you edited it). Setup never overwrites it. Pick
@@ -2209,9 +2210,14 @@ The message names the guide for the harness you asked for (OpenClaw:
   wiring, or remove it with `gbrain bootstrap harness --remove` first. On
   Codex this also fires when the bootstrap Codex lane's `SessionEnd` hook is in
   `hooks.json` and you passed `--capture`: keep that lane and run setup without
-  `--capture`.
+  `--capture`. On Hermes it fires when the profile's `config.yaml` already
+  carries a hand-written `gbrain hook … --harness hermes` item on an event setup
+  would wire: keep it and run setup with `--no-hooks` (or `--no-capture`).
+  It also fires when the profile has `memory.provider: gbrain` (the hosted
+  MemoryProvider lane already pushes context every turn): remove that lane with
+  `gbrain hermes setup --hermes-home DIR --remove` first, or skip setup there.
 
-`gbrain setup claude-code --dry-run --json` shows the resolved target and the
+`gbrain setup claude-code --dry-run --json` (or `codex`, `hermes`) shows the resolved target and the
 blocking owner without writing anything.
 
 ### Setup hosted connection
@@ -2222,7 +2228,9 @@ the harness configuration, or a `gbrain connect --install` receipt), and no
 `gbrain setup` receipt owns it. Setup never falls back to a new local brain,
 because sessions would then read an empty brain while useful memory stays on
 the hosted one. Manage that connection with `gbrain connect <mcp-url>
---harness <claude-code|codex> --install`; `gbrain doctor --only harness_wiring` shows
+--harness <claude-code|codex> --install` (Hermes: `gbrain hermes setup
+--hermes-home DIR --url <mcp-url>`, which also covers a profile that already
+carries the hosted provider or an HTTP `gbrain` entry; or pick another `--name`); `gbrain doctor --only harness_wiring` shows
 which brain the registration reaches.
 
 ## Connection notices

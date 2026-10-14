@@ -201,6 +201,7 @@
   "test/graph-query-thin-client-source-flag.serial.test.ts": 0,
   "test/guarded-http-tls.serial.test.ts": 0,
   "test/harness-delivery-recovery.serial.test.ts": 1,
+  "test/harness-wiring-hermes.serial.test.ts": 1,
   "test/hook-backup-notice.serial.test.ts": 0,
   "test/hook-command.serial.test.ts": 2,
   "test/hook-push-banner-superseded.serial.test.ts": 0,

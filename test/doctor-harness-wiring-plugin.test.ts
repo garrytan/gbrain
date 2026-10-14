@@ -27,6 +27,7 @@ function box(): Box {
       HOME: home,
       GBRAIN_HOME: join(root, 'gbrain-home'),
       CODEX_HOME: join(root, 'codex'),
+      HERMES_HOME: join(root, 'hermes'),
       CLAUDE_CONFIG_DIR: join(root, 'claude'),
       XDG_CONFIG_HOME: join(root, 'xdg'),
       CLAUDECODE: undefined, CLAUDE_CODE_ENTRYPOINT: undefined, CODEX_SANDBOX: undefined, CODEX_CI: undefined, OPENCODE: undefined, OPENCODE_PID: undefined,

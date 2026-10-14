@@ -75,6 +75,8 @@ interface IngestCliOpts {
   dryRun?: boolean;
   limit?: number;
   since?: string;
+  messagesSinceIso?: string;
+  sessionSources?: string[];
   source?: string;
   facts?: boolean;
   maxCostUsd?: number;
@@ -99,6 +101,8 @@ export function ingestCheckpointFingerprintInput(args: {
   format: string;
   version: string | number;
   maxBytes?: number;
+  messagesSinceIso?: string;
+  sessionSources?: string[];
 }): Record<string, string | number | string[]> {
   return {
     sourceId: args.sourceId,
@@ -111,6 +115,8 @@ export function ingestCheckpointFingerprintInput(args: {
     // rescan. Omitting the key keeps the default path on the legacy
     // fingerprint; every explicit cap still gets its own scope.
     ...(args.maxBytes != null ? { maxBytes: args.maxBytes } : {}),
+    ...(args.messagesSinceIso ? { messagesSinceIso: new Date(args.messagesSinceIso).toISOString(), messagesCutoffSemantics: 'strictly-after-v1' } : {}),
+    ...(args.sessionSources ? { sessionSources: [...new Set(args.sessionSources)].sort() } : {}),
   };
 }
 
@@ -126,6 +132,19 @@ export function parseIngestArgs(args: string[]): IngestCliOpts | { help: true } 
     if (a === '--facts') { opts.facts = true; continue; }
     if (a === '--all') { opts.all = true; continue; }
     if (a === '--include-self') { opts.includeSelf = true; continue; }
+    if (a === '--session-source') {
+      const source = args[++i];
+      if (!source || source.startsWith('-')) return { error: 'session-source needs an exact Hermes session source' };
+      (opts.sessionSources ??= []).push(source);
+      continue;
+    }
+    if (a === '--messages-since') {
+      const value = args[++i];
+      const ms = value ? Date.parse(value) : NaN;
+      if (!Number.isFinite(ms)) return { error: 'messages-since needs a parseable timestamp (not last)' };
+      opts.messagesSinceIso = new Date(ms).toISOString();
+      continue;
+    }
     if (a === '--format') {
       const v = args[++i] as TranscriptFormat | undefined;
       if (!v || !FORMATS.includes(v)) {
@@ -215,6 +234,12 @@ skip). Embedding is OFF by default; run the embed backfill later or opt in.
   --limit N         Max sessions this run
   --since T         Only sessions newer than ISO time T; the word "last"
                     resumes from the previous clean run
+  --messages-since T Keep only turns strictly after T, before redaction and
+                    rendering (opt-in cutover; missing/invalid times excluded)
+                    Creates a separate stable view; prior full archives remain.
+  --session-source S Include an exact Hermes sessions.source value; repeat to
+                    include several. Unknown sources yield a clean empty scan.
+                    This is session provenance, not proof of human authorship.
   --source-id S     Target source (default: the canonical 6-tier resolution)
   --embed           Embed pages at import (default: defer to embed backfill)
   --facts           Extract facts from imported pages (budget-capped)
@@ -471,6 +496,8 @@ async function runIngest(engine: BrainEngine, args: string[], dispatch: Pick<Cli
       format: parsed.format ?? 'auto',
       version: TRANSCRIPT_IMPORT_VERSION,
       maxBytes: parsed.maxBytes,
+      messagesSinceIso: parsed.messagesSinceIso,
+      sessionSources: parsed.sessionSources,
     })),
   };
   let sinceIso = parsed.since;
@@ -502,6 +529,8 @@ async function runIngest(engine: BrainEngine, args: string[], dispatch: Pick<Cli
       dryRun: parsed.dryRun,
       limit: parsed.limit,
       sinceIso,
+      messagesSinceIso: parsed.messagesSinceIso,
+      sessionSources: parsed.sessionSources,
       sourceId,
       maxBytes: parsed.maxBytes,
       embed: parsed.embed,

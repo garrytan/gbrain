@@ -109,11 +109,11 @@ comes from agent-authored `## Facts` fences and the `remember` verb.
 
 ## Step 3: Create the Brain
 
-**If you are Claude Code or Codex**, one command does Step 3 and the MCP registration
-(use `codex` in place of `claude-code` on Codex):
+**If you are Claude Code, Codex or Hermes**, one command does Step 3 and the MCP registration
+(use `codex` or `hermes` in place of `claude-code`; Hermes also takes `--hermes-home DIR` for a named profile):
 
 ```bash
-gbrain setup claude-code --dry-run --json   # the resolved target; writes nothing
+gbrain setup claude-code --dry-run --json   # the resolved target; writes nothing (also: codex, hermes)
 gbrain setup claude-code --json             # brain (if none) + MCP + read-context hooks, verified
 ```
 

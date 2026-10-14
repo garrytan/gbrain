@@ -167,6 +167,18 @@ export async function bindResolveIpcForServe(
       }
     }
 
+    let hermesHandlers: Pick<IpcHandlers, 'hermes_start' | 'hermes_status' | 'hermes_abort'> = {};
+    if (process.env.GBRAIN_SERVE_SYNC_IPC !== '0') {
+      try {
+        const hermes = await import('../core/serve-hermes-runner.ts');
+        hermesHandlers = {
+          hermes_start: req => hermes.startDelegatedHermesMaintenance(engine, req.options, req.clientToken, req.registration, defaultSource),
+          hermes_status: req => hermes.getDelegatedHermesMaintenanceStatus(engine, req.jobId, defaultSource),
+          hermes_abort: req => hermes.abortDelegatedHermesMaintenance(engine, req.jobId, defaultSource),
+        };
+      } catch { process.stderr.write('[serve-hermes] local maintenance handlers unavailable.\n'); }
+    }
+
     const handlers: IpcHandlers = {
       // [CX2-10] Bound-source posture for BOTH kinds: the IPC layer
       // rejects any resolve/turn_context request naming a source other
@@ -218,6 +230,7 @@ export async function bindResolveIpcForServe(
       context_pack: makeContextPackIpcHandler(engine, defaultSource),
       ...syncHandlers,
       ...sweepHandlers,
+      ...hermesHandlers,
     };
     const serverOpts: IpcServerOpts = {
       // The IPC resolve path IS the ambient reflex channel. Logging happens

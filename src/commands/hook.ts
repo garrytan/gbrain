@@ -85,6 +85,7 @@ import { resolveWritebackConfigFromFile } from '../core/facts/writeback-config.t
 import { recordCaptureIfOff } from '../core/context/capture-consent.ts';
 import { memorableGateAllowed, recordAndRelayReceipt, redactedToolCallsJson } from '../core/context/hook-heartbeat.ts';
 import { captureSpecFor } from '../core/transcripts/capture-spec.ts';
+import { hookUserPromptHermes } from '../core/context/hermes-hook.ts';
 import {
   heartbeatPath,
   hookStatusPath,
@@ -233,11 +234,11 @@ export interface HookIo {
    */
   disableTelemetry?: boolean;
   /**
-   * Feedback-loop attribution channel (`--harness <claude-code|codex|opencode>`).
+   * Feedback-loop attribution channel (`--harness <claude-code|codex|opencode|hermes>`).
    * Default 'claude-code' — the only harness bootstrap registers hooks for
    * today; a codex/opencode hook registration passes the flag explicitly.
    */
-  harness?: 'claude-code' | 'codex' | 'opencode';
+  harness?: 'claude-code' | 'codex' | 'opencode' | 'hermes';
 }
 
 // ── Entry point ─────────────────────────────────────────────────────────────
@@ -252,8 +253,9 @@ Events (wired into .claude/settings.local.json by gbrain bootstrap):
                   hook health) to stdout
   user-prompt     read hook JSON on stdin, request per-turn context from a
                   running 'gbrain serve' over IPC, print additionalContext JSON
-                  (--harness <claude-code|codex|opencode> sets the feedback-loop
-                  channel; default claude-code, unknown values fall back to the default)
+                  (--harness <claude-code|codex|opencode|hermes> sets the feedback-loop
+                  channel; default claude-code, unknown values fall back to the default;
+                  hermes reads Hermes' pre_llm_call payload and prints {"context": ...})
   stop            bank the writeback backstop and spawn the workspace push
   session-end     ingest the session transcript into the dream corpus
                   (secret-scanned), prune old corpus files, push the workspace
@@ -272,13 +274,13 @@ export async function runHook(args: string[], io: HookIo = {}): Promise<number> 
     write(io, USAGE + '\n');
     return 0;
   }
-  // `--harness <claude-code|codex|opencode>` — feedback-loop channel
+  // `--harness <claude-code|codex|opencode|hermes>` — feedback-loop channel
   // attribution for user-prompt. Unknown values fall back to the default
   // (fail-open: a bad registration must never break the hook contract).
   const harnessIdx = args.indexOf('--harness');
   if (harnessIdx >= 0 && !io.harness) {
     const v = args[harnessIdx + 1];
-    if (v === 'claude-code' || v === 'codex' || v === 'opencode') io = { ...io, harness: v };
+    if (v === 'claude-code' || v === 'codex' || v === 'opencode' || v === 'hermes') io = { ...io, harness: v };
   }
   if (!event || !(HOOK_EVENTS as readonly string[]).includes(event)) {
     process.stderr.write(USAGE + '\n');
@@ -337,7 +339,9 @@ export async function runHook(args: string[], io: HookIo = {}): Promise<number> 
     case 'session-start':
       return hookSessionStart(io);
     case 'user-prompt':
-      return hookUserPrompt(io);
+      return io.harness === 'hermes'
+        ? hookUserPromptHermes(io, { withDeadline, DEADLINE, write, writeHeartbeat, errorCode, sanitizeSessionId, startDeadlineMs: SESSION_START_DEADLINE_MS, serveWaitDeadlineMs: SESSION_START_SERVE_WAIT_DEADLINE_MS })
+        : hookUserPrompt(io);
     case 'stop':
       return hookStop(io);
     case 'session-end':
@@ -1714,7 +1718,7 @@ async function hookSessionEnd(io: HookIo): Promise<number> {
       // "conversations", and synthesize mints duplicate idea pages.
       segmentMode = 'self_transcript';
     } else {
-      const parsed = spec.parse(conf.path, { collectToolCalls: memorableAllowed });
+      const parsed = spec.parse(conf.path, { collectToolCalls: memorableAllowed, sessionId: typeof j?.session_id === 'string' ? j.session_id : undefined }); // hermes selects its session by id from state.db
       if (sessionId === 'unknown') {
         // Stdin payload carried no session_id (observed on codex): adopt the
         // transcript's own id so successive such sessions don't collapse onto

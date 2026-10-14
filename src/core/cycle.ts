@@ -491,6 +491,8 @@ export interface CycleReport {
 }
 
 export interface CycleOpts {
+  /** Explicit trusted producer for this request; never inferred from ambient CLI ALS. */
+  localSubagentSubmit?: import('./cycle/synthesize.ts').SynthesizePhaseOpts['localSubagentSubmit'];
   /** If true, no writes to filesystem or DB. All phases honor this. */
   dryRun?: boolean;
   /**
@@ -1882,6 +1884,12 @@ async function runRepairLanePhase(phase: typeof REPAIR_LANE_PHASES[number], engi
   return phase === 'fence_repair' ? (await import('./cycle/fence-repair.ts')).runFenceRepairPhase(engine, opts) : (await import('./cycle/content-repair.ts')).runContentRepairPhase(engine, opts);
 }
 
+/** Skip result for a filesystem phase when the brain has no on-disk checkout. */
+function skipNoBrainDir(phase: CyclePhase): PhaseResult {
+  return { phase, status: 'skipped', duration_ms: 0, summary: 'requires a local brain directory; this brain has no on-disk checkout '
+    + '(postgres/remote engine); pass --dir <path> to run filesystem phases', details: { reason: 'no_brain_dir' } };
+}
+
 /**
  * Run the brain maintenance cycle.
  *
@@ -1924,16 +1932,6 @@ export async function runCycle(
   // the per-phase `if (brainDir === null)` guards, even within async closures
   // (const bindings narrow across closures; property accesses don't).
   const brainDir = opts.brainDir;
-
-  // Skip result for a filesystem phase when the brain has no on-disk checkout.
-  const skipNoBrainDir = (phase: CyclePhase): PhaseResult => ({
-    phase,
-    status: 'skipped',
-    duration_ms: 0,
-    summary: 'requires a local brain directory; this brain has no on-disk checkout '
-      + '(postgres/remote engine); pass --dir <path> to run filesystem phases',
-    details: { reason: 'no_brain_dir' },
-  });
 
   // A1: canonical per-source scope for the DB-capable per-source phases
   // (extract_facts, extract_atoms, the calibration trio). Explicit --source
@@ -2293,6 +2291,7 @@ export async function runCycle(
           // the cycle lock (pre-fix these sites passed the raw — in production
           // always-undefined — hook, so long phases never refreshed).
           yieldDuringPhase: buildYieldDuringPhase(lock, opts.yieldDuringPhase, onStolen),
+          localSubagentSubmit: opts.localSubagentSubmit,
           inputFile: opts.synthInputFile,
           date: opts.synthDate,
           cycleDate,

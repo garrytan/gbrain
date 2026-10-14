@@ -1,7 +1,6 @@
 /**
  * hermes-fixture-builder.ts — builds a SYNTHETIC hermes state.db matching the
- * schema verified from the installed hermes-agent v0.20.0 source
- * (hermes_state_common.py SCHEMA_SQL, columns subset). Synthetic by
+ * full pinned upstream SCHEMA_SQL in hermes-schema.sql. Synthetic by
  * declaration: the adapter's SPEC_TARGET stays provisional and this builder
  * never claims to be a production sample. Content uses the repo's generic
  * placeholder names only.
@@ -9,6 +8,7 @@
 
 import { Database } from 'bun:sqlite';
 import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
 
 export const HERMES_FIXTURE_DB = 'state.db';
 
@@ -17,27 +17,7 @@ export function buildHermesFixture(dir: string): string {
   const path = join(dir, HERMES_FIXTURE_DB);
   const db = new Database(path);
   try {
-    db.exec(`
-      CREATE TABLE sessions (
-        id TEXT PRIMARY KEY,
-        source TEXT NOT NULL,
-        display_name TEXT,
-        model TEXT,
-        started_at REAL NOT NULL,
-        ended_at REAL,
-        cwd TEXT,
-        title TEXT
-      );
-      CREATE TABLE messages (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        session_id TEXT NOT NULL REFERENCES sessions(id),
-        role TEXT NOT NULL,
-        content TEXT,
-        timestamp REAL NOT NULL,
-        active INTEGER NOT NULL DEFAULT 1,
-        compacted INTEGER NOT NULL DEFAULT 0
-      );
-    `);
+    db.exec(readFileSync(new URL('./hermes-schema.sql', import.meta.url), 'utf8'));
     const insSession = db.prepare(
       'INSERT INTO sessions (id, source, display_name, model, started_at, cwd, title) VALUES (?, ?, ?, ?, ?, ?, ?)',
     );

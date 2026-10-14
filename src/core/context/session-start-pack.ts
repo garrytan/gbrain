@@ -20,7 +20,7 @@ import {
   type ContextPackResponse,
   type IpcPathConfig,
 } from './resolve-ipc.ts';
-import { claudeCodeSpawnsServe } from '../setup/local-receipts.ts';
+import { claudeCodeSpawnsServe, hermesSpawnsServe } from '../setup/local-receipts.ts';
 
 const POLL_MS = 100;
 /** Kept free before the deadline for composing and writing stdout. */
@@ -33,9 +33,9 @@ const WRITE_MARGIN_MS = 100;
  * process spawns a stdio serve for this directory. Fail-open: false.
  */
 export function sessionStartAwaitsServe(source: unknown, harness: string, cwd: string): boolean {
-  if (harness !== 'claude-code' || (source !== undefined && source !== 'startup' && source !== 'resume')) return false;
+  if ((harness !== 'claude-code' && harness !== 'hermes') || (source !== undefined && source !== 'startup' && source !== 'resume')) return false;
   try {
-    return claudeCodeSpawnsServe(cwd);
+    return harness === 'hermes' ? hermesSpawnsServe() : claudeCodeSpawnsServe(cwd);
   } catch {
     return false;
   }

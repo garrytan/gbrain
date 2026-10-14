@@ -92,6 +92,12 @@ export interface FactsDrainRunRecord {
   unpriced_calls: number;
   backlog_before: number;
   backlog_after: number | null;
+  waiting_after?: number;
+  delayed_after?: number;
+  active_after?: number;
+  waiting_children_after?: number;
+  paused_after?: number;
+  remaining_after?: number;
   model: string | null;
   error?: { code: string; reason: string; message: string; fix?: Action };
 }
@@ -118,15 +124,18 @@ export function dailySpentUsd(state: FactsDrainState, now = Date.now()): number 
   return state.runs.filter(r => now - Date.parse(r.started_at) < 24 * 3600_000).reduce((sum, r) => sum + (r.spent_usd || 0), 0);
 }
 
-export interface FactsDrainBacklog { waiting: number; delayed: number; active: number }
+export interface FactsDrainBacklog { waiting: number; delayed: number; active: number; waiting_children: number; paused: number }
 
 export async function factsDrainBacklog(engine: BrainEngine): Promise<FactsDrainBacklog> {
   const rows = await engine.executeRaw<{ status: string; n: number }>(
     `SELECT status, count(*)::int AS n FROM minion_jobs
-      WHERE name = $1 AND queue = $2 AND status IN ('waiting', 'delayed', 'active') GROUP BY status`,
+      WHERE name = $1 AND queue = $2 AND status IN ('waiting', 'delayed', 'active', 'waiting-children', 'paused') GROUP BY status`,
     [FACTS_DRAIN_JOB, FACTS_DRAIN_QUEUE]);
-  const out: FactsDrainBacklog = { waiting: 0, delayed: 0, active: 0 };
-  for (const r of rows) out[r.status as keyof FactsDrainBacklog] = Number(r.n);
+  const out: FactsDrainBacklog = { waiting: 0, delayed: 0, active: 0, waiting_children: 0, paused: 0 };
+  for (const r of rows) {
+    const key = r.status === 'waiting-children' ? 'waiting_children' : r.status as keyof FactsDrainBacklog;
+    out[key] = Number(r.n);
+  }
   return out;
 }
 
@@ -250,6 +259,14 @@ export async function runFactsDrain(engine: BrainEngine, opts: FactsDrainRunOpts
     await queue.handleStalled();
     const backlog = await factsDrainBacklog(engine);
     result.backlog_before = backlog.waiting;
+    // Retain the observed queue state for pre-claim deferrals too (missing key,
+    // daily cap, unpriced model). Those paths do not reach the post-loop read.
+    result.waiting_after = backlog.waiting;
+    result.delayed_after = backlog.delayed;
+    result.active_after = backlog.active;
+    result.waiting_children_after = backlog.waiting_children;
+    result.paused_after = backlog.paused;
+    result.remaining_after = backlog.waiting + backlog.delayed + backlog.active + backlog.waiting_children + backlog.paused;
     if (backlog.waiting === 0) { result.backlog_after = 0; return finish('idle'); }
 
     const { refreshGatewayEnvFromFilePlane, reconfigureGatewayWithEngine, withBudgetTracker } = await import('../ai/gateway.ts');
@@ -413,12 +430,28 @@ export async function runFactsDrain(engine: BrainEngine, opts: FactsDrainRunOpts
       await new Promise(resolve => setTimeout(resolve, opts.yieldMs ?? 25));
     }
 
-    result.backlog_after = (await factsDrainBacklog(engine)).waiting;
+    const backlogAfter = await factsDrainBacklog(engine);
+    result.backlog_after = backlogAfter.waiting;
+    result.waiting_after = backlogAfter.waiting;
+    result.delayed_after = backlogAfter.delayed;
+    result.active_after = backlogAfter.active;
+    result.waiting_children_after = backlogAfter.waiting_children;
+    result.paused_after = backlogAfter.paused;
+    result.remaining_after = backlogAfter.waiting + backlogAfter.delayed + backlogAfter.active + backlogAfter.waiting_children + backlogAfter.paused;
     if (stopReason) return defer(outcome, stopReason.reason, stopReason.message, stopReason.fix);
     finish(outcome);
     await save();
     return result;
   } catch (e) {
+    // An error can follow successful claims/writes and even the final count query.
+    // Never label a pre-processing snapshot as the unverified remaining queue.
+    result.backlog_after = null;
+    delete result.waiting_after;
+    delete result.delayed_after;
+    delete result.active_after;
+    delete result.waiting_children_after;
+    delete result.paused_after;
+    delete result.remaining_after;
     const message = e instanceof Error ? e.message : String(e);
     state ??= await readFactsDrainState(engine).catch(() => ({ version: 1 as const, runs: [] }));
     return defer('error', 'drain_error', `Automatic fact extraction failed before finishing its run: ${message}. Queued pages stay queued.`,
@@ -443,7 +476,7 @@ export interface FactsDrainStatus {
 
 /** The one status read for doctor `facts_drain` and the MCP readiness entry `facts_drain`. */
 export async function readFactsDrainStatus(engine: BrainEngine, now = Date.now()): Promise<FactsDrainStatus> {
-  const empty: FactsDrainBacklog = { waiting: 0, delayed: 0, active: 0 };
+  const empty: FactsDrainBacklog = { waiting: 0, delayed: 0, active: 0, waiting_children: 0, paused: 0 };
   if (engine.kind !== 'pglite') {
     return { health: 'not_applicable', message: 'Postgres brains run facts-absorb jobs on the job worker (gbrain jobs supervisor), not the automatic drain.', settings: null, backlog: empty, last_run: null, daily_spent_usd: 0 };
   }
@@ -453,10 +486,10 @@ export async function readFactsDrainStatus(engine: BrainEngine, now = Date.now()
   const last = state.runs.at(-1) ?? null;
   const daily = dailySpentUsd(state, now);
   const base = { settings, backlog, last_run: last, daily_spent_usd: daily };
-  const queued = backlog.waiting + backlog.delayed;
+  const queued = backlog.waiting + backlog.delayed + backlog.active + backlog.waiting_children + backlog.paused;
   const lastText = last ? `last run ${last.finished_at ?? last.started_at} by ${last.owner}: ${last.outcome}, ${last.completed} extracted, ${fmtUsd(last.spent_usd)}` : 'no run recorded yet';
   if (!settings.enabled) {
-    return { ...base, health: 'disabled', message: `Facts extraction is off (facts.extraction_enabled false); ${queued} facts-absorb job(s) are queued and are skipped when they run.`,
+    return { ...base, health: 'disabled', message: `Facts extraction is off (facts.extraction_enabled false); ${queued} facts-absorb job(s) remain and are skipped when they run.`,
       fix: { argv: ['gbrain', 'config', 'set', 'facts.extraction_enabled', 'true'], consent: ['paid', 'egress'], actor: 'agent', requires_exclusive: false,
         why: 'Turns automatic fact extraction back on: one paid chat call per eligible page write, bounded per run and per day.' } };
   }

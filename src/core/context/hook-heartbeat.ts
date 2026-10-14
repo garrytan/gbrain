@@ -245,7 +245,7 @@ export interface SessionReceiptEntry {
    * (hook.ts's user-prompt path silently maps unknown channels to
    * 'claude-code', a misattribution, not a compile error).
    */
-  harness: 'claude-code' | 'codex' | 'opencode' | 'openclaw';
+  harness: 'claude-code' | 'codex' | 'opencode' | 'openclaw' | 'hermes';
   corpus_path: string;
   content_hash: string;
   turn_count: number;

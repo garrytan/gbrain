@@ -11,6 +11,9 @@
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { hostname } from 'os';
+import { runHermesMaintenance } from '../src/core/hermes-maintenance.ts';
+import type { OperationContext } from '../src/core/ops/contract.ts';
+import type { TranscriptsIngestResult } from '../src/core/transcripts/ingest.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import {
   reapDeadHolderLocks,
@@ -85,6 +88,29 @@ describe('reapDeadHolderLocks', () => {
     expect(reaped).toBe(3);
     expect(reapedIds.sort()).toEqual(['gbrain-cycle', 'gbrain-cycle:src-b', 'gbrain-sync:src-a']);
     expect(await lockIds()).toEqual([]);
+  });
+
+  test('source-limited maintenance neither deletes nor discloses sibling locks', async () => {
+    await seedLock('gbrain-sync:src-a', 900101, LOCAL, OLD_S);
+    await seedLock('gbrain-sync:private-sibling', 900102, LOCAL, OLD_S);
+    await seedLock('gbrain-cycle', 900103, LOCAL, OLD_S);
+    const before = await lockIds();
+    let reaperCalled = false;
+    const context = { remote: false, engine, auth: { token: '', clientId: 'scoped-cli',
+      scopes: ['read', 'write'], allowedSources: ['src-a'], sourceId: 'src-a' } } as unknown as OperationContext;
+    const report = await runHermesMaintenance(engine, { stateDb: '/synthetic/state.db', sourceId: 'src-a', context }, {
+      currentVerifiedLocalWriter: () => ({ principal: { kind: 'local_cli', id: 'scoped-cli' }, remote: false,
+        grant: { sourceIds: ['src-a'], scopes: ['read', 'write'], operations: null, slugPrefixes: null } }),
+      reapLocks: async eng => { reaperCalled = true; return reapDeadHolderLocks(eng, killSeam(new Set())); },
+      ingest: async () => ({ cleanScan: true, sessionsSeen: 0, sessionsImported: 0, slugsTouched: [],
+        pages: { imported: 0, skipped: 0, errored: 0, planned: 0 } } as unknown as TranscriptsIngestResult),
+      cycle: async () => { throw new Error('import-only must not run a cycle'); },
+    });
+    expect(reaperCalled).toBe(false);
+    expect(await lockIds()).toEqual(before);
+    expect(report.lock_reap).toEqual({ reaped: 0, reapedIds: [], skipped: 'requires_unrestricted_writer' });
+    expect(JSON.stringify(report)).not.toContain('private-sibling');
+    expect(report.reasons).toContain('lock_reap_requires_unrestricted_writer');
   });
 
   test('keeps a live same-host holder', async () => {
