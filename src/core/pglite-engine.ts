@@ -199,13 +199,27 @@ export type PgliteInitFailure =
   | 'permission'
   | 'unknown';
 
+function errnoLabel(value: unknown, seen = new Set<unknown>()): string | undefined {
+  if (!value || typeof value !== 'object' || seen.has(value)) return undefined;
+  seen.add(value);
+  const record = value as { name?: unknown; errno?: unknown; cause?: unknown };
+  if (typeof record.name === 'string' && record.errno != null) return `${record.name} (errno ${record.errno})`;
+  return errnoLabel(record.cause, seen);
+}
+
 export function stringifyPgliteInitError(err: unknown): string {
-  const message = (err as { message?: unknown })?.message;
-  if (message != null) return String(message);
+  const label = errnoLabel(err);
+  const message = (err as { message?: unknown } | null)?.message;
+  if (typeof message === 'string' && message && !message.startsWith('[object Object]')) return message;
+  if (label) {
+    return typeof message === 'string' && message.startsWith('[object Object]')
+      ? `${label}${message.slice('[object Object]'.length)}`
+      : label;
+  }
+  if (typeof message === 'string') return message;
+  if (message != null && typeof message !== 'object') return String(message);
   if (typeof err === 'object' && err !== null) {
     const name = (err as { name?: unknown }).name;
-    const errno = (err as { errno?: unknown }).errno;
-    if (typeof name === 'string' && errno != null) return `${name} (errno ${errno})`;
     try {
       const json = JSON.stringify(err);
       if (json && json !== '{}') return typeof name === 'string' ? `${name}: ${json}` : json;

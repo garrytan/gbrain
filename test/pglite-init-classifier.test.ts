@@ -186,6 +186,10 @@ describe('stringifyPgliteInitError', () => {
     expect(stringifyPgliteInitError('raw failure')).toBe('raw failure');
     expect(stringifyPgliteInitError(null)).toBe('null');
   });
+
+  test('names an ErrnoError instead of [object Object]', () => {
+    expect(stringifyPgliteInitError({ name: 'ErrnoError', errno: 20, message: '[object Object]' })).toBe('ErrnoError (errno 20)');
+  });
 });
 
 describe('#1340 reproducer — exact reporter error string maps to bunfs', () => {

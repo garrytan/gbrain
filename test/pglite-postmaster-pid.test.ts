@@ -155,7 +155,7 @@ test('目录只读标记去不掉时，打开前就停止，不改文件内容',
   try {
     const page = join(dir, 'PG_VERSION');
     writeFileSync(page, '17\n');
-    chmodSync(dir, 0o444);
+    chmodSync(dir, 0o555);
     expect(() => assertPgliteDataDirLockWritable(dir)).toThrow(/Permission denied/);
     expect(() => assertPgliteDataDirLockWritable(dir)).toThrow(/postmaster\.pid/);
     expect(readFileSync(page, 'utf8')).toBe('17\n');

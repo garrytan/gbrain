@@ -1,6 +1,7 @@
 import { statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PGlite, type PGliteOptions } from '@electric-sql/pglite';
+import { stringifyPgliteInitError } from './pglite-engine.ts';
 import { clearPgliteDataDirReadonly, clearStalePglitePostmasterPid } from './pglite-lock.ts';
 
 const MAX_STARTUP_LOG_LINES = 40;
@@ -57,19 +58,31 @@ export async function createPgliteDatabase(options: PGliteOptions): Promise<PGli
   const lines: string[] = [];
   const previousDebug = console.debug;
   const previousError = console.error;
+  const previousWrite = process.stdout.write;
   console.debug = (...args: unknown[]) => recordStartupLine(lines, args);
   console.error = (...args: unknown[]) => recordStartupLine(lines, args);
+  process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding | ((error?: Error | null) => void), callback?: (error?: Error | null) => void) => {
+    const text = typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8');
+    recordStartupLine(lines, [text]);
+    const done = typeof encoding === 'function' ? encoding : callback;
+    done?.();
+    return true;
+  }) as typeof process.stdout.write;
   try {
     const db = await PGlite.create({ ...options, debug: 1 });
     (db as { debug?: number }).debug = 0;
     return db;
   } catch (error) {
-    const base = error instanceof Error ? error.message : String(error);
-    const detail = lines.slice(-MAX_STARTUP_LOG_LINES).join('\n');
-    if (!detail || base.includes(detail)) throw error;
+    const base = stringifyPgliteInitError(error);
+    const detail = lines.slice(-MAX_STARTUP_LOG_LINES).join('\n').trim();
+    if (!detail || base.includes(detail)) {
+      if (error instanceof Error && error.message === base) throw error;
+      throw new Error(base, { cause: error });
+    }
     throw new Error(`${base}\n${detail}`, { cause: error });
   } finally {
     console.debug = previousDebug;
     console.error = previousError;
+    process.stdout.write = previousWrite;
   }
 }

@@ -7,9 +7,9 @@
 - 标题：只读目录清理在 Linux 上删不掉，引擎契约还在找已经挪走的 PGlite.create
 - 编程工具：Grok 大模型：Grok 4.7
 - 描述：origin/master 的 998e37df（PR #80）Test 运行 38573080464 中，test (4) 四项只读目录用例清理时报 EACCES，test (9) 仍要求 pglite-engine.ts 包含已移到 pglite-open.ts 的 PGlite.create。同一次合并把 codex/cherry-cope 的多助手、网页对齐和窄窗口修复合进 master。
-- 修复：目录去掉只读标记时同时恢复写入和执行权限，文件只恢复写入。测试删除前先把目录改回可进入。引擎契约改为确认 createPgliteDatabase，并在 pglite-open.ts 检查 PGlite.create。不删除知识页面、原始资料或向量。
+- 修复：目录去掉只读标记时同时恢复写入和执行权限，文件只恢复写入。测试删除前先把目录改回可进入。仍保持只读的目录用 0555，避免 Linux 上读不到文件。没有助手挂接的任务运行时不启动助手协调器。PGLite 打开期间的调试输出留在启动记录里，不写进 doctor 的 JSON。ErrnoError 按名称和 errno 记录，不再变成 [object Object]。引擎契约改为确认 createPgliteDatabase，并在 pglite-open.ts 检查 PGlite.create。不删除知识页面、原始资料或向量。
 - 是否完成：定向测试后提交并推送 master。远端 CI 以该提交的 Actions 为准。安装包未打包。
-- 最终结果：本机 `test/pglite-postmaster-pid.test.ts` 与发布说明合同共 16 项通过，`pglite-engine` 打开契约 1 项通过。`bun run build:admin` 完成，发布清单 `0779142a2982`。Linux 清理路径以远端 Test 为准。正式库未参与测试。
+- 最终结果：3781959b 的 Heavy、E2E、Core User Journeys 已通过。Test 38580079594 仍失败：只读目录读取、空任务运行时、doctor JSON 和符号链接错误文本。本轮补上这四项。`bun run build:admin` 完成，发布清单 `0779142a2982`。正式库未参与测试。
 - 与规划差异：产品版本取 master 1.4.69 的下一位 1.4.70。分支里已经写成 1.4.65–1.4.67 的多助手和窄窗口记录保留原编号。
 - Skill/插件与工作流：无。未运行 build:win。
 
