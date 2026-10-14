@@ -24,7 +24,7 @@ import { afterEach, beforeEach, describe, test, expect } from 'bun:test';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { runModels } from '../src/commands/models.ts';
-import { resolveExtractAtomsModel } from '../src/core/cycle/extract-atoms.ts';
+import { resolveExtractAtomsModel, resolveExtractAtomsModelWithSource } from '../src/core/cycle/extract-atoms.ts';
 import { resolveTierDefault } from '../src/core/model-config.ts';
 
 const PINNED = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GBRAIN_HOME', 'GBRAIN_MODEL'] as const;
@@ -57,7 +57,7 @@ class StubConfigEngine {
 }
 
 async function captureModelsJson(engine: StubConfigEngine): Promise<{
-  per_task: Array<{ key: string; tier: string; resolved: string; source: string; description: string }>;
+  per_task: Array<{ key: string; tier: string; resolved: string; source: string; description: string; newer_available?: { command: string } }>;
 }> {
   let stdout = '';
   const originalWrite = process.stdout.write;
@@ -127,5 +127,27 @@ describe('gbrain models per-task report — extract_atoms entry', () => {
     expect(entry!.resolved).toBe(await resolveExtractAtomsModel(engine as never));
     expect(entry!.resolved).toBe(resolveTierDefault('utility'));
     expect(entry!.source).toBe('tier.utility');
+  });
+
+  test('an inherited route (tier / models.default) does not emit a row-key newer_available hint; the row key does', async () => {
+    const engine = new StubConfigEngine();
+    engine.set('models.tier.utility', 'anthropic:claude-haiku-4-5');
+    let entry = (await captureModelsJson(engine)).per_task.find((r) => r.key === 'models.dream.extract_atoms');
+    expect(entry!.source).toBe('config: models.tier.utility');
+    expect(entry!.newer_available).toBeUndefined();
+
+    engine.set('models.dream.extract_atoms', 'anthropic:claude-haiku-4-5');
+    entry = (await captureModelsJson(engine)).per_task.find((r) => r.key === 'models.dream.extract_atoms');
+    expect(entry!.newer_available?.command).toBe('gbrain config set models.dream.extract_atoms anthropic:claude-haiku-5-5');
+  });
+
+  test('resolver reports tier_default for inherited sources and config only for its own key', async () => {
+    const engine = new StubConfigEngine();
+    engine.set('models.default', 'claude-cli:claude-sonnet-5-5');
+    expect(await resolveExtractAtomsModelWithSource(engine as never)).toMatchObject({ source: 'tier_default', label: 'config: models.default' });
+    engine.set('models.tier.utility', 'claude-cli:claude-haiku-5-5');
+    expect(await resolveExtractAtomsModelWithSource(engine as never)).toMatchObject({ source: 'tier_default', label: 'config: models.tier.utility' });
+    engine.set('models.dream.extract_atoms', 'openai:gpt-5.6-luna');
+    expect(await resolveExtractAtomsModelWithSource(engine as never)).toMatchObject({ source: 'config', label: 'config: models.dream.extract_atoms' });
   });
 });

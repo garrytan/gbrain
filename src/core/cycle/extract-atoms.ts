@@ -657,8 +657,9 @@ export async function tombstonedTranscriptsForHashes(
  * another provider still extracted atoms on the built-in Anthropic default, and
  * `gbrain models` labelled the row `tier.utility (caller-specific)`.
  *
- * `source` is `config` when any config key supplied the model (the `label`
- * names it), else `tier_default`; both come from the SAME call as `model` so
+ * `source` is `config` only when the row's own key supplied the model, else
+ * `tier_default` (tier / models.default / env are inherited; the `label`
+ * still names the origin); both come from the SAME call as `model` so
  * the report's attribution can never disagree with the resolved value.
  * Fail-soft: a throwing config read routes to the key-aware tier default (the
  * end state runPhaseExtractAtoms's config-read try/catch has always produced).
@@ -673,11 +674,16 @@ export async function resolveExtractAtomsModelWithSource(
     switch (detail.source) {
       case 'config_key':
       case 'deprecated_key':
+        return { model: detail.model, source: 'config', label: `config: ${origin}` };
+      // Inherited routes (tier / models.default / env) are NOT the row's own
+      // key: report `tier_default` so `gbrain models` does not emit a
+      // `newer_available` command that sets the row key (same convention as
+      // facts.extraction_model). The label still names the inherited origin.
       case 'tier_config':
       case 'models_default':
-        return { model: detail.model, source: 'config', label: `config: ${origin}` };
+        return { model: detail.model, source: 'tier_default', label: `config: ${origin}` };
       case 'env':
-        return { model: detail.model, source: 'config', label: `env: ${origin}` };
+        return { model: detail.model, source: 'tier_default', label: `env: ${origin}` };
       default:
         return { model: detail.model, source: 'tier_default', label: 'tier.utility' };
     }
