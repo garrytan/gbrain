@@ -6,7 +6,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import { PGLiteEngine } from '../src/core/pglite-engine';
 import { PostgresEngine } from '../src/core/postgres-engine';
 import type { BrainEngine } from '../src/core/engine';
-import { configureGateway, resetGateway, DEFAULT_EMBEDDING_DIMENSIONS, __setEmbedTransportForTests } from '../src/core/ai/gateway';
+import { configureGateway, resetGateway, DEFAULT_EMBEDDING_DIMENSIONS, getEmbeddingDimensions, __setEmbedTransportForTests } from '../src/core/ai/gateway';
 import { assertSafeE2eDatabaseUrl } from './helpers/db-guard';
 import { WorkbenchStore } from '../src/product/workbench/store';
 import { WorkbenchMemoryCoordinator, runWorkbenchMemoryTask, recallWorkbenchMemory } from '../src/product/workbench/memory';
@@ -24,6 +24,8 @@ const root = mkdtempSync(join(tmpdir(), 'pmbrain-memory-lifecycle-'));
 const previous = process.env.PMBRAIN_HOME;
 const url = process.env.PMBRAIN_MEMORY_TEST_DATABASE_URL;
 if (url) assertSafeE2eDatabaseUrl(url);
+const sharedPostgres = Boolean(url);
+const vectorDimensions = sharedPostgres ? getEmbeddingDimensions() : DEFAULT_EMBEDDING_DIMENSIONS;
 const engine: BrainEngine = url ? new PostgresEngine() : new PGLiteEngine();
 const store = new WorkbenchStore(join(root, 'sessions'));
 const coordinator = new WorkbenchMemoryCoordinator(engine, store, async () => ({ id: 'task-test', status: 'queued' } as any), async () => null);
@@ -32,7 +34,7 @@ beforeAll(async () => {
   process.env.PMBRAIN_HOME = root;
   mkdirSync(join(root, '.pmbrain'));
   writeFileSync(join(root, '.pmbrain', 'config.json'), JSON.stringify({ engine: engine.kind, memory: { auto_writeback: 'all' } }));
-  configureGateway({ env: {} });
+  configureGateway(sharedPostgres ? { env: {}, embedding_dimensions: vectorDimensions } : { env: {} });
   await engine.connect(url ? { database_url: url } : {}); await engine.initSchema();
   await engine.setConfig('memory.auto_writeback', 'all'); await engine.setConfig('facts.default_visibility', 'world');
   await engine.executeRaw("INSERT INTO sources(id,name) VALUES ('lifecycle','隔离记忆验收'),('foreign','异源验收') ON CONFLICT DO NOTHING");
@@ -152,10 +154,10 @@ test('旧版无事实数组的派生页也执行到期过滤，失败后重启�
 
 test('向量及语义缓存命中也不能返回已失效快照，刷新后分块只包含有效事实', async () => {
   const file = join(root, '.pmbrain', 'config.json'); const previousConfig = readFileSync(file, 'utf8');
-  const vector = new Float32Array([1, ...Array(DEFAULT_EMBEDDING_DIMENSIONS - 1).fill(0)]);
+  const vector = new Float32Array([1, ...Array(vectorDimensions - 1).fill(0)]);
   try {
-    writeFileSync(file, JSON.stringify({ engine: engine.kind, memory: { auto_writeback: 'all' }, embedding_model: 'openai:text-embedding-3-small', embedding_dimensions: DEFAULT_EMBEDDING_DIMENSIONS }));
-    configureGateway({ embedding_model: 'openai:text-embedding-3-small', embedding_dimensions: DEFAULT_EMBEDDING_DIMENSIONS, env: { OPENAI_API_KEY: 'sk-test' } });
+    writeFileSync(file, JSON.stringify({ engine: engine.kind, memory: { auto_writeback: 'all' }, embedding_model: 'openai:text-embedding-3-small', embedding_dimensions: vectorDimensions }));
+    configureGateway({ embedding_model: 'openai:text-embedding-3-small', embedding_dimensions: vectorDimensions, env: { OPENAI_API_KEY: 'sk-test' } });
     __setEmbedTransportForTests(async ({ values }) => ({ embeddings: values.map(() => Array.from(vector)), usage: { tokens: 0 } }) as any);
     const f = await capture('红豆杉临时行程在重庆，红豆杉报告需要日期', [{ fact: '红豆杉临时行程在重庆' }, { fact: '红豆杉报告需要日期' }]);
     const found = (await engine.searchVector(vector, { sourceId: 'lifecycle', limit: 20 })).filter(row => row.slug === f.slug);
@@ -169,7 +171,7 @@ test('向量及语义缓存命中也不能返回已失效快照，刷新后分�
     await coordinator.scan(f.conversation.id);
     expect(JSON.stringify(await engine.getChunks(f.slug, { sourceId: 'lifecycle' }))).not.toContain('重庆');
     expect(JSON.stringify(await engine.searchVector(vector, { sourceId: 'lifecycle', limit: 20 }))).toContain('红豆杉报告需要日期');
-  } finally { __setEmbedTransportForTests(null); configureGateway({ env: {} }); writeFileSync(file, previousConfig); }
+  } finally { __setEmbedTransportForTests(null); configureGateway(sharedPostgres ? { env: {}, embedding_dimensions: vectorDimensions } : { env: {} }); writeFileSync(file, previousConfig); }
 }, 60000);
 
 test('有完整单会话贡献链的旧 Take 到期失效，无法证明来源的人工记录保留', async () => {
@@ -191,7 +193,7 @@ test('有完整单会话贡献链的旧 Take 到期失效，无法证明来源�
 test('临时原生事实不提升永久 Take，稳定派生 Take 在遗忘后失效而人工 Take 保留', async () => {
   const entity = 'projects/lifecycle-takes';
   await importFromContent(engine, entity, '---\ntitle: 生命周期整理\ntype: project\n---\n\n原始项目资料。', { sourceId: 'lifecycle', noEmbed: true });
-  const embedding = new Float32Array([1, ...Array(DEFAULT_EMBEDDING_DIMENSIONS - 1).fill(0)]);
+  const embedding = new Float32Array([1, ...Array(vectorDimensions - 1).fill(0)]);
   const kinds = ['fact', 'preference', 'commitment'];
   const transient = await capture('临时项目计划三项', kinds.map((kind, i) => ({ fact: `临时原生计划${i}`, kind, entity_slug: entity, embedding, valid_from: new Date(Date.now() - 3 * 86400000), valid_until: new Date(Date.now() + 3600000) })));
   await runPhaseConsolidate(engine, { minOldestAgeMs: 0, minFactsPerBucket: 3 });

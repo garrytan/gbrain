@@ -1,16 +1,29 @@
 # Bug 修复台账
 
+## 2026-10-14 PMBrain 1.4.66 启动失败修复的三项 CI 失败
+
+- 时间：2026-10-14
+- 版本号：PMBrain 1.4.66（统一产品版本，Schema 134 未变）
+- 标题：共享测试库向量宽度、保存向量模型时 PGLite 不再返回、空任务运行时注册崩溃
+- 编程工具：Grok 大模型：Grok 4.7
+- 描述：提交 4b82545b 的检查里，记忆生命周期在共享测试库上报 `content_chunks.embedding` 为 vector(1536)，用例却把配置重置成 1280。核心用户路径第 4 步保存向量模型后，对齐维度时同一次打开又创建了一个 PGLite，等待遮罩停在「正在准备搜索索引」。串行用例用空任务运行时注册管理路由，`attachWorkbenchMemory` 不存在时仍然被调用。
+- 修复：共享测试库沿用预加载时已经存在的向量宽度，本机 PGLite 用例仍用 1280。同一次打开不再为了读取启动细节额外创建 PGLite；第一次打开失败仍走原有的一次 WAL 修复重试。管理路由在没有记忆挂接时跳过。已有向量列与配置宽度不一致时仍拒绝初始化，不自动改列宽。不删除知识页面、原始资料或向量。
+- 是否完成：定向测试和发布资源已完成。远端 CI、打包后的核心用户路径和安装包未跑。
+- 最终结果：本地 5 个文件 55 项通过，16.08 秒。其中管理路由 3 项、PGLite 启动分类、toast 修复约束、发布说明 6 项、记忆生命周期 9 项。记忆生命周期这次走本机 PGLite 的 1280 维；共享测试库的 1536 维路径没有在本机重跑。`bun run build:admin` 完成，发布清单 `62bd5f8df132`。`check-version-sync` 为统一 1.4.66。
+- 与规划差异：1.4.65 曾在初始化失败后于同进程再打开一次 PGLite 以保留启动细节。这次去掉该次打开，因为第二次创建可能一直不返回。用户正式库未打开，不能据此判断那台机器的库能否启动。
+- Skill/插件与工作流：无。未运行 build:win，未提交。
+
 ## 2026-10-14 PMBrain 1.4.65 PGLite 启动失败被误判为 WASM 损坏
 
 - 时间：2026-10-14
 - 版本号：PMBrain 1.4.65（统一产品版本，Schema 134 未变）
 - 标题：知识库服务启动时 PGLite 报 failed to initialize properly，未进入 WAL 修复
 - 编程工具：Grok 大模型：Grok 4.7
-- 描述：用户日志先在升级冷备副本上做了 WAL 修复，随后正式库 `E:\AI\PMBrain\PGLite\brain.pglite` 打开失败。界面显示「知识库服务没有启动」和「PGLite failed to initialize its WASM runtime」，原错是 `PGlite failed to initialize properly`。此前修复只把 `Aborted()` 送去 WAL 修复，这条 Postgres 进程退出码错误被当成未知 WASM 故障，正式库没有再试修复，Postgres 自己的启动日志也被丢掉。
-- 修复：该启动失败与 `Aborted()` 走同一套有备份、失败会恢复的 WAL 修复。打开失败时再以调试方式读一次 Postgres 日志；日志若指向目录损坏或 toast 大字段损坏，仍不重置 WAL。不删除知识库、原始资料或向量。
+- 描述：用户日志先在升级冷备副本上做了 WAL 修复，随后正式库 `E:\AI\PMBrain\PGLite\brain.pglite` 打开失败。界面显示「知识库服务没有启动」和「PGLite failed to initialize its WASM runtime」，原错是 `PGlite failed to initialize properly`。此前修复只把 `Aborted()` 送去 WAL 修复，这条 PGLite 初始化失败被当成未知故障，正式库没有再试修复。
+- 修复：该启动失败与 `Aborted()` 走同一套有备份、失败会恢复的 WAL 修复。日志若指向目录损坏或 toast 大字段损坏，仍不重置 WAL。不删除知识库、原始资料或向量。同进程调试重开已在 1.4.66 去掉。
 - 是否完成：分类与启动日志定向测试通过，Admin 发布资源已按 1.4.65 重建。用户那台机器的正式库未在本机打开，安装包未打包。
 - 最终结果：`test/pglite-init-classifier.test.ts`、`test/pglite-startup-detail.test.ts`、`test/pglite-toast-repair.test.ts` 共 41 项通过。`bun run build:admin` 完成，发布清单 `d7bee2268b4b`。正式库是否能在修复后启动，要等用户打包安装 1.4.65 后用原库验证。
-- 与规划差异：冷备副本在日志里已经修过 WAL 仍打不开，所以不能保证正式库一定能被同一修复打开。这次保证正式库会尝试修复，并把 Postgres 原因留在错误里。
+- 与规划差异：冷备副本在日志里已经修过 WAL 仍打不开，所以不能保证正式库一定能被同一修复打开。这次保证正式库会尝试修复。启动细节不来自另一套数据库服务。
 - Skill/插件与工作流：无。未运行 build:win，未改用户知识库。
 
 ## 2026-10-14 PMBrain 1.4.64 深度整理同步无进度与中断续跑缺口

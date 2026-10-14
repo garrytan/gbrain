@@ -20,7 +20,6 @@ import { pg_trgm } from '@electric-sql/pglite/contrib/pg_trgm';
 import { configDir } from './config.ts';
 import { acquireLock, clearReapMarker, releaseLock } from './pglite-lock.ts';
 import { isPgliteProcessStartupFailure, isPgliteToastInconsistencyError } from './pglite-errors.ts';
-import { createWithStartupDetail } from './pglite-startup-detail.ts';
 import { attemptWalRepairAndRetry, clearRepairAttemptSidecar } from './pglite-repair.ts';
 import { pgControlLooksCleanlyShutdown } from './pglite-resetwal.ts';
 import { PGLITE_DATA_PROTECTION_POLICY } from './pglite-data-policy.ts';
@@ -306,11 +305,10 @@ async function openVerifiedRestoreCopy(
 
 async function inspectRestoreCopy(databasePath: string): Promise<PgliteRecoveryValidation> {
   return preservingProcessExitCode(async () => {
-    const open = () => createWithStartupDetail(debug => PGlite.create({
+    const open = () => PGlite.create({
       dataDir: databasePath,
       extensions: { vector, pg_trgm },
-      ...(debug ? { debug } : {}),
-    }));
+    });
     const db = await openVerifiedRestoreCopy(databasePath, open);
     try {
       const tableResult = await db.query<{ tablename: string }>(
