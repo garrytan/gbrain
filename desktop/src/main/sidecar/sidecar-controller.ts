@@ -1,4 +1,4 @@
-import {readMigrationProgress} from '../startup/post-upgrade-startup.js';
+import {readMigrationProgress, runUpgradeRetryGate, startupFailureAllowsRetry} from '../startup/post-upgrade-startup.js';
 import { app, type BrowserWindow } from 'electron';
 import { ensureBootstrapToken, getDatabaseRuntimeConfig, getSetupInfo, markDesktopMigration, needsDesktopMigration } from '../config-manager.js';
 import type { CliRuntime } from '../cli-runner.js';
@@ -240,10 +240,12 @@ export class SidecarController {
       const retrySetup = getSetupInfo();
       const migrationRequired = retrySetup.current.engine === 'pglite'
         && needsDesktopMigration(app.getVersion());
-      if (!migrationRequired) {
-        await this.dependencies.reconcileConfiguredEmbeddingIndex();
-      }
-      await this.startOnce(false);
+      await runUpgradeRetryGate({
+        migrationRequired,
+        migrate: () => this.dependencies.migrateConfiguredInstallation(),
+        reconcile: () => this.dependencies.reconcileConfiguredEmbeddingIndex(),
+        start: () => this.startOnce(false),
+      });
       const started = this.manager;
       if (!started) throw new Error('PMBrain 本地服务未能启动。');
       if (migrationRequired) {
@@ -402,6 +404,7 @@ export class SidecarController {
           } catch {
             // best-effort cleanup between retries
           }
+          if (!startupFailureAllowsRetry(raw)) break;
         }
         if (attempt < maxAttempts) {
           this.dependencies.sendStartupProgress({

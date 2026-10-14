@@ -1,3 +1,5 @@
+import { isPgliteDataDirPermissionError } from '../../../../src/core/pglite-errors.js';
+
 /**
  * Post-upgrade first-boot helpers.
  *
@@ -40,6 +42,21 @@ export const POST_UPGRADE_RETRY_BASE_MS = 2_000;
 export function postUpgradeRetryDelayMs(attempt: number): number {
   const n = Math.max(1, Math.floor(attempt));
   return POST_UPGRADE_RETRY_BASE_MS * n;
+}
+
+export function startupFailureAllowsRetry(message: string): boolean {
+  return !isPgliteDataDirPermissionError(message) && !message.includes('无法写入启动锁');
+}
+
+export async function runUpgradeRetryGate(input: {
+  migrationRequired: boolean;
+  migrate: () => Promise<unknown>;
+  reconcile: () => Promise<void>;
+  start: () => Promise<void>;
+}): Promise<void> {
+  if (input.migrationRequired) await input.migrate();
+  else await input.reconcile();
+  await input.start();
 }
 
 /**

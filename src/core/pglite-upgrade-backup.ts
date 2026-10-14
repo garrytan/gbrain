@@ -22,7 +22,6 @@ import { configDir } from './config.ts';
 import { acquireLock, clearReapMarker, releaseLock } from './pglite-lock.ts';
 import { isPgliteDataDirPermissionError, isPgliteProcessStartupFailure, isPgliteToastInconsistencyError } from './pglite-errors.ts';
 import { attemptWalRepairAndRetry, clearRepairAttemptSidecar } from './pglite-repair.ts';
-import { pgControlLooksCleanlyShutdown } from './pglite-resetwal.ts';
 import { PGLITE_DATA_PROTECTION_POLICY } from './pglite-data-policy.ts';
 
 export const PGLITE_UPGRADE_BACKUP_RETENTION = 2;
@@ -269,38 +268,21 @@ function isWasmAbortMessage(message: string): boolean {
     || isPgliteProcessStartupFailure(message);
 }
 
-async function openVerifiedRestoreCopy(
+export async function openVerifiedRestoreCopy(
   databasePath: string,
   open: () => Promise<PGlite>,
 ): Promise<PGlite> {
   const fail = (detail: string, cause?: unknown): never => {
     throw new Error(`PGLite recovery-copy WAL repair failed: ${detail}`, { cause });
   };
-  const repair = () => attemptWalRepairAndRetry(databasePath, open);
-
-  if (!pgControlLooksCleanlyShutdown(databasePath)) {
-    const attempt = await repair();
-    if (attempt.status === 'repaired') return attempt.db;
-    if (attempt.status !== 'skipped') return fail(attempt.repairError);
-    try {
-      return await open();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (!isWasmAbortMessage(message)) throw error;
-      return fail(attempt.detail, error);
-    }
-  }
-
   try {
     return await open();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (!isWasmAbortMessage(message)) throw error;
-    const attempt = await repair();
-    if (attempt.status !== 'repaired') {
-      return fail(attempt.status === 'skipped' ? attempt.detail : attempt.repairError, error);
-    }
-    return attempt.db;
+    if (isPgliteDataDirPermissionError(message) || !isWasmAbortMessage(message)) throw error;
+    const attempt = await attemptWalRepairAndRetry(databasePath, open);
+    if (attempt.status === 'repaired') return attempt.db;
+    return fail(attempt.status === 'skipped' ? attempt.detail : attempt.repairError, error);
   }
 }
 

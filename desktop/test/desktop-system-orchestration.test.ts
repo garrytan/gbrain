@@ -67,7 +67,8 @@ describe('desktop system orchestration contracts', () => {
     expect(main).toContain("setup.current.engine === 'pglite'");
     expect(databaseController).toMatch(/async migrateConfiguredInstallation[\s\S]*?engine === 'pglite'[\s\S]*?pgliteBackup\.ensureUpgradeBackup[\s\S]*?return true;[\s\S]*?DESKTOP_MIGRATION_ARGS/);
     expect(sidecarController).toMatch(/migrateConfiguredInstallation\(\)[\s\S]*?this\.start\(false\)[\s\S]*?engine === 'pglite'\)[\s\S]*?markDesktopMigration/);
-    expect(sidecarController).toMatch(/async restartForRetry[\s\S]*?needsDesktopMigration\(app\.getVersion\(\)\)[\s\S]*?startOnce\(false\)[\s\S]*?markDesktopMigration\(app\.getVersion\(\)\)/);
+    expect(sidecarController).toMatch(/async restartForRetry[\s\S]*?needsDesktopMigration\(app\.getVersion\(\)\)[\s\S]*?runUpgradeRetryGate\([\s\S]*?markDesktopMigration\(app\.getVersion\(\)\)/);
+    expect(sidecarController).toContain('if (!startupFailureAllowsRetry(raw)) break;');
     expect(main).toContain('PGLite 数据库路径：${databasePath}');
   });
 
@@ -218,7 +219,8 @@ describe('desktop system orchestration contracts', () => {
     expect(databaseController).toContain('pgliteBackup.ensureUpgradeBackup');
     expect(databaseController).toContain('automatic clearing was refused');
     expect(sidecarController).toMatch(/migrateConfiguredInstallation\(\)[\s\S]*?reconcileConfiguredEmbeddingIndex\(\)[\s\S]*?this\.start\(false\)/);
-    expect(sidecarController).toMatch(/await this\.stopNow\(\);[\s\S]*?reconcileConfiguredEmbeddingIndex\(\)[\s\S]*?await this\.startOnce\(false\)/);
+    expect(sidecarController).toMatch(/await this\.stopNow\(\);[\s\S]*?runUpgradeRetryGate\(\{[\s\S]*?migrate: \(\) => this\.dependencies\.migrateConfiguredInstallation\(\),[\s\S]*?reconcile: \(\) => this\.dependencies\.reconcileConfiguredEmbeddingIndex\(\),[\s\S]*?start: \(\) => this\.startOnce\(false\)/);
+    expect(main).toMatch(/if \(input\.migrationRequired\) await input\.migrate\(\);\s*else await input\.reconcile\(\);\s*await input\.start\(\)/);
     expect(main).toContain('reconcileConfiguredEmbeddingIndex: () => databaseUpgradeController.reconcileConfiguredEmbeddingIndex()');
   });
 

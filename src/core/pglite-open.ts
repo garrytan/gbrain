@@ -1,7 +1,7 @@
-import { writeFileSync, unlinkSync } from 'node:fs';
+import { statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PGlite, type PGliteOptions } from '@electric-sql/pglite';
-import { clearStalePglitePostmasterPid } from './pglite-lock.ts';
+import { clearPgliteDataDirReadonly, clearStalePglitePostmasterPid } from './pglite-lock.ts';
 
 const MAX_STARTUP_LOG_LINES = 40;
 
@@ -16,6 +16,17 @@ function permissionError(detail: string): Error {
     'FATAL: could not create lock file "postmaster.pid": Permission denied',
     detail,
   ].join('\n'));
+}
+
+export function assertPgliteDataDirLockWritable(dataDir: string): void {
+  let info: ReturnType<typeof statSync>;
+  try {
+    info = statSync(dataDir);
+  } catch {
+    return;
+  }
+  if (!info.isDirectory() || (info.mode & 0o222) !== 0) return;
+  throw permissionError('数据目录仍没有写入属性，启动锁 postmaster.pid 无法创建。');
 }
 
 function assertDataDirWritable(dataDir: string): void {
@@ -34,6 +45,8 @@ function assertDataDirWritable(dataDir: string): void {
 export async function createPgliteDatabase(options: PGliteOptions): Promise<PGlite> {
   const dataDir = typeof options.dataDir === 'string' ? options.dataDir : '';
   if (dataDir) {
+    clearPgliteDataDirReadonly(dataDir);
+    assertPgliteDataDirLockWritable(dataDir);
     const cleared = clearStalePglitePostmasterPid(dataDir);
     if (cleared.status === 'blocked') {
       throw permissionError(`${cleared.code}: ${cleared.detail}`);

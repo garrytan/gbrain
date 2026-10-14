@@ -320,6 +320,51 @@ export type StalePostmasterPidClear =
   | { status: 'kept-live'; pid: number }
   | { status: 'blocked'; code: string; detail: string };
 
+function clearReadonlyTree(dir: string): void {
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    if (name === 'postmaster.pid') continue;
+    const child = join(dir, name);
+    let info: ReturnType<typeof lstatSync>;
+    try {
+      info = lstatSync(child);
+    } catch {
+      continue;
+    }
+    if (info.isSymbolicLink()) continue;
+    if (info.isDirectory()) {
+      if ((info.mode & 0o222) === 0) {
+        try { chmodSync(child, (info.mode | 0o200) & 0o777); } catch { /* one directory can stay readonly */ }
+      }
+      clearReadonlyTree(child);
+      continue;
+    }
+    if (!info.isFile() || (info.mode & 0o222) !== 0) continue;
+    try { chmodSync(child, (info.mode | 0o200) & 0o777); } catch { /* leave this file */ }
+  }
+}
+
+export function clearPgliteDataDirReadonly(dataDir: string): void {
+  let info: ReturnType<typeof statSync>;
+  try {
+    info = statSync(dataDir);
+  } catch {
+    return;
+  }
+  if (!info.isDirectory() || (info.mode & 0o222) !== 0) return;
+  try {
+    chmodSync(dataDir, (info.mode | 0o200) & 0o777);
+  } catch {
+    return;
+  }
+  clearReadonlyTree(dataDir);
+}
+
 export function clearStalePglitePostmasterPid(dataDir: string): StalePostmasterPidClear {
   const pidFile = join(dataDir, 'postmaster.pid');
   let info: ReturnType<typeof lstatSync>;
