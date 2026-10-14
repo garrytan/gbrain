@@ -218,6 +218,8 @@ export const SKILL_CHECK_NAMES: ReadonlySet<string> = new Set([
 export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   // The effective chat_fallback_chain, its config plane, the providers it reaches and per-entry readiness.
   'chat_fallback_chain',
+  // A route preset (`models.route`) and every model surface that would leave its provider.
+  'subscription_routing',
   // Agent operator wave: is an agent harness wired to this brain (registration read; --only adds the smoke test).
   'harness_wiring',
   // Cat 41: the provider-use decision gbrain setup recorded; declined = no provider request (discovery, probe).

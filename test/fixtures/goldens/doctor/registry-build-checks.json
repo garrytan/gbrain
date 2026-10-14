@@ -342,6 +342,10 @@
         "name": "chat_fallback_chain"
       },
       {
+        "category": "ops",
+        "name": "subscription_routing"
+      },
+      {
         "category": "meta",
         "name": "behavior_changes"
       },

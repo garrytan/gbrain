@@ -105,6 +105,7 @@ import { trustSourcesUnclaimedEntry } from './checks/trust-sources-unclaimed.ts'
 import { harnessWiringDoctorEntry } from './checks/harness-wiring.ts';
 import { agentContractEntry } from './checks/agent-contract.ts';
 import { chatFallbackChainEntry } from './checks/chat-fallback.ts';
+import { subscriptionRoutingEntry } from './checks/subscription-routing.ts';
 import { providerConsentEntry } from './checks/provider-consent.ts';
 import { behaviorChangesEntry } from './checks/behavior-changes.ts';
 import { fenceIntegrityEntry } from './checks/fence-integrity.ts';
@@ -150,6 +151,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   embeddingEnvOverrideEntry,
   supersessionCalibrationEntry,
   chatFallbackChainEntry,
+  subscriptionRoutingEntry,
   behaviorChangesEntry,
   graphCoverageEntry,
   orphanRatioEntry,

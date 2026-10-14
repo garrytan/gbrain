@@ -23,6 +23,14 @@ for embeddings.`). Claude has no first-party embedding model regardless of
 transport; pair this recipe with `openai`, `google`, or `voyage` for
 embeddings the same way the `anthropic` recipe's docs recommend.
 
+To put every chat surface on this recipe in one command (tiers, default,
+aliases, fact and atom extraction; opt-in, dry run first, reversible), see
+[Run GBrain on your Claude subscription](../guides/claude-subscription.md).
+Every call on that route, background jobs included, draws on your Claude
+plan's usage limits; the guide points at Anthropic's current terms for
+automated use. `gbrain doctor --only subscription_routing` then names any
+surface that still resolves to another provider.
+
 ## Setup
 
 1. Install Claude Code 2.0.60 or newer (the `claude` CLI) and run `claude`

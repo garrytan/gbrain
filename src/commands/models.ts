@@ -12,6 +12,11 @@
  *                               advisory `[newer <family> available: <id>]`
  *                               hint plus the config command.
  *
+ *   `gbrain models route <preset> [--apply] [--undo]` — opt-in routing
+ *                               preset (src/commands/models-route.ts): every
+ *                               chat surface on one provider, dry run first,
+ *                               reversible. `claude-cli` is the one preset.
+ *
  *   `gbrain models doctor`   — opt-in probe. Fires a 1-token `gateway.chat()`
  *                               call against each configured chat / expansion
  *                               model and reports reachability with the
@@ -219,7 +224,7 @@ function newerAvailable(resolved: string, configKey: string): NewerAvailable | u
   return { family: newer.family, model: newer.id, command: `gbrain config set ${configKey} ${model}` };
 }
 
-async function buildReport(engine: BrainEngine): Promise<ModelsReport> {
+export async function buildModelsReport(engine: BrainEngine): Promise<ModelsReport> {
   const globalDefault = await engine.getConfig('models.default');
 
   const tiers = {} as Record<ModelTier, ModelEntry>;
@@ -815,13 +820,22 @@ export async function runModels(engine: BrainEngine, args: string[]): Promise<vo
   // to the args.includes('--help') branch; the args[0] rewrite needs
   // explicit ordering to preserve that behavior.
   const hasHelp = args.includes('--help') || args.includes('-h') || args[0] === 'help';
-  const sub = hasHelp ? 'help' : args[0] === 'doctor' ? 'doctor' : 'read';
+  const sub = hasHelp ? 'help' : args[0] === 'doctor' ? 'doctor' : args[0] === 'route' ? 'route' : 'read';
+
+  if (sub === 'route') {
+    const { runModelsRoute } = await import('./models-route.ts');
+    await runModelsRoute(engine, args.slice(1));
+    return;
+  }
 
   if (sub === 'help') {
     process.stdout.write(
 `Usage:
   gbrain models                   Show routing table (read-only)
   gbrain models doctor [flags]    Probe each configured model (~1 token each)
+  gbrain models route <preset>    Preview a routing preset (dry run); --apply writes it,
+                                  --undo [--apply] restores. Preset: claude-cli
+                                  (every chat surface on the Claude subscription)
   gbrain models --json            Machine-readable output
 
 Flags (doctor only):
@@ -840,7 +854,7 @@ Tiers: utility (haiku-class) | reasoning (sonnet) | deep (opus) | subagent (Anth
   }
 
   if (sub === 'read') {
-    const report = await buildReport(engine);
+    const report = await buildModelsReport(engine);
     if (json) {
       process.stdout.write(JSON.stringify(report, null, 2) + '\n');
     } else {
