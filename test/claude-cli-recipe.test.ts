@@ -94,6 +94,11 @@ describe('claude-cli recipe registration', () => {
     expect(recipe!.touchpoints.chat!.models).toContain('claude-opus-5');
     expect(recipe!.touchpoints.chat!.models).toContain('claude-opus-4-8');
     expect(recipe!.touchpoints.chat!.models).toContain('claude-sonnet-5');
+    // Haiku 5.5 is the utility pick of the claude-cli route preset and the
+    // anthropic recipe lists it; the CLI serves it (`claude -p --model
+    // claude-haiku-5-5`), so the chat list and the expansion list carry it.
+    expect(recipe!.touchpoints.chat!.models).toContain('claude-haiku-5-5');
+    expect(recipe!.touchpoints.expansion!.models).toContain('claude-haiku-5-5');
     expect(recipe!.touchpoints.embedding).toBeUndefined();
     // Expansion IS declared. Without it `isAvailable('expansion')` is false
     // for every claude-cli model, so expandQuery() returns [query] before any
