@@ -1414,9 +1414,11 @@ describe('PGLiteEngine: error-wrap and guarded WAL recovery on connect()', () =>
   test('pglite-engine.ts classifies create failures, guards WAL repair, and preserves the original error', async () => {
     const { readFileSync } = await import('fs');
     const src = readFileSync('src/core/pglite-engine.ts', 'utf-8');
+    const openSrc = readFileSync('src/core/pglite-open.ts', 'utf-8');
     expect(src).toContain('const openPersistent = () => preservingProcessExitCode');
     expect(src).toContain('this._db = await openPersistent()');
-    expect(src).toContain('PGlite.create({');
+    expect(src).toContain('createPgliteDatabase({');
+    expect(openSrc).toContain('PGlite.create({');
     expect(src).toContain('classifyPgliteInitError(original)');
     expect(src).toContain("verdict === 'wasm-abort'");
     expect(src).toContain("return 'toast-corrupt'");

@@ -30,6 +30,8 @@ import {
   statSync,
   lstatSync,
   rmSync,
+  chmodSync,
+  unlinkSync,
 } from 'fs';
 import { dirname, join } from 'path';
 import { randomBytes } from 'crypto';
@@ -310,6 +312,93 @@ export function isProcessAlive(pid: number): boolean {
     return true;
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+export type StalePostmasterPidClear =
+  | { status: 'absent' | 'removed' }
+  | { status: 'kept-live'; pid: number }
+  | { status: 'blocked'; code: string; detail: string };
+
+function clearReadonlyTree(dir: string): void {
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    if (name === 'postmaster.pid') continue;
+    const child = join(dir, name);
+    let info: ReturnType<typeof lstatSync>;
+    try {
+      info = lstatSync(child);
+    } catch {
+      continue;
+    }
+    if (info.isSymbolicLink()) continue;
+    if (info.isDirectory()) {
+      if ((info.mode & 0o222) === 0) {
+        try { chmodSync(child, (info.mode | 0o300) & 0o777); } catch { /* one directory can stay readonly */ }
+      }
+      clearReadonlyTree(child);
+      continue;
+    }
+    if (!info.isFile() || (info.mode & 0o222) !== 0) continue;
+    try { chmodSync(child, (info.mode | 0o200) & 0o777); } catch { /* leave this file */ }
+  }
+}
+
+export function clearPgliteDataDirReadonly(dataDir: string): void {
+  let info: ReturnType<typeof statSync>;
+  try {
+    info = statSync(dataDir);
+  } catch {
+    return;
+  }
+  if (!info.isDirectory() || (info.mode & 0o222) !== 0) return;
+  try {
+    chmodSync(dataDir, (info.mode | 0o300) & 0o777);
+  } catch {
+    return;
+  }
+  clearReadonlyTree(dataDir);
+}
+
+export function clearStalePglitePostmasterPid(dataDir: string): StalePostmasterPidClear {
+  const pidFile = join(dataDir, 'postmaster.pid');
+  let info: ReturnType<typeof lstatSync>;
+  try {
+    info = lstatSync(pidFile);
+  } catch {
+    return { status: 'absent' };
+  }
+  if (info.isSymbolicLink() || !info.isFile()) {
+    return { status: 'blocked', code: 'EINVAL', detail: 'postmaster.pid 不是普通文件' };
+  }
+  let recordedPid = Number.NaN;
+  try {
+    recordedPid = Number(readFileSync(pidFile, 'utf8').split(/\r?\n/, 1)[0]?.trim());
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code ?? 'EACCES';
+    const detail = error instanceof Error ? error.message : String(error);
+    return { status: 'blocked', code, detail };
+  }
+  if (isProcessAlive(recordedPid)) return { status: 'kept-live', pid: recordedPid };
+  try {
+    const dirMode = statSync(dataDir).mode;
+    chmodSync(dataDir, (dirMode | 0o300) & 0o777);
+  } catch { /* directory mode is best-effort */ }
+  try {
+    chmodSync(pidFile, 0o666);
+  } catch { /* still attempt removal */ }
+  try {
+    unlinkSync(pidFile);
+    return { status: 'removed' };
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code ?? 'EPERM';
+    const detail = error instanceof Error ? error.message : String(error);
+    return { status: 'blocked', code, detail };
   }
 }
 

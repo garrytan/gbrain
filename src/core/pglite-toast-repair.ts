@@ -7,7 +7,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { basename, dirname, join, relative, resolve } from 'node:path';
-import { PGlite } from '@electric-sql/pglite';
+import { createPgliteDatabase } from './pglite-open.ts';
 import { vector } from '@electric-sql/pglite/vector';
 import { pg_trgm } from '@electric-sql/pglite/contrib/pg_trgm';
 import { gbrainPath, loadConfig } from './config.ts';
@@ -217,7 +217,7 @@ async function openStagingEngine(
   } catch (error) {
     if (!forensicWalReset || !isPgliteToastInconsistencyError(error)) throw error;
     steps.push('connect failed with toast-corrupt; attempting one forensic WAL reset on staging only');
-    const open = () => preservingProcessExitCode(() => PGlite.create({
+    const open = () => preservingProcessExitCode(() => createPgliteDatabase({
       dataDir: stagingPath,
       extensions: { vector, pg_trgm },
     }));

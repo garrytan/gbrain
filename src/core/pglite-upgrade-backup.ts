@@ -14,14 +14,14 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { PGlite } from '@electric-sql/pglite';
+import type { PGlite } from '@electric-sql/pglite';
+import { createPgliteDatabase } from './pglite-open.ts';
 import { vector } from '@electric-sql/pglite/vector';
 import { pg_trgm } from '@electric-sql/pglite/contrib/pg_trgm';
 import { configDir } from './config.ts';
 import { acquireLock, clearReapMarker, releaseLock } from './pglite-lock.ts';
-import { isPgliteToastInconsistencyError } from './pglite-errors.ts';
+import { isPgliteDataDirPermissionError, isPgliteProcessStartupFailure, isPgliteToastInconsistencyError } from './pglite-errors.ts';
 import { attemptWalRepairAndRetry, clearRepairAttemptSidecar } from './pglite-repair.ts';
-import { pgControlLooksCleanlyShutdown } from './pglite-resetwal.ts';
 import { PGLITE_DATA_PROTECTION_POLICY } from './pglite-data-policy.ts';
 
 export const PGLITE_UPGRADE_BACKUP_RETENTION = 2;
@@ -263,48 +263,32 @@ async function preservingProcessExitCode<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 function isWasmAbortMessage(message: string): boolean {
-  if (isPgliteToastInconsistencyError(message)) return false;
-  return /aborted\s*\(\)|RuntimeError|unreachable|abort.*runtime|wasm.*runtime/i.test(message);
+  if (isPgliteToastInconsistencyError(message) || isPgliteDataDirPermissionError(message)) return false;
+  return /aborted\s*\(\)|RuntimeError|unreachable|abort.*runtime|wasm.*runtime/i.test(message)
+    || isPgliteProcessStartupFailure(message);
 }
 
-async function openVerifiedRestoreCopy(
+export async function openVerifiedRestoreCopy(
   databasePath: string,
   open: () => Promise<PGlite>,
 ): Promise<PGlite> {
   const fail = (detail: string, cause?: unknown): never => {
     throw new Error(`PGLite recovery-copy WAL repair failed: ${detail}`, { cause });
   };
-  const repair = () => attemptWalRepairAndRetry(databasePath, open);
-
-  if (!pgControlLooksCleanlyShutdown(databasePath)) {
-    const attempt = await repair();
-    if (attempt.status === 'repaired') return attempt.db;
-    if (attempt.status !== 'skipped') return fail(attempt.repairError);
-    try {
-      return await open();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (!isWasmAbortMessage(message)) throw error;
-      return fail(attempt.detail, error);
-    }
-  }
-
   try {
     return await open();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (!isWasmAbortMessage(message)) throw error;
-    const attempt = await repair();
-    if (attempt.status !== 'repaired') {
-      return fail(attempt.status === 'skipped' ? attempt.detail : attempt.repairError, error);
-    }
-    return attempt.db;
+    if (isPgliteDataDirPermissionError(message) || !isWasmAbortMessage(message)) throw error;
+    const attempt = await attemptWalRepairAndRetry(databasePath, open);
+    if (attempt.status === 'repaired') return attempt.db;
+    return fail(attempt.status === 'skipped' ? attempt.detail : attempt.repairError, error);
   }
 }
 
 async function inspectRestoreCopy(databasePath: string): Promise<PgliteRecoveryValidation> {
   return preservingProcessExitCode(async () => {
-    const open = () => PGlite.create({
+    const open = () => createPgliteDatabase({
       dataDir: databasePath,
       extensions: { vector, pg_trgm },
     });

@@ -212,7 +212,7 @@ export function registerWorkbenchRoutes(app: express.Express, requireAdmin: Requ
   const store = new WorkbenchStore(options.storageRoot ?? join(configDir(), 'workbench', identity));
   const agentStore = new WorkbenchAgentStore(store);
   const agents: WorkbenchAgentTools = { store: agentStore, engine, config: currentConfig, ...(options.productTasks ? { runs: () => options.productTasks!.listRuns() } : {}) };
-  const memory = options.productTasks?.attachWorkbenchMemory(store);
+  const memory = options.productTasks?.attachWorkbenchMemory?.(store);
   const hooks=memory?{capture:async(...args:Parameters<typeof memory.capture>)=>{if(options.databaseAvailable?.()===false)throw new Error('知识库正在准备，记忆提炼暂缓');return memory.capture(...args);},settled:memory.settled}:undefined;
   const service = new WorkbenchService(store, currentModels, options.answer ?? knowledgeWorkbenchAnswer(engine, undefined, options.productTasks?{tasks:options.productTasks,store}:undefined, agents), options.summarize ?? summarizeConversation, undefined, hooks);
   const coordinator = options.productTasks ? new WorkbenchAgentCoordinator(agentStore, service, options.productTasks) : undefined;
