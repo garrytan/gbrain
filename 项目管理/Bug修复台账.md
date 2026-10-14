@@ -1,5 +1,70 @@
 # Bug 修复台账
 
+## 2026-10-14 PMBrain 1.4.69 只读数据目录无法创建启动锁
+
+- 时间：2026-10-14
+- 版本号：PMBrain 1.4.69（统一产品版本，Schema 134 未变）
+- 标题：1.4.68 已说明是启动锁权限，但 postmaster.pid 仍然创建失败
+- 编程工具：Grok 大模型：Grok 4.7
+- 描述：20:13 的界面和日志已经是 1.4.68 的权限文案。PGLite 原文是 `2026-10-14 20:13:23.920 +08 [42] FATAL: could not create lock file "postmaster.pid": Permission denied`，没有「could not remove」。升级校验副本和正式库 `E:\AI\PMBrain\PGLite\brain.pglite` 同样失败。本机把临时 PGLite 目录标成只读后，Node 仍能新建文件，PGLite 却报出同一句。原因是目录的只读属性让 PGLite 认为不能创建启动锁。1.4.68 只在 postmaster.pid 还存在时才改目录属性；锁文件已经不在，所以目录一直是只读。同一次日志里，12:12 冷备失败后，约 10 秒的重新启动仍拉起了 sidecar。
+- 修复：打开前如果数据目录没有写入权限，就去掉该目录以及其中数据库文件的只读标记。标记去不掉时，按启动锁权限停止，不再调用 PGlite.create。升级校验副本先正常打开；启动锁权限失败原样抛出，不进入 WAL 修复。只有原来的 WAL 或 wasm 中止才做一次 WAL 修复。重新启动服务时，若这次升级的冷备还没通过，先重做冷备；冷备失败则不启动 sidecar，也不记升级完成。启动锁权限失败不进入升级后的自动重试。不删除知识页面、原始资料或向量。正式库没有打开。
+- 是否完成：定向测试和发布资源已完成。用户正式库未打开，安装包未打包。
+- 最终结果：启动锁、分类和发布说明 42 项通过；桌面重试入口和编排合同 22 项通过。其中临时只读库再次打开并通过 `SELECT 1`，只读校验副本打开且没有 WAL 修复日志，冷备抛错时不会调用启动。核心与桌面 `tsc --noEmit` 通过。`check-version-sync` 为统一 1.4.69。发布清单 `e9d864e528e2`。正式库未参与测试。
+- 与规划差异：若 Windows 访问控制拒绝当前用户写入该文件夹，去掉只读标记也不会成功。界面仍说明是启动锁权限，不进入 WAL 修复，服务仍打不开。只读标记只在目录本身不可写时才清理内部文件；目录本来可写时，单独只读的文件保持不动。没有对正式库做升级彩排。
+- Skill/插件与工作流：无。未运行 build:win。
+
+## 2026-10-14 PMBrain 1.4.68 启动失败仍显示 WAL 冷却
+
+- 时间：2026-10-14
+- 版本号：PMBrain 1.4.68（统一产品版本，Schema 134 未变）
+- 标题：19:22 重启后界面仍是 WAL 冷却，没有显示启动锁权限
+- 编程工具：Grok 大模型：Grok 4.7
+- 描述：新日志 11:22 UTC 的界面原文仍是「数据库本身异常」和「自动 WAL 修复已安全跳过：last auto-repair attempt failed 1945s ago」。1945 秒前就是 10:49 UTC 那次修复失败。这次异常只有 `PGlite failed to initialize properly`，没有带上 PGLite 打出的 `postmaster.pid: Permission denied`。1.4.67 只在错误文本里出现这句时才按权限处理，所以这次仍走进 WAL 冷却。更早的 10:49 日志已经写明旧锁删不掉、新锁建不成。
+- 修复：同一次打开读取 PGLite 的启动输出，不再为了读日志额外创建一个 PGLite。启动锁删不掉或目录不能写入时，按权限失败停止，不进入 WAL 修复。只读且不指向运行进程的 postmaster.pid 仍会先删除。不删除知识页面、原始资料或向量。
+- 是否完成：定向测试和发布资源已完成。用户正式库未打开，安装包未打包。
+- 最终结果：启动锁、分类和 toast 约束 42 项通过，其中只读失效 postmaster.pid 后再次打开 PGLite 并通过 `SELECT 1`。发布说明 6 项通过。`check-version-sync` 为统一 1.4.68。发布清单 `690d63fd7d06`。正式库未参与测试。
+- 与规划差异：若 Windows 访问控制拒绝当前用户写入该文件夹，新版本会说明是启动锁权限，但仍打不开 `E:\AI\PMBrain\PGLite\brain.pglite`。19:22 的截图不是 1.4.67 的启动锁文案，需要安装 1.4.68 后再看。
+- Skill/插件与工作流：无。未运行 build:win。
+
+## 2026-10-14 PMBrain 1.4.67 PGLite 启动锁 postmaster.pid 权限被拒绝
+
+- 时间：2026-10-14
+- 版本号：PMBrain 1.4.67（统一产品版本，Schema 134 未变）
+- 标题：1.4.65 安装后服务仍不能启动，原因为 postmaster.pid Permission denied
+- 编程工具：Grok 大模型：Grok 4.7
+- 描述：吴淑川安装 1.4.65 后，界面仍显示知识库服务没有启动。日志路径是 `E:\AI\PMBrain\PGLite\brain.pglite`。PGLite 原错是 `could not remove old lock file "postmaster.pid": Permission denied`，以及 `could not create lock file "postmaster.pid": Permission denied`。升级副本校验也是同一句。该错误被当成 WASM/WAL 故障，自动 WAL 修复没有打开数据库，原 WAL 已恢复，随后进入一小时冷却。
+- 修复：打开 PGLite 前，若 postmaster.pid 不指向仍在运行的本机进程，先去掉该文件和所在目录的只读标记，再只删除这个启动锁。权限拒绝不再进入 WAL 修复，也不再显示成数据库内容损坏。指向当前进程的锁保留。不删除知识页面、原始资料或向量。
+- 是否完成：定向测试和发布资源已完成。用户那台机器的正式库未打开，安装包未打包。
+- 最终结果：启动锁与错误分类 41 项通过，发布说明 6 项通过。`check-version-sync` 为统一 1.4.67。`bun run build:admin` 完成，发布清单 `ad16ce34fac6`。只读的失效 postmaster.pid 会在测试目录中被删除，当前进程的锁会保留。正式库 `E:\AI\PMBrain\PGLite\brain.pglite` 未参与测试。
+- 与规划差异：若文件夹的访问控制仍拒绝创建文件，软件无法替用户改权限，界面会说明是启动锁权限问题。这次不能保证 `E:\AI\PMBrain\PGLite\brain.pglite` 一定能打开。
+- Skill/插件与工作流：无。未运行 build:win。
+
+## 2026-10-14 PMBrain 1.4.66 启动失败修复的三项 CI 失败
+
+- 时间：2026-10-14
+- 版本号：PMBrain 1.4.66（统一产品版本，Schema 134 未变）
+- 标题：共享测试库向量宽度、保存向量模型时 PGLite 不再返回、空任务运行时注册崩溃
+- 编程工具：Grok 大模型：Grok 4.7
+- 描述：提交 4b82545b 的检查里，记忆生命周期在共享测试库上报 `content_chunks.embedding` 为 vector(1536)，用例却把配置重置成 1280。核心用户路径第 4 步保存向量模型后，对齐维度时同一次打开又创建了一个 PGLite，等待遮罩停在「正在准备搜索索引」。串行用例用空任务运行时注册管理路由，`attachWorkbenchMemory` 不存在时仍然被调用。
+- 修复：共享测试库沿用预加载时已经存在的向量宽度，本机 PGLite 用例仍用 1280。同一次打开不再为了读取启动细节额外创建 PGLite；第一次打开失败仍走原有的一次 WAL 修复重试。管理路由在没有记忆挂接时跳过。已有向量列与配置宽度不一致时仍拒绝初始化，不自动改列宽。不删除知识页面、原始资料或向量。
+- 是否完成：定向测试和发布资源已完成。远端 CI、打包后的核心用户路径和安装包未跑。
+- 最终结果：本地 5 个文件 55 项通过，16.08 秒。其中管理路由 3 项、PGLite 启动分类、toast 修复约束、发布说明 6 项、记忆生命周期 9 项。记忆生命周期这次走本机 PGLite 的 1280 维；共享测试库的 1536 维路径没有在本机重跑。`bun run build:admin` 完成，发布清单 `62bd5f8df132`。`check-version-sync` 为统一 1.4.66。
+- 与规划差异：1.4.65 曾在初始化失败后于同进程再打开一次 PGLite 以保留启动细节。这次去掉该次打开，因为第二次创建可能一直不返回。用户正式库未打开，不能据此判断那台机器的库能否启动。
+- Skill/插件与工作流：无。未运行 build:win，未提交。
+
+## 2026-10-14 PMBrain 1.4.65 PGLite 启动失败被误判为 WASM 损坏
+
+- 时间：2026-10-14
+- 版本号：PMBrain 1.4.65（统一产品版本，Schema 134 未变）
+- 标题：知识库服务启动时 PGLite 报 failed to initialize properly，未进入 WAL 修复
+- 编程工具：Grok 大模型：Grok 4.7
+- 描述：用户日志先在升级冷备副本上做了 WAL 修复，随后正式库 `E:\AI\PMBrain\PGLite\brain.pglite` 打开失败。界面显示「知识库服务没有启动」和「PGLite failed to initialize its WASM runtime」，原错是 `PGlite failed to initialize properly`。此前修复只把 `Aborted()` 送去 WAL 修复，这条 PGLite 初始化失败被当成未知故障，正式库没有再试修复。
+- 修复：该启动失败与 `Aborted()` 走同一套有备份、失败会恢复的 WAL 修复。日志若指向目录损坏或 toast 大字段损坏，仍不重置 WAL。不删除知识库、原始资料或向量。同进程调试重开已在 1.4.66 去掉。
+- 是否完成：分类与启动日志定向测试通过，Admin 发布资源已按 1.4.65 重建。用户那台机器的正式库未在本机打开，安装包未打包。
+- 最终结果：`test/pglite-init-classifier.test.ts`、`test/pglite-startup-detail.test.ts`、`test/pglite-toast-repair.test.ts` 共 41 项通过。`bun run build:admin` 完成，发布清单 `d7bee2268b4b`。正式库是否能在修复后启动，要等用户打包安装 1.4.65 后用原库验证。
+- 与规划差异：冷备副本在日志里已经修过 WAL 仍打不开，所以不能保证正式库一定能被同一修复打开。这次保证正式库会尝试修复。启动细节不来自另一套数据库服务。
+- Skill/插件与工作流：无。未运行 build:win，未改用户知识库。
+
 ## 2026-10-14 PMBrain 1.4.64 深度整理同步无进度与中断续跑缺口
 
 - 时间：2026-10-14
