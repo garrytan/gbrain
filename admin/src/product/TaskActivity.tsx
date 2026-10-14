@@ -27,7 +27,7 @@ export function TaskActivityProvider({ enabled, children }: { enabled: boolean; 
         if (!live) return;
         for (const run of rows) {
           const old = previous.current.get(run.id);
-          if ((old === 'running' || old === 'queued') && !['running', 'queued'].includes(run.status)) setNotice(run);
+          if (run.kind!=='conversation_memory'&&(old === 'running' || old === 'queued') && !['running', 'queued'].includes(run.status)) setNotice(run);
         }
         previous.current = new Map(rows.map(run => [run.id, run.status]));
         setSnapshot({ rows, error: '', loaded: true });
@@ -38,7 +38,7 @@ export function TaskActivityProvider({ enabled, children }: { enabled: boolean; 
     void load();
     return () => { live = false; clearTimeout(timer); };
   }, [enabled]);
-  const running = snapshot.rows.find(run => run.status === 'running') ?? snapshot.rows.find(run => run.status === 'queued');
+  const running = snapshot.rows.find(run => run.kind!=='conversation_memory'&&run.status === 'running') ?? snapshot.rows.find(run => run.kind!=='conversation_memory'&&run.status === 'queued');
   return <TasksContext.Provider value={{ ...snapshot, imports, setImports }}>{children}
     {running && <button type="button" className="product-task-activity" onClick={() => taskLink(running)}><LoaderCircle size={15} /><span>{running.product?.name ?? taskName(running.kind)} · {running.product?.stage ?? '等待执行'}{running.product?.percent != null ? ` ${running.product.percent}%` : ''}</span></button>}
     {notice && <div className="product-task-notice" role="status"><button type="button" onClick={() => taskLink(notice)}>{notice.product?.name ?? taskName(notice.kind)} · {taskStatus(notice)}{notice.product?.metrics.filter(metric => metric.value > 0).slice(0, 2).map(metric => ` · ${metric.label} ${metric.value}`)}</button><button type="button" aria-label="关闭任务通知" onClick={() => setNotice(null)}><X size={16} /></button></div>}

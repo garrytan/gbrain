@@ -61,6 +61,33 @@ describe('pglite-lock v2', () => {
     expect(lockDirExists(TEST_DIR)).toBe(false);
   });
 
+  test('路径被普通文件占用时明确提示并保留原文件，不创建锁或改用其他数据库', async () => {
+    const path = join(TEST_DIR, 'brain.pglite');
+    const original = Buffer.from('Unknown existing file must remain byte-for-byte intact.');
+    writeFileSync(path, original);
+    let failure: unknown;
+    try { await acquireLock(path, { inspector, ownerType: 'test' }); } catch (error) { failure = error; }
+    expect(failure).toBeInstanceOf(PgliteOpenError);
+    expect((failure as Error).message).toContain('普通文件');
+    expect((failure as Error).message).toContain('修改配置');
+    expect((failure as PgliteOpenError).databasePath).toBe(path);
+    expect(classifySidecarStartupError(failure)).toMatchObject({ category: 'database_open_failed', retryable: false });
+    expect(readFileSync(path)).toEqual(original);
+    expect(readdirSync(TEST_DIR)).toEqual(['brain.pglite']);
+  });
+
+  test('父路径被文件占用时指出具体冲突位置，不创建任何目录', async () => {
+    const parent = join(TEST_DIR, 'parent-file');
+    writeFileSync(parent, 'Retain parent file.');
+    let failure: unknown;
+    try { await acquireLock(join(parent, 'nested', 'brain.pglite'), { inspector, ownerType: 'test' }); } catch (error) { failure = error; }
+    expect(failure).toBeInstanceOf(PgliteOpenError);
+    expect((failure as Error).message).toContain('父路径');
+    expect((failure as Error).message).toContain(parent);
+    expect(readFileSync(parent, 'utf8')).toBe('Retain parent file.');
+    expect(readdirSync(TEST_DIR)).toEqual(['parent-file']);
+  });
+
   test('2. second process cannot acquire the same lock while owner is active', async () => {
     const lock1 = await acquireLock(TEST_DIR, { inspector, ownerType: 'desktop-sidecar', timeoutMs: 500 });
     await expect(

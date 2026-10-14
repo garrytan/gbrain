@@ -16,7 +16,7 @@ import { taskRoundCompleted, taskStatus } from '../admin/src/product/task-presen
 import type { ConsoleRun } from '../shared/contracts/common.ts';
 
 let engine: BrainEngine, runtime: ProductTaskRuntime, root: string, server: ReturnType<typeof Bun.serve>;
-let calls = 0, hold = false, invalid = false, usageInput = 20;
+let calls = 0, hold = false, invalid = false, usageInput = 20, incompleteSlug = '';
 const releases = new Set<() => void>();
 const keys = ['PMBRAIN_HOME', 'GBRAIN_HOME', 'DATABASE_URL', 'PMBRAIN_DATABASE_URL', 'GBRAIN_DATABASE_URL'];
 const original = Object.fromEntries(keys.map(key => [key, process.env[key]]));
@@ -29,8 +29,8 @@ async function until(check: () => Promise<boolean>, timeout = 40_000) {
   throw new Error(JSON.stringify({ runs: (await runtime.listRuns()).map(run => ({ id: run.id, status: run.status, stage: run.product?.stage, error: run.error })), jobs: await engine.executeRaw('SELECT id,status,queue,error_text,private_queue_owner_job_id FROM minion_jobs ORDER BY id') }));
 }
 
-async function finished(id: string) {
-  await until(async () => !['queued', 'running'].includes((await runtime.getRun(id))?.status ?? 'running'));
+async function finished(id: string, timeout=40_000) {
+  await until(async () => !['queued', 'running'].includes((await runtime.getRun(id))?.status ?? 'running'),timeout);
   return (await runtime.getRun(id))!;
 }
 
@@ -42,11 +42,12 @@ beforeAll(async () => {
   process.env.PMBRAIN_HOME = root; process.env.GBRAIN_HOME = root; mkdirSync(join(root, '.pmbrain'));
   if (databaseUrl) assertSafeE2eDatabaseUrl(databaseUrl);
   server = Bun.serve({ port: 0, async fetch(req) {
-    const body = await req.json() as { input?: string | string[] };
+    const body = await req.json() as { input?: string | string[]; messages?: unknown[] };
     if (new URL(req.url).pathname.endsWith('/embeddings')) return Response.json({ object: 'list', data: (Array.isArray(body.input) ? body.input : [body.input]).map((_, index) => ({ object: 'embedding', index, embedding: Array.from({ length: dimensions }, (_, i) => i === 0 ? 1 : 0) })), model: 'isolated-embedding', usage: { prompt_tokens: 2, total_tokens: 2 } });
     calls++;
     if (hold) await new Promise<void>(finish => releases.add(finish));
-    return Response.json({ id: `chat-${calls}`, object: 'chat.completion', created: 1, model: 'isolated-capture', choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: JSON.stringify(invalid ? { entities: [], relations: [] } : { entities: [], relations: [], no_entities: true }) } }], usage: { prompt_tokens: usageInput, completion_tokens: 10, total_tokens: usageInput + 10 } });
+    const unfinished=invalid||!!incompleteSlug&&JSON.stringify(body.messages).includes(`资料 slug: ${incompleteSlug}\\n`);
+    return Response.json({ id: `chat-${calls}`, object: 'chat.completion', created: 1, model: 'isolated-capture', choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: JSON.stringify(unfinished ? { entities: [], relations: [] } : { entities: [], relations: [], no_entities: true }) } }], usage: { prompt_tokens: usageInput, completion_tokens: 10, total_tokens: usageInput + 10 } });
   } });
   writeFileSync(configPath(), JSON.stringify({ engine: databaseUrl ? 'postgres' : 'pglite', custom_openai_api_key: 'isolated-only', embedding_model: 'custom-openai:isolated-embedding', embedding_dimensions: dimensions, provider_base_urls: { 'custom-openai': server.url.origin + '/v1' }, models: { default: 'custom-openai:isolated-capture' }, model_usage: { generative_enabled: true, embedding_enabled: true }, desktop: { knowledge_directory: root } }));
   engine = databaseUrl ? new PostgresEngine() : new WorkerPgliteEngine() as unknown as BrainEngine;
@@ -54,7 +55,7 @@ beforeAll(async () => {
 }, 60_000);
 
 beforeEach(async () => {
-  calls = 0; invalid = false; usageInput = 20; release();
+  calls = 0; invalid = false; usageInput = 20; incompleteSlug = ''; release();
   await engine.executeRaw('DELETE FROM minion_jobs');
   await engine.executeRaw("DELETE FROM config WHERE key LIKE 'dream.entity_capture.pending.%'");
   await engine.executeRaw('DELETE FROM pages');
@@ -62,6 +63,9 @@ beforeEach(async () => {
   await engine.executeRaw("UPDATE sources SET local_path=NULL WHERE id='default'");
   await engine.executeRaw("DELETE FROM sources WHERE id<>'default'");
   await engine.setConfig('dream.entity_capture.max_input_tokens', '1000000');
+  await engine.setConfig('dream.entity_capture.cost_cap_cny','5');
+  await engine.executeRaw("DELETE FROM config WHERE key IN ('dream.entity_capture.price.input_cny_per_million','dream.entity_capture.price.output_cny_per_million')");
+  await engine.executeRaw("DELETE FROM config WHERE key IN ('dream.entity_capture.document_max_turns','dream.entity_capture.document_max_input_tokens','dream.entity_capture.document_max_output_tokens')");
   runtime = new ProductTaskRuntime(engine); await runtime.start();
 }, 30_000);
 
@@ -79,7 +83,7 @@ test('同步多份资料只有一个主任务，深度整理等待它完成，�
   hold = true;
   const quick = await runtime.submitDream({ preset: 'quick', sourceId: 'default' });
   const deep = await runtime.submitDream({ phase: 'backlinks', sourceId: 'default' });
-  await until(async () => calls > 0);
+  await until(async () => calls > 0, 60_000);
   const jobs = await engine.executeRaw<{ kind: string }>("SELECT data->>'kind' AS kind FROM minion_jobs WHERE queue=$1", [PRODUCT_TASK_QUEUE]);
   expect(jobs.filter(job => job.kind === 'dream_capture_entities')).toHaveLength(0);
   expect(jobs.filter(job => job.kind === 'dream_quick')).toHaveLength(1);
@@ -101,28 +105,79 @@ test('同步多份资料只有一个主任务，深度整理等待它完成，�
   for (let i = 0; i < 5; i++) expect((await engine.getPage(`input-${i}`, { sourceId: 'default' }))?.compiled_truth).toContain(`第${i}份`);
 }, 90_000);
 
-test('一个维护的多个Source共用Token预算，继续原任务也不会重置预算', async () => {
+test('多Source维护忽略旧累计Token额度，已完成原任务再继续不重复识别', async () => {
   const first=join(root,'budget-first'),second=join(root,'budget-second');mkdirSync(first);mkdirSync(second);
-  writeFileSync(join(first,'first.md'),'# 第一个资料\n\n这是第一个知识源的独立原文。');
-  writeFileSync(join(second,'second.md'),'# 第二个资料\n\n这是第二个知识源的独立原文。');
   await engine.executeRaw("UPDATE sources SET local_path=$1 WHERE id='default'",[first]);
   await engine.executeRaw("INSERT INTO sources(id,name,local_path) VALUES('budget-other','第二个源',$1)",[second]);
+  for(const [sourceId,slug,body] of [['default','first','这是第一个知识源的独立原文。'],['budget-other','second','这是第二个知识源的独立原文。']]){
+    const page={slug,type:'note',compiled_truth:body,frontmatter:{}};
+    await engine.putPage(slug,{...page,title:slug,timeline:''},{sourceId});
+    await requestImportedEntityCapture(engine,sourceId,page);
+  }
   usageInput = 60000;
-  await engine.setConfig('dream.entity_capture.max_input_tokens','60000');
+  await engine.setConfig('dream.entity_capture.max_input_tokens','1');
+  await engine.setConfig('dream.entity_capture.max_output_tokens','1');
+  await engine.setConfig('dream.entity_capture.cost_cap_cny','unlimited');
   const quick=await runtime.submitDream({preset:'quick',allSources:true});
-  const done=await finished(quick.id);
+  const done=await finished(quick.id,90_000);
   expect(done.status,JSON.stringify(done.result)).toBe('completed');
-  expect(calls).toBe(1);
-  expect(done.product?.metrics).toContainEqual({label:'剩余页面',value:1});
+  expect(calls).toBe(2);
+  expect(done.product?.metrics).toContainEqual({label:'剩余页面',value:0});
+  const [usage]=await engine.executeRaw<{input:string;output:string}>('SELECT sum(tokens_input) AS input,sum(tokens_output) AS output FROM minion_jobs WHERE private_queue_owner_job_id=$1',[Number(quick.id.slice(5))]);
+  expect(Number(usage.input)).toBe(120000);expect(Number(usage.output)).toBe(20);
   const resumed=await runtime.retry(quick.id);expect(resumed?.id).toBe(quick.id);
-  expect((await finished(quick.id)).status).toBe('completed');expect(calls).toBe(1);
-  await engine.setConfig('dream.entity_capture.max_input_tokens','120000');
-  await runtime.retry(quick.id);expect((await finished(quick.id)).status).toBe('completed');expect(calls).toBe(2);
+  expect((await finished(quick.id,90_000)).status).toBe('completed');expect(calls).toBe(2);
   expect((await engine.getPage('first',{sourceId:'default'}))?.compiled_truth).toContain('第一个知识源');
   expect((await engine.getPage('second',{sourceId:'budget-other'}))?.compiled_truth).toContain('第二个知识源');
   expect(await engine.getPage('second',{sourceId:'default'})).toBeNull();
   await engine.setConfig('dream.entity_capture.max_input_tokens','1000000');
-},90_000);
+},180_000);
+
+test('后台任务单资料八轮耗尽仍处理后续资料，原任务继续只重试失败资料',async()=>{
+  const directory=join(root,'turn-limit-source');mkdirSync(directory);
+  await engine.executeRaw("UPDATE sources SET local_path=$1 WHERE id='default'",[directory]);
+  for(const slug of ['a-bad','z-good']){
+    const page={slug,type:'note',compiled_truth:`${slug} 是独立原文，必须保存已有成果和失败断点。`,frontmatter:{}};
+    await engine.putPage(slug,{...page,title:slug,timeline:''},{sourceId:'default'});
+    await requestImportedEntityCapture(engine,'default',page);
+  }
+  incompleteSlug='a-bad';await engine.setConfig('dream.entity_capture.cost_cap_cny','unlimited');
+  const quick=await runtime.submitDream({preset:'quick',sourceId:'default'}),done=await finished(quick.id,90000);
+  expect(calls).toBe(9);
+  const capture=(done.result as {phases:Array<{phase:string;details:Record<string,any>}>}).phases.find(phase=>phase.phase==='capture_entities');
+  expect(capture?.details).toMatchObject({pages_processed:1,pages_failed:1,pages_remaining:1,stop_reason:'document_turns',budget_stop:null});
+  const success=await engine.executeRaw("SELECT id FROM minion_jobs WHERE result->>'ingest_verified'='true' AND data->'ingest_context'->>'slug'='z-good'");
+  expect(success).toHaveLength(1);
+  incompleteSlug='';expect((await runtime.retry(quick.id))?.id).toBe(quick.id);
+  const resumed=await finished(quick.id,90000);expect(resumed.status,JSON.stringify(resumed.result)).toBe('completed');expect(calls).toBe(10);
+  expect((await engine.getPage('a-bad'))?.compiled_truth).toContain('独立原文');
+  expect(await engine.executeRaw("SELECT id FROM minion_jobs WHERE result->>'ingest_verified'='true' AND data->'ingest_context'->>'slug'='z-good'")).toHaveLength(1);
+},180000);
+
+test('多个Source仍共用费用上限，继续原任务不重置已发生费用，增加金额后完成剩余资料',async()=>{
+  const first=join(root,'cost-first'),second=join(root,'cost-second');mkdirSync(first);mkdirSync(second);
+  await engine.executeRaw("UPDATE sources SET local_path=$1 WHERE id='default'",[first]);
+  await engine.executeRaw("INSERT INTO sources(id,name,local_path) VALUES('cost-other','费用第二源',$1)",[second]);
+  for(const [sourceId,slug,body] of [['default','first','这是第一个源的独立原文，继续时不能重复识别。'],['cost-other','second','这是第二个源的独立原文，增加金额后可以完成。']]){
+    const page={slug,type:'note',compiled_truth:body,frontmatter:{}};
+    await engine.putPage(slug,{...page,title:slug,timeline:''},{sourceId});
+    await requestImportedEntityCapture(engine,sourceId,page);
+  }
+  usageInput=60000;
+  await engine.setConfig('dream.entity_capture.cost_cap_cny','0.5');
+  await engine.setConfig('dream.entity_capture.price.input_cny_per_million','10');
+  await engine.setConfig('dream.entity_capture.price.output_cny_per_million','10');
+  const quick=await runtime.submitDream({preset:'quick',allSources:true});
+  const done=await finished(quick.id);expect(done.status,JSON.stringify(done.result)).toBe('completed');
+  expect(calls).toBe(1);expect(done.product?.metrics).toContainEqual({label:'剩余页面',value:1});
+  expect((await runtime.retry(quick.id))?.id).toBe(quick.id);
+  expect((await finished(quick.id)).status).toBe('completed');expect(calls).toBe(1);
+  await engine.setConfig('dream.entity_capture.cost_cap_cny','2');
+  await runtime.retry(quick.id);expect((await finished(quick.id)).status).toBe('completed');expect(calls).toBe(2);
+  expect((await engine.getPage('first',{sourceId:'default'}))?.compiled_truth).toContain('第一个源');
+  expect((await engine.getPage('second',{sourceId:'cost-other'}))?.compiled_truth).toContain('第二个源');
+  expect(await engine.getPage('second',{sourceId:'default'})).toBeNull();
+},90000);
 
 test('停止并重启后，待识别资料仍属于原维护，不能重新派生自动整理',async()=>{
   const repo=join(root,'stopped');mkdirSync(repo);
@@ -196,6 +251,16 @@ test('外部周期锁占用时保留同一排队任务，释放后真正执行�
     } finally { await nextLock.release(); }
   } finally { await lock.release(); }
 }, 60_000);
+
+test('深度整理接收导入实体请求时归属原主任务，不再额外排队一轮整理', async () => {
+  const queue = new MinionQueue(engine);
+  const parent = await queue.add('pmbrain-product-task', { kind: 'dream_full', fileSession: true, task: { type: 'dream', input: { preset: 'full', sourceId: 'default' } } }, { queue: PRODUCT_TASK_QUEUE, delay: 86400000 });
+  await engine.executeRaw("UPDATE minion_jobs SET status='active',lock_token='deep-owner' WHERE id=$1", [parent.id]);
+  await requestImportedEntityCapture(engine, 'default', { slug: 'deep-input', type: 'source', compiled_truth: '这是一份需要整理实体的资料。', frontmatter: {} });
+  expect(await enqueueImportedEntityCapture(engine, async () => true)).toEqual([]);
+  const pending = JSON.parse((await engine.getConfig('dream.entity_capture.pending.default'))!);
+  expect(pending.ownerJobId).toBe(parent.id);
+});
 
 test('实体校验失败留在快速维护主任务，可在原任务继续，不自动开启另一轮', async () => {
   const repo = join(root, 'invalid'); mkdirSync(repo);

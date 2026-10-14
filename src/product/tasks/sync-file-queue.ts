@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir, stat, unlink, rmdir } from 'node:fs/promises';
+import { mkdir, stat, unlink, rmdir, lstat, realpath } from 'node:fs/promises';
 import { basename, join, dirname, resolve, sep } from 'node:path';
 import type { BrainEngine } from '../../core/engine.ts';
 import { MinionQueue } from '../../core/minions/queue.ts';
@@ -11,7 +11,7 @@ import { importFile, isImageFilePath } from '../../core/import-file.ts';
 import { isCodeFilePath, isOfficeFilePath } from '../../core/sync.ts';
 import { isSessionExportPath } from '../../core/conversation-parser/session-import.ts';
 import { syncFileContentFingerprint } from './checkpoint.ts';
-import { TaskResourceGuard, SYNC_QUEUE_CAPACITY, streamFileHash, copyFileSnapshot, assertImportFileSize } from './resource-guard.ts';
+import { TaskResourceGuard, SYNC_QUEUE_CAPACITY, streamFileHash, copyFileSnapshot, assertImportFileSize, isSyncCapacityError } from './resource-guard.ts';
 
 export const SYNC_FILE_QUEUE = 'pmbrain-sync-files';
 export const SYNC_FILE_TASK = 'pmbrain-sync-file';
@@ -113,18 +113,25 @@ export class SyncFileQueue {
     if(job && ['paused','delayed','waiting'].includes(job.status)){
       await this.engine.executeRaw(`UPDATE minion_jobs SET data=jsonb_set(data,'{task,input}', $2::jsonb),updated_at=now()
         WHERE id=$1 AND status IN ('paused','delayed','waiting')`,[job.id,{...file,path:((job.data.task as {input:SyncFileInput}).input).path}]);
-      return { slug: '', status: 'skipped', chunks: 0, deferred: true };
+      const snapshot=((job.data.task as {input:SyncFileInput}).input).path;
+      if(await stat(snapshot).catch(error=>{if(error.code==='ENOENT')return null;throw error;}))return { slug: '', status: 'skipped', chunks: 0, deferred: true };
     }
     const pending=await this.engine.executeRaw<{count:string}>("SELECT count(*)::text AS count FROM minion_jobs WHERE queue=$1 AND status NOT IN ('completed','failed','dead','cancelled')",[SYNC_FILE_QUEUE]);
-    if(Number(pending[0].count)>=SYNC_QUEUE_CAPACITY)throw new Error(`资源保护：队列容量已达到 ${SYNC_QUEUE_CAPACITY}，已拒绝新文件。请先完成或停止已有任务。`);
+    if(!job && Number(pending[0].count)>=SYNC_QUEUE_CAPACITY)throw new Error(`资源保护：队列容量已达到 ${SYNC_QUEUE_CAPACITY}，已拒绝新文件。请先完成或停止已有任务。`);
     const size=(await stat(file.path)).size;
     await this.resources.assertImportDisk(size*2);
     const config = loadConfig();
     const brain = createHash('sha256').update(JSON.stringify([config?.engine, config?.database_path, config?.database_url])).digest('hex').slice(0, 24);
     const dir = join(gbrainPath('task-artifacts'), 'sync-files', brain, String(sessionId));
     await mkdir(dir, { recursive: true });
-    const path = join(dir, `${key}-${basename(file.path)}`);
-    const releaseReservation=await this.resources.reserveSnapshot(size);
+    const path = this.snapshotPath(sessionId,job && ['paused','delayed','waiting'].includes(job.status)
+      ? ((job.data.task as {input:SyncFileInput}).input).path : join(dir, `${key}-${basename(file.path)}`));
+    const releaseReservation=await this.resources.reserveSnapshot(size).catch(async error=>{
+      if(!isSyncCapacityError(error))throw error;
+      await this.cleanupCompletedSnapshots();
+      await this.cleanupStoppedSnapshots();
+      return this.resources.reserveSnapshot(size);
+    });
     let queued=false;
     try {
     await copyFileSnapshot(file.path,path,file.hash,async()=>{
@@ -134,10 +141,12 @@ export class SyncFileQueue {
     const after = await this.queue.getJob(sessionId);
     if (!this.allowed(sessionId)) throw new Error('同步任务已停止');
     if (after?.status !== 'active' || after.lock_token !== token) throw new Error('同步任务已停止或租约失效');
-    const added = await this.queue.add(SYNC_FILE_TASK, { sessionId, kind: 'sync_file', task: { type: 'sync-file', input: { ...file, path } } }, {
+    const added = job && ['paused','delayed','waiting'].includes(job.status) ? job : await this.queue.add(SYNC_FILE_TASK, { sessionId, kind: 'sync_file', task: { type: 'sync-file', input: { ...file, path } } }, {
       queue: SYNC_FILE_QUEUE, delay: 24 * 60 * 60 * 1000, max_attempts: 1, maxQueueSize: SYNC_QUEUE_CAPACITY,
       timeout_ms: 6 * 60 * 60 * 1000, idempotency_key: `sync-file:${key}`, on_child_fail: 'continue',
     });
+    if(added===job)await this.engine.executeRaw(`UPDATE minion_jobs SET data=jsonb_set(data,'{task,input}',$2::jsonb),updated_at=now()
+      WHERE id=$1 AND status IN ('paused','delayed','waiting')`,[added.id,{...file,path}]);
     queued=true;
     await this.engine.executeRaw('UPDATE minion_jobs SET parent_job_id=$1 WHERE id=$2',[sessionId,added.id]);
     added.parent_job_id=sessionId;
@@ -249,11 +258,67 @@ export class SyncFileQueue {
     }
   }
 
-  private async removeSnapshot(sessionId:number,value:string){
+  async cleanupStoppedSnapshots(sessionId?:number) {
+    let after=0;
+    while(true){
+      const rows=await this.engine.executeRaw<{id:number;session_id:string;input:SyncFileInput}>(`SELECT child.id,child.data->>'sessionId' AS session_id,child.data->'task'->'input' AS input
+        FROM minion_jobs child JOIN minion_jobs parent ON parent.id=child.parent_job_id
+        WHERE child.queue=$1 AND child.id>$2 AND ($3::bigint IS NULL OR parent.id=$3)
+        AND parent.queue='pmbrain-product' AND parent.data->'task'->>'type'='dream' AND (parent.data->'task'->'input'->>'preset'='quick' OR parent.data->>'fileSession'='true')
+        AND child.status IN ('paused','cancelled','dead','failed') AND parent.status IN ('cancelled','paused','dead','failed','completed')
+        AND (child.data->'task'->'input'->>'originalPath' IS NOT NULL OR child.data->'task'->'input'->>'sourceRoot' IS NOT NULL)
+        ORDER BY child.id LIMIT 200`,[SYNC_FILE_QUEUE,after,sessionId??null]);
+      for(const row of rows){
+        const input=row.input;
+        const snapshot=await stat(input.path).catch(error=>{if(error.code==='ENOENT')return null;throw error;});
+        if(!snapshot)continue;
+        let originalPath=input.originalPath;
+        if(!originalPath){
+          if(!input.sourceRoot || !input.relativePath)continue;
+          const root=resolve(input.sourceRoot);const candidate=resolve(root,input.relativePath);
+          if(!candidate.startsWith(root+sep) || !(await lstat(candidate).catch(()=>null))?.isFile())continue;
+          const resolvedRoot=await realpath(root).catch(()=>null);const resolvedFile=await realpath(candidate).catch(()=>null);
+          if(!resolvedRoot || !resolvedFile?.startsWith(resolvedRoot+sep))continue;
+          const source=await this.engine.executeRaw('SELECT id FROM sources WHERE id=$1 AND local_path=$2 AND NOT archived',[input.options?.sourceId??'default',input.sourceRoot]);
+          if(!source.length)continue;
+          originalPath=candidate;
+        }
+        const original=await stat(originalPath).catch(()=>null);
+        if(!original?.isFile() || original.size!==input.originalSize || (input.originalPath && original.mtimeMs!==input.originalMtime))continue;
+        if(await streamFileHash(originalPath).catch(()=>null)!==input.hash)continue;
+        await this.engine.transaction(async tx=>{
+          const owned=await tx.executeRaw(`SELECT child.id FROM minion_jobs child JOIN minion_jobs parent ON parent.id=child.parent_job_id
+            WHERE child.id=$1 AND child.status IN ('paused','cancelled','dead','failed')
+            AND parent.queue='pmbrain-product' AND parent.data->'task'->>'type'='dream' AND (parent.data->'task'->'input'->>'preset'='quick' OR parent.data->>'fileSession'='true')
+            AND parent.status IN ('cancelled','paused','dead','failed','completed') FOR UPDATE OF child,parent`,[row.id]);
+          if(!owned.length)return;
+          if(!input.originalPath){
+            const source=await tx.executeRaw('SELECT id FROM sources WHERE id=$1 AND local_path=$2 AND NOT archived FOR SHARE',[input.options?.sourceId??'default',input.sourceRoot]);
+            if(!source.length)return;
+          }
+          const current=await stat(originalPath!).catch(()=>null);
+          if(current?.size!==original.size || current.mtimeMs!==original.mtimeMs || current.ctimeMs!==original.ctimeMs)return;
+          await this.removeSnapshot(Number(row.session_id),input.path);
+        });
+      }
+      if(rows.length<200)return;
+      after=rows.at(-1)!.id;
+    }
+  }
+
+  private snapshotPath(sessionId:number,value:string){
     const root=resolve(gbrainPath('task-artifacts'),'sync-files');const path=resolve(value);
     if(!path.startsWith(root+sep)||basename(dirname(path))!==String(sessionId)||!/^[a-f0-9]{64}-/.test(basename(path)))throw new Error('文件任务快照清理路径无效');
+    return path;
+  }
+
+  private async removeSnapshot(sessionId:number,value:string){
+    const path=this.snapshotPath(sessionId,value);
     const info=await stat(path).catch(error=>{if(error.code==='ENOENT')return null;throw error;});
-    if(info){await unlink(path);this.resources.snapshotRemoved(info.size);}
+    if(info){
+      const removed=await unlink(path).then(()=>true,error=>{if(error.code==='ENOENT')return false;throw error;});
+      if(removed)this.resources.snapshotRemoved(info.size);
+    }
     await rmdir(dirname(path)).catch(error=>{if(!['ENOENT','ENOTEMPTY'].includes(error.code))throw error;});
   }
 }

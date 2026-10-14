@@ -29,6 +29,7 @@ import type { BrainEngine, NewFact, FactKind } from '../engine.ts';
 import { normalizeMetricLabel } from './extract-from-fence.ts';
 import { stripReasoningBlocks } from '../llm-json.ts';
 import {defaultMaxOutputTokens,isThinkingModel} from '../ai/model-compatibility.ts';
+import { parseDurationShorthandMs, isValidTransientTtl } from './ttl-parse.ts';
 
 /**
  * v0.31 (D15): kill-switch for fact extraction.
@@ -72,6 +73,9 @@ export const ALL_EXTRACT_KINDS: readonly FactKind[] = [
 ] as const;
 
 export interface ExtractInput {
+  transientTtl?: string;
+  validFrom?: Date;
+  knownFacts?: Array<{ id: number; fact: string }>;
   throwOnError?: boolean;
   turnText: string;
   /** Opaque session id (MCP _meta.session_id, CLI --session, or null). */
@@ -97,7 +101,7 @@ export interface ExtractInput {
 }
 
 /** A pre-INSERT fact ready for the engine.insertFact path. */
-export type ExtractedFact = NewFact & { entity_slug: string | null };
+export type ExtractedFact = NewFact & { entity_slug: string | null; supersedes?: number };
 
 const EXTRACTOR_SYSTEM = [
   'You extract personal-knowledge claims from a conversation turn into structured facts.',
@@ -163,6 +167,7 @@ export async function getFactsExtractionPromptAppendix(engine?: BrainEngine): Pr
 }
 
 export async function extractFactsFromTurn(input: ExtractInput): Promise<ExtractedFact[]> {
+  if(input.transientTtl&&!isValidTransientTtl(input.transientTtl))throw new Error('临时记忆有效期无效');
   if (input.isDreamGenerated) return [];
   if (!input.turnText) return [];
 
@@ -172,7 +177,7 @@ export async function extractFactsFromTurn(input: ExtractInput): Promise<Extract
   cleaned = cleaned.trim();
   if (!cleaned) return [];
 
-  if (!isAvailable('chat')) {
+  if (!isAvailable('chat',input.model)) {
     // No chat gateway → no extraction. Caller still inserts facts via direct
     // `gbrain take add` paths.
     return [];
@@ -186,7 +191,7 @@ export async function extractFactsFromTurn(input: ExtractInput): Promise<Extract
   try {
     result = await chat({
       model,
-      system: promptAppendix ? `${EXTRACTOR_SYSTEM}\n\n${promptAppendix}` : EXTRACTOR_SYSTEM,
+      system: [input.transientTtl?EXTRACTOR_SYSTEM.replace('Cap at 10 facts per turn.',`Cap at ${cap} facts per turn.`):EXTRACTOR_SYSTEM, promptAppendix, input.transientTtl ? '本次是用户直接表达的对话记忆。每条 JSON 对象必须增加 transient 布尔字段：当前健康、位置、行程、情绪等临时状态必须为 true，如“我今天在北京”；长期偏好、决定、已发生事件必须为 false。示例：{"fact":"方案先写结论","kind":"preference","entity":null,"confidence":1,"notability":"medium","transient":false,"supersedes":null}。只提取用户陈述，排除助手推测、工具结果、粘贴引用和仅有问句。覆盖此前 low 跳过规则，all 模式也提取低重要度的真实陈述。supersedes 仅在用户明确纠正已知事实时填写对应 id，否则 null。' : ''].filter(Boolean).join('\n\n'),
       messages: [
         {
           role: 'user',
@@ -194,13 +199,14 @@ export async function extractFactsFromTurn(input: ExtractInput): Promise<Extract
             input.entityHints && input.entityHints.length
               ? ` Known entity slugs the user already mentioned: ${input.entityHints.slice(0, 5).join(', ')}.`
               : ''
-          }`,
+          }${input.knownFacts?.length ? `\n已知事实仅供理解本次明确纠正，不重新提取：${JSON.stringify(input.knownFacts.slice(0, 10))}` : ''}`,
         },
       ],
       maxTokens:isThinkingModel(model)?defaultMaxOutputTokens(model):1500,
       retryLength:true,
       disableReasoning:true,
-      responseSchema:{name:'facts',schema:{type:'object',properties:{facts:{type:'array',items:{type:'object'}}},required:['facts']}},
+      ...(input.transientTtl?{allowFallback:false}:{}),
+      responseSchema:{name:'facts',schema:{type:'object',properties:{facts:{type:'array',items:input.transientTtl?{type:'object',properties:{fact:{type:'string'},kind:{type:'string',enum:[...ALL_EXTRACT_KINDS]},transient:{type:'boolean'}},required:['fact','kind','transient']}:{type:'object'}}},required:['facts']}},
       abortSignal: input.abortSignal,
     });
   } catch (err) {
@@ -211,7 +217,7 @@ export async function extractFactsFromTurn(input: ExtractInput): Promise<Extract
     return [];
   }
 
-  if (result.stopReason === 'refusal' || result.stopReason === 'content_filter') return [];
+  if (result.stopReason === 'refusal' || result.stopReason === 'content_filter') {if(input.throwOnError)throw new Error(`Facts extraction ${result.stopReason}`);return [];}
   if(result.stopReason==='length'){
     const error=new Error('facts_output_truncated: output truncated after bounded retry');
     if(input.throwOnError)throw error;
@@ -227,6 +233,7 @@ export async function extractFactsFromTurn(input: ExtractInput): Promise<Extract
   }
 
   const junkFilterOn = await isJunkFilterEnabled(input.engine);
+  if(input.transientTtl&&parsedRaw.some(row=>typeof row.transient!=='boolean'))throw new Error('Facts extraction missing transient classification');
   const facts: ExtractedFact[] = [];
   for (const candidate of parsedRaw.slice(0, cap)) {
     if (input.abortSignal?.aborted) {
@@ -280,6 +287,9 @@ export async function extractFactsFromTurn(input: ExtractInput): Promise<Extract
       claim_value:  claimValue,
       claim_unit:   claimUnit,
       claim_period: claimPeriod,
+      ...(input.validFrom ? { valid_from: input.validFrom } : {}),
+      ...(input.transientTtl && candidate.transient === true ? { valid_until: new Date((input.validFrom?.getTime() ?? Date.now()) + parseDurationShorthandMs(input.transientTtl)!) } : {}),
+      ...(input.transientTtl && Number.isSafeInteger(candidate.supersedes) && input.knownFacts?.some(row => row.id === candidate.supersedes) ? { supersedes: candidate.supersedes! } : {}),
     });
   }
 
@@ -287,6 +297,8 @@ export async function extractFactsFromTurn(input: ExtractInput): Promise<Extract
 }
 
 interface RawExtracted {
+  transient?: boolean;
+  supersedes?: number;
   fact: string;
   kind: string;
   entity?: string | null;
@@ -335,6 +347,8 @@ function tryArrayShape(s: string): RawExtracted[] | null {
       const o = item as Record<string, unknown>;
       if (typeof o.fact !== 'string' || typeof o.kind !== 'string') continue;
       out.push({
+        ...(typeof o.transient === 'boolean' ? { transient: o.transient } : {}),
+        ...(typeof o.supersedes === 'number' && Number.isSafeInteger(o.supersedes) && o.supersedes > 0 ? { supersedes: o.supersedes } : {}),
         fact: o.fact,
         kind: o.kind,
         entity: typeof o.entity === 'string' ? o.entity : null,

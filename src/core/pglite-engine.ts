@@ -4,6 +4,7 @@ import { readMentionPolicy } from './mentions/policy.ts';
 import { writePageAliases } from './mentions/pass.ts';
 import { composablePgliteTransaction } from './page-state/transactions.ts';
 import { pageReadFilter } from './search/read-policy-sql.ts';
+import { currentMemoryTakeSql, memoryPageIsCurrent, memoryPageFilterForSchema } from './pmbrain-adapters/memory-projections.ts';
 import { readRelationalFanout, readTakes } from './search/read-enrichment.ts';
 import { PGlite } from '@electric-sql/pglite';
 import { vector } from '@electric-sql/pglite/vector';
@@ -1280,7 +1281,8 @@ export class PGLiteEngine implements BrainEngine {
       params
     );
     if (rows.length === 0) return null;
-    return rowToPage(rows[0] as Record<string, unknown>);
+    const page = rowToPage(rows[0] as Record<string, unknown>);
+    return includeDeleted || await memoryPageIsCurrent(this,page) ? page : null;
   }
 
   /**
@@ -1596,6 +1598,7 @@ export class PGLiteEngine implements BrainEngine {
     // v0.26.5: hide soft-deleted by default; opt in via filters.includeDeleted.
     if (filters?.includeDeleted !== true) {
       where.push('p.deleted_at IS NULL');
+      where.push(await memoryPageFilterForSchema(this,'p'));
     }
     if (filters?.excludePrivate === true) {
       where.push(privatePagesFilterFragment('p'));
@@ -4960,6 +4963,7 @@ export class PGLiteEngine implements BrainEngine {
        JOIN pages p ON p.id = t.page_id
        WHERE t.page_id = ANY($1::int[])
          AND t.active = true
+         AND ${currentMemoryTakeSql('t','p')}
          AND ($2::text[] IS NULL OR t.holder = ANY($2::text[]))
        ORDER BY t.page_id, t.row_num`,
       [pageIds, opts.takesHoldersAllowList ?? null]
@@ -5136,6 +5140,7 @@ export class PGLiteEngine implements BrainEngine {
          AND ($3::text  IS NULL OR t.holder  = $3::text)
          AND ($4::text  IS NULL OR t.kind    = $4::text)
          AND ($5::boolean IS NULL OR t.active = $5::boolean)
+         AND (NOT $5::boolean OR ${currentMemoryTakeSql('t','p')})
          AND (
            $6::boolean IS NULL
            OR ($6::boolean = true  AND t.resolved_at IS NOT NULL)

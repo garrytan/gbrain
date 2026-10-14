@@ -10,6 +10,7 @@ export const WRITEBACK_SKIP_REASONS = [
   'quoted_or_tool_output',
   'bulk_paste',
   'secret',
+  'operational_request',
 ] as const;
 export type WritebackSkipReason = (typeof WRITEBACK_SKIP_REASONS)[number];
 
@@ -54,13 +55,13 @@ export function turnHash24(normalized: string): string {
   return createHash('sha256').update(normalized, 'utf8').digest('hex').slice(0, 24);
 }
 
-export function gateWritebackTurn(text: unknown): WritebackGateResult {
+export function gateWritebackTurn(text: unknown, opts: { minChars?: number; maxChars?: number; maxBytes?: number; excludeOperationalRequests?:boolean } = {}): WritebackGateResult {
   if (typeof text !== 'string') return { ok: false, reason: 'empty' };
   const trimmed = text.trim();
   if (trimmed.length === 0) return { ok: false, reason: 'empty' };
-  const minChars = CJK_RE.test(trimmed) ? MIN_TURN_CHARS_CJK : MIN_TURN_CHARS;
+  const minChars = opts.minChars ?? (CJK_RE.test(trimmed) ? MIN_TURN_CHARS_CJK : MIN_TURN_CHARS);
   if (trimmed.length < minChars) return { ok: false, reason: 'too_short' };
-  if (trimmed.length > MAX_TURN_CHARS || Buffer.byteLength(trimmed,'utf8') > 8192) return { ok: false, reason: 'bulk_paste' };
+  if (trimmed.length > (opts.maxChars ?? MAX_TURN_CHARS) || Buffer.byteLength(trimmed,'utf8') > (opts.maxBytes ?? 8192)) return { ok: false, reason: 'bulk_paste' };
   if (scanText(trimmed).length) return { ok: false, reason: 'secret' };
   if (/^(好的|谢谢|感谢|收到|明白|继续|可以|没问题|辛苦了|嗯|好|是的|请继续|[，。！!\s])+$/u.test(trimmed)) return { ok:false,reason:'ack_or_greeting' };
   const bare = trimmed.toLowerCase().replace(/[.!?,;:~……]+$/gu, '').replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, '').trim();
@@ -73,12 +74,14 @@ export function gateWritebackTurn(text: unknown): WritebackGateResult {
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
   if (sentences.length > 0 && sentences.every((s) => /[?？]$/.test(s))) {
-    return { ok: false, reason: 'question_only' };
+    const hasClaim=opts.excludeOperationalRequests&&sentences.flatMap(part=>part.split(/[，,；;]/)).some(part=>part.trim().length>=minChars&&!/[?？]$|吗|是否|怎么|如何|多少|能否|what|how|why|where/i.test(part)&&!/^(请|帮我|你能|能不能|可以|并|please|can you|could you)/i.test(part.trim()));
+    if(!hasClaim)return { ok: false, reason: 'question_only' };
   }
   const residue = stripQuotedAndToolOutput(trimmed).trim();
-  if (residue.length < (CJK_RE.test(residue) ? MIN_TURN_CHARS_CJK : MIN_TURN_CHARS)) {
+  if (residue.length < (opts.minChars ?? (CJK_RE.test(residue) ? MIN_TURN_CHARS_CJK : MIN_TURN_CHARS))) {
     return { ok: false, reason: 'quoted_or_tool_output' };
   }
   const normalized = normalizeTurnText(residue);
+  if(opts.excludeOperationalRequests&&!/以后|今后|从今|每次|总是|一律|默认|统一|约定|规则|always|from now on|by default/i.test(normalized)&&residue.split(/[，,；;。！？!?]/).filter(part=>part.trim()).every(part=>/^(请|请问|帮我|给我|给.{0,24}(写|列|生成|查)|替我|能否|可以.{0,6}(帮|查|写)|你能|并?(说明|解释|列出|查询|写一份|生成)|please|can you|could you|help me|show me)/i.test(part.trim())))return {ok:false,reason:'operational_request'};
   return { ok: true, normalized, hash24: turnHash24(normalized) };
 }

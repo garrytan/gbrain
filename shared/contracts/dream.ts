@@ -117,8 +117,8 @@ export const DreamRunResponseSchema = RunAcceptedResponseSchema;
 
 export const EntityCaptureBudgetResponseSchema = z.object({
   costCapCny: z.number().positive().nullable(),
-  maxInputTokens: z.number().int().positive(),
-  maxOutputTokens: z.number().int().positive(),
+  maxInputTokens: z.number().int().positive().nullable(),
+  maxOutputTokens: z.number().int().positive().nullable(),
 });
 
 export type DreamSettingsResponse = z.infer<typeof DreamSettingsResponseSchema>;

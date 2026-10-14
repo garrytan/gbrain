@@ -4,6 +4,7 @@ import { readMentionPolicy } from './mentions/policy.ts';
 import { writePageAliases } from './mentions/pass.ts';
 import { composablePostgresTransaction } from './page-state/transactions.ts';
 import { readRelationalFanout, readTakes } from './search/read-enrichment.ts';
+import { currentMemoryTakeSql, memoryPageIsCurrent, memoryPageFilterForSchema } from './pmbrain-adapters/memory-projections.ts';
 import postgres from 'postgres';
 import type {
   BrainEngine,
@@ -977,7 +978,8 @@ export class PostgresEngine implements BrainEngine {
       LIMIT 1
     `;
     if (rows.length === 0) return null;
-    return rowToPage(rows[0]);
+    const page = rowToPage(rows[0]);
+    return includeDeleted || await memoryPageIsCurrent(this,page) ? page : null;
   }
 
   /**
@@ -1291,7 +1293,7 @@ export class PostgresEngine implements BrainEngine {
     // v0.26.5: hide soft-deleted by default; opt in via filters.includeDeleted.
     const deletedCondition = filters?.includeDeleted === true
       ? sql``
-      : sql`AND p.deleted_at IS NULL`;
+      : sql`AND p.deleted_at IS NULL AND ${sql.unsafe(await memoryPageFilterForSchema(this,'p'))}`;
     const privateCondition = filters?.excludePrivate === true
       ? sql.unsafe(`AND ${privatePagesFilterFragment('p')}`)
       : sql``;
@@ -4679,6 +4681,7 @@ export class PostgresEngine implements BrainEngine {
       JOIN pages p ON p.id = t.page_id
       WHERE t.page_id = ANY(${pageIds}::int[])
         AND t.active = true
+        AND ${sql.unsafe(currentMemoryTakeSql('t','p'))}
         AND (
           ${opts.takesHoldersAllowList ?? null}::text[] IS NULL
           OR t.holder = ANY(${opts.takesHoldersAllowList ?? null}::text[])
@@ -4867,6 +4870,7 @@ export class PostgresEngine implements BrainEngine {
         AND (${opts.holder ?? null}::text   IS NULL OR t.holder  = ${opts.holder ?? null}::text)
         AND (${opts.kind ?? null}::text     IS NULL OR t.kind    = ${opts.kind ?? null}::text)
         AND (${active}::boolean IS NULL OR t.active = ${active}::boolean)
+        AND (NOT ${active}::boolean OR ${sql.unsafe(currentMemoryTakeSql('t','p'))})
         AND (
           ${opts.resolved === undefined ? null : opts.resolved}::boolean IS NULL
           OR (${opts.resolved === undefined ? null : opts.resolved}::boolean = true  AND t.resolved_at IS NOT NULL)

@@ -29,6 +29,34 @@ function isolatedHome(): string {
 }
 
 describe('desktop config manager', () => {
+  test('已有自定义目录不因保存同一配置而追加 brain.pglite 或改用空库', () => {
+    const root = isolatedHome(), valid = join(root, 'custom-pgdata');
+    mkdirSync(valid);writeFileSync(join(valid, 'PG_VERSION'), '17\n');
+    writeJsonConfig(desktopConfigPath(), { engine: 'pglite', database_path: valid, desktop: { setup_completed: true } });
+    saveSetup({ engine: 'pglite', databasePath: valid });
+    expect(getSetupInfo().current.databasePath).toBe(valid);
+    saveSetup({ engine: 'pglite' });
+    expect(getSetupInfo().current.databasePath).toBe(valid);
+    expect(existsSync(join(valid, 'brain.pglite'))).toBe(false);
+    expect(readFileSync(join(valid, 'PG_VERSION'), 'utf8')).toBe('17\n');
+  });
+
+  for (const parentConflict of [false, true]) test(`${parentConflict ? '父路径' : '同名'}文件冲突不保存配置，原有效数据库路径与文件保留`, () => {
+    const root = isolatedHome(), valid = join(root, 'original', 'brain.pglite');
+    mkdirSync(valid, { recursive: true });
+    writeFileSync(join(valid, 'PG_VERSION'), '17\n');
+    writeJsonConfig(desktopConfigPath(), { engine: 'pglite', database_path: valid, desktop: { setup_completed: true } });
+    const before = readFileSync(desktopConfigPath());
+    const occupied = join(root, parentConflict ? 'parent-file' : 'occupied.pglite');
+    writeFileSync(occupied, 'Retain unknown file.');
+    const path = parentConflict ? join(occupied, 'brain.pglite') : occupied;
+    expect(() => saveSetup({ engine: 'pglite', databasePath: path })).toThrow('普通文件');
+    expect(readFileSync(desktopConfigPath())).toEqual(before);
+    expect(getSetupInfo().current.databasePath).toBe(valid);
+    expect(readFileSync(occupied, 'utf8')).toBe('Retain unknown file.');
+    expect(readFileSync(join(valid, 'PG_VERSION'), 'utf8')).toBe('17\n');
+  });
+
   test('persists optional OCR settings and allows ordinary-model reuse', () => {
     const root = isolatedHome();
     saveSetup({

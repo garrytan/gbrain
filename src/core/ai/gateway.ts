@@ -2387,6 +2387,7 @@ export interface ChatResult {
 }
 
 export interface ChatOpts {
+  allowFallback?: boolean;
   /** "provider:modelId" — defaults to config.chat_model. */
   model?: string;
   /** System prompt. */
@@ -3064,7 +3065,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
   const primary = opts.model ?? getChatModel();
   const candidates = [
     primary,
-    ...getChatFallbackChain(),
+    ...(opts.allowFallback===false?[]:getChatFallbackChain()),
   ].filter((model, index, models) => model.trim() !== '' && models.indexOf(model) === index);
 
   let lastError: unknown;

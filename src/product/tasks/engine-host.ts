@@ -48,6 +48,7 @@ export class TaskEngineHost {
     private syncFile?: SyncFileInput,
     private resources=new TaskResourceGuard(),
     private auditJobId = jobId,
+    private operationGate?: (engine:BrainEngine)=>Promise<void>,
   ) {this.cleanupOwner=owner;this.owner=withSqlCancellation(owner,this.abort.signal);}
 
   ownsLockedTransaction(): boolean {
@@ -64,6 +65,7 @@ export class TaskEngineHost {
       [this.jobId, this.token, 30_000],
     );
     if (!rows.length) throw new Error('任务已取消或执行租约已失效');
+    if(this.operationGate)await this.operationGate(tx);
     if ((!this.syncFile || this.syncFile.modelMayRun || !this.syncFile.options.noEmbed) && taskModelFingerprint() !== this.initialModel) throw new Error('向量模型配置已改变，请使用当前配置重新执行任务');
   }
 

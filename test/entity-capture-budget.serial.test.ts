@@ -5,7 +5,7 @@ import { afterAll, beforeAll, beforeEach, expect, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
-import { runPhaseCaptureEntities } from '../src/core/cycle/capture-entities.ts';
+import { runPhaseCaptureEntities,splitEntityCaptureCandidate } from '../src/core/cycle/capture-entities.ts';
 import { runByMentionCore } from '../src/commands/extract.ts';
 import type { MinionJobContext } from '../src/core/minions/types.ts';
 import {UnrecoverableError} from '../src/core/minions/types.ts';
@@ -218,6 +218,79 @@ test('长文尾部按源文档分块，页数不会让这一篇停在半截', as
   expect(prompts.every(prompt => prompt.includes('notes/long'))).toBe(true);
 }, 60_000);
 
+test('跨页累计超过旧默认输入输出额度仍全部处理，保留用量、原文和完成断点',async()=>{
+  const originals=new Map<string,string>();
+  for(let i=0;i<12;i++){
+    const slug=`notes/cumulative-${String(i).padStart(2,'0')}`;const body=`第${i}份原始资料，团队评审本月的交付和风险。`;
+    originals.set(slug,body);await note(slug,body);
+  }
+  await engine.setConfig('dream.entity_capture.cost_cap_cny','unlimited');
+  let calls=0;
+  const result=await runPhaseCaptureEntities(engine,{sourceId:'vault',handler:async ctx=>{
+    calls++;expect(ctx.data.usage_limits).toMatchObject({input:120000,output:20000});
+    return {ingest_verified:true,tokens:{in:90000,out:18000}};
+  }});
+  expect(result.status,result.summary).toBe('ok');expect(calls).toBe(12);
+  expect(result.details.input_tokens).toBe(1_080_000);expect(result.details.output_tokens).toBe(216_000);
+  expect(result.details.pages_processed).toBe(12);expect(result.details.pages_remaining).toBe(0);
+  expect(result.details.stop_reason).toBe('completed');expect(result.details.budget_stop).toBeNull();
+  expect(result.details.max_input_tokens).toBeNull();expect(result.details.max_output_tokens).toBeNull();
+  for(const [slug,body] of originals)expect((await engine.getPage(slug,{sourceId:'vault'}))?.compiled_truth).toBe(body);
+  const next=await runPhaseCaptureEntities(engine,{sourceId:'vault',handler:async()=>{calls++;throw new Error('已完成资料不应再次调用模型');}});
+  expect(next.status,next.summary).toBe('ok');expect(calls).toBe(12);expect(next.details.chunks_submitted).toBe(0);
+},60000);
+
+test('分块 Token 耗尽只跳过当前资料，后续资料仍完成',async()=>{
+  await note('notes/document-tokens','这份资料用于验证单页调用保护及失败信息。');
+  await note('notes/z-good','这份正常资料需要继续识别。');
+  const limited=await runPhaseCaptureEntities(engine,{sourceId:'vault',handler:async ctx=>{
+    if(promptOf(ctx).includes('notes/document-tokens'))throw new UnrecoverableError('ingest_budget_tokens: document token limit');
+    return {ingest_verified:true,tokens:{in:10,out:5}};
+  }});
+  expect(limited.details.stop_reason).toBe('document_tokens');
+  expect(limited.details.pages_processed).toBe(1);expect(limited.details.pages_failed).toBe(1);
+  expect(limited.details.budget_stop).toBeNull();
+},60000);
+
+test('长资料每块独立获得调用和 Token 额度，完成后不重复识别',async()=>{
+  const body='长文分块中的实体识别应保留完成断点。'.repeat(1000);
+  await note('notes/document-turns',body);
+  const chunkCount=splitEntityCaptureCandidate({slug:'notes/document-turns',sourceId:'vault',title:'notes/document-turns',body}).length;
+  let calls=0;
+  const turns=await runPhaseCaptureEntities(engine,{sourceId:'vault',handler:async ctx=>{
+    calls++;expect(ctx.data.max_turns).toBe(20);expect(ctx.data.usage_limits).toMatchObject({input:120000,output:20000});
+    return {ingest_verified:true,stop_reason:'end_turn',turns_count:8,tokens:{in:90000,out:18000}};
+  }});
+  expect(calls).toBe(chunkCount);expect(turns.details.stop_reason).toBe('completed');
+  expect(turns.details.pages_processed).toBe(1);expect(turns.details.pages_remaining).toBe(0);
+  expect((await engine.getPage('notes/document-turns',{sourceId:'vault'}))?.compiled_truth).toBe(body);
+  const next=await runPhaseCaptureEntities(engine,{sourceId:'vault',handler:async()=>{throw new Error('已完成分块不应重复执行');}});
+  expect(next.details.chunks_submitted).toBe(0);
+},60000);
+
+for(const resultFailure of [false,true])test(`${resultFailure?'模型轮数结果':'模型轮数错误'}仅跳过当前资料，继续时只重试未完成分块`,async()=>{
+  const body='这份资料有多个分块，需要保留第一段完成结果。'.repeat(700);
+  await note('notes/a-partial',body);await note('notes/z-good','正常资料需要完成识别。');
+  let chunkCalls=0,goodCalls=0;
+  const first=await runPhaseCaptureEntities(engine,{sourceId:'vault',handler:async ctx=>{
+    if(promptOf(ctx).includes('notes/z-good')){goodCalls++;return {ingest_verified:true,stop_reason:'end_turn',tokens:{in:10,out:5}};}
+    if(++chunkCalls===2){
+      if(resultFailure)return {ingest_verified:false,stop_reason:'max_turns',turns_count:20,tokens:{in:30,out:10}};
+      await ctx.updateTokens({input:30,output:10});throw new UnrecoverableError('ingest_turn_limit: 20 turns exhausted');
+    }
+    return {ingest_verified:true,stop_reason:'end_turn',turns_count:8,tokens:{in:10,out:5}};
+  }});
+  expect(chunkCalls).toBe(2);expect(goodCalls).toBe(1);
+  expect(first.details.pages_processed).toBe(1);expect(first.details.pages_failed).toBe(1);
+  expect(first.details.stop_reason).toBe('document_turns');expect(first.details.budget_stop).toBeNull();
+  expect((first.details.page_failures as any[])[0]).toMatchObject({slug:'notes/a-partial',kind:'document_turns',input_tokens:30});
+  const resumed:string[]=[];
+  const next=await runPhaseCaptureEntities(engine,{sourceId:'vault',handler:async ctx=>{resumed.push(promptOf(ctx));return {ingest_verified:true,stop_reason:'end_turn',tokens:{in:10,out:5}};}});
+  expect(next.details.pages_processed).toBe(1);expect(next.details.pages_remaining).toBe(0);
+  expect(resumed.every(prompt=>!prompt.includes('notes/z-good')&&!prompt.includes('第 1/'))).toBe(true);
+  expect(resumed).toHaveLength(splitEntityCaptureCandidate({slug:'notes/a-partial',sourceId:'vault',title:'notes/a-partial',body}).length-1);
+},60000);
+
 test('费用到上限后停止新的模型请求，已完成结果保留，任务不失败', async () => {
   await note('notes/a', '第一篇资料足够长，用来识别实体。');
   await note('notes/b', '第二篇资料足够长，用来识别实体。');
@@ -253,7 +326,7 @@ test('费用到上限后停止新的模型请求，已完成结果保留，任�
   expect(Number(people[0]?.n)).toBe(1);
 }, 60_000);
 
-test('Ollama 不记人民币，没有价格时改按 Token 停，没有用量时继续处理完', async () => {
+test('Ollama 不记人民币，未知价格或缺用量继续处理，旧累计配置和调用参数不再限制', async () => {
   for (const slug of ['notes/a', 'notes/b', 'notes/c']) {
     await note(slug, `${slug} 的正文足够参与实体识别。`);
   }
@@ -285,6 +358,8 @@ test('Ollama 不记人民币，没有价格时改按 Token 停，没有用量时
     await note(slug, `${slug} 的正文足够参与实体识别。`);
   }
   let tokenCalls = 0;
+  await engine.setConfig('dream.entity_capture.max_input_tokens','1');
+  await engine.setConfig('dream.entity_capture.max_output_tokens','1');
   const tokens = await runPhaseCaptureEntities(engine, {
     sourceId: 'vault',
     budget: {
@@ -300,9 +375,12 @@ test('Ollama 不记人民币，没有价格时改按 Token 停，没有用量时
       return { ingest_verified:true, tokens: { in: 1000, out: 10 } };
     },
   });
-  expect(tokens.status).toBe('warn');
-  expect(tokenCalls).toBe(2);
-  expect(tokens.details.budget_stop).toBe('tokens');
+  expect(tokens.status,tokens.summary).toBe('ok');
+  expect(tokenCalls).toBe(3);
+  expect(tokens.details.budget_stop).toBeNull();
+  expect(tokens.details.stop_reason).toBe('completed');
+  expect(tokens.details.input_tokens).toBe(3000);expect(tokens.details.output_tokens).toBe(30);
+  expect(tokens.summary).not.toContain('按 Token 限制');
   expect(tokens.details.cost_cny).toBeNull();
 
   await resetPgliteState(engine as PGLiteEngine);

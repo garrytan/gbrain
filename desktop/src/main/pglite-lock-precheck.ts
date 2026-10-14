@@ -8,6 +8,7 @@
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { validatePgliteDatabasePath } from '../../../src/core/pmbrain-adapters/pglite-database-path.js';
 
 export interface PgliteLockPrecheckResult {
   blocked: boolean;
@@ -36,6 +37,12 @@ function metadataBlocked(databasePath: string, lockDir: string, reason: string):
 
 export function precheckPgliteLock(databasePath: string | null | undefined): PgliteLockPrecheckResult {
   if (!databasePath) return { blocked: false };
+
+  try {
+    validatePgliteDatabasePath(databasePath);
+  } catch (error) {
+    return { blocked: true, message: error instanceof Error ? error.message : String(error) };
+  }
 
   const lockDir = join(databasePath, '.gbrain-lock');
   if (!existsSync(lockDir)) return { blocked: false };

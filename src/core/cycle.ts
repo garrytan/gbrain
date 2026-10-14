@@ -1037,7 +1037,7 @@ async function runPhaseSync(
       documentOcr,
       concurrency,
       fileRuntime,
-      workingTree: fileRuntime ? true : undefined,
+      workingTree: fileRuntime ? fileRuntime.workingTree ?? true : undefined,
       signal,
     });
     const git = !dryRun && afterSync && sourceId ? await afterSync(sourceId, brainDir, result) : undefined;

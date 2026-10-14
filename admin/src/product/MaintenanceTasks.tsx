@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { ArrowUpRight, CheckCircle2, CircleDashed, CircleStop, FileText, LoaderCircle, PenLine, Sparkles, X, XCircle } from 'lucide-react';
 import { api } from '../api';
 import { formatDate, type ConsoleRun } from '../lib/shared';
-import { taskName } from '../../../shared/task-progress';
+import { taskName, taskUsesFileQueue } from '../../../shared/task-progress';
 import { useProductTasks } from './TaskActivity';
 import { TaskProgressCard, taskLink, taskStatus, taskStopping, formatFileBytes } from './TaskProgress';
 import './maintenance-tasks.css';
@@ -39,7 +39,7 @@ function MaintenanceTaskDetail({ run, onClose, onChange }: { run: ConsoleRun; on
   },[filesOpen,run.id,run.status,files,loadingFiles]);
   const act = async (retry: boolean) => {
     if (busy) return;
-    if (retry && !window.confirm(run.kind === 'dream_quick' ? '将保留已完成资料，继续未完成的同步和知识增强。中断的模型请求可能已产生费用，继续吗？' : '将重新执行整理任务，中断的模型请求可能已产生费用，继续吗？')) return;
+    if (retry && !window.confirm(taskUsesFileQueue(run.kind) ? '将保留已完成资料，继续未完成的同步和知识增强。中断的模型请求可能已产生费用，继续吗？' : '将重新执行整理任务，中断的模型请求可能已产生费用，继续吗？')) return;
     setBusy(true); setError('');
     try {
       if (retry) {
@@ -54,7 +54,7 @@ function MaintenanceTaskDetail({ run, onClose, onChange }: { run: ConsoleRun; on
     <div className="maintenance-detail-body">
       <div className="maintenance-detail-meta"><span>{run.trigger === 'scheduled' ? '自动任务' : '手动任务'}</span><span>开始于 {formatDate(run.startedAt, '—')}</span></div>
       <TaskProgressCard run={run} link={false} timeline />
-      {run.kind === 'dream_quick' && run.product?.syncFiles && <details onToggle={event => {setFilesOpen(event.currentTarget.open); if (event.currentTarget.open && !files && !loadingFiles) void readFiles(); }}><summary>查看同步文件明细</summary>
+      {taskUsesFileQueue(run.kind) && run.product?.syncFiles && <details onToggle={event => {setFilesOpen(event.currentTarget.open); if (event.currentTarget.open && !files && !loadingFiles) void readFiles(); }}><summary>查看同步文件明细</summary>
         {files?.updatedAt && <p className="maintenance-muted">状态更新于 {new Date(files.updatedAt).toLocaleTimeString()}</p>}
         {files?.rows.map(file => <p key={file.id}><b>{file.path}</b> · {file.sourceId} · {({ completed: '已完成', failed: '失败', running: '处理中', pending: '未处理' })[file.status]}{file.activity && <span> · {formatFileBytes(file.activity.bytes)} · {file.activity.stage}</span>}{file.error && <span> · {file.error}</span>}</p>)}
         {fileError && <p role="alert">{fileError}</p>}
@@ -64,7 +64,7 @@ function MaintenanceTaskDetail({ run, onClose, onChange }: { run: ConsoleRun; on
       {!run.product && <p className="maintenance-muted">此历史任务没有保存步骤进度，可在任务中心查看结果。</p>}
       {error && <p className="product-error" role="alert">{error}</p>}
     </div>
-    <footer>{activeTask(run) && <button type="button" disabled={busy || taskStopping(run)} onClick={() => void act(false)}><CircleStop size={16} />{busy || taskStopping(run) ? '正在停止…' : '停止任务'}</button>}{(['failed', 'cancelled'].includes(run.status) || (run.kind === 'dream_quick' && taskRoundCompleted(run) && taskHasRemaining(run))) && run.id.startsWith('task-') && <button type="button" disabled={busy} onClick={() => void act(true)}>{busy ? '正在提交…' : run.kind === 'dream_quick' ? '继续未完成任务' : '重新执行'}</button>}<button type="button" className="maintenance-primary" onClick={() => taskLink(run)}><ArrowUpRight size={16} />查看任务</button></footer>
+    <footer>{activeTask(run) && <button type="button" disabled={busy || taskStopping(run)} onClick={() => void act(false)}><CircleStop size={16} />{busy || taskStopping(run) ? '正在停止…' : '停止任务'}</button>}{(['failed', 'cancelled'].includes(run.status) || (taskUsesFileQueue(run.kind) && taskRoundCompleted(run) && taskHasRemaining(run))) && run.id.startsWith('task-') && <button type="button" disabled={busy} onClick={() => void act(true)}>{busy ? '正在提交…' : taskUsesFileQueue(run.kind) ? '继续未完成任务' : '重新执行'}</button>}<button type="button" className="maintenance-primary" onClick={() => taskLink(run)}><ArrowUpRight size={16} />查看任务</button></footer>
   </dialog>;
 }
 

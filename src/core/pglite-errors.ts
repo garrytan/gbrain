@@ -106,8 +106,8 @@ export class PglitePermissionError extends Error {
   readonly name = 'PglitePermissionError';
   readonly databasePath: string | null;
 
-  constructor(message: string, databasePath?: string | null) {
-    super(message);
+  constructor(message: string, databasePath?: string | null, opts?: { cause?: unknown }) {
+    super(message, opts?.cause !== undefined ? { cause: opts.cause } : undefined);
     this.databasePath = databasePath ?? null;
   }
 }
@@ -172,6 +172,14 @@ export class SidecarHealthTimeoutError extends Error {
  */
 export function classifySidecarStartupError(error: unknown): SidecarErrorClassification {
   const text = extractErrorText(error);
+
+  if (/PGLite 数据库路径无效：/.test(text)) {
+    return { category: 'database_open_failed', retryable: false, labelZh: '数据库路径不是有效文件夹' };
+  }
+  if (/PGLite 数据库路径检查失败：/.test(text)) {
+    const permission = error instanceof PglitePermissionError || /EACCES|EPERM/.test(text);
+    return { category: permission ? 'permission' : 'database_open_failed', retryable: false, labelZh: permission ? '数据库目录权限不足' : '数据库路径无法访问' };
+  }
 
   if (
     error instanceof Error && error.name === 'GinIndexUnusableError'

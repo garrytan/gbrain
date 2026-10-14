@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "reviewed_at": "2026-10-11",
-  "product_version": "1.4.55",
+  "reviewed_at": "2026-10-13",
+  "product_version": "1.4.63",
   "subsystem": "entity-relations",
   "status": "release-blocked-pending-package-acceptance",
   "upstream": {
@@ -18,7 +18,10 @@
     "wanted-link persistence",
     "complete ingest, filing and quality contracts; durable shared Minion Agent tools and receipts",
     "evidence-backed entity/source relationships and final graph reconciliation",
-    "Reasoning output headroom, bounded truncation retry, endpoint option rejection and durable restricted JSON ingest"
+    "Reasoning output headroom, bounded truncation retry, endpoint option rejection and durable restricted JSON ingest",
+    "Authorized native Workbench memory adapter; optional transient classification, source-bound exact dedup and DB-only fact write preserving original materials",
+    "Authorized world-only Dream consolidation; private Facts remain local and are not promoted to public entity takes",
+    "Authorized native memory lifecycle: source-bound live projection guards, refresh, TTL-safe takes and verified contribution retirement"
   ],
   "integrations": [
     "src/core/pglite-engine.ts",
@@ -74,7 +77,9 @@
     "PMBrain 1.4.50 reuses shared Gateway and ingest validators: thinking defaults to 32000 output tokens; length retries once at double cap within existing calls/token/cost limits and persists both usages. Bad document receipts remain pending while other pages continue. Endpoint-specific Qwen controls and schema are removed once on explicit rejection; tool rejection selects durable restricted JSON tools without changing Source/evidence checks.",
     "PMBrain 1.4.51 removes the new global default chat timeout. Entity ingest has separate configurable call/job deadlines; truncation recovery respects known output/context ceilings, actual remaining cost/tokens and final verification reserves without consuming normal tool rounds. Abort causes and per-page usage/limits are retained; Ollama stream errors preserve tool rejection for durable JSON fallback.",
     "PMBrain 1.4.53 adapts Cherry context-management ideas in the Workbench: per-request budgets, immutable tool shares, structural output trimming and full-exchange compaction. Gateway request shaping is opt-in; readonly concurrency is explicit, capped at four, preserves result order and persist-before-execute for each tool. Default callers, non-idempotent writes and crash replay stay serial. Ollama native tools receive bounded context windows; reasoning-only output is not a tool answer. No knowledge data/schema, Core retrieval, Minion phases or upstream-pinned hashes are changed.",
-    "PMBrain 1.4.54 adds opt-in request lifecycle boundaries, same-request stream recovery and per-endpoint validated JSON/DSML tool normalization. Canonical tool history is preserved while Workbench uses a budgeted projection with one output reservation and a protocol-free final answer. Existing Core/Minion timeout, replay, write ordering and default serial execution remain unchanged. No knowledge schema/data, retrieval or upstream-pinned hash changes."
+    "PMBrain 1.4.54 adds opt-in request lifecycle boundaries, same-request stream recovery and per-endpoint validated JSON/DSML tool normalization. Canonical tool history is preserved while Workbench uses a budgeted projection with one output reservation and a protocol-free final answer. Existing Core/Minion timeout, replay, write ordering and default serial execution remain unchanged. No knowledge schema/data, retrieval or upstream-pinned hash changes.",
+    "PMBrain 1.4.57 removes cross-document cumulative entity-capture input/output token ceilings and owner-task token allowance subtraction. Token usage, owner-linked monetary budgets, completed ingest receipts, per-document limits, request timeouts, bounded truncation retry and resource guards remain. Legacy total-token settings are retained but ignored; API ceilings are null. No knowledge schema/data or upstream-pinned hash changes.",
+    "PMBrain 1.4.58 scopes ingest turns and token allowance to each chunk. Durable distinct entity references extend the default eight-turn allowance up to the existing shared Minion twenty-turn ceiling; duplicate entity operations do not extend it. Explicit operator turn limits remain. Exhausted chunk turns or tokens leave that document pending while subsequent documents continue; monetary limits and provider/resource stops still bound the task. Successful chunks and original Source/evidence checks remain reusable. No new loop, knowledge schema/data or upstream-pinned hash changes."
   ],
   "deferred": [
     "whole-repository GBrain upgrade",
@@ -590,7 +595,7 @@
       "path": "src/core/ai/gateway.ts",
       "upstream_path": "src/core/ai/gateway.ts",
       "mode": "adapted",
-      "sha256": "e79a38c1ff3392eac2afc4364a47ce27acbbeb4a02cf8e84220eb6550a4af837",
+      "sha256": "3eb4b1b9c2e5e276405c61e1fd8d0aff055d3ed17073ad665b398000fea6d878",
       "upstream_sha256": "622b81db5282117c6e2b32b566e2e35c36117400d416051011dbcc0e8e9c565f"
     },
     {
@@ -604,7 +609,7 @@
       "path": "src/core/facts/extract.ts",
       "upstream_path": "src/core/facts/extract.ts",
       "mode": "adapted",
-      "sha256": "3cf6b3e978210e3e5f79a558f8f6e748e577c68beb46a38d6a6064851105d033",
+      "sha256": "858a640cd5ab46c91acdb81ce708b163c0b0962f74a38eba5f7383820337bd28",
       "upstream_sha256": "1e9a5aec6a3f4c7ad159687d4d6f934519c29687a71ef757272971909da17978"
     },
     {
@@ -613,6 +618,48 @@
       "mode": "adapted",
       "sha256": "050256b42b7fb49452be6606cd0f4f7996a8b0c919de4d02d16a39e74f73d047",
       "upstream_sha256": "d0f3a747b615808b92be26486b7842e7cbc509724f273484d25de78a4c85127a"
+    },
+    {
+      "path": "src/core/facts/write-single.ts",
+      "upstream_path": "src/core/facts/write-single.ts",
+      "mode": "adapted",
+      "sha256": "cf4036fe5391758d1bd1885f1e8402a6c360f390f86089cdefc5187c34d5c5a3",
+      "upstream_sha256": "1ed9011cecaab1354fe8e0968374f7b02dba9040b5741bccf9c499c2437791dc"
+    },
+    {
+      "path": "src/core/facts/writeback-gate.ts",
+      "upstream_path": "src/core/facts/writeback-gate.ts",
+      "mode": "adapted",
+      "sha256": "477c11ff0e8e674a9b4857125a59ab80b95b7ab01387fc859b0616df67255d89",
+      "upstream_sha256": "8974e3585d8f9fece557b8724b4a621259bbe18e121f7b6855d61c7dafd1bd6d"
+    },
+    {
+      "path": "src/core/cycle/phases/consolidate.ts",
+      "upstream_path": "src/core/cycle/phases/consolidate.ts",
+      "mode": "adapted",
+      "sha256": "54d8baef1c6c7bb1e410b771d297d814a84923ad5ae766beaff8c21e8ea87b89",
+      "upstream_sha256": "7f843fc1a1602da61a68c273ff6347d0a1e50095aced95af64a1c63af6766d5b"
+    },
+    {
+      "path": "src/core/facts/forget.ts",
+      "upstream_path": "src/core/facts/forget.ts",
+      "mode": "adapted",
+      "sha256": "7fec04f6db59dcec374ef7901f744f65269960833363166fa66457f350256033",
+      "upstream_sha256": "b057026b83a8acb2d43339e6801f4da6b494f65dbaf6d5d7ce0d3a0eb4144a2e"
+    },
+    {
+      "path": "src/core/facts/meta-hook.ts",
+      "upstream_path": "src/core/facts/meta-hook.ts",
+      "mode": "adapted",
+      "sha256": "c68ac48f37936219477a68f9a7da6fb51627805a9984f428a7145572f39eb74d",
+      "upstream_sha256": "e2993843ed861cee57754c09b3eb05ddfea8aba71ea154b7944b34325a7cde3b"
+    },
+    {
+      "path": "src/core/search/sql-ranking.ts",
+      "upstream_path": "src/core/search/sql-ranking.ts",
+      "mode": "adapted",
+      "sha256": "8455eed5ffd94c79048cda6302edbbf54b127a81aae3b3ff55a62cab701ed560",
+      "upstream_sha256": "808abf46b9effbcfe4927888686ce8cb91864aef077ef2f91214dbe93cc15f71"
     }
   ],
   "migration_namespace": {

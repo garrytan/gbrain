@@ -1,6 +1,6 @@
 import {AsyncLocalStorage} from 'node:async_hooks';
-import {classifyChatError} from './errors';
-import type {ChatOpts,ChatResult} from './gateway';
+import {classifyChatError} from './errors.ts';
+import type {ChatOpts,ChatResult} from './gateway.ts';
 
 export interface ChatRequestPolicy { firstResponseMs?:number; idleMs?:number; totalMs?:number; maxRetries?:number; retryDelayMs?:number }
 export interface ChatRequestEvent {

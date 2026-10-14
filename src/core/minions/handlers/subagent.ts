@@ -621,7 +621,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
         }
         break;
       }
-      if(finalIngestTurn)throw new UnrecoverableError('ingest final receipt attempted more tools; unfinished document is resumable');
+      if(finalIngestTurn)throw new UnrecoverableError('ingest_turn_limit: final receipt attempted more tools; unfinished chunk is resumable');
 
       // 5. Dispatch each tool_use. Two-phase persist (pending → complete/failed).
       const toolResults: ContentBlock[] = [];

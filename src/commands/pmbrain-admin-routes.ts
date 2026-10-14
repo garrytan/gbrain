@@ -227,8 +227,8 @@ export function registerPmbrainAdminRoutes(options: PmbrainAdminRouteOptions): {
     reconnectPglite,
     ensureAdminWorkerStarted,
   } = options;
-  registerWorkbenchRoutes(app, requireAdmin, engine, config, { databaseAvailable: () => !getPgliteBusy() });
   const productTasks = options.productTasks;
+  registerWorkbenchRoutes(app, requireAdmin, engine, config, { databaseAvailable: () => !getPgliteBusy(), productTasks });
   const readRuns = async () => [...(getPgliteBusy() ? productTasks.cachedRuns() : await productTasks.listRuns()), ...listRuns()];
   const readRun = async (id: string) => (getPgliteBusy() ? productTasks.cachedRuns().find(run => run.id === id) : await productTasks.getRun(id)) ?? getRun(id);
   app.post('/admin/api/gateway/reload', requireAdmin, async (_req: Request, res: Response) => {
@@ -948,16 +948,12 @@ export function registerPmbrainAdminRoutes(options: PmbrainAdminRouteOptions): {
   });
 
   const entityCaptureBudgetView = async () => {
-    const { readEntityCaptureCostCap, readTokenCap, DEFAULT_ENTITY_CAPTURE_MAX_INPUT_TOKENS, DEFAULT_ENTITY_CAPTURE_MAX_OUTPUT_TOKENS } = await import('../core/cycle/entity-capture-budget.ts');
-    const [cap, input, output] = await Promise.all([
-      engine.getConfig('dream.entity_capture.cost_cap_cny'),
-      engine.getConfig('dream.entity_capture.max_input_tokens'),
-      engine.getConfig('dream.entity_capture.max_output_tokens'),
-    ]);
+    const { readEntityCaptureCostCap } = await import('../core/cycle/entity-capture-budget.ts');
+    const cap = await engine.getConfig('dream.entity_capture.cost_cap_cny');
     return {
       costCapCny: readEntityCaptureCostCap(cap),
-      maxInputTokens: readTokenCap(input, DEFAULT_ENTITY_CAPTURE_MAX_INPUT_TOKENS),
-      maxOutputTokens: readTokenCap(output, DEFAULT_ENTITY_CAPTURE_MAX_OUTPUT_TOKENS),
+      maxInputTokens: null,
+      maxOutputTokens: null,
     };
   };
 

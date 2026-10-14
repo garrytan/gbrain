@@ -13,6 +13,10 @@ export const PRODUCT_QUEUE_CAPACITY=128;
 export const SYNC_QUEUE_CAPACITY=10000;
 export const SNAPSHOT_QUOTA_BYTES=1024*1024*1024;
 export const TASK_LOG_MAX_BYTES=32*1024*1024;
+export function isSyncCapacityError(error:unknown):boolean {
+  const message=error instanceof Error?error.message:String(error);
+  return message.startsWith('资源保护：') && /队列容量|快照容量/.test(message);
+}
 export function assertImportFileSize(path:string,size:number){
   const limit=isImageFilePath(path)?MAX_IMAGE_BYTES:isOfficeFilePath(path)?MAX_OFFICE_BYTES:MAX_FILE_SIZE;
   if(size>limit)throw new Error(`资源保护：文件过大（${size} bytes，当前格式上限 ${limit} bytes）：${path}。请拆分后继续。`);

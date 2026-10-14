@@ -1,6 +1,7 @@
 import { taskName, type TaskProductProgress } from '../../../shared/task-progress.ts';
 
 const labels: Record<string, string> = {
+  memory: '提炼对话记忆',
   collect: '读取资料清单', process: '读取与解析资料', vector: '生成向量', write: '写入知识库',
   check: '检查知识', sync: '同步资料', relations: '建立知识关联', embed: '更新搜索索引', finish: '完成检查',
   synthesize: '理解新增知识', extract_atoms: '提炼长期知识', patterns: '发现知识模式',
@@ -84,10 +85,14 @@ export class TaskProgressAdapter {
         this.scan({...scan,active:event.event!=='finish'});
         return;
       }
-      if (this.view.name !== '导入资料') return;
+      if (this.view.name !== '导入资料' && this.currentPhase !== 'sync') return;
       if (typeof event.done === 'number') this.view.processed = event.done;
       if (typeof event.total === 'number') this.view.total = event.total;
-      if (this.view.total && this.view.processed !== null) this.view.percent = Math.min(99, Math.floor(this.view.processed / this.view.total * 100));
+      if (this.view.total && this.view.processed !== null) {
+        const percent = Math.floor(this.view.processed / this.view.total * 100);
+        if (this.view.name === '导入资料') this.view.percent = Math.min(99, percent);
+        else this.view.phasePercent = percent;
+      }
       return;
     }
     const phase = raw.split('.')[0]!;

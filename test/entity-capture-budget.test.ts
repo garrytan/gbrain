@@ -5,6 +5,7 @@
  */
 import { expect, test } from 'bun:test';
 import { TaskProgressAdapter, finishTaskProgress } from '../src/product/tasks/progress-adapter.ts';
+import { EntityCaptureBudgetResponseSchema } from '../shared/contracts/dream.ts';
 import {
   captureBudgetStop,
   captureChunkCostCny,
@@ -60,23 +61,18 @@ test('未配置费用上限时默认 5 元，不限制和自定义金额可以�
   expect(usageFromJobResult({ tokens: { in: 0, out: 0 } })).toEqual({ present: true, input: 0, output: 0 });
 });
 
-test('页数不是停止条件，费用和 Token 可以在长文中间停住', () => {
-  expect(captureBudgetStop({
-    inputTokens: 1, outputTokens: 1,
-    maxInputTokens: 100, maxOutputTokens: 100, usageKnown: true, costCny: 0, costCapCny: 5,
-  })).toBeNull();
-  expect(captureBudgetStop({
-    inputTokens: 10, outputTokens: 1,
-    maxInputTokens: 10, maxOutputTokens: 100, usageKnown: false, costCny: null, costCapCny: 5,
-  })).toBeNull();
-  expect(captureBudgetStop({
-    inputTokens: 10, outputTokens: 1,
-    maxInputTokens: 10, maxOutputTokens: 100, usageKnown: true, costCny: null, costCapCny: 5,
-  })).toBe('tokens');
-  expect(captureBudgetStop({
-    inputTokens: 1, outputTokens: 1,
-    maxInputTokens: 100, maxOutputTokens: 100, usageKnown: true, costCny: 5, costCapCny: 5,
-  })).toBe('cost');
+test('累计 Token 超过历史额度也不停止，明确的费用上限仍然生效', () => {
+  const legacy={inputTokens:2_000_000,outputTokens:400_000,maxInputTokens:1_000_000,maxOutputTokens:200_000,usageKnown:true,costCny:null,costCapCny:5};
+  expect(captureBudgetStop(legacy)).toBeNull();
+  expect(captureBudgetStop({...legacy,costCny:0,costCapCny:null})).toBeNull();
+  expect(captureBudgetStop({...legacy,costCny:5})).toBe('cost');
+});
+
+test('预算接口用空值明确表示累计 Token 不限制，未知价格不再声称按 Token 限制',()=>{
+  expect(EntityCaptureBudgetResponseSchema.parse({costCapCny:null,maxInputTokens:null,maxOutputTokens:null})).toEqual({costCapCny:null,maxInputTokens:null,maxOutputTokens:null});
+  const line=captureReportLine({model:'custom-openai:Qwen3.6-35B-A3B',pagesProcessed:12,pagesRemaining:0,entitiesCreated:0,relationsCreated:0,costCny:null,costCapCny:5,ollama:false,stopReason:'completed'});
+  expect(line).toContain('金额上限无法核算，未生效');
+  expect(line).not.toContain('按 Token 限制');
 });
 
 test('识别实体单独选可用模型，显式不可用时不改去别的模型', () => {

@@ -4,10 +4,12 @@ import type { WorkbenchMessage } from '../../../shared/workbench';
 import { MarkdownArticle } from '../pages/Documentation';
 import { CopyButton } from '../lib/clipboard';
 import { ToolActivity } from './ToolActivity';
+import { workbenchRequest } from './useWorkbench';
 
 export function Message({ message, assistantName, assistantEmoji, canRetry, onRetry, canEdit, onEdit }: { message: WorkbenchMessage; assistantName: string; assistantEmoji: string; canRetry: boolean; onRetry: () => void; canEdit?: boolean; onEdit?: () => void }) {
   const modelLabel = message.modelName || message.model;
   const [now,setNow]=useState(Date.now());
+  const [origins,setOrigins]=useState<Record<number,string>>({});
   useEffect(()=>{if(message.status!=='running')return;const timer=setInterval(()=>setNow(Date.now()),1000);return()=>clearInterval(timer);},[message.status]);
   const waitingSeconds=message.request?Math.max(0,Math.floor((now-Date.parse(message.request.startedAt))/1000)):0;
   return <article className={`wb-message wb-${message.role}`} aria-label={message.role === 'user' ? '你的消息' : '助手回答'}>
@@ -19,7 +21,10 @@ export function Message({ message, assistantName, assistantEmoji, canRetry, onRe
       {message.status === 'error' && <p className="wb-error" role="alert">{message.error}</p>}
       {message.status === 'cancelled' && <p className="wb-muted">已停止生成，可以重试或继续提问。</p>}
       {message.stopReason === 'length' && message.status === 'complete' && <p className="wb-notice">回答因模型长度限制未能一次写完。你可以发送「继续」接着写。</p>}
-      {!!message.citations?.length && <details className="wb-citations"><summary><BookOpen size={14} />参考了 {message.citations.length} 条知识</summary>{message.citations.map((citation, index) => <div key={`${citation.sourceId}/${citation.slug}`}><b>[{index + 1}] {citation.title}</b><small>{citation.sourceId} / {citation.slug}</small><p>{citation.snippet}</p></div>)}</details>}
+      {!!message.citations?.length && <details className="wb-citations"><summary><BookOpen size={14} />参考了 {message.citations.length} 条知识与记忆</summary>{message.citations.map((citation, index) => <div key={`${citation.sourceId}/${citation.slug}/${citation.factId??''}`}><b>[{index + 1}] {citation.title}</b><small>{citation.kind==='memory'?'已保存的记忆':`${citation.sourceId} / ${citation.slug}`}</small><p>{citation.snippet}</p>{citation.kind==='memory'&&citation.conversationId&&citation.messageId&&<><button type="button" onClick={()=>void workbenchRequest<{text:string;createdAt:string}>(`/conversations/${citation.conversationId}/memory/${citation.messageId}${citation.memoryHash?`?hash=${citation.memoryHash}`:''}`).then(result=>setOrigins(old=>({...old,[index]:`${new Date(result.createdAt).toLocaleString()}\n${result.text}`}))).catch(reason=>setOrigins(old=>({...old,[index]:String(reason)})))}>查看对话出处</button>{origins[index]&&<p>{origins[index]}</p>}</>}</div>)}</details>}
+      {message.memory&&['pending','queued','running'].includes(message.memory.status)&&<p className="wb-muted" role="status">正在后台沉淀对话记忆…</p>}
+      {message.memory?.status==='complete'&&!!message.memory.factIds?.length&&<p className="wb-muted">已沉淀 {message.memory.factIds.length} 条记忆</p>}
+      {message.memory&&['held','failed'].includes(message.memory.status)&&<p className="wb-error" role="status">记忆尚未沉淀：{message.memory.error||'请在任务中心查看并继续'}</p>}
       {message.contextNote && <p className="wb-muted">{message.contextNote}</p>}
       {!!message.requestHistory?.length&&message.status==='error'&&<details className="wb-citations"><summary>请求诊断</summary>{message.requestHistory.map((request,index)=><small key={index}>{request.model} · 尝试 {request.attempt} · {Math.round(request.elapsedMs/1000)} 秒 · {request.errorKind||'完成'} · 输入 {request.inputTokens??'未返回'} / 输出 {request.outputTokens??'未返回'} Token · 输出上限 {request.outputLimit??'未返回'}{request.usageUnknown?' · 失败请求消耗未知':''}</small>)}</details>}
       {message.status !== 'running' && <footer>{message.text && <CopyButton value={message.text} />}{canEdit && <button onClick={onEdit}>修改问题</button>}{canRetry && <button onClick={onRetry}>重新生成</button>}{message.contextMessages !== undefined && <small>本次直接带上 {message.contextMessages} 条最近消息</small>}</footer>}

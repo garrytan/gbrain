@@ -57,6 +57,7 @@ export interface DreamTaskInput {
 }
 
 export type ProductTask =
+  | { type: 'memory'; input: import('../workbench/memory').WorkbenchMemoryTask }
   | { type: 'sync-file'; input: SyncFileInput }
   | { type: 'sync'; input: { timeoutMs?: number } }
   | { type: 'import'; input: ImportTaskInput }

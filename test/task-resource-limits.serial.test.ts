@@ -1,9 +1,9 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, unlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, unlinkSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
-import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { WorkerPgliteEngine } from '../src/product/database/worker-engine.ts';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { MinionQueue } from '../src/core/minions/queue.ts';
@@ -15,6 +15,8 @@ import { FileProjection } from '../src/product/tasks/file-projection.ts';
 import { taskArtifactPath } from '../src/product/tasks/checkpoint.ts';
 import { SyncFileQueue, SYNC_FILE_QUEUE, SYNC_FILE_TASK } from '../src/product/tasks/sync-file-queue.ts';
 import { gbrainPath } from '../src/core/config.ts';
+import { syncFileContentFingerprint, taskModelFingerprint } from '../src/product/tasks/checkpoint.ts';
+import { TaskProgressAdapter } from '../src/product/tasks/progress-adapter.ts';
 
 const database=process.env.PMBRAIN_TASK_TEST_DATABASE_URL;
 const keys=['PMBRAIN_HOME','GBRAIN_HOME','DATABASE_URL','PMBRAIN_DATABASE_URL','GBRAIN_DATABASE_URL'];
@@ -28,7 +30,7 @@ beforeAll(async()=>{
   mkdirSync(join(home,'.pmbrain'));
   writeFileSync(join(home,'.pmbrain','config.json'),JSON.stringify({engine:database?'postgres':'pglite',model_usage:{embedding_enabled:false,generative_enabled:false}}));
   if(database)assertSafeE2eDatabaseUrl(database);
-  engine=database?new PostgresEngine():new PGLiteEngine();
+  engine=database?new PostgresEngine():new WorkerPgliteEngine() as unknown as BrainEngine;
   await engine.connect(database?{database_url:database}:{});await engine.initSchema();
 },60000);
 afterAll(async()=>{
@@ -127,7 +129,7 @@ test('软件重启回收已完成任务的遗留快照，暂停任务的快照�
   unlinkSync(paused);
 },60000);
 
-test('容量满后拒绝后续文件，已接受文件正常完成释放快照，手动继续认领旧页面',async()=>{
+test('整批资料超过快照窗口时自动分批完成，同一任务不报失败且完成副本释放',async()=>{
   const dir=join(home,'bounded-scan');mkdirSync(dir);
   const content='# 有界队列\n\n容量不足时保留原文，先完成已经入队的资料。';
   for(const name of ['first.md','second.md','third.md'])writeFileSync(join(dir,name),content+'\n'+name);
@@ -136,15 +138,12 @@ test('容量满后拒绝后续文件，已接受文件正常完成释放快照�
   const runtime=new ProductTaskRuntime(engine,{snapshotQuotaBytes:Buffer.byteLength(content+'\nsecond.md')*2});
   await runtime.start();
   async function ended(id:string){
-    const deadline=Date.now()+15000;
+    const deadline=Date.now()+90_000;
     while(Date.now()<deadline){const run=await runtime.getRun(id);if(run&&!['running','queued'].includes(run.status))return run;await Bun.sleep(30);}
-    throw new Error('容量限制任务未收尾');
+    throw new Error(`容量限制任务未收尾：${JSON.stringify(await runtime.getRun(id))}`);
   }
   try{
     const run=await runtime.submitDream({preset:'quick',sourceId:'bounded-scan'});
-    expect((await ended(run.id)).error).toContain('快照容量');
-    const files=await runtime.files(run.id);expect(files?.rows).toHaveLength(2);expect(files?.rows.every(row=>row.status==='completed')).toBe(true);
-    await runtime.retry(run.id);
     const resumed=await ended(run.id);
     expect(resumed.status,JSON.stringify(resumed)).toBe('completed');
     expect((await engine.executeRaw<{stopped:boolean}>("SELECT data ? 'resourceStopReason' AS stopped FROM minion_jobs WHERE id=$1",[Number(run.id.slice(5))]))[0].stopped).toBe(false);
@@ -152,9 +151,174 @@ test('容量满后拒绝后续文件，已接受文件正常完成释放快照�
     const savedPages=await engine.executeRaw<{slug:string}>("SELECT slug FROM pages WHERE source_id='bounded-scan' ORDER BY slug");
     expect(savedPages.map(page=>page.slug)).toEqual(['first','second','third']);
     expect(resumedFiles?.rows,JSON.stringify({run:await runtime.getRun(run.id),files:resumedFiles})).toHaveLength(3);
+    expect(resumedFiles?.rows.every(row=>row.status==='completed')).toBe(true);
+    const snapshots=await engine.executeRaw<{path:string}>("SELECT data->'task'->'input'->>'path' AS path FROM minion_jobs WHERE queue=$1 AND parent_job_id=$2",[SYNC_FILE_QUEUE,Number(run.id.slice(5))]);
+    expect(snapshots.every(row=>!existsSync(row.path))).toBe(true);
     originals.forEach((bytes,index)=>expect(readFileSync(join(dir,['first.md','second.md','third.md'][index]))).toEqual(bytes));
-  }finally{await runtime.close();}
+  }finally{
+    await runtime.close();
+    await engine.executeRaw("UPDATE minion_jobs SET status='cancelled' WHERE id=(SELECT parent_job_id FROM minion_jobs WHERE queue=$1 AND data->'task'->'input'->'options'->>'sourceId'='bounded-scan' LIMIT 1)",[SYNC_FILE_QUEUE]);
+    const snapshots=await engine.executeRaw<{path:string}>("SELECT data->'task'->'input'->>'path' AS path FROM minion_jobs WHERE queue=$1 AND data->'task'->'input'->'options'->>'sourceId'='bounded-scan'",[SYNC_FILE_QUEUE]);
+    for(const row of snapshots){if(!row.path.startsWith(home))throw new Error('隔离快照路径越界');if(existsSync(row.path))unlinkSync(row.path);}
+  }
+},120000);
+
+test('停止任务释放可重建的快照，新任务不被旧副本阻塞，旧任务仍按原子任务续跑',async()=>{
+  const queue=new MinionQueue(engine);
+  const resources=new TaskResourceGuard({snapshotQuotaBytes:80});
+  let files=new SyncFileQueue(engine,undefined,()=>true,resources);
+  const dir=join(home,'stopped-cache');mkdirSync(dir);
+  const path=join(dir,'original.md');writeFileSync(path,'# 原资料\n\n'+'甲'.repeat(20));
+  const bytes=readFileSync(path),info=statSync(path);
+  const options={sourceId:'stopped-cache',noEmbed:true};
+  await engine.executeRaw("INSERT INTO sources(id,name,local_path,config) VALUES ('stopped-cache','停止续跑验收',$1,'{}'::jsonb)",[dir]);
+  const input={path,originalPath:path,originalSize:info.size,originalMtime:info.mtimeMs,sourceRoot:dir,relativePath:'original.md',options,hash:createHash('sha256').update(bytes).digest('hex'),fingerprint:syncFileContentFingerprint(options),modelFingerprint:taskModelFingerprint()};
+  const old=await queue.add('pmbrain-product-task',{kind:'dream_quick',task:{type:'dream',input:{preset:'quick',sourceId:'stopped-cache'}}},{queue:'pmbrain-product',delay:86400000});
+  await engine.executeRaw("UPDATE minion_jobs SET status='active',lock_token='stopped-cache-token' WHERE id=$1",[old.id]);
+  await files.enqueue(old.id,'stopped-cache-token',input);
+  await files.pause(old.id);
+  await engine.executeRaw("UPDATE minion_jobs SET status='cancelled',lock_token=NULL,error_text='任务已停止' WHERE id=$1",[old.id]);
+  const [child]=await engine.executeRaw<{id:number;path:string}>("SELECT id,data->'task'->'input'->>'path' AS path FROM minion_jobs WHERE queue=$1 AND parent_job_id=$2",[SYNC_FILE_QUEUE,old.id]);
+  const runtime=new ProductTaskRuntime(engine,{snapshotQuotaBytes:80});
+  try{
+    await runtime.start();
+    expect(existsSync(child.path)).toBe(false);
+    expect((await queue.getJob(child.id))?.status).toBe('paused');
+    expect(readFileSync(path)).toEqual(bytes);
+    await runtime.close();
+    files=new SyncFileQueue(engine,undefined,()=>true,new TaskResourceGuard({snapshotQuotaBytes:80}));
+    await files.resume(old.id);
+    await engine.executeRaw("UPDATE minion_jobs SET status='active',lock_token='stopped-cache-token' WHERE id=$1",[old.id]);
+    expect((await files.enqueue(old.id,'stopped-cache-token',input)).deferred).toBe(true);
+    const rows=await engine.executeRaw<{id:number;path:string}>("SELECT id,data->'task'->'input'->>'path' AS path FROM minion_jobs WHERE queue=$1 AND parent_job_id=$2",[SYNC_FILE_QUEUE,old.id]);
+    expect(rows).toHaveLength(1);expect(rows[0].id).toBe(child.id);expect(rows[0].path).toBe(child.path);
+    expect(readFileSync(child.path)).toEqual(bytes);
+  }finally{
+    await engine.executeRaw("UPDATE minion_jobs SET status='cancelled' WHERE id=$1",[old.id]);
+    await runtime.close();
+    if(existsSync(child.path))unlinkSync(child.path);
+  }
 },60000);
+
+test('原资料丢失或内容改变时停止缓存仍保留，清理不会删除仅存副本',async()=>{
+  const queue=new MinionQueue(engine);
+  const files=new SyncFileQueue(engine);
+  const parent=await queue.add('pmbrain-product-task',{kind:'dream_quick',task:{type:'dream',input:{preset:'quick'}}},{queue:'pmbrain-product',delay:86400000});
+  await engine.executeRaw("UPDATE minion_jobs SET status='cancelled' WHERE id=$1",[parent.id]);
+  const directory=gbrainPath('task-artifacts','sync-files','retained',String(parent.id));mkdirSync(directory,{recursive:true});
+  const bytes=Buffer.from('原资料的旧版正文');
+  const paths:string[]=[];
+  for(const [index,reason] of ['missing','changed'].entries()){
+    const original=join(home,reason+'-original.md');writeFileSync(original,bytes);
+    const path=join(directory,String(index).repeat(64)+'-'+reason+'.md');writeFileSync(path,bytes);paths.push(path);
+    if(reason==='changed')writeFileSync(original,Buffer.alloc(bytes.length,46));
+    const info=statSync(original);
+    if(reason==='missing')unlinkSync(original);
+    const child=await queue.add(SYNC_FILE_TASK,{sessionId:parent.id,task:{type:'sync-file',input:{path,originalPath:original,originalSize:info.size,originalMtime:info.mtimeMs,hash:createHash('sha256').update(bytes).digest('hex')}}},{queue:SYNC_FILE_QUEUE,delay:86400000});
+    await engine.executeRaw("UPDATE minion_jobs SET parent_job_id=$2,status='paused' WHERE id=$1",[child.id,parent.id]);
+  }
+  try{
+    await files.cleanupStoppedSnapshots(parent.id);
+    for(const path of paths)expect(readFileSync(path)).toEqual(bytes);
+  }finally{for(const path of paths)unlinkSync(path);}
+},60000);
+
+test('深度整理 Git 临时目录已移除后，仅释放当前原资料仍能重建的停止快照',async()=>{
+  const queue=new MinionQueue(engine);const files=new SyncFileQueue(engine);
+  const repo=join(home,'git-stopped');mkdirSync(repo);
+  await engine.executeRaw("INSERT INTO sources(id,name,local_path,config) VALUES ('git-stopped','Git停止缓存验收',$1,'{}'::jsonb)",[repo]);
+  const parent=await queue.add('pmbrain-product-task',{kind:'dream_full',fileSession:true,task:{type:'dream',input:{preset:'full',sourceId:'git-stopped'}}},{queue:'pmbrain-product',delay:86400000});
+  await engine.executeRaw("UPDATE minion_jobs SET status='cancelled' WHERE id=$1",[parent.id]);
+  const directory=gbrainPath('task-artifacts','sync-files','git-stopped',String(parent.id));mkdirSync(directory,{recursive:true});
+  const bytes=Buffer.from('Git已提交资料的原始正文');const paths:string[]=[];
+  const names=['safe.md','changed.md','missing.md','../outside.md'];
+  for(const [index,name] of names.entries()){
+    if(name!=='missing.md')writeFileSync(join(repo,name),index===1?Buffer.alloc(bytes.length,46):bytes);
+    const path=join(directory,String(index+1).repeat(64)+'-snapshot.md');writeFileSync(path,bytes);paths.push(path);
+    const child=await queue.add(SYNC_FILE_TASK,{sessionId:parent.id,task:{type:'sync-file',input:{path,sourceRoot:repo,relativePath:name,options:{sourceId:'git-stopped',noEmbed:true},originalSize:bytes.length,originalMtime:1,hash:createHash('sha256').update(bytes).digest('hex')}}},{queue:SYNC_FILE_QUEUE,delay:86400000});
+    await engine.executeRaw("UPDATE minion_jobs SET parent_job_id=$2,status='paused' WHERE id=$1",[child.id,parent.id]);
+  }
+  try{
+    await files.cleanupStoppedSnapshots(parent.id);
+    expect(existsSync(paths[0])).toBe(false);
+    for(const path of paths.slice(1))expect(readFileSync(path)).toEqual(bytes);
+    expect(readFileSync(join(repo,'safe.md'))).toEqual(bytes);
+    expect(readFileSync(join(repo,'../outside.md'))).toEqual(bytes);
+  }finally{for(const path of paths)if(existsSync(path))unlinkSync(path);}
+},60000);
+
+test('旧版本因快照容量失败的最新任务启动后自动恢复，主动停止和不确定模型请求仍不重启',async()=>{
+  const queue=new MinionQueue(engine);
+  const dir=join(home,'legacy-capacity');mkdirSync(dir);
+  const path=join(dir,'legacy.md');writeFileSync(path,'# 旧容量中断\n\n旧版因缓存达到上限而停止的任务，应恢复正常处理。');
+  await engine.executeRaw("INSERT INTO sources(id,name,local_path,config) VALUES ('legacy-capacity','旧任务容量恢复',$1,'{}'::jsonb)",[dir]);
+  const reason='资源保护：同步快照容量已达到 1024 MB，已拒绝入队。请先完成已有任务后手动继续。';
+  const parent=await queue.add('pmbrain-product-task',{kind:'dream_quick',resourceStopReason:reason,task:{type:'dream',input:{preset:'quick',sourceId:'legacy-capacity'}}},{queue:'pmbrain-product',delay:86400000});
+  const progress=new TaskProgressAdapter('dream_quick').view;progress.errorReason=reason;
+  await engine.executeRaw("UPDATE minion_jobs SET status='paused',error_text=$2,progress=$3::jsonb WHERE id=$1",[parent.id,reason,{product:progress,result:{status:'partial'}}]);
+  const unsafe=await queue.add('pmbrain-product-task',{kind:'dream_quick',resourceStopReason:reason,task:{type:'dream',input:{preset:'quick',sourceId:'legacy-uncertain'}}},{queue:'pmbrain-product',delay:86400000});
+  await engine.executeRaw("UPDATE minion_jobs SET status='paused',error_text=$2 WHERE id=$1",[unsafe.id,reason]);
+  const child=await queue.add(SYNC_FILE_TASK,{sessionId:unsafe.id,task:{type:'sync-file',input:{modelMayRun:true}}},{queue:SYNC_FILE_QUEUE,delay:86400000});
+  await engine.executeRaw("UPDATE minion_jobs SET parent_job_id=$2,status='paused',attempts_started=1 WHERE id=$1",[child.id,unsafe.id]);
+  const unsafeInline=await queue.add('pmbrain-product-task',{kind:'dream_quick',resourceStopReason:reason,task:{type:'dream',input:{preset:'quick',sourceId:'legacy-inline-uncertain'}}},{queue:'pmbrain-product',delay:86400000});
+  await engine.executeRaw("UPDATE minion_jobs SET status='paused',error_text=$2 WHERE id=$1",[unsafeInline.id,reason]);
+  const inline=await queue.add('model-capture',{}, {queue:'dream-inline-snapshot-uncertain',delay:86400000});
+  await engine.executeRaw("UPDATE minion_jobs SET private_queue_owner_job_id=$2,status='paused',attempts_started=1 WHERE id=$1",[inline.id,unsafeInline.id]);
+  const stopped=await queue.add('pmbrain-product-task',{kind:'dream_quick',resourceStopReason:reason,task:{type:'dream',input:{preset:'quick',sourceId:'legacy-stopped'}}},{queue:'pmbrain-product',delay:86400000});
+  await engine.executeRaw("UPDATE minion_jobs SET status='cancelled',error_text=$2 WHERE id=$1",[stopped.id,reason]);
+  const runtime=new ProductTaskRuntime(engine);
+  try{
+    await runtime.start();
+    const deadline=Date.now()+90_000;
+    let status='queued';
+    while(Date.now()<deadline){const run=await runtime.getRun(`task-${parent.id}`);status=run!.status;if(!['running','queued'].includes(status))break;await Bun.sleep(50);}
+    expect(status,JSON.stringify(await runtime.getRun(`task-${parent.id}`))).toBe('completed');
+    expect((await queue.getJob(parent.id))?.data.resourceStopReason).toBeUndefined();
+    expect((await runtime.getRun(`task-${parent.id}`))?.product?.errorReason).toBeNull();
+    expect((await engine.getPage('legacy',{sourceId:'legacy-capacity'}))?.title).toBe('旧容量中断');
+    expect((await queue.getJob(unsafe.id))?.status).toBe('paused');
+    expect((await queue.getJob(child.id))?.attempts_started).toBe(1);
+    expect((await queue.getJob(unsafeInline.id))?.status).toBe('paused');
+    expect((await queue.getJob(inline.id))?.attempts_started).toBe(1);
+    expect((await queue.getJob(stopped.id))?.status).toBe('cancelled');
+  }finally{await runtime.close();}
+},120000);
+
+test('分批同步中主动停止后保持停止，重启后继续原任务完成且文件记录不重复',async()=>{
+  const dir=join(home,'live-stop');mkdirSync(dir);
+  const names=['first.md','second.md','third.md'];
+  const bytes=Buffer.from('# 实际停止续跑\n\n停止后按原任务接着处理，原资料不改变。');
+  for(const name of names)writeFileSync(join(dir,name),bytes);
+  await engine.executeRaw("INSERT INTO sources(id,name,local_path,config) VALUES ('live-stop','真实停止续跑',$1,'{}'::jsonb)",[dir]);
+  let runtime=new ProductTaskRuntime(engine,{snapshotQuotaBytes:bytes.length*2});
+  const queue=new MinionQueue(engine);
+  let runId:string|undefined;
+  try{
+    await runtime.start();
+    const run=await runtime.submitDream({preset:'quick',sourceId:'live-stop'});runId=run.id;
+    const id=Number(run.id.slice(5)),deadline=Date.now()+90_000;
+    let waiting=false;
+    while(Date.now()<deadline){if((await queue.getJob(id))?.status==='waiting-children'){waiting=true;break;}await Bun.sleep(20);}
+    expect(waiting,JSON.stringify(await runtime.getRun(run.id))).toBe(true);
+    expect((await runtime.cancel(run.id))?.status).toBe('cancelled');
+    const old=await engine.executeRaw<{id:number}>("SELECT id FROM minion_jobs WHERE queue=$1 AND parent_job_id=$2",[SYNC_FILE_QUEUE,id]);
+    await runtime.close();
+    runtime=new ProductTaskRuntime(engine,{snapshotQuotaBytes:bytes.length*2});await runtime.start();
+    expect((await runtime.getRun(run.id))?.status).toBe('cancelled');
+    expect((await runtime.retry(run.id))?.id).toBe(run.id);
+    const finishDeadline=Date.now()+90_000;
+    let status='queued';
+    while(Date.now()<finishDeadline){status=(await runtime.getRun(run.id))!.status;if(!['running','queued'].includes(status))break;await Bun.sleep(40);}
+    expect(status,JSON.stringify(await runtime.getRun(run.id))).toBe('completed');
+    const final=await engine.executeRaw<{id:number;path:string}>("SELECT id,data->'task'->'input'->>'path' AS path FROM minion_jobs WHERE queue=$1 AND parent_job_id=$2",[SYNC_FILE_QUEUE,id]);
+    expect(final).toHaveLength(3);expect(old.every(row=>final.some(saved=>saved.id===row.id))).toBe(true);
+    expect(final.every(row=>!existsSync(row.path))).toBe(true);
+    for(const name of names)expect(readFileSync(join(dir,name))).toEqual(bytes);
+  }finally{
+    if(runId)await runtime.cancel(runId);
+    await runtime.close();
+  }
+},240000);
 
 test('正常 2GB 工作集可以继续，软压力回收闲置线程并降并发，恢复后继续领取任务',async()=>{
   let memory=0;

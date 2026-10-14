@@ -18,8 +18,6 @@ import { alignCapturedEntityGraph } from './entity-graph-align.ts';
 import { lineGrammarOptions } from '../line-grammar.ts';
 import { locateIngestSkillsDir, readIngestContract, pruneEntityIngestLinks,ingestAbortKind } from '../pmbrain-adapters/entity-ingest-workflow.ts';
 import {
-  DEFAULT_ENTITY_CAPTURE_MAX_INPUT_TOKENS,
-  DEFAULT_ENTITY_CAPTURE_MAX_OUTPUT_TOKENS,
   ENTITY_CAPTURE_CANDIDATE_LIMIT,
   type CaptureEntityBrief,
   type CaptureModelChoice,
@@ -123,6 +121,7 @@ export function buildEntityCapturePrompt(
   page: EntityCaptureCandidate | EntityCaptureChunk,
   candidates: CaptureEntityBrief[] = [],
   acknowledged:CaptureEntityBrief[] = [],
+  maxTurns=20,
 ): string {
   const isChunk = 'chunkBody' in page;
   const body = isChunk ? page.chunkBody : page.body;
@@ -148,7 +147,7 @@ ${acknowledged.length?acknowledged.map(entity=>`${entity.sourceId}:${entity.slug
 读取现有实体后保留已有事实，当前状态只保留一节。put_page 的 content 必须以完整 YAML frontmatter 开头，包含 title 和 type；Markdown 的 # 标题不能设置页面身份。title 使用本段原文名称，复用现有准确 slug，禁止将拼音 slug 当标题。类型是 person、company、organization、project、concept；未知类型不建页。项目和概念只有原文明确信息才建，不作普通关键词互连。
 人物 people/、单位 companies/、项目 projects/、概念 concepts/。已有实体标题不在本段逐字出现时，在 YAML aliases 中记录本段明确使用的名称并保留原身份，禁止臆测别名。原始资料本身就是可用的 brain context，包含明确职责、项目或事件时可满足有意义内容要求；不需外部补充。正文每条事实带 [Source: ${page.slug}]。使用 [[${page.sourceId}:${page.slug}]] 回链资料，禁止猜测或缩写路径。同一明确日期事件传播到每个实际参与实体；add_timeline_entry 的 source 必须包含 ${page.slug}，date 必须为原文明确给出的 YYYY-MM-DD；只有月份或阶段范围的事实留在正文，不得编造某月 1 日。
 第一轮只调用一次 search，query 用逗号分隔本段所有候选名称，一次查重。没有同名实体时第二轮批量写入，禁止反复搜索、resolve_slugs 或整库 list_pages。新实体内容来自本段资料，不要求额外读取其他原始文档；实体已经存在时批量 get_page 读取并复用。只有增加明确新事实才 put_page。add_link 的 from/to 使用准确 slug，context 必须逐字引用本段同时包含两端名称的原文；不得凭共现编造任职、拥有或投资关系，普通引用使用 mentions。
-优先完成资料的主题项目、牵头单位和明确职责关系，再处理有明确身份、职责或事件的人物；只有姓名的名单不单独建实体。一次批量完成查重，不要逐个姓名分轮搜索。最多允许六轮，包括最后的验收回执。
+优先完成资料的主题项目、牵头单位和明确职责关系，再处理有明确身份、职责或事件的人物；只有姓名的名单不单独建实体。一次批量完成查重，不要逐个姓名分轮搜索。本分块初始允许 ${Math.min(8,maxTurns)} 轮，按不同实体数量放宽，最多 ${maxTurns} 轮，包括最后的验收回执；不要重复操作已完成的实体。
 写入完成后返回唯一 JSON 验收清单（不写额外总结）。页面和关系由程序统一读回验收，不再要求模型反复查询图谱：
 {"entities":["people/姓名","companies/单位","projects/项目"],"relations":[{"from":"companies/单位","to":"projects/项目","link_type":"mentions","evidence":"本段逐字原文，包含两端名称"}]}
 entities 列出本段识别且存在的所有值得记录实体，包括复用的旧页。没有实体时返回 {"entities":[],"relations":[],"no_entities":true}。尚未存在的目标不得填入已完成清单。程序将验证所有目标、原文证据、来源回链和关系，未通过不会标记完成。
@@ -548,10 +547,6 @@ export async function runPhaseCaptureEntities(
   const initialRepair=await repairCaptureRelations(engine,opts,initialMentions.processedSlugs);
   const budgetOpt = opts.budget;
   const batchSize = Math.max(1, opts.batchSize ?? ENTITY_CAPTURE_PAGE_BUDGET);
-  const maxInputTokens = budgetOpt?.maxInputTokens
-    ?? readTokenCap(await engine.getConfig('dream.entity_capture.max_input_tokens'), DEFAULT_ENTITY_CAPTURE_MAX_INPUT_TOKENS);
-  const maxOutputTokens = budgetOpt?.maxOutputTokens
-    ?? readTokenCap(await engine.getConfig('dream.entity_capture.max_output_tokens'), DEFAULT_ENTITY_CAPTURE_MAX_OUTPUT_TOKENS);
   const costCapCny = budgetOpt && 'costCapCny' in budgetOpt
     ? budgetOpt.costCapCny ?? null
     : readEntityCaptureCostCap(await engine.getConfig('dream.entity_capture.cost_cap_cny'));
@@ -567,7 +562,7 @@ export async function runPhaseCaptureEntities(
   const ollama = budgetOpt?.ollama ?? isOllamaModel(chosen.model, providerId);
   const maxDocumentInput=readTokenCap(await engine.getConfig('dream.entity_capture.document_max_input_tokens'),120_000);
   const maxDocumentOutput=readTokenCap(await engine.getConfig('dream.entity_capture.document_max_output_tokens'),isThinkingModel(chosen.model)?defaultMaxOutputTokens(chosen.model)*4:20_000);
-  const maxDocumentTurns=Math.min(12,readTokenCap(await engine.getConfig('dream.entity_capture.document_max_turns'),6));
+  const maxDocumentTurns=Math.min(20,readTokenCap(await engine.getConfig('dream.entity_capture.document_max_turns'),20));
   const turnTimeoutMs=readTokenCap(await engine.getConfig('dream.entity_capture.turn_timeout_ms'),300_000);
   const configuredJobTimeout=readTokenCap(await engine.getConfig('dream.entity_capture.job_timeout_ms'),maxDocumentTurns*(turnTimeoutMs*2+30_000));
   const declaredOutputLimit=await engine.getConfig('dream.entity_capture.model_max_output_tokens');
@@ -625,7 +620,6 @@ export async function runPhaseCaptureEntities(
   const unresolvedReferences:unknown[]=[];
   let inputTokens = 0;
   let outputTokens = 0;
-  let usageKnown = false;
   let usageMissing = false;
   let knownCost = ollama ? 0 : 0;
   let sawPricedUsage = ollama;
@@ -640,7 +634,7 @@ export async function runPhaseCaptureEntities(
   let fatalFailure=false;
   const pageFailures:Array<{slug:string;sourceId:string;reason:string;stage:string;kind:CaptureStopReason;input_tokens:number;output_tokens:number;input_limit:number;output_limit:number;model_output_limit:number|null;turn_timeout_ms:number;job_timeout_ms:number}>=[];
   let failureReason: CaptureStopReason = 'failure';
-  let budgetStop: 'tokens' | 'cost' | null = null;
+  let budgetStop: 'cost' | null = null;
   const failedPageSlugs = new Set<string>();
   const verifiedChildIds:number[]=[];
   const rememberRelationError = (error: unknown) => {
@@ -663,11 +657,6 @@ export async function runPhaseCaptureEntities(
     }
   };
   const stopState = () => captureBudgetStop({
-    inputTokens,
-    outputTokens,
-    maxInputTokens,
-    maxOutputTokens,
-    usageKnown,
     costCny: ollama ? 0 : (sawPricedUsage ? knownCost : null),
     costCapCny: ollama ? null : costCapCny,
   });
@@ -687,7 +676,6 @@ export async function runPhaseCaptureEntities(
         const item = pendingPages[cursor]!;
         cursor += 1;
         sourceRefs.set(`${item.page.sourceId}:${item.page.slug}`,item.page);
-        let documentInput=0,documentOutput=0,documentTurns=0;
         let submittedForPage = 0;
         let completedForPage = 0;
         const entityIndex = await loadCaptureEntityIndex(engine, opts.sourceId);
@@ -702,21 +690,20 @@ export async function runPhaseCaptureEntities(
             entity.sourceId === chunk.sourceId || entity.sourceId === 'default',
           ), { limit: ENTITY_CAPTURE_CANDIDATE_LIMIT, sourceId: chunk.sourceId });
           const baseKey = entityCaptureIdempotencyKey(chunk, chunk.chunkIndex, chunk.chunkBody);
-          if(documentTurns>=maxDocumentTurns){budgetStop='tokens';modelError='本资料达到模型轮数上限，未完成分块可续跑';break;}
           const idempotencyKey = await retryableKey(engine, baseKey, nonce);
           const acknowledged=await acknowledgedIngestEntities(engine,chunk,entityIndex);
           const data: SubagentHandlerData = {
-            prompt: buildEntityCapturePrompt(chunk, related,acknowledged),
+            prompt: buildEntityCapturePrompt(chunk, related,acknowledged,maxDocumentTurns),
             model: chosen.model,
-            max_turns: maxDocumentTurns-documentTurns,
+            max_turns: maxDocumentTurns,
             turn_timeout_ms:turnTimeoutMs,
             model_output_limit:modelOutputLimit,
             no_self_fix: true,
             system: readIngestContract(skillsDir),
-            ingest_context: {slug:chunk.slug,sourceId:chunk.sourceId,body:chunk.body,chunkBody:chunk.chunkBody,acknowledged:acknowledged.map(entity=>`${entity.sourceId}:${entity.slug}`)},
+            ingest_context: {slug:chunk.slug,sourceId:chunk.sourceId,body:chunk.body,chunkBody:chunk.chunkBody,acknowledged:acknowledged.map(entity=>`${entity.sourceId}:${entity.slug}`),turn_entity_refs:[...new Set([...related,...acknowledged].map(entity=>`${entity.sourceId}:${entity.slug}`))]},
             usage_limits: {
-              input: Math.max(0,Math.min(maxInputTokens-inputTokens,maxDocumentInput-documentInput)),
-              output: Math.max(0,Math.min(maxOutputTokens-outputTokens,maxDocumentOutput-documentOutput)),
+              input: maxDocumentInput,
+              output: maxDocumentOutput,
               cost_cny: ollama || costCapCny==null ? null : Math.max(0,costCapCny-knownCost),
               input_price: inputPrice,output_price:outputPrice,
             },
@@ -791,10 +778,8 @@ export async function runPhaseCaptureEntities(
           });
           if (!usage.present) usageMissing = true;
           else {
-            usageKnown = true;
             inputTokens += usage.input;
             outputTokens += usage.output;
-            documentInput+=usage.input;documentOutput+=usage.output;
           }
           if (ollama) {
             knownCost = 0;
@@ -804,7 +789,6 @@ export async function runPhaseCaptureEntities(
             sawPricedUsage = true;
           }
           const result=job.result as any;
-          documentTurns+=reused?0:Number(result?.turns_count??0);
           directLinks+=reused?0:Number(result?.ingest_links_created??0);
           for(const ref of result?.ingest_entities??[])recognizedEntities.set(JSON.stringify([ref.sourceId,ref.slug]),ref);
           unresolvedReferences.push(...(result?.ingest_unresolved??[]));
@@ -813,11 +797,12 @@ export async function runPhaseCaptureEntities(
             failedPageSlugs.add(chunk.slug);
             failureStop = true;
             fatalFailure=true;
-            if(job.error_text?.includes('ingest_budget_tokens')){budgetStop='tokens';failureStop=pageFailures.length>0;}
             if(job.error_text?.includes('ingest_budget_cost')){budgetStop='cost';failureStop=pageFailures.length>0;}
             modelError = job.error_text ?? `实体识别子任务 ${job.id} 未通过 ingest 读回验收（${result?.stop_reason??job.status}）`;
             if (/\bingest[ _]/i.test(modelError) || job.status === 'completed') failureReason = 'ingest_validation';
-            if(/ingest_output_truncated/.test(modelError)){failureReason='truncated';fatalFailure=false;}
+            if(result?.stop_reason==='max_turns'||/ingest_turn_limit|ingest incomplete: max_turns|ingest final receipt attempted more tools/.test(modelError)){failureReason='document_turns';fatalFailure=false;}
+            else if(/ingest_budget_tokens/.test(modelError)){failureReason='document_tokens';fatalFailure=false;}
+            else if(/ingest_output_truncated/.test(modelError)){failureReason='truncated';fatalFailure=false;}
             else if(/ingest receipt (?:missing|requires)|ingest invalid JSON|ingest_provider_parse/.test(modelError)){failureReason='parse';fatalFailure=false;}
             else if(/ingest_provider_(timeout|network|rate_limit|provider_5xx|user_stop|service_shutdown|aborted)/.test(modelError))failureReason=modelError.match(/ingest_provider_(timeout|network|rate_limit|provider_5xx|user_stop|service_shutdown|aborted)/)![1] as CaptureStopReason;
             else if(/ingest_provider_(auth|billing|model_not_found)/.test(modelError))failureReason='model_unavailable';
@@ -891,11 +876,7 @@ export async function runPhaseCaptureEntities(
       : await countCaptureLinkGaps(engine, recognized,[...sourceRefs.values()]);
     const linkedEntities = gaps.linked;
     const costCny = ollama ? 0 : (sawPricedUsage ? Number(knownCost.toFixed(6)) : null);
-    const stopReason: CaptureStopReason = relationError?'relation_failure':budgetStop === 'tokens'
-        ? 'tokens'
-        : budgetStop === 'cost'
-          ? 'cost'
-          : failureStop?failureReason:'completed';
+    const stopReason: CaptureStopReason = relationError?'relation_failure':budgetStop??(failureStop?failureReason:'completed');
     const cleanStatus: PhaseResult['status'] = failureStop
       ? (writtenSlugs.length > 0 || pagesProcessed > 0 ? 'warn' : 'fail')
       : pagesRemaining>0 ? 'warn' : 'ok';
@@ -950,8 +931,8 @@ export async function runPhaseCaptureEntities(
       document_max_turns:maxDocumentTurns,
       document_max_input_tokens:maxDocumentInput,
       document_max_output_tokens:maxDocumentOutput,
-      max_input_tokens:maxInputTokens,
-      max_output_tokens:maxOutputTokens,
+      max_input_tokens:null,
+      max_output_tokens:null,
       model_output_limit:modelOutputLimit??null,
       turn_timeout_ms:turnTimeoutMs,
       job_timeout_ms:configuredJobTimeout,

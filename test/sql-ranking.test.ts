@@ -267,9 +267,12 @@ describe('buildVisibilityClause (v0.26.5)', () => {
   });
 
   test('uses the supplied aliases verbatim', () => {
-    expect(buildVisibilityClause('pp', 'src')).toBe(
+    const clause = buildVisibilityClause('pp', 'src');
+    expect(clause).toContain(
       "AND pp.deleted_at IS NULL AND NOT src.archived AND NOT (COALESCE(pp.frontmatter, '{}'::jsonb) ? 'quarantine')",
     );
+    expect(clause).toContain("pp.frontmatter->>'pmbrain_memory'");
+    expect(clause).toContain('memory_fact.source_id=pp.source_id');
   });
 
   test('does NOT bypass on detail level — visibility is a contract, not a temporal preference', () => {
@@ -279,7 +282,7 @@ describe('buildVisibilityClause (v0.26.5)', () => {
     expect(buildVisibilityClause.length).toBe(3);
     const local = buildVisibilityClause('p', 's');
     const remote = buildVisibilityClause('p', 's', { excludePrivate: true });
-    expect(local).not.toContain("frontmatter->>'visibility'");
+    expect(local).not.toContain("COALESCE(p.frontmatter->>'visibility', 'world') <> 'private'");
     expect(remote).toContain("COALESCE(p.frontmatter->>'visibility', 'world') <> 'private'");
     expect(remote.startsWith(local)).toBe(true);
   });

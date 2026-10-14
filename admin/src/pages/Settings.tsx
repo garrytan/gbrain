@@ -434,7 +434,7 @@ function EntityCaptureBudgetSettings() {
         <span className="settings-panel-icon"><Sparkles /></span>
         <div>
           <h2>AI 实体回填</h2>
-          <p>只限制深度整理里的实体识别。达到费用上限后保留已完成结果，剩余资料下次继续，本地 Ollama 不计入金额。</p>
+          <p>费用上限用于深度整理里的实体识别。Token 用量仅作统计，不限制整轮累计数量。达到费用上限后保留已完成结果，剩余资料下次继续，本地 Ollama 不计入金额。</p>
         </div>
       </div>
       <div className="dream-schedule-row">

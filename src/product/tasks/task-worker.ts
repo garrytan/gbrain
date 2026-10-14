@@ -9,7 +9,7 @@ import { resolveDreamPresetPhases, resolveDreamRelationOptions, resolveBrainDir 
 import { runQuickMaintenance, combineQuickMaintenanceReports, resolveQuickMaintenancePhases } from '../../core/quick-maintenance.ts';
 import { ALL_PHASES } from '../../core/cycle.ts';
 import { chooseCaptureModel, configuredCnyPrices, storedPrice } from '../../core/cycle/capture-entities.ts';
-import { DEFAULT_ENTITY_CAPTURE_MAX_INPUT_TOKENS, DEFAULT_ENTITY_CAPTURE_MAX_OUTPUT_TOKENS, readEntityCaptureCostCap, readTokenCap } from '../../core/cycle/entity-capture-budget.ts';
+import { readEntityCaptureCostCap } from '../../core/cycle/entity-capture-budget.ts';
 import { splitProviderModelId } from '../../core/model-id.ts';
 import { maintenanceFailure } from './maintenance-orchestration.ts';
 import { fetchSource, loadAllSources, parseSourceConfig } from '../../core/sources-load.ts';
@@ -25,6 +25,7 @@ import { SyncFilesDeferred, type SyncFileRuntime } from '../../core/sync-file-ru
 import { classifyErrorCode, isInfrastructureFailureCode } from '../../core/sync-failure-ledger.ts';
 import { performSync } from '../../commands/sync.ts';
 import { readTaskCheckpoint, taskModelFingerprint, syncFileContentFingerprint } from './checkpoint.ts';
+import { usesSyncFileQueue } from '../../../shared/task-progress.ts';
 import { isGinRepairAbortText } from '../../core/pglite-gin-repair.ts';
 import type { SyncStrategy } from '../../core/sync.ts';
 import { isOfficeFilePath } from '../../core/sync.ts';
@@ -34,6 +35,7 @@ let sequence = 0;
 const pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
 let abort = new AbortController();
 let ownerJobId: number | null = null;
+let ownerToken:string|undefined;
 const send = (message: TaskWorkerMessage) => parentPort!.postMessage(message);
 let importFile: string | undefined;
 let constrained=false;
@@ -119,15 +121,18 @@ setCliOptions({ ...DEFAULT_CLI_OPTIONS, progressJson: true });
 
 async function runDreamTask(engine: BrainEngine, input: Extract<ProductTask, { type: 'dream' }>['input']) {
   const checkpoint: MaintenanceCheckpoint = input.checkpoint ?? { phases: {}, reports: {} };
-  const captureModel = input.preset === 'quick' && !input.dryRun ? await chooseCaptureModel(engine, {}) : null;
+  const captureModel = usesSyncFileQueue(input) && input.phase !== 'sync' ? await chooseCaptureModel(engine, {}) : null;
   let pendingFiles = false;
+  let capacityReached = false;
   let scanned = 0;
   let unchanged = 0;
   const roots = new Map<string, string>();
-  const fileRuntime: SyncFileRuntime | undefined = input.preset === 'quick' && !input.dryRun ? {
+  const fileRuntime: SyncFileRuntime | undefined = usesSyncFileQueue(input) ? {
     signal: abort.signal,
+    workingTree: input.preset === 'quick' || (await engine.getConfig('sync.include_working_tree')) === 'true',
     importFile: async (path, relativePath, options) => {
       abort.signal.throwIfAborted();
+      if(capacityReached)return {slug:'',status:'skipped',chunks:0,deferred:true};
       const sourceId = options.sourceId ?? 'default';
       if (!roots.has(sourceId)) roots.set(sourceId, (await fetchSource(engine, sourceId))?.local_path ?? '');
       const sourceRoot = roots.get(sourceId)!;
@@ -144,8 +149,9 @@ async function runDreamTask(engine: BrainEngine, input: Extract<ProductTask, { t
         modelFingerprint: taskModelFingerprint(),
         modelMayRun: options.documentOcr === true && (isOfficeFilePath(relativePath) || isImageFilePath(relativePath)),
         fingerprint: syncFileContentFingerprint(options), options,
-      }]) as import('../../core/import-file.ts').ImportResult & { deferred?: boolean; unchanged?: boolean };
+      }]) as import('../../core/import-file.ts').ImportResult & { deferred?: boolean; unchanged?: boolean; capacityReached?:boolean };
       if (result.deferred) pendingFiles = true;
+      if(result.capacityReached)capacityReached=true;
       scanned++;
       if (result.unchanged) unchanged++;
       send({ type: 'progress', syncScan: { scanned, unchanged,path:relativePath,bytes:snapshot.size,updatedAt:new Date().toISOString(),active:true } });
@@ -157,9 +163,10 @@ async function runDreamTask(engine: BrainEngine, input: Extract<ProductTask, { t
     let captureEntitySlugs: string[] | undefined;
     let captureEntityBudget: import('../../core/cycle/capture-entities.ts').CaptureEntitiesOpts['budget'];
     if (captureModel?.ok) {
-      captureEntitySlugs = await rpc('task.captureRequest', [sourceId]) as string[] | undefined;
-      if (captureEntitySlugs?.length) {
-        checkpoint.captureRequests = { ...checkpoint.captureRequests, [sourceId]: captureEntitySlugs };
+      const requested = await rpc('task.captureRequest', [sourceId]) as string[] | undefined;
+      captureEntitySlugs = input.preset === 'quick' ? requested : input.slugs;
+      if (requested?.length) checkpoint.captureRequests = { ...checkpoint.captureRequests, [sourceId]: requested };
+      if (input.preset === 'quick' && captureEntitySlugs?.length) {
         const [usage] = await engine.executeRaw<{ input: string; output: string }>(`SELECT COALESCE(sum(tokens_input),0) AS input,COALESCE(sum(tokens_output),0) AS output FROM minion_jobs WHERE private_queue_owner_job_id=$1`, [ownerJobId]);
         const inputTokens = Number(usage?.input ?? 0), outputTokens = Number(usage?.output ?? 0);
         const cardPrices = configuredCnyPrices(captureModel.model, splitProviderModelId(captureModel.model).provider);
@@ -167,8 +174,6 @@ async function runDreamTask(engine: BrainEngine, input: Extract<ProductTask, { t
         const outputPrice = storedPrice(await engine.getConfig('dream.entity_capture.price.output_cny_per_million')) ?? cardPrices.output;
         const costCap = readEntityCaptureCostCap(await engine.getConfig('dream.entity_capture.cost_cap_cny'));
         captureEntityBudget = {
-          maxInputTokens: Math.max(0, readTokenCap(await engine.getConfig('dream.entity_capture.max_input_tokens'), DEFAULT_ENTITY_CAPTURE_MAX_INPUT_TOKENS) - inputTokens),
-          maxOutputTokens: Math.max(0, readTokenCap(await engine.getConfig('dream.entity_capture.max_output_tokens'), DEFAULT_ENTITY_CAPTURE_MAX_OUTPUT_TOKENS) - outputTokens),
           costCapCny: costCap === null || inputPrice === null || outputPrice === null ? costCap : Math.max(0, costCap - (inputTokens * inputPrice + outputTokens * outputPrice) / 1_000_000),
         };
       }
@@ -179,7 +184,7 @@ async function runDreamTask(engine: BrainEngine, input: Extract<ProductTask, { t
     captureEntityBudget,
     syncFileRuntime: fileRuntime,
     completedPhases: checkpoint.phases[sourceId],
-    phaseCheckpoint: input.preset === 'quick' ? async (phases: import('../../core/cycle.ts').PhaseResult[]) => {
+    phaseCheckpoint: fileRuntime ? async (phases: import('../../core/cycle.ts').PhaseResult[]) => {
       checkpoint.phases[sourceId] = phases;
       await rpc('task.maintenanceCheckpoint', [checkpoint]);
     } : undefined,
@@ -221,7 +226,7 @@ async function runDreamTask(engine: BrainEngine, input: Extract<ProductTask, { t
         reports.push({ sourceId: source.id, report: checkpoint.reports[source.id] as unknown as import('../../core/cycle.ts').CycleReport });
         continue;
       }
-      scanned=0;unchanged=0;pendingFiles=false;
+      scanned=0;unchanged=0;pendingFiles=false;capacityReached=false;
       send({ type: 'progress', scope: { name: source.name, index, total: sources.length } });
       const report = await runQuickMaintenance(engine, {
         ...common, sourceId: source.id, brainDir: await resolveBrainDir(engine, null, source.id),
@@ -240,6 +245,7 @@ async function runDreamTask(engine: BrainEngine, input: Extract<ProductTask, { t
   return runCycle(engine, {
     ...resolveDreamRelationOptions(input.preset, input.phase),
     ...common, brainDir,
+    ...await resumeOptions(sourceId ?? 'default'),
     phases: input.phase && input.phase !== 'all' ? [input.phase as CyclePhase]
       : input.preset ? resolveDreamPresetPhases(input.preset) : undefined,
     forcePackPhases: input.preset === 'meeting' ? ['extract_atoms'] : undefined,
@@ -276,6 +282,19 @@ async function execute(task: ProductTask, kind: BrainEngine['kind']) {
     }
     send({ type: 'result', result });
     return;
+  } else if (task.type === 'memory') {
+    send({type:'progress',phases:['memory']});send({type:'progress',event:{phase:'memory',event:'start'}});
+    const { runWorkbenchMemoryTask } = await import('../workbench/memory');
+    const synthEnabled=await engine.getConfig('dream.synthesize.enabled');
+    const synthConfigured=synthEnabled==='true'||synthEnabled!=='false'&&!!await engine.getConfig('dream.synthesize.session_corpus_dir');
+    result = await runWorkbenchMemoryTask(engine, task.input, abort.signal, { ownerJobId,ownerToken,organize:synthConfigured?async(path,sourceId)=>{
+      const report=await runDreamTask(engine,{phase:'synthesize',input:path,sourceId});
+      const failure=maintenanceFailure(report);
+      if(failure)throw new Error(failure);
+      if(report.reason==='cycle_already_running')throw new Error('当前 Source 正在整理，记忆事实已保留，请稍后继续整理');
+      return report;
+    }:undefined });
+    send({type:'progress',event:{phase:'memory',event:'finish'}});
   } else if (task.type === 'import') {
     const input = task.input;
     send({ type: 'progress', phases: input.noEmbed ? ['collect', 'process', 'write'] : ['collect', 'process', 'vector', 'write'] });
@@ -375,6 +394,7 @@ parentPort!.on('message', message => {
     pending.clear();
   } else if (message.type === 'start') {
     ownerJobId = Number.isSafeInteger(message.ownerJobId) ? message.ownerJobId : null;
+    ownerToken=typeof message.ownerToken==='string'?message.ownerToken:undefined;
     constrained=message.constrained===true;
     abort = new AbortController();
     importFile = undefined;

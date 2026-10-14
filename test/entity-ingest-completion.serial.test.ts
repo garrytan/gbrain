@@ -11,7 +11,7 @@ import type {MinionJobContext,ToolDef} from '../src/core/minions/types.ts';
 import {parseMarkdown} from '../src/core/markdown.ts';
 import {assertSafeE2eDatabaseUrl} from './helpers/db-guard.ts';
 import {resetPgliteState} from './helpers/reset-pglite.ts';
-import {checkIngestCallBudget} from '../src/core/pmbrain-adapters/entity-ingest-workflow.ts';
+import {checkIngestCallBudget,type EntityIngestContext} from '../src/core/pmbrain-adapters/entity-ingest-workflow.ts';
 
 const previous=process.env.PMBRAIN_HOME;
 process.env.PMBRAIN_HOME=mkdtempSync(join(tmpdir(),'pmbrain-ingest-completion-'));
@@ -40,8 +40,8 @@ test('截断恢复扣除持久用量并预留最终回执，最终回执可使�
  expect(await checkIngestCallBudget(engine,job!.id,data,'',[],[],true,20,true)).toBe(20);
  expect(await checkIngestCallBudget(engine,job!.id,{...data,usage_limits:{...data.usage_limits,output:18}},'',[],[],false,20,true)).toBe(0);
 });
-async function run(replies:(ChatResult|Error)[],direct=false,maxTurns=6,seed?:string,wireModel?:string){
- const data={prompt:'识别三纪早会体系，先落库再返回实体回执。',model:wireModel??(direct?'anthropic:claude-sonnet-4-6':'custom-openai:Qwen3.6-35B-A3B'),source_id:'default',max_turns:maxTurns,model_output_limit:64000,ingest_context:context};
+async function run(replies:(ChatResult|Error)[],direct=false,maxTurns=6,seed?:string,wireModel?:string,ingestContext:EntityIngestContext=context){
+ const data={prompt:'识别实体，先落库再返回实体回执。',model:wireModel??(direct?'anthropic:claude-sonnet-4-6':'custom-openai:Qwen3.6-35B-A3B'),source_id:'default',max_turns:maxTurns,model_output_limit:64000,ingest_context:ingestContext};
  const [job]=await engine.executeRaw<{id:number}>("INSERT INTO minion_jobs(name,status,data) VALUES('subagent','active',$1::jsonb) RETURNING id",[JSON.stringify(data)]);
  if(seed!==undefined){
   await engine.executeRaw("INSERT INTO subagent_messages(job_id,message_idx,role,content_blocks) VALUES($1,0,'user',$2::jsonb)",[job!.id,JSON.stringify([{type:'text',text:data.prompt}])]);
@@ -55,6 +55,51 @@ async function run(replies:(ChatResult|Error)[],direct=false,maxTurns=6,seed?:st
  const handler=makeSubagentHandler({engine,config:{engine:url?'postgres':'pglite'},toolRegistry:tools,...(direct?{client}:{})});
  return {calls,jobId:job!.id,result:handler(ctx),resume:async()=>{const [stored]=await engine.executeRaw<{data:typeof data|string}>('SELECT data FROM minion_jobs WHERE id=$1',[job!.id]);return handler({...ctx,data:typeof stored!.data==='string'?JSON.parse(stored!.data):stored!.data});}};
 }
+
+for(const wire of [false,true])test(`${wire?'Qwen 实际 HTTP':'持久工具'}实体密集小资料按实体数量增加轮数，保存后不重复执行`,async()=>{
+ const names=Array.from({length:8},(_,i)=>`评审方法${i}`);
+ const body=names.map(name=>`团队采用${name}核对工作风险。`).join('\n');
+ await engine.putPage(context.slug,{type:'note',title:'实体密集资料',compiled_truth:body,frontmatter:{}});
+ const replies=names.map((name,i):ChatResult=>({...response('',true),blocks:[{type:'tool-call',toolCallId:`put-${i}`,toolName:'brain_put_page',input:{slug:`concepts/method-${i}`,content:`---\ntitle: ${name}\ntype: concept\n---\n团队采用${name}核对风险。[Source: notes/meeting]`}}]}));
+ const final=JSON.stringify({entities:names.map((_,i)=>`concepts/method-${i}`),relations:[]});
+ const duplicate={...replies[0]!,blocks:[{...(replies[0]!.blocks[0] as any),toolCallId:'repeat-entity'}]};
+ const sequence=[...replies,duplicate,response(final)],requests:any[]=[];
+ const server=wire?Bun.serve({port:0,async fetch(request){
+  const params:any=await request.json();requests.push(params);const reply=sequence.shift()!;
+  return Response.json({id:`dense-${requests.length}`,object:'chat.completion',created:1,model:params.model,choices:[{index:0,finish_reason:reply.stopReason==='tool_calls'?'tool_calls':'stop',message:{role:'assistant',content:reply.text,tool_calls:reply.blocks.filter(block=>block.type==='tool-call').map(block=>({id:(block as any).toolCallId,type:'function',function:{name:(block as any).toolName,arguments:JSON.stringify((block as any).input)}}))}}],usage:{prompt_tokens:10,completion_tokens:5,total_tokens:15}});
+ }}):null;
+ try{
+  if(server)configureGateway({chat_model:'custom-openai:Qwen3.6-35B-A3B',generative_enabled:true,base_urls:{'custom-openai':server.url.origin+'/v1'},env:{CUSTOM_OPENAI_API_KEY:'isolated-test-only'}});
+  const attempt=await run(wire?[]:sequence,false,20,undefined,wire?'custom-openai:Qwen3.6-35B-A3B':undefined,{...context,body,chunkBody:body,turn_entity_refs:[]});
+  const result=await attempt.result,calls=wire?requests:attempt.calls;
+  expect(result.ingest_verified).toBe(true);expect(calls).toHaveLength(10);expect(calls[7].tools.length).toBeGreaterThan(0);
+  expect((await attempt.resume()).ingest_verified).toBe(true);expect(calls).toHaveLength(10);
+ }finally{server?.stop(true);}
+},60000);
+
+test('实体密集分块最多二十轮，最后一轮工具不会执行，失效回执也不能冒报完成',async()=>{
+ const names=Array.from({length:8},(_,i)=>`风险方法${i}`),body=names.map(name=>`团队采用${name}核对风险。`).join('\n');
+ await engine.putPage(context.slug,{type:'note',title:'密集实体',compiled_truth:body,frontmatter:{}});
+ const replies=Array.from({length:20},(_,i):ChatResult=>({...response('',true),blocks:[{type:'tool-call',toolCallId:`bounded-${i}`,toolName:'brain_put_page',input:{slug:`concepts/risk-${i%8}`,content:`---\ntitle: ${names[i%8]}\ntype: concept\n---\n团队采用${names[i%8]}核对风险。[Source: notes/meeting]`}}]}));
+ const attempt=await run(replies,false,20,undefined,undefined,{...context,body,chunkBody:body,turn_entity_refs:[]});
+ expect(String(await attempt.result.catch(error=>error))).toContain('ingest_turn_limit:');expect(attempt.calls).toHaveLength(20);
+ expect(attempt.calls.at(-1).tools).toBeUndefined();
+ expect(await engine.executeRaw('SELECT id FROM subagent_tool_executions WHERE job_id=$1',[attempt.jobId])).toHaveLength(19);
+},60000);
+
+test('八轮仍无有效回执按轮数耗尽分类，保存消耗和纠错记录',async()=>{
+ const attempt=await run(Array.from({length:20},()=>response('正在处理')),false,20,undefined,undefined,{...context,turn_entity_refs:[]});
+ expect(String(await attempt.result.catch(error=>error))).toContain('ingest_turn_limit: 8 turns exhausted');expect(attempt.calls).toHaveLength(8);
+ expect(await engine.executeRaw("SELECT id FROM subagent_messages WHERE job_id=$1 AND role='assistant'",[attempt.jobId])).toHaveLength(8);
+},60000);
+
+for(const direct of [false,true])test(`${direct?'兼容直连':'Qwen Gateway'}重复同一实体八轮收口，耗尽只报分块轮数限制`,async()=>{
+ const replies=Array.from({length:20},(_,i):ChatResult=>({...response('',true),blocks:[{...(response('',true).blocks[0] as any),toolCallId:`repeat-${i}`}]}));
+ const attempt=await run(replies,direct,20,undefined,undefined,{...context,turn_entity_refs:[]});
+ expect(String(await attempt.result.catch(error=>error))).toContain('ingest_turn_limit:');
+ expect(attempt.calls).toHaveLength(8);expect(attempt.calls.at(-1).tools).toBeUndefined();
+ expect(await engine.executeRaw('SELECT id FROM pages WHERE slug=$1',[slug])).toHaveLength(1);
+},60000);
 
 test('端点拒绝工具后切换受限 JSON，重启沿用协议且不重复落库',async()=>{
  const rejected=Object.assign(new Error('tools not supported'),{statusCode:400});

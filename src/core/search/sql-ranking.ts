@@ -1,3 +1,5 @@
+import { currentMemoryPageSql } from '../pmbrain-adapters/memory-projections.ts';
+
 /**
  * SQL Ranking Builders
  *
@@ -134,7 +136,7 @@ export function buildVisibilityClause(
 ): string {
   const quarantine = `NOT (COALESCE(${pageAlias}.frontmatter, '{}'::jsonb) ? 'quarantine')`;
   const privateClause = opts?.excludePrivate ? ` AND ${privatePagesFilterFragment(pageAlias)}` : '';
-  return `AND ${pageAlias}.deleted_at IS NULL AND NOT ${sourceAlias}.archived AND ${quarantine}${privateClause}`;
+  return `AND ${pageAlias}.deleted_at IS NULL AND NOT ${sourceAlias}.archived AND ${quarantine} AND ${currentMemoryPageSql(pageAlias)}${privateClause}`;
 }
 
 // ============================================================

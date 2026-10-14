@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import threading
+from datetime import datetime, timezone
 from urllib.parse import urlparse
 from playwright.sync_api import sync_playwright, expect
 
@@ -12,6 +13,7 @@ def run(args):
     output.mkdir(parents=True, exist_ok=False)
     rows = []
     requests = []
+    retry_ids = []
     reject = False
     date = '2026-10-03T14:30:00.000Z'
     steps = [{'id': key, 'label': label, 'status': 'completed' if index < 2 else 'running' if index == 2 else 'pending', 'phases': [key]} for index, (key, label) in enumerate([('check', '检查知识'), ('sync', '同步资料'), ('relations', '建立知识关联'), ('embed', '更新搜索索引'), ('finish', '完成检查')])]
@@ -55,7 +57,10 @@ def run(args):
                 if path.endswith('/files'):
                     after = int(route.request.url.split('after=')[-1]) if 'after=' in route.request.url else 0
                     data = {'rows': [{'id': after + i + 1, 'sourceId': 'main-test', 'path': f'file-{after + i}.md', 'status': 'failed' if after + i == 0 else 'completed', 'error': '文件格式不支持' if after + i == 0 else None} for i in range(50 if not after else 10)], 'next': 50 if not after else None}
+                    if task['kind'] == 'dream_full':
+                        data = {'rows': [{'id': 1, 'sourceId': 'main-test', 'path': 'large.docx', 'status': 'running', 'error': None}], 'next': None}
                 elif path.endswith('/retry'):
+                    retry_ids.append(task['id'])
                     task.update(status='running', completedAt=None)
                     task['product'].update(stage='建立知识关联', percent=40, steps=json.loads(json.dumps(steps)))
                     data = {'runId': task['id'], 'status': task['status']}
@@ -126,8 +131,26 @@ def run(args):
         expect(page.locator('.maintenance-run-row').first).to_contain_text('AI 深度整理')
         assert requests[-1]['sourceId'] == 'main-test' and requests[-1]['dryRun'] is False
         current = rows[0]
+        current['product'].update(stage='同步资料', percent=20, completedSteps=1, phasePercent=33, processed=1, total=3, syncFiles={'total': 3, 'completed': 1, 'failed': 0, 'remaining': 2}, activeFiles=[{'id': 1, 'sourceId': 'main-test', 'path': 'large.docx', 'bytes': 722297, 'stage': '写入正文分块', 'updatedAt': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'), 'chunksTotal': 240, 'bodyWritten': 100, 'bodyCommitted': True, 'bodyBatchesCompleted': 1, 'bodyBatchesTotal': 3, 'noEmbed': True}])
+        for index, step in enumerate(current['product']['steps']):
+            step['status'] = 'completed' if index == 0 else 'running' if index == 1 else 'pending'
+        page.reload()
+        page.locator('.maintenance-run-row').first.click()
+        deep_dialog = page.get_by_role('dialog', name='AI 深度整理详情', exact=True)
+        expect(deep_dialog).to_contain_text('large.docx')
+        expect(deep_dialog).to_contain_text('正文已提交 100 / 240 块')
+        expect(deep_dialog).to_contain_text('已完成 1 / 3 批')
+        deep_dialog.locator('summary').filter(has_text='查看同步文件明细').click()
+        expect(deep_dialog).to_contain_text('large.docx')
+        page.screenshot(path=str(output / 'deep-sync-writing.png'), full_page=True)
+        deep_dialog.get_by_role('button', name='停止任务', exact=True).click()
+        deep_dialog.get_by_role('button', name='继续未完成任务', exact=True).click()
+        expect(deep_dialog).to_contain_text('执行中')
+        assert retry_ids[-1] == current['id']
+        page.keyboard.press('Escape')
         current.update(status='completed', completedAt=date)
         current['product'].update(stage='整理完成', percent=100, completedSteps=5, metrics=[{'label': '新建关联', 'value': 26}])
+        current['product'].update(syncFiles={'total': 3, 'completed': 3, 'failed': 0, 'remaining': 0}, activeFiles=[])
         for step in current['product']['steps']:
             step['status'] = 'completed'
         expect(page.locator('.maintenance-run-row').first).to_contain_text('已完成', timeout=10000)
@@ -208,11 +231,11 @@ def run(args):
         page.screenshot(path=str(output / 'round-task-center.png'), full_page=True)
         task_row.get_by_role('button', name='查看详情', exact=True).click()
         expect(page.get_by_label('任务详情', exact=True)).to_contain_text('本轮成果')
-        page.mouse.click(70, 90)
+        page.locator('.drawer-overlay').click(position={'x': 300, 'y': 90})
         expect(page.get_by_label('任务详情', exact=True)).to_have_count(0)
         assert partial['product']['percent'] == 0 and partial['status'] == 'completed'
         assert not errors, errors
-        (output / 'result.json').write_text(json.dumps({'passed': True, 'checks': ['quick_create', 'queued_to_running', 'full_main_source', 'list_spinner', 'click_details', 'keyboard_details', 'reload_details', 'cancel_stops_spinners', 'explicit_retry', 'completed_result', 'reload_history', 'filters', 'native_submit_error', 'dark_light', '1100_layout', 'green_round_result', 'outcomes_and_remaining', 'zero_pages_preserved', 'outside_click_close', 'inside_click_stays', 'unfinished_filter_and_retry', 'real_failure_red', 'task_center_round_parity'], 'browser_errors': errors}), encoding='utf-8')
+        (output / 'result.json').write_text(json.dumps({'passed': True, 'checks': ['quick_create', 'queued_to_running', 'full_main_source', 'deep_sync_file_and_batches', 'deep_stop_and_same_task_resume', 'list_spinner', 'click_details', 'keyboard_details', 'reload_details', 'cancel_stops_spinners', 'explicit_retry', 'completed_result', 'reload_history', 'filters', 'native_submit_error', 'dark_light', '1100_layout', 'green_round_result', 'outcomes_and_remaining', 'zero_pages_preserved', 'outside_click_close', 'inside_click_stays', 'unfinished_filter_and_retry', 'real_failure_red', 'task_center_round_parity'], 'browser_errors': errors}), encoding='utf-8')
         browser.close()
 
 

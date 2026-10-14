@@ -16,12 +16,14 @@
 
 import type { OperationContext } from './../operations.ts';
 import type { FactRow } from './../engine.ts';
+import type { BrainEngine } from './../engine.ts';
 import { effectiveConfidence } from './decay.ts';
 
 const DEFAULT_TTL_MS = 30_000;
 const DEFAULT_TOP_K = 10;
 
 interface CacheEntry {
+  engine: WeakRef<BrainEngine>;
   expiresAt: number;
   payload: Record<string, unknown> | undefined;
 }
@@ -44,7 +46,7 @@ export async function getBrainHotMemoryMeta(
   // Don't inject on tool calls that themselves manipulate hot memory —
   // the agent doesn't need the brain's hot memory wrapped around its own
   // recall response.
-  if (name === 'recall' || name === 'extract_facts' || name === 'forget_fact') return undefined;
+  if (name === 'recall' || name === 'extract_facts' || name === 'forget_fact' || name === 'forget') return undefined;
 
   const sourceId = ctx.sourceId ?? 'default';
   const sessionId = (ctx as { source_session?: string }).source_session
@@ -57,8 +59,14 @@ export async function getBrainHotMemoryMeta(
 
   // Cache hit?
   const cached = _cache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) {
-    return cached.payload;
+  if (cached && cached.engine.deref() === ctx.engine && cached.expiresAt > Date.now()) {
+    const facts = (cached.payload?.brain_hot_memory as { facts?: Array<{ id: number; fact: string }> } | undefined)?.facts ?? [];
+    if (!facts.length) return cached.payload;
+    const current = await ctx.engine.executeRaw<{ id: number; fact: string }>(`SELECT f.id,f.fact FROM facts f JOIN sources s ON s.id=f.source_id AND NOT s.archived
+      WHERE f.source_id=$1 AND f.id=ANY($2::bigint[]) AND f.expired_at IS NULL
+        AND (f.valid_until IS NULL OR f.valid_until>now()) AND ($3::boolean OR f.visibility='world')`, [sourceId,facts.map(fact=>fact.id),ctx.remote===false]);
+    if (current.length===facts.length && facts.every(fact=>current.some(row=>Number(row.id)===Number(fact.id)&&row.fact===fact.fact))) return cached.payload;
+    _cache.delete(cacheKey);
   }
 
   // Build a fresh payload. Visibility tier: remote → world-only;
@@ -78,7 +86,7 @@ export async function getBrainHotMemoryMeta(
     });
   }
   if (rows.length === 0) {
-    _cache.set(cacheKey, { expiresAt: Date.now() + ttl, payload: undefined });
+    _cache.set(cacheKey, { engine: new WeakRef(ctx.engine), expiresAt: Date.now() + ttl, payload: undefined });
     return undefined;
   }
 
@@ -105,16 +113,16 @@ export async function getBrainHotMemoryMeta(
     },
   };
   const expiry=Math.min(Date.now()+ttl,...rows.map(r=>r.valid_until?new Date(r.valid_until).getTime():Infinity));
-  _cache.set(cacheKey, { expiresAt: expiry, payload });
+  _cache.set(cacheKey, { engine: new WeakRef(ctx.engine), expiresAt: expiry, payload });
   return payload;
 }
 
 /** Invalidate the cache for a (source_id, session_id) pair after extraction. */
-export function bumpHotMemoryCache(sourceId: string, sessionId: string | null): void {
+export function bumpHotMemoryCache(sourceId: string, sessionId?: string | null): void {
   // Walk the cache and prune any entry matching this source+session prefix
   // (regardless of allow-list hash). Visitors with different visibility
   // tiers all get fresh data on next read.
-  const prefix = `${sourceId}::${sessionId ?? '_'}::`;
+  const prefix = sessionId === undefined ? `${sourceId}::` : `${sourceId}::${sessionId ?? '_'}::`;
   for (const k of _cache.keys()) {
     if (k.startsWith(prefix)) _cache.delete(k);
   }

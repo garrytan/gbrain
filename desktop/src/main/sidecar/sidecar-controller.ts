@@ -84,7 +84,7 @@ export class SidecarController {
     if (getDatabaseRuntimeConfig().engine === 'pglite') {
       const precheck = precheckPgliteLock(getSetupInfo().current.databasePath);
       if (precheck.blocked && precheck.message) {
-        logger.write('desktop', `PGLite lock precheck blocked startup: holder PID ${precheck.holderPid}`);
+        logger.write('desktop', `PGLite startup precheck blocked startup: ${precheck.message}`);
         this.sendState({ phase: 'failed', port: this.manager?.port ?? 3131, message: precheck.message });
         this.dependencies.hideStartupProgress();
         throw new Error(precheck.message);

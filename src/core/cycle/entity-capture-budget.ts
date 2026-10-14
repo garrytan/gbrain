@@ -2,11 +2,9 @@ import { splitProviderModelId } from '../model-id.ts';
 import { serviceNeedsApiKey } from '../../../shared/model-services.ts';
 
 export const DEFAULT_ENTITY_CAPTURE_COST_CAP_CNY = 5;
-export const DEFAULT_ENTITY_CAPTURE_MAX_INPUT_TOKENS = 1_000_000;
-export const DEFAULT_ENTITY_CAPTURE_MAX_OUTPUT_TOKENS = 200_000;
 export const ENTITY_CAPTURE_CANDIDATE_LIMIT = 60;
 
-export type CaptureStopReason = 'completed' | 'tokens' | 'cost' | 'failure' | 'ingest_validation' | 'relation_failure' | 'aborted' | 'user_stop' | 'service_shutdown' | 'model_unavailable'|'truncated'|'parse'|'timeout'|'network'|'rate_limit'|'provider_5xx';
+export type CaptureStopReason = 'completed' | 'tokens' | 'document_tokens' | 'document_turns' | 'cost' | 'failure' | 'ingest_validation' | 'relation_failure' | 'aborted' | 'user_stop' | 'service_shutdown' | 'model_unavailable'|'truncated'|'parse'|'timeout'|'network'|'rate_limit'|'provider_5xx';
 
 import { CJK_PLAIN_MENTION_BLOCKLIST } from '../pmbrain-adapters/mention-policy.ts';
 export { CJK_PLAIN_MENTION_BLOCKLIST };
@@ -86,17 +84,9 @@ export function captureChunkCostCny(input: {
 }
 
 export function captureBudgetStop(state: {
-  inputTokens: number;
-  outputTokens: number;
-  maxInputTokens: number;
-  maxOutputTokens: number;
-  usageKnown: boolean;
   costCny: number | null;
   costCapCny: number | null;
-}): 'tokens' | 'cost' | null {
-  if (state.usageKnown && (
-    state.inputTokens >= state.maxInputTokens || state.outputTokens >= state.maxOutputTokens
-  )) return 'tokens';
+}): 'cost' | null {
   if (state.costCapCny != null && state.costCny != null && state.costCny >= state.costCapCny) return 'cost';
   return null;
 }
@@ -177,6 +167,8 @@ const STOP_REASON_TEXT: Record<CaptureStopReason, string> = {
   provider_5xx:'模型服务端故障',
   completed: '已完成',
   tokens: 'Token 到上限',
+  document_tokens: '部分资料分块 Token 预算到上限，已保留进度并继续其他资料',
+  document_turns: '部分资料分块达到模型调用轮数上限，已保留进度并继续其他资料',
   cost: '费用到上限',
   failure: '模型调用失败',
   ingest_validation: '实体落库验收失败',
@@ -207,7 +199,7 @@ export function captureReportLine(input: {
   const cost = input.ollama
     ? '0 元（本地模型）'
     : input.costCny == null ? '未统计' : `${input.costCny} 元`;
-  const cap = input.costCny==null&&!input.ollama&&input.costCapCny!=null ? '金额上限无法核算，未生效；按 Token 限制'
+  const cap = input.costCny==null&&!input.ollama&&input.costCapCny!=null ? '金额上限无法核算，未生效'
     : input.costCapCny == null ? '不限制' : `${input.costCapCny} 元`;
   const base = `使用模型 ${input.model ?? '未选择'}。已处理 ${input.pagesProcessed} 页，剩余 ${input.pagesRemaining} 页。创建实体 ${input.entitiesCreated}。新增关系 ${input.relationsCreated}。费用 ${cost} / ${cap}。停止原因：${STOP_REASON_TEXT[input.stopReason]}。`;
   if (!input.integrity) return base;
