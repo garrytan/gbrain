@@ -17,24 +17,26 @@ const readOnlyToken = await (await import('../../src/core/token-mint.ts')).mintL
 
 // Synthetic-only fixtures; do not reseed durable rows when reopening after restart.
 if (!process.env.GBRAIN_TEST_HERMES_FIXTURE_REOPEN) {
-await callTool(server.base, token, 'put_page', {
-  slug: 'hermes-acceptance/world-synthetic', title: 'Synthetic world fixture',
-  content: `---
+// put_page rejects undeclared parameters (title/type belong in the frontmatter), and a rejected seed must stop the
+// fixture instead of leaving an empty brain that the provider tests then read as a recall regression.
+async function seed(slug: string, content: string): Promise<void> {
+  const result = await callTool(server.base, token, 'put_page', { slug, content });
+  if (result.isError) throw new Error(`Synthetic fixture ${slug} could not be written`);
+}
+await seed('hermes-acceptance/world-synthetic', `---
 title: Synthetic world fixture
+type: note
 visibility: world
 ---
 
-HERMES_WORLD_FIXTURE_7241`, type: 'note',
-});
-await callTool(server.base, token, 'put_page', {
-  slug: 'hermes-acceptance/private-synthetic', title: 'Synthetic private fixture',
-  content: `---
+HERMES_WORLD_FIXTURE_7241`);
+await seed('hermes-acceptance/private-synthetic', `---
 title: Synthetic private fixture
+type: note
 visibility: private
 ---
 
-HERMES_PRIVATE_FIXTURE_9813`, type: 'note',
-});
+HERMES_PRIVATE_FIXTURE_9813`);
 }
 const sourceTokens = [];
 for (const sourceId of ['hermes-profile-a', 'hermes-profile-b']) {
