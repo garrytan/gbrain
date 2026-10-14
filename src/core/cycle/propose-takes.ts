@@ -45,7 +45,8 @@ import { defaultTimeoutMsFor } from '../minions/handler-timeouts.ts';
 import {
   PROPOSE_TAKES_CALL_TIMEOUT_KEY, PROPOSE_TAKES_CALL_TIMEOUT_MAX_MS, PROPOSE_TAKES_CALL_TIMEOUT_MIN_MS, readPhaseConfigNumber,
 } from './phase-config-values.ts';
-import { chat as gatewayChat, getChatModel, probeChatModel } from '../ai/gateway.ts';
+import { chat as gatewayChat, getChatModel } from '../ai/gateway.ts';
+import { probeChatModelWithKey } from '../ai/chat-key-probe.ts';
 import { createGlobalLlmHaltTracker, haltedClassOf, type GlobalLlmErrorClass } from '../ai/errors.ts';
 import { normalizeModelId } from '../model-id.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
@@ -832,13 +833,12 @@ class ProposeTakesPhase extends BaseCyclePhase {
     const callTimeout = await readPhaseConfigNumber(engine, PROPOSE_TAKES_CALL_TIMEOUT_KEY); // #5874
 
     // With the default (gateway) extractor, skip cheaply when the resolved
-    // model's provider can't run — same probe semantics as patterns.ts /
-    // think/index.ts: unknown provider/model or Anthropic-without-key skips;
-    // other providers' auth surfaces lazily at chat() time. An injected
-    // extractor bypasses the gateway, so it is never gated. (Takeover of
-    // PR #1979's intent by @shawnduggan.)
+    // model's provider can't run: unknown provider/model, or any provider whose
+    // declared auth_env key is absent (probeChatModel pre-checks only Anthropic,
+    // by the A9 contract). An injected extractor bypasses the gateway, so it is
+    // never gated. (Takeover of PR #1979's intent by @shawnduggan.)
     if (!opts.extractor) {
-      const probe = probeChatModel(normalizeModelId(modelId));
+      const probe = probeChatModelWithKey(normalizeModelId(modelId));
       if (!probe.ok) {
         return {
           summary: `propose_takes skipped: ${probe.detail}`,

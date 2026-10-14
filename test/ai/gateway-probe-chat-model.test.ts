@@ -16,6 +16,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { validateModelId, probeChatModel, configureGateway, resetGateway } from '../../src/core/ai/gateway.ts';
+import { probeChatModelWithKey } from '../../src/core/ai/chat-key-probe.ts';
 import { normalizeModelId } from '../../src/core/model-id.ts';
 import { withEnv } from '../helpers/with-env.ts';
 
@@ -156,5 +157,63 @@ describe('probeChatModel gateway-env snapshot (#2119)', () => {
     } finally {
       resetGateway();
     }
+  });
+});
+
+describe('probeChatModelWithKey (provider-agnostic key check)', () => {
+  const noOpenAiKey = () => ({ OPENAI_API_KEY: undefined, GBRAIN_HOME: emptyHome() });
+
+  test('unavailable: keyed non-Anthropic provider with no key, naming the env var', async () => {
+    await withEnv(noOpenAiKey(), async () => {
+      const p = probeChatModelWithKey('openai:gpt-5.6');
+      expect(p.ok).toBe(false);
+      if (!p.ok) {
+        expect(p.reason).toBe('unavailable');
+        expect(p.detail).toContain('OPENAI_API_KEY');
+      }
+    });
+  });
+
+  test('ok: keyed non-Anthropic provider with the key in env', async () => {
+    await withEnv({ OPENAI_API_KEY: 'sk-test', GBRAIN_HOME: emptyHome() }, async () => {
+      expect(probeChatModelWithKey('openai:gpt-5.6').ok).toBe(true);
+    });
+  });
+
+  test('ok: key present only in the gateway env snapshot', async () => {
+    await withEnv(noOpenAiKey(), async () => {
+      configureGateway({ chat_model: 'openai:gpt-5.6', env: { OPENAI_API_KEY: 'sk-test' } });
+      try {
+        expect(probeChatModelWithKey('openai:gpt-5.6').ok).toBe(true);
+      } finally {
+        resetGateway();
+      }
+    });
+  });
+
+  test('ok: a local recipe with no declared key passes keyless', async () => {
+    await withEnv(noOpenAiKey(), async () => {
+      expect(probeChatModelWithKey('ollama:qwen2.5-coder:14b').ok).toBe(true);
+    });
+  });
+
+  test('unavailable: anthropic with no key (same answer as probeChatModel)', async () => {
+    await withEnv(noKeyEnv(), async () => {
+      const p = probeChatModelWithKey(REAL);
+      expect(p.ok).toBe(false);
+      if (!p.ok) expect(p.reason).toBe('unavailable');
+    });
+  });
+
+  test('validity still runs first: unknown provider classifies regardless of keys', () => {
+    const p = probeChatModelWithKey('bogusprovider:whatever');
+    expect(p.ok).toBe(false);
+    if (!p.ok) expect(p.reason).toBe('unknown_provider');
+  });
+
+  test('probeChatModel keeps its lazy non-Anthropic contract (A9)', async () => {
+    await withEnv(noOpenAiKey(), async () => {
+      expect(probeChatModel('openai:gpt-5.6').ok).toBe(true);
+    });
   });
 });
