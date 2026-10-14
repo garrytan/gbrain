@@ -81,7 +81,7 @@ import { abortableSleep } from '../retry.ts';
 import { throwIfAborted } from '../abort-check.ts';
 import { createHash } from 'crypto';
 import { slugifySegment } from '../sync.ts';
-import { resolveTierDefault } from '../model-config.ts';
+import { TIER_DEFAULTS, describeResolveOrigin, resolveModelDetailed, resolveTierDefault } from '../model-config.ts';
 import { isUndefinedTableError, warnOncePerProcess } from '../utils.ts';
 import { utcDate } from './cycle-date.ts';
 import { normalizeForGrounding } from './synthesize-verify.ts';
@@ -648,32 +648,43 @@ export async function tombstonedTranscriptsForHashes(
 }
 
 /**
- * The exact two-step model resolution `runPhaseExtractAtoms` uses:
- * `models.dream.extract_atoms` DB config wins if set (same plain-`||`
- * truthiness as always — a whitespace-only value IS "configured"), else the
- * key-aware `resolveTierDefault('utility')`. Deliberately NOT
- * `resolveModel()`'s fuller chain (which also honors `models.tier.utility`,
- * `models.default`, and an env var) — extract_atoms has never read those, and
- * unifying the two behaviors is a separate, larger change. Exported so
- * `gbrain models` can report the actual routing instead of a generic chain
- * that can diverge from it in partially-configured installs; `source` comes
- * from the SAME call as `model` so the report's attribution can never
- * disagree with the resolved value. Fail-soft: a throwing config read routes
- * to the tier default (the same end state runPhaseExtractAtoms's config-read
- * try/catch has always produced).
+ * The model resolution `runPhaseExtractAtoms` uses, shared with the
+ * `gbrain models` report so the two cannot diverge. One `resolveModelDetailed`
+ * walk: `models.dream.extract_atoms` > `models.tier.utility` > `models.default`
+ * > `GBRAIN_MODEL` > the key-aware utility default. Before this change the
+ * phase read only its own key and then jumped to `resolveTierDefault`, so a
+ * brain that routed its utility tier (or every model via `models.default`) to
+ * another provider still extracted atoms on the built-in Anthropic default, and
+ * `gbrain models` labelled the row `tier.utility (caller-specific)`.
+ *
+ * `source` is `config` when any config key supplied the model (the `label`
+ * names it), else `tier_default`; both come from the SAME call as `model` so
+ * the report's attribution can never disagree with the resolved value.
+ * Fail-soft: a throwing config read routes to the key-aware tier default (the
+ * end state runPhaseExtractAtoms's config-read try/catch has always produced).
  */
 export async function resolveExtractAtomsModelWithSource(
   engine: BrainEngine,
-): Promise<{ model: string; source: 'config' | 'tier_default' }> {
-  let configuredModel: string | null = null;
+): Promise<{ model: string; source: 'config' | 'tier_default'; label: string }> {
+  const opts = { configKey: 'models.dream.extract_atoms', tier: 'utility' as const };
   try {
-    configuredModel = await engine.getConfig('models.dream.extract_atoms');
+    const detail = await resolveModelDetailed(engine, { ...opts, fallback: TIER_DEFAULTS.utility });
+    const origin = describeResolveOrigin(detail.source, opts);
+    switch (detail.source) {
+      case 'config_key':
+      case 'deprecated_key':
+      case 'tier_config':
+      case 'models_default':
+        return { model: detail.model, source: 'config', label: `config: ${origin}` };
+      case 'env':
+        return { model: detail.model, source: 'config', label: `env: ${origin}` };
+      default:
+        return { model: detail.model, source: 'tier_default', label: 'tier.utility' };
+    }
   } catch {
-    // Fail-soft — fall through to the tier default.
+    // Fail-soft — a throwing config read falls through to the tier default.
+    return { model: resolveTierDefault('utility'), source: 'tier_default', label: 'tier.utility' };
   }
-  return configuredModel
-    ? { model: configuredModel, source: 'config' }
-    : { model: resolveTierDefault('utility'), source: 'tier_default' };
 }
 
 /** String-returning wrapper for runtime callers (`runPhaseExtractAtoms`). */

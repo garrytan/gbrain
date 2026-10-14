@@ -10,6 +10,16 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**The extract_atoms phase now runs on the model you configured for its tier.** `runPhaseExtractAtoms` read only its own key, `models.dream.extract_atoms`, and then jumped to the built-in key-aware default, so a brain that routed its utility tier (`models.tier.utility`) or every surface (`models.default`) to another provider still extracted atoms on `anthropic:claude-haiku-4-5-20251001`: a failed call on a brain without an Anthropic key, a billed one on a brain with one. The phase now resolves its model the way every other phase does, `gbrain models` reports the key that won, and the `claude-cli` recipe lists `claude-haiku-5-5` alongside the other Haiku entry.
+
+### Itemized changes
+
+- **extract_atoms model precedence** (`resolveExtractAtomsModelWithSource` in `src/core/cycle/extract-atoms.ts`): one `resolveModelDetailed` walk, `models.dream.extract_atoms` > `models.tier.utility` > `models.default` > `GBRAIN_MODEL` > key-aware utility default, replaces the own-key-then-`resolveTierDefault('utility')` pair. The resolver is still the single call `runPhaseExtractAtoms` and the `gbrain models` row share, so the report cannot diverge from the phase; the row's source now reads `config: <key that won>`, `env: GBRAIN_MODEL` or `tier.utility` (the `tier.utility (caller-specific)` label is gone). Fail-soft on a throwing config read is unchanged. Disclosed as a `behavior_changes` row: set `models.dream.extract_atoms` to keep a different model for this phase.
+- **`claude-cli` recipe** lists `claude-haiku-5-5` in its chat and expansion models (the `anthropic` recipe already did, and `claude -p --model claude-haiku-5-5` serves it). Recipe model lists are advisory (`providers explain`, init's auto-pick, the docs); the chat path never validated against them, so calls are unchanged.
+- **Tests.** `test/models-per-task-extract-atoms.serial.test.ts` is flipped: its second case pinned the old narrow chain on purpose ("ignores models.tier.utility") and now asserts that the tier key and `models.default` are honored and that the runtime resolver agrees with the row; a third case pins the full precedence order. `test/claude-cli-recipe.test.ts` asserts the new recipe entries.
+
 ## [0.60.207.0] - 2026-10-13
 
 **The claim root probe's buffer test no longer depends on how random worktree ids happen to sort.** `test/e2e/claim-earlier-equivalence.test.ts` checks that the indexed root probe reads fewer than 0.85× the buffers of the former COALESCE key. Its fixture queued each worktree's rows as one contiguous block. The former key's scan of the pending index `(worktree_id, sequence)` can only use `sequence` as an index condition, so it skipped every root whose rows all came after the candidate. When the random ids sorted in reverse insert order, the former key read 1388 buffers against the current probe's 1309 (ratio 0.943) and the test failed. It failed in #6613's CI at 1308 against `< 1205.3`.
