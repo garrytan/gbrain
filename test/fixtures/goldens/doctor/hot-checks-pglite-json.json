@@ -1237,13 +1237,13 @@
             "details": {
               "capped": false,
               "docs": "docs/guides/repair.md#conversation-labels",
-              "extractor_version": 1,
+              "extractor_version": 2,
               "sample": [],
               "scanned": 0,
               "stale": 0,
               "unstamped": 0
             },
-            "message": "No conversation extraction outcome predates extractor version 1.",
+            "message": "No conversation extraction outcome predates extractor version 2.",
             "name": "conversation_outcomes_stale",
             "status": "ok"
           },
@@ -4342,13 +4342,13 @@
             "details": {
               "capped": false,
               "docs": "docs/guides/repair.md#conversation-labels",
-              "extractor_version": 1,
+              "extractor_version": 2,
               "sample": [],
               "scanned": 0,
               "stale": 0,
               "unstamped": 0
             },
-            "message": "No conversation extraction outcome predates extractor version 1.",
+            "message": "No conversation extraction outcome predates extractor version 2.",
             "name": "conversation_outcomes_stale",
             "status": "ok"
           },

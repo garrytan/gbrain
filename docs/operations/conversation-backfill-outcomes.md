@@ -135,7 +135,7 @@ therefore takes more extractor calls than before, under the same cost cap.
 
 Pages stamped complete by an earlier release saw clipped input, and their
 outcome stays valid because the page did not change. To re-extract them
-run `gbrain extract-conversation-facts --source <id> --slug <slug> --force`
+run `gbrain extract-conversation-facts --source-id <id> --slug <slug> --force`
 (or `--force` without `--slug` for the whole source, after a `--dry-run`
 preview of the window count); this spends model calls, so it is the
 operator's decision.
@@ -143,7 +143,9 @@ operator's decision.
 A page an earlier release recorded as not extractable for "fewer than two
 eligible messages" (a lone message, or only lone messages) keeps that outcome
 until its content changes or `--force` replays it; see the CHANGELOG entry for
-the query that lists them.
+the query that lists them. The extractor version moved to 2 with this change,
+so doctor `conversation_outcomes_stale` counts every outcome recorded before
+it.
 
 ## Non-extractable authority
 

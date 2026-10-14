@@ -106,7 +106,7 @@
       "  [OK] google_file_modes: No group- or world-readable gbrain files under Google source directories outside ~/.gbrain.",
       "  [OK] extractor_facts_expired: No conversation-extractor fact is left expired by the pre-v0.60.11.0 projection.",
       "  [OK] conversation_label_facts: No conversation fact carries the pre-fix meeting-label signature (a 1970-01-01 segment on a label page).",
-      "  [OK] conversation_outcomes_stale: No conversation extraction outcome predates extractor version 1.",
+      "  [OK] conversation_outcomes_stale: No conversation extraction outcome predates extractor version 2.",
       "  [OK] captured_facts_active: No active fact from a gbrain self-capture or paste candidate remains. This counts facts in the database; the self_capture check counts corpus files.",
       "  [OK] loop_facts_drift: Every closed commitment loop has its fact retired.",
       "  [OK] ontology_facts_fenced: No ontology observation is held by a page's Facts table.",

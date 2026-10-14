@@ -51,8 +51,12 @@ export const AUDIT_ROW_SOURCES = [
  * (`extractor_version=<n>`) and a managed publication carries it in its
  * generation identity. An outcome recorded under an older version stays
  * fresh: nothing reopens automatically; doctor counts it as stale.
+ *
+ * 2: lone messages are extracted (sub-minimum gap groups coalesce per
+ * calendar day instead of being dropped), so a page completed or declined
+ * under 1 may yield more.
  */
-export const CONVERSATION_EXTRACTOR_VERSION = 1;
+export const CONVERSATION_EXTRACTOR_VERSION = 2;
 
 const EXTRACTOR_VERSION_RE = /(?:^|; )extractor_version=(\d+)$/;
 

@@ -28,7 +28,7 @@ import { currentConversationVersionToken, parseArgs as parseExtractArgs, runExtr
 import { CONVERSATION_LABELS_INTENT, EPOCH_SEGMENT_MARKER } from '../src/core/repair/conversation-labels.ts';
 import { classifyExtractorFacts } from '../src/core/repair/extractor-facts.ts';
 import { conversationLabelFactsCheck } from '../src/commands/doctor/checks/conversation-outcomes.ts';
-import { NON_EXTRACTABLE_AUDIT_SOURCE, TERMINAL_AUDIT_SOURCE, outcomeExtractorVersion, stampExtractorVersion } from '../src/core/facts/audit-sources.ts';
+import { CONVERSATION_EXTRACTOR_VERSION, NON_EXTRACTABLE_AUDIT_SOURCE, TERMINAL_AUDIT_SOURCE, outcomeExtractorVersion, stampExtractorVersion } from '../src/core/facts/audit-sources.ts';
 import { LiveServeLockError } from '../src/core/pglite-lock.ts';
 import { exclusiveFix, liveServeOwner } from '../src/core/exclusive-fix.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
@@ -148,7 +148,7 @@ async function exercise(engine: BrainEngine, managed: boolean, seeded: Seeded): 
   const outcomes = await engine.executeRaw<{ slug: string; fact: string; context: string | null }>(`SELECT source_markdown_slug AS slug, fact, context FROM facts
     WHERE source_id='default' AND source IN ($1,$2) AND expired_at IS NULL ORDER BY slug`, [TERMINAL_AUDIT_SOURCE, NON_EXTRACTABLE_AUDIT_SOURCE]);
   expect(outcomes.map(o => [o.slug, o.fact])).toEqual([[FIXED, 'EXTRACTION_NOT_APPLICABLE'], [PROSE, 'EXTRACTION_NOT_APPLICABLE']]);
-  expect(outcomeExtractorVersion(outcomes[1]!.context)).toBe(1);
+  expect(outcomeExtractorVersion(outcomes[1]!.context)).toBe(CONVERSATION_EXTRACTOR_VERSION);
   if (managed) {
     const requests = await engine.executeRaw<{ state: string }>("SELECT state FROM persistence_requests WHERE intent->>'kind'=$1", [CONVERSATION_LABELS_INTENT]);
     expect(requests.map(r => r.state)).toEqual(['committed']);
