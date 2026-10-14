@@ -61,8 +61,9 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
           bun-version: 1.4.2
-      - name: Install locked GBrain dependencies
-        run: bun install --frozen-lockfile --ignore-scripts
+      - name: Install locked GBrain dependencies (bounded, retried once)
+        timeout-minutes: 8
+        run: bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
       - name: Install minimal pinned native Hermes runtime dependencies
         run: >-
           python -m pip install --disable-pip-version-check
