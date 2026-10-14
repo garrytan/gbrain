@@ -124,4 +124,16 @@ describe('mergeWindowAtoms (#6503)', () => {
     expect(merged[0].quoteFields).toMatchObject({ source_quote: 'Two.', source_quote_verified: true });
     expect(merged[1].quoteFields.source_quote_offset).toEqual([5, 35]);
   });
+
+  test('distinct titles that only share the 60-char slug stem are both kept (atomSlug hashes the full title)', () => {
+    const text = 'One. Two.';
+    const w0 = { index: 0, count: 2, start: 0, end: 5, text: text.slice(0, 5) };
+    const w1 = { index: 1, count: 2, start: 4, end: text.length, text: text.slice(4) };
+    const shared = 'Quarterly planning review for the enterprise sales motion in';
+    const merged = mergeWindowAtoms(text, [
+      { window: w0, atoms: [atom(`${shared} North America`)] },
+      { window: w1, atoms: [atom(`${shared} Western Europe`), atom(`${shared.toUpperCase()} NORTH AMERICA!`)] },
+    ]);
+    expect(merged.map(a => a.title)).toEqual([`${shared} North America`, `${shared} Western Europe`]);
+  });
 });

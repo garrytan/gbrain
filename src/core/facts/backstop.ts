@@ -685,14 +685,19 @@ async function derivedFactWriter(ctx: FactsBackstopCtx, input: PipelineInput, de
  * the single historical call (page-windows.ts). A claim two windows both
  * state is dropped as a repeat by the same cosine verdict the DB dedup
  * applies (same entity and speaker; capture lanes never drop by cosine, #5888).
+ * One verdict serves one text, so the threshold is read once per embedding
+ * model and dims, not once per compared pair.
  */
-function windowRepeatVerdict(ctx: FactsBackstopCtx, cosineSimilarity: (a: Float32Array, b: Float32Array) => number) {
+export function windowRepeatVerdict(ctx: Pick<FactsBackstopCtx, 'engine' | 'source'>, cosineSimilarity: (a: Float32Array, b: Float32Array) => number) {
+  const thresholds = new Map<string, Promise<{ threshold: number | null }>>();
   return async (candidate: ExtractedFact, kept: ExtractedFact): Promise<boolean> => {
     if ((candidate.entity_slug ?? '').toLowerCase() !== (kept.entity_slug ?? '').toLowerCase()) return false;
     if ((candidate.attributed_to ?? null) !== (kept.attributed_to ?? null)) return false;
     if (!candidate.embedding || !kept.embedding || candidate.embedding.length !== kept.embedding.length) return false;
     if ((candidate.embedding_model ?? null) !== (kept.embedding_model ?? null)) return false;
-    const { threshold } = await readSupersessionThreshold(ctx.engine, candidate.embedding_model, candidate.embedding.length);
+    const key = `${candidate.embedding_model ?? ''}\u0000${candidate.embedding.length}`;
+    if (!thresholds.has(key)) thresholds.set(key, readSupersessionThreshold(ctx.engine, candidate.embedding_model, candidate.embedding.length));
+    const { threshold } = await thresholds.get(key)!;
     return cosineVerdict(ctx.source, cosineSimilarity(candidate.embedding, kept.embedding), candidate.fact, kept.fact, threshold) === 'duplicate';
   };
 }
@@ -747,7 +752,7 @@ async function runPipelineBodyInner(
     model: ctx.model,
     notabilityAdmission, observationDate: input.observationDate ?? observationDateFrom(ctx.validFrom ?? ctx.turnAt ?? null),
     ...(managed ? { embedding: managed.embedding ?? null } : {}),
-  }, { isRepeat: windowRepeatVerdict(ctx, cosineSimilarity) }); // #6503: long text is windowed, never cut
+  }, { isRepeat: windowRepeatVerdict(ctx, cosineSimilarity), bankScope: ctx.sourceId }); // #6503: long text is windowed (resumably), never cut
   const outcome = managed ? await withAIInvocationPreflight(async call => {
     if (call.kind !== 'embedding') return;
     abortSignal?.throwIfAborted();

@@ -105,14 +105,17 @@ export type MergedAtom = ExtractedAtom & { quoteFields: Record<string, unknown> 
  *
  * A single window is passed through in order, untouched (the historical
  * one-call behavior). Across windows, an atom is a repeat and dropped when its
- * title folds to the same slug stem as a kept atom (it would upsert the same
- * slug) or its verified quote overlaps a kept atom's verified quote (the same
- * passage, read twice in the overlap). The first occurrence is kept; a kept
- * atom without a verified quote adopts a repeat's verified one.
+ * whole title folds (slugifySegment: case, punctuation, accents) to the same
+ * slug as a kept atom's, or its verified quote overlaps a kept atom's verified
+ * quote (the same passage, read twice in the overlap). The fold is NOT cut to
+ * the 60-char slug stem: atomSlug() hashes the full title precisely so two
+ * distinct titles sharing that stem stay separate atoms, and the merge must
+ * not drop one of them as a repeat. The first occurrence is kept; a kept atom
+ * without a verified quote adopts a repeat's verified one.
  */
 export function mergeWindowAtoms(text: string, settled: Array<{ window: TextWindow; atoms: ExtractedAtom[] }>): MergedAtom[] {
   const out: MergedAtom[] = [];
-  const byStem = new Map<string, MergedAtom>();
+  const byTitle = new Map<string, MergedAtom>();
   const spans: Array<{ start: number; end: number; atom: MergedAtom }> = [];
   const multi = settled.length > 1;
   for (const { window, atoms } of settled) {
@@ -126,8 +129,8 @@ export function mergeWindowAtoms(text: string, settled: Array<{ window: TextWind
         : {};
       const merged: MergedAtom = { ...atom, quoteFields };
       if (!multi) { out.push(merged); continue; }
-      const stem = atomSlugStem(atom.title);
-      const repeat = byStem.get(stem) ?? (span ? spans.find(s => s.start < span.end && span.start < s.end)?.atom : undefined);
+      const titleKey = slugifySegment(atom.title) || atom.title;
+      const repeat = byTitle.get(titleKey) ?? (span ? spans.find(s => s.start < span.end && span.start < s.end)?.atom : undefined);
       if (repeat) {
         if (span && repeat.quoteFields.source_quote_verified !== true) {
           repeat.quoteFields = quoteFields;
@@ -136,7 +139,7 @@ export function mergeWindowAtoms(text: string, settled: Array<{ window: TextWind
         continue;
       }
       out.push(merged);
-      byStem.set(stem, merged);
+      byTitle.set(titleKey, merged);
       if (span) spans.push({ ...span, atom: merged });
     }
   }

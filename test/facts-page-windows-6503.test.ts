@@ -13,12 +13,12 @@
  */
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { runFactsBackstop, runFactsPipeline } from '../src/core/facts/backstop.ts';
+import { runFactsBackstop, runFactsPipeline, windowRepeatVerdict } from '../src/core/facts/backstop.ts';
 import { __setChatTransportForTests, resetGateway, type ChatOpts, type ChatResult } from '../src/core/ai/gateway.ts';
 import { __resetFactsQueueForTests } from '../src/core/facts/queue.ts';
 import { FactsExtractionError, MAX_TURN_TEXT_CHARS, type ExtractedFact, type ExtractFactsOutcome, type ExtractInput } from '../src/core/facts/extract.ts';
 import {
-  extractFactsFromTextWithOutcome, FACT_WINDOW_HEADER_RESERVE, factWindowText, mergeWindowFacts, planFactWindows,
+  extractFactsFromTextWithOutcome, FACT_WINDOW_HEADER_RESERVE, FACT_WINDOW_OP, factWindowText, mergeWindowFacts, planFactWindows,
 } from '../src/core/facts/page-windows.ts';
 
 let engine: PGLiteEngine;
@@ -120,6 +120,104 @@ describe('extractFactsFromTextWithOutcome (#6503)', () => {
     expect(merged.map(f => [f.fact, f.entity_slug])).toEqual([
       ['Dana ships Friday.', 'people/dana'], ['Team is small', null], ['Dana ships Friday', 'people/other'],
     ]);
+  });
+});
+
+describe('bounded executions resume, merge cost stays bounded (#6503 review)', () => {
+  const fact = (text: string, extra: Partial<ExtractedFact> = {}): ExtractedFact =>
+    ({ fact: text, kind: 'fact', entity_slug: null, source: 'test', confidence: 1, notability: 'high', ...extra } as ExtractedFact);
+  const bankRows = async () => (await engine.executeRaw<{ n: number }>(
+    'SELECT count(*)::int AS n FROM op_checkpoints WHERE op=$1', [FACT_WINDOW_OP]))[0]!.n;
+
+  test('a run stopped part-way (budget abort) banks its settled windows; the next run continues from there, not window 0', async () => {
+    const text = `${longBody('resume')}\n\n${longBody('resume-b')}`;
+    const n = planFactWindows(text).length;
+    expect(n).toBeGreaterThan(3);
+    const input = { turnText: text, source: 'test', engine } as unknown as ExtractInput;
+    const partOf = (i: ExtractInput) => Number(/\[Part (\d+) of/.exec(i.turnText)![1]);
+    const embedding = new Float32Array([0.25, 0.5, 0.75]);
+    const validFrom = new Date('2026-01-02T00:00:00.000Z');
+    const reply = (part: number): ExtractFactsOutcome =>
+      ({ ok: true, facts: [fact(`resume fact from part ${part}`, part === 1 ? { embedding, valid_from: validFrom } : {})] });
+
+    const firstRun: number[] = [];
+    await expect(extractFactsFromTextWithOutcome(input, { bankScope: 'default', extractOne: async i => {
+      const part = partOf(i);
+      firstRun.push(part);
+      if (part === 3) throw new Error('budget exhausted');
+      return reply(part);
+    } })).rejects.toThrow('budget exhausted');
+    expect(firstRun).toEqual([1, 2, 3]);
+    expect(await bankRows()).toBe(2);
+
+    const secondRun: number[] = [];
+    const out = await extractFactsFromTextWithOutcome(input, { bankScope: 'default', extractOne: async i => {
+      const part = partOf(i);
+      secondRun.push(part);
+      return reply(part);
+    } });
+    expect(secondRun).toEqual(Array.from({ length: n - 2 }, (_, k) => k + 3));
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.facts.map(f => f.fact)).toEqual(Array.from({ length: n }, (_, k) => `resume fact from part ${k + 1}`));
+    // A banked fact round-trips its embedding and dates.
+    expect(out.facts[0].embedding).toBeInstanceOf(Float32Array);
+    expect(Array.from(out.facts[0].embedding!)).toEqual([0.25, 0.5, 0.75]);
+    expect(out.facts[0].valid_from).toEqual(validFrom);
+    // Every window settled: the bank is cleared.
+    expect(await bankRows()).toBe(0);
+  });
+
+  test('a banked window is never reused for another scope or changed inputs', async () => {
+    const text = longBody('scoped');
+    const n = planFactWindows(text).length;
+    const base = { turnText: text, source: 'test', engine } as unknown as ExtractInput;
+    const stop = async (i: ExtractInput): Promise<ExtractFactsOutcome> => {
+      if (i.turnText.startsWith('[Part 2 of')) return { ok: false, reason: 'malformed_output', model: 'm' };
+      return { ok: true, facts: [fact('scoped fact')] };
+    };
+    expect((await extractFactsFromTextWithOutcome(base, { bankScope: 'a', extractOne: stop })).ok).toBe(false);
+    let calls = 0;
+    const count = async (): Promise<ExtractFactsOutcome> => { calls++; return { ok: true, facts: [] }; };
+    await extractFactsFromTextWithOutcome(base, { bankScope: 'b', extractOne: count });
+    expect(calls).toBe(n);
+    calls = 0;
+    await extractFactsFromTextWithOutcome(base, { bankScope: 'a', extractOne: count });
+    expect(calls).toBe(n - 1); // same scope and inputs: window 1 reused
+    expect((await extractFactsFromTextWithOutcome(base, { bankScope: 'a', extractOne: stop })).ok).toBe(false);
+    calls = 0;
+    await extractFactsFromTextWithOutcome({ ...base, entityHints: ['people/dana'] }, { bankScope: 'a', extractOne: count });
+    expect(calls).toBe(n); // different hints: nothing reused
+  });
+
+  test('near-repeat verdicts are asked only against the previous window, not every prior fact', async () => {
+    const windows = Array.from({ length: 6 }, (_, w) => Array.from({ length: 4 }, (_, k) => fact(`w${w} distinct claim ${k}`)));
+    const asked: Array<[string, string]> = [];
+    const merged = await mergeWindowFacts(windows, async (candidate, kept) => { asked.push([candidate.fact, kept.fact]); return false; });
+    expect(merged).toHaveLength(24);
+    expect(asked).toHaveLength(5 * 4 * 4); // all-prior pairs would be 4*4*(1+2+3+4+5) = 240
+    for (const [candidate, kept] of asked) expect(Number(candidate[1]) - Number(kept[1])).toBe(1);
+  });
+
+  test('a fact the previous window only restated still counts as that window\'s neighbour', async () => {
+    const merged = await mergeWindowFacts([
+      [fact('Dana ships Friday')],
+      [fact('dana ships friday.')],
+      [fact('Dana will ship on Friday')],
+    ], async (candidate, kept) => candidate.fact === 'Dana will ship on Friday' && kept.fact === 'Dana ships Friday');
+    expect(merged.map(f => f.fact)).toEqual(['Dana ships Friday']);
+  });
+
+  test('the production repeat verdict reads the supersession threshold once per text, not once per pair', async () => {
+    let reads = 0;
+    const fakeEngine = { getConfig: async () => { reads++; return '{"test:model@3": 0.9}'; } };
+    const verdict = windowRepeatVerdict({ engine: fakeEngine as never, source: 'mcp:extract_facts' } as never, () => 0.99);
+    const emb = (x: number) => new Float32Array([x, 1, 1]);
+    const facts = Array.from({ length: 6 }, (_, i) => fact(`claim number ${i} about a different thing`, { embedding: emb(i), embedding_model: 'test:model' }));
+    let duplicates = 0;
+    for (const a of facts) for (const b of facts) if (a !== b && await verdict(a, b)) duplicates++;
+    expect(duplicates).toBe(30);
+    expect(reads).toBe(1);
   });
 });
 
