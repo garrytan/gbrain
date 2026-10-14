@@ -315,22 +315,31 @@ export function isProcessAlive(pid: number): boolean {
   }
 }
 
-export function clearStalePglitePostmasterPid(dataDir: string): boolean {
+export type StalePostmasterPidClear =
+  | { status: 'absent' | 'removed' }
+  | { status: 'kept-live'; pid: number }
+  | { status: 'blocked'; code: string; detail: string };
+
+export function clearStalePglitePostmasterPid(dataDir: string): StalePostmasterPidClear {
   const pidFile = join(dataDir, 'postmaster.pid');
   let info: ReturnType<typeof lstatSync>;
   try {
     info = lstatSync(pidFile);
   } catch {
-    return false;
+    return { status: 'absent' };
   }
-  if (info.isSymbolicLink() || !info.isFile()) return false;
+  if (info.isSymbolicLink() || !info.isFile()) {
+    return { status: 'blocked', code: 'EINVAL', detail: 'postmaster.pid 不是普通文件' };
+  }
   let recordedPid = Number.NaN;
   try {
     recordedPid = Number(readFileSync(pidFile, 'utf8').split(/\r?\n/, 1)[0]?.trim());
-  } catch {
-    return false;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code ?? 'EACCES';
+    const detail = error instanceof Error ? error.message : String(error);
+    return { status: 'blocked', code, detail };
   }
-  if (isProcessAlive(recordedPid)) return false;
+  if (isProcessAlive(recordedPid)) return { status: 'kept-live', pid: recordedPid };
   try {
     const dirMode = statSync(dataDir).mode;
     chmodSync(dataDir, (dirMode | 0o200) & 0o777);
@@ -340,9 +349,11 @@ export function clearStalePglitePostmasterPid(dataDir: string): boolean {
   } catch { /* still attempt removal */ }
   try {
     unlinkSync(pidFile);
-    return true;
-  } catch {
-    return false;
+    return { status: 'removed' };
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code ?? 'EPERM';
+    const detail = error instanceof Error ? error.message : String(error);
+    return { status: 'blocked', code, detail };
   }
 }
 

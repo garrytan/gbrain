@@ -14,11 +14,12 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { PGlite } from '@electric-sql/pglite';
+import type { PGlite } from '@electric-sql/pglite';
+import { createPgliteDatabase } from './pglite-open.ts';
 import { vector } from '@electric-sql/pglite/vector';
 import { pg_trgm } from '@electric-sql/pglite/contrib/pg_trgm';
 import { configDir } from './config.ts';
-import { acquireLock, clearReapMarker, clearStalePglitePostmasterPid, releaseLock } from './pglite-lock.ts';
+import { acquireLock, clearReapMarker, releaseLock } from './pglite-lock.ts';
 import { isPgliteDataDirPermissionError, isPgliteProcessStartupFailure, isPgliteToastInconsistencyError } from './pglite-errors.ts';
 import { attemptWalRepairAndRetry, clearRepairAttemptSidecar } from './pglite-repair.ts';
 import { pgControlLooksCleanlyShutdown } from './pglite-resetwal.ts';
@@ -305,13 +306,10 @@ async function openVerifiedRestoreCopy(
 
 async function inspectRestoreCopy(databasePath: string): Promise<PgliteRecoveryValidation> {
   return preservingProcessExitCode(async () => {
-    const open = () => {
-      clearStalePglitePostmasterPid(databasePath);
-      return PGlite.create({
-        dataDir: databasePath,
-        extensions: { vector, pg_trgm },
-      });
-    };
+    const open = () => createPgliteDatabase({
+      dataDir: databasePath,
+      extensions: { vector, pg_trgm },
+    });
     const db = await openVerifiedRestoreCopy(databasePath, open);
     try {
       const tableResult = await db.query<{ tablename: string }>(

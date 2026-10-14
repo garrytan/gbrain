@@ -6,10 +6,10 @@ import { composablePgliteTransaction } from './page-state/transactions.ts';
 import { pageReadFilter } from './search/read-policy-sql.ts';
 import { currentMemoryTakeSql, memoryPageIsCurrent, memoryPageFilterForSchema } from './pmbrain-adapters/memory-projections.ts';
 import { readRelationalFanout, readTakes } from './search/read-enrichment.ts';
-import { PGlite } from '@electric-sql/pglite';
+import { createPgliteDatabase } from './pglite-open.ts';
 import { vector } from '@electric-sql/pglite/vector';
 import { pg_trgm } from '@electric-sql/pglite/contrib/pg_trgm';
-import type { Transaction, PGliteOptions } from '@electric-sql/pglite';
+import type { PGlite, Transaction, PGliteOptions } from '@electric-sql/pglite';
 import type {
   BrainEngine,
   BatchOpts,
@@ -38,7 +38,7 @@ import {
   PGVECTOR_HNSW_VECTOR_MAX_DIMS,
 } from './vector-index.ts';
 import { DELETE_BATCH_SIZE } from './engine-constants.ts';
-import { acquireLock, clearStalePglitePostmasterPid, previousOwnerConfirmedDeadFromLock, releaseLock, type LockHandle } from './pglite-lock.ts';
+import { acquireLock, previousOwnerConfirmedDeadFromLock, releaseLock, type LockHandle } from './pglite-lock.ts';
 import { DatabaseAlreadyOwnedError, PgliteOpenError, isPgliteDataDirPermissionError, isPgliteProcessStartupFailure, isPgliteToastInconsistencyError } from './pglite-errors.ts';
 import {
   GIN_REPAIR_DB_UNUSABLE_MESSAGE,
@@ -464,23 +464,17 @@ export class PGLiteEngine implements BrainEngine {
       }
     }
 
-    const openPersistent = () => preservingProcessExitCode(() => {
-      if (dataDir) clearStalePglitePostmasterPid(dataDir);
-      return PGlite.create({
-        dataDir,
-        loadDataDir,
-        extensions: { vector, pg_trgm },
-        ...this.runtimeAssets,
-      });
-    });
-    const openAfterRepair = () => preservingProcessExitCode(() => {
-      if (dataDir) clearStalePglitePostmasterPid(dataDir);
-      return PGlite.create({
-        dataDir,
-        extensions: { vector, pg_trgm },
-        ...this.runtimeAssets,
-      });
-    });
+    const openPersistent = () => preservingProcessExitCode(() => createPgliteDatabase({
+      dataDir,
+      loadDataDir,
+      extensions: { vector, pg_trgm },
+      ...this.runtimeAssets,
+    }));
+    const openAfterRepair = () => preservingProcessExitCode(() => createPgliteDatabase({
+      dataDir,
+      extensions: { vector, pg_trgm },
+      ...this.runtimeAssets,
+    }));
 
     try {
       if (dataDir && shouldRepairWalBeforeFirstOpen(dataDir)) {
@@ -624,14 +618,11 @@ export class PGLiteEngine implements BrainEngine {
       await this.closeHandleKeepLock();
       const attempt = await attemptWalRepairAndRetry(
         this._dataDir,
-        () => preservingProcessExitCode(() => {
-          if (this._dataDir) clearStalePglitePostmasterPid(this._dataDir);
-          return PGlite.create({
-            dataDir: this._dataDir,
-            extensions: { vector, pg_trgm },
-            ...this.runtimeAssets,
-          });
-        }),
+        () => preservingProcessExitCode(() => createPgliteDatabase({
+          dataDir: this._dataDir,
+          extensions: { vector, pg_trgm },
+          ...this.runtimeAssets,
+        })),
         walRepairOptsFromLock(this._lock),
       );
       if (attempt.status !== 'repaired') throw err;

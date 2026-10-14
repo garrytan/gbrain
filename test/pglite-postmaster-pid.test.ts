@@ -3,6 +3,7 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { clearStalePglitePostmasterPid } from '../src/core/pglite-lock.ts';
+import { createPgliteDatabase } from '../src/core/pglite-open.ts';
 
 function tempDir(): string {
   return mkdtempSync(join(tmpdir(), 'pmbrain-postmaster-'));
@@ -16,7 +17,7 @@ test('只读且不是本机进程的 postmaster.pid 会去掉只读后删除，�
     writeFileSync(pidFile, '-42\n/pglite/data\n');
     writeFileSync(page, '17\n');
     chmodSync(pidFile, 0o444);
-    expect(clearStalePglitePostmasterPid(dir)).toBe(true);
+    expect(clearStalePglitePostmasterPid(dir)).toEqual({ status: 'removed' });
     expect(existsSync(pidFile)).toBe(false);
     expect(readFileSync(page, 'utf8')).toBe('17\n');
   } finally {
@@ -29,18 +30,37 @@ test('postmaster.pid 指向仍在运行的进程时保留', () => {
   try {
     const pidFile = join(dir, 'postmaster.pid');
     writeFileSync(pidFile, `${process.pid}\n`);
-    expect(clearStalePglitePostmasterPid(dir)).toBe(false);
+    expect(clearStalePglitePostmasterPid(dir)).toEqual({ status: 'kept-live', pid: process.pid });
     expect(readFileSync(pidFile, 'utf8')).toBe(`${process.pid}\n`);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
+test('只读失效启动锁不再挡住下一次打开', async () => {
+  const dir = tempDir();
+  let open: Awaited<ReturnType<typeof createPgliteDatabase>> | undefined;
+  try {
+    open = await createPgliteDatabase({ dataDir: dir });
+    await open.close();
+    open = undefined;
+    const pidFile = join(dir, 'postmaster.pid');
+    writeFileSync(pidFile, '-42\n/pglite/data\n');
+    chmodSync(pidFile, 0o444);
+    open = await createPgliteDatabase({ dataDir: dir });
+    const result = await open.query<{ ok: number }>('SELECT 1 as ok');
+    expect(result.rows[0]?.ok).toBe(1);
+  } finally {
+    await open?.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+}, 60000);
+
 test('没有 postmaster.pid 时不改目录', () => {
   const dir = tempDir();
   try {
     writeFileSync(join(dir, 'PG_VERSION'), '17\n');
-    expect(clearStalePglitePostmasterPid(dir)).toBe(false);
+    expect(clearStalePglitePostmasterPid(dir)).toEqual({ status: 'absent' });
     expect(existsSync(join(dir, 'PG_VERSION'))).toBe(true);
   } finally {
     rmSync(dir, { recursive: true, force: true });

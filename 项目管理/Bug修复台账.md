@@ -1,5 +1,18 @@
 # Bug 修复台账
 
+## 2026-10-14 PMBrain 1.4.68 启动失败仍显示 WAL 冷却
+
+- 时间：2026-10-14
+- 版本号：PMBrain 1.4.68（统一产品版本，Schema 134 未变）
+- 标题：19:22 重启后界面仍是 WAL 冷却，没有显示启动锁权限
+- 编程工具：Grok 大模型：Grok 4.7
+- 描述：新日志 11:22 UTC 的界面原文仍是「数据库本身异常」和「自动 WAL 修复已安全跳过：last auto-repair attempt failed 1945s ago」。1945 秒前就是 10:49 UTC 那次修复失败。这次异常只有 `PGlite failed to initialize properly`，没有带上 PGLite 打出的 `postmaster.pid: Permission denied`。1.4.67 只在错误文本里出现这句时才按权限处理，所以这次仍走进 WAL 冷却。更早的 10:49 日志已经写明旧锁删不掉、新锁建不成。
+- 修复：同一次打开读取 PGLite 的启动输出，不再为了读日志额外创建一个 PGLite。启动锁删不掉或目录不能写入时，按权限失败停止，不进入 WAL 修复。只读且不指向运行进程的 postmaster.pid 仍会先删除。不删除知识页面、原始资料或向量。
+- 是否完成：定向测试和发布资源已完成。用户正式库未打开，安装包未打包。
+- 最终结果：启动锁、分类和 toast 约束 42 项通过，其中只读失效 postmaster.pid 后再次打开 PGLite 并通过 `SELECT 1`。发布说明 6 项通过。`check-version-sync` 为统一 1.4.68。发布清单 `690d63fd7d06`。正式库未参与测试。
+- 与规划差异：若 Windows 访问控制拒绝当前用户写入该文件夹，新版本会说明是启动锁权限，但仍打不开 `E:\AI\PMBrain\PGLite\brain.pglite`。19:22 的截图不是 1.4.67 的启动锁文案，需要安装 1.4.68 后再看。
+- Skill/插件与工作流：无。未运行 build:win。
+
 ## 2026-10-14 PMBrain 1.4.67 PGLite 启动锁 postmaster.pid 权限被拒绝
 
 - 时间：2026-10-14
