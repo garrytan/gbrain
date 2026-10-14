@@ -83,7 +83,7 @@ test('同步多份资料只有一个主任务，深度整理等待它完成，�
   hold = true;
   const quick = await runtime.submitDream({ preset: 'quick', sourceId: 'default' });
   const deep = await runtime.submitDream({ phase: 'backlinks', sourceId: 'default' });
-  await until(async () => calls > 0);
+  await until(async () => calls > 0, 60_000);
   const jobs = await engine.executeRaw<{ kind: string }>("SELECT data->>'kind' AS kind FROM minion_jobs WHERE queue=$1", [PRODUCT_TASK_QUEUE]);
   expect(jobs.filter(job => job.kind === 'dream_capture_entities')).toHaveLength(0);
   expect(jobs.filter(job => job.kind === 'dream_quick')).toHaveLength(1);
@@ -251,6 +251,16 @@ test('外部周期锁占用时保留同一排队任务，释放后真正执行�
     } finally { await nextLock.release(); }
   } finally { await lock.release(); }
 }, 60_000);
+
+test('深度整理接收导入实体请求时归属原主任务，不再额外排队一轮整理', async () => {
+  const queue = new MinionQueue(engine);
+  const parent = await queue.add('pmbrain-product-task', { kind: 'dream_full', fileSession: true, task: { type: 'dream', input: { preset: 'full', sourceId: 'default' } } }, { queue: PRODUCT_TASK_QUEUE, delay: 86400000 });
+  await engine.executeRaw("UPDATE minion_jobs SET status='active',lock_token='deep-owner' WHERE id=$1", [parent.id]);
+  await requestImportedEntityCapture(engine, 'default', { slug: 'deep-input', type: 'source', compiled_truth: '这是一份需要整理实体的资料。', frontmatter: {} });
+  expect(await enqueueImportedEntityCapture(engine, async () => true)).toEqual([]);
+  const pending = JSON.parse((await engine.getConfig('dream.entity_capture.pending.default'))!);
+  expect(pending.ownerJobId).toBe(parent.id);
+});
 
 test('实体校验失败留在快速维护主任务，可在原任务继续，不自动开启另一轮', async () => {
   const repo = join(root, 'invalid'); mkdirSync(repo);

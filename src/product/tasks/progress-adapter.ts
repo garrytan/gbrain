@@ -85,10 +85,14 @@ export class TaskProgressAdapter {
         this.scan({...scan,active:event.event!=='finish'});
         return;
       }
-      if (this.view.name !== '导入资料') return;
+      if (this.view.name !== '导入资料' && this.currentPhase !== 'sync') return;
       if (typeof event.done === 'number') this.view.processed = event.done;
       if (typeof event.total === 'number') this.view.total = event.total;
-      if (this.view.total && this.view.processed !== null) this.view.percent = Math.min(99, Math.floor(this.view.processed / this.view.total * 100));
+      if (this.view.total && this.view.processed !== null) {
+        const percent = Math.floor(this.view.processed / this.view.total * 100);
+        if (this.view.name === '导入资料') this.view.percent = Math.min(99, percent);
+        else this.view.phasePercent = percent;
+      }
       return;
     }
     const phase = raw.split('.')[0]!;

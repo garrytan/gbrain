@@ -223,6 +223,30 @@ test('原资料丢失或内容改变时停止缓存仍保留，清理不会删�
   }finally{for(const path of paths)unlinkSync(path);}
 },60000);
 
+test('深度整理 Git 临时目录已移除后，仅释放当前原资料仍能重建的停止快照',async()=>{
+  const queue=new MinionQueue(engine);const files=new SyncFileQueue(engine);
+  const repo=join(home,'git-stopped');mkdirSync(repo);
+  await engine.executeRaw("INSERT INTO sources(id,name,local_path,config) VALUES ('git-stopped','Git停止缓存验收',$1,'{}'::jsonb)",[repo]);
+  const parent=await queue.add('pmbrain-product-task',{kind:'dream_full',fileSession:true,task:{type:'dream',input:{preset:'full',sourceId:'git-stopped'}}},{queue:'pmbrain-product',delay:86400000});
+  await engine.executeRaw("UPDATE minion_jobs SET status='cancelled' WHERE id=$1",[parent.id]);
+  const directory=gbrainPath('task-artifacts','sync-files','git-stopped',String(parent.id));mkdirSync(directory,{recursive:true});
+  const bytes=Buffer.from('Git已提交资料的原始正文');const paths:string[]=[];
+  const names=['safe.md','changed.md','missing.md','../outside.md'];
+  for(const [index,name] of names.entries()){
+    if(name!=='missing.md')writeFileSync(join(repo,name),index===1?Buffer.alloc(bytes.length,46):bytes);
+    const path=join(directory,String(index+1).repeat(64)+'-snapshot.md');writeFileSync(path,bytes);paths.push(path);
+    const child=await queue.add(SYNC_FILE_TASK,{sessionId:parent.id,task:{type:'sync-file',input:{path,sourceRoot:repo,relativePath:name,options:{sourceId:'git-stopped',noEmbed:true},originalSize:bytes.length,originalMtime:1,hash:createHash('sha256').update(bytes).digest('hex')}}},{queue:SYNC_FILE_QUEUE,delay:86400000});
+    await engine.executeRaw("UPDATE minion_jobs SET parent_job_id=$2,status='paused' WHERE id=$1",[child.id,parent.id]);
+  }
+  try{
+    await files.cleanupStoppedSnapshots(parent.id);
+    expect(existsSync(paths[0])).toBe(false);
+    for(const path of paths.slice(1))expect(readFileSync(path)).toEqual(bytes);
+    expect(readFileSync(join(repo,'safe.md'))).toEqual(bytes);
+    expect(readFileSync(join(repo,'../outside.md'))).toEqual(bytes);
+  }finally{for(const path of paths)if(existsSync(path))unlinkSync(path);}
+},60000);
+
 test('旧版本因快照容量失败的最新任务启动后自动恢复，主动停止和不确定模型请求仍不重启',async()=>{
   const queue=new MinionQueue(engine);
   const dir=join(home,'legacy-capacity');mkdirSync(dir);

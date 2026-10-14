@@ -4,6 +4,22 @@ import { SidecarResourceMonitor, resourcePressure, readSidecarResources, parseWi
 const rawSample={bytes:100*1024**2,availableBytes:12*1024**3,commitLimitBytes:32*1024**3,committedBytes:16*1024**3,startedAt:new Date().toISOString()};
 function parseSample(value:unknown){return parseWindowsResourceSample(JSON.stringify(value));}
 
+test('内存余量在阈值附近波动时维持降速，持续恢复十五秒后只恢复一次',async()=>{
+  const actions:string[]=[];let now=0;let available=500*1024**2;
+  const monitor=new SidecarResourceMonitor(12345,async(_message,_sample,action)=>{actions.push(action);},{
+    intervalMs:60000,now:()=>now,read:async()=>({bytes:100*1024**2,availableBytes:available,totalBytes:8*1024**3,commitHeadroomBytes:8*1024**3}),
+  });
+  try{
+    await (monitor as any).tick();
+    for(let index=0;index<10;index++){now+=1000;available=index%2?500*1024**2:3*1024**3;await (monitor as any).tick();}
+    expect(actions).toEqual(['adjust']);
+    available=3*1024**3;now+=1000;await (monitor as any).tick();
+    now+=14999;await (monitor as any).tick();expect(actions).toEqual(['adjust']);
+    now+=1;await (monitor as any).tick();expect(actions).toEqual(['adjust','adjust']);
+    available=0;now+=1;await (monitor as any).tick();expect(actions.at(-1)).toBe('drain');
+  }finally{monitor.stop();}
+});
+
 test('缺失或异常的 Windows 计数器不能作为零余量，真实零余量仍触发保护',()=>{
   for(const invalid of [
     {...rawSample,availableBytes:null},
@@ -80,8 +96,8 @@ test('采样失败只记录诊断，不终止服务，创建时间改变时不�
 });
 
 test('软压力保持采样并在恢复后正常运行，只有连续真实耗尽 30 秒才紧急退出',async()=>{
-  let pressure=true;const actions:string[]=[];
-  const soft=new SidecarResourceMonitor(12345,async(_message,_sample,action)=>{actions.push(action);},{intervalMs:10,read:async()=>({bytes:pressure?9*1024**3:1*1024**3,totalBytes:32*1024**3,availableBytes:10*1024**3})});
+  let pressure=true;let recoveryNow=0;const actions:string[]=[];
+  const soft=new SidecarResourceMonitor(12345,async(_message,_sample,action)=>{actions.push(action);},{intervalMs:10,now:()=>recoveryNow+=15000,read:async()=>({bytes:pressure?9*1024**3:1*1024**3,totalBytes:32*1024**3,availableBytes:10*1024**3})});
   soft.start();await Bun.sleep(40);pressure=false;await Bun.sleep(40);soft.stop();
   expect(actions).toEqual(['adjust','adjust']);
   let now=0;actions.length=0;

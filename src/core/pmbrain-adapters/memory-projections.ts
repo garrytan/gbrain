@@ -1,5 +1,5 @@
-import type { BrainEngine } from '../engine';
-import type { SearchResult, Page } from '../types';
+import type { BrainEngine } from '../engine.ts';
+import type { SearchResult, Page } from '../types.ts';
 
 export function managedMemoryPageSql(alias: string): string {
   return `(${alias}.frontmatter->>'pmbrain_memory'='true'

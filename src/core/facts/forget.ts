@@ -38,8 +38,8 @@ import { join } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { withPageLock } from '../page-lock.ts';
 import { parseFactsFence, renderFactsTable, type ParsedFact } from '../facts-fence.ts';
-import { retireInvalidMemoryTakes } from '../pmbrain-adapters/memory-projections';
-import { bumpHotMemoryCache } from './meta-hook';
+import { retireInvalidMemoryTakes } from '../pmbrain-adapters/memory-projections.ts';
+import { bumpHotMemoryCache } from './meta-hook.ts';
 
 export interface ForgetFactResult {
   /** True iff the row was found AND a forget was applied (fence or DB). */

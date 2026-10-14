@@ -637,14 +637,14 @@
       "path": "src/core/cycle/phases/consolidate.ts",
       "upstream_path": "src/core/cycle/phases/consolidate.ts",
       "mode": "adapted",
-      "sha256": "4ebcb3989d0c66fc15ab4264a906b1ba7bd8b09f438c3e9b09316cbca2a630f3",
+      "sha256": "54d8baef1c6c7bb1e410b771d297d814a84923ad5ae766beaff8c21e8ea87b89",
       "upstream_sha256": "7f843fc1a1602da61a68c273ff6347d0a1e50095aced95af64a1c63af6766d5b"
     },
     {
       "path": "src/core/facts/forget.ts",
       "upstream_path": "src/core/facts/forget.ts",
       "mode": "adapted",
-      "sha256": "87cb5c2aabd5d591fb595647b9c4e4b0eace5338b1c2929e29026b8037bc61f7",
+      "sha256": "7fec04f6db59dcec374ef7901f744f65269960833363166fa66457f350256033",
       "upstream_sha256": "b057026b83a8acb2d43339e6801f4da6b494f65dbaf6d5d7ce0d3a0eb4144a2e"
     },
     {
@@ -658,7 +658,7 @@
       "path": "src/core/search/sql-ranking.ts",
       "upstream_path": "src/core/search/sql-ranking.ts",
       "mode": "adapted",
-      "sha256": "d44502da51fab5e7b3a0fea7b327f946ec2f7e40c21e3addc8687edf82d8d3eb",
+      "sha256": "8455eed5ffd94c79048cda6302edbbf54b127a81aae3b3ff55a62cab701ed560",
       "upstream_sha256": "808abf46b9effbcfe4927888686ce8cb91864aef077ef2f91214dbe93cc15f71"
     }
   ],

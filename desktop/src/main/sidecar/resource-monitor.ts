@@ -46,6 +46,7 @@ export class SidecarResourceMonitor {
   private createdAt=Date.now();
   private level:'normal'|'constrained'|'critical'='normal';
   private criticalSince:number|null=null;
+  private normalSince:number|null=null;
   constructor(private pid:number,private halt:(message:string,sample:ResourceSample|null,action:ResourceAction)=>Promise<void>,private options:{intervalMs?:number;read?:(pid:number)=>Promise<ResourceSample|null>;onError?:(error:unknown)=>void;now?:()=>number}={}){}
   start(){if(this.timer||this.stopped)return;this.timer=setTimeout(()=>void this.tick(),this.options.intervalMs??2000);this.timer.unref();}
   stop(){this.stopped=true;if(this.timer)clearTimeout(this.timer);this.timer=null;}
@@ -67,6 +68,10 @@ export class SidecarResourceMonitor {
           this.stop();await this.halt(`资源保护：${pressure.reason}持续 30 秒，后台任务已停止仍无法回收，紧急停止本地服务。`,sample,'emergency');return;
         }
       }else this.criticalSince=null;
+      if(pressure.level==='normal' && this.level!=='normal'){
+        this.normalSince??=now;
+        if(now-this.normalSince<15000)return;
+      }else this.normalSince=null;
       if(pressure.level!==this.level){
         await this.halt(pressure.reason,sample,pressure.level==='critical'?'drain':'adjust');
         this.level=pressure.level;

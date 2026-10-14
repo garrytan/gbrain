@@ -3,7 +3,7 @@ import { pageReadFilter } from './read-policy-sql.ts';
 import { clampSearchLimit, type TakeHit } from '../engine.ts';
 import type { PageVersion, Link } from '../types.ts';
 import { privatePagesFilterFragment } from './private-visibility.ts';
-import { currentMemoryTakeSql } from '../pmbrain-adapters/memory-projections';
+import { currentMemoryTakeSql } from '../pmbrain-adapters/memory-projections.ts';
 
 export type ReadQuery = <T = Record<string, unknown>>(sql: string, params?: unknown[]) => Promise<T[]>;
 type PageRef = { slug: string; source_id: string };

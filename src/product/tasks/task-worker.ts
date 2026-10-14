@@ -25,6 +25,7 @@ import { SyncFilesDeferred, type SyncFileRuntime } from '../../core/sync-file-ru
 import { classifyErrorCode, isInfrastructureFailureCode } from '../../core/sync-failure-ledger.ts';
 import { performSync } from '../../commands/sync.ts';
 import { readTaskCheckpoint, taskModelFingerprint, syncFileContentFingerprint } from './checkpoint.ts';
+import { usesSyncFileQueue } from '../../../shared/task-progress.ts';
 import { isGinRepairAbortText } from '../../core/pglite-gin-repair.ts';
 import type { SyncStrategy } from '../../core/sync.ts';
 import { isOfficeFilePath } from '../../core/sync.ts';
@@ -120,14 +121,15 @@ setCliOptions({ ...DEFAULT_CLI_OPTIONS, progressJson: true });
 
 async function runDreamTask(engine: BrainEngine, input: Extract<ProductTask, { type: 'dream' }>['input']) {
   const checkpoint: MaintenanceCheckpoint = input.checkpoint ?? { phases: {}, reports: {} };
-  const captureModel = input.preset === 'quick' && !input.dryRun ? await chooseCaptureModel(engine, {}) : null;
+  const captureModel = usesSyncFileQueue(input) && input.phase !== 'sync' ? await chooseCaptureModel(engine, {}) : null;
   let pendingFiles = false;
   let capacityReached = false;
   let scanned = 0;
   let unchanged = 0;
   const roots = new Map<string, string>();
-  const fileRuntime: SyncFileRuntime | undefined = input.preset === 'quick' && !input.dryRun ? {
+  const fileRuntime: SyncFileRuntime | undefined = usesSyncFileQueue(input) ? {
     signal: abort.signal,
+    workingTree: input.preset === 'quick' || (await engine.getConfig('sync.include_working_tree')) === 'true',
     importFile: async (path, relativePath, options) => {
       abort.signal.throwIfAborted();
       if(capacityReached)return {slug:'',status:'skipped',chunks:0,deferred:true};
@@ -161,9 +163,10 @@ async function runDreamTask(engine: BrainEngine, input: Extract<ProductTask, { t
     let captureEntitySlugs: string[] | undefined;
     let captureEntityBudget: import('../../core/cycle/capture-entities.ts').CaptureEntitiesOpts['budget'];
     if (captureModel?.ok) {
-      captureEntitySlugs = await rpc('task.captureRequest', [sourceId]) as string[] | undefined;
-      if (captureEntitySlugs?.length) {
-        checkpoint.captureRequests = { ...checkpoint.captureRequests, [sourceId]: captureEntitySlugs };
+      const requested = await rpc('task.captureRequest', [sourceId]) as string[] | undefined;
+      captureEntitySlugs = input.preset === 'quick' ? requested : input.slugs;
+      if (requested?.length) checkpoint.captureRequests = { ...checkpoint.captureRequests, [sourceId]: requested };
+      if (input.preset === 'quick' && captureEntitySlugs?.length) {
         const [usage] = await engine.executeRaw<{ input: string; output: string }>(`SELECT COALESCE(sum(tokens_input),0) AS input,COALESCE(sum(tokens_output),0) AS output FROM minion_jobs WHERE private_queue_owner_job_id=$1`, [ownerJobId]);
         const inputTokens = Number(usage?.input ?? 0), outputTokens = Number(usage?.output ?? 0);
         const cardPrices = configuredCnyPrices(captureModel.model, splitProviderModelId(captureModel.model).provider);
@@ -181,7 +184,7 @@ async function runDreamTask(engine: BrainEngine, input: Extract<ProductTask, { t
     captureEntityBudget,
     syncFileRuntime: fileRuntime,
     completedPhases: checkpoint.phases[sourceId],
-    phaseCheckpoint: input.preset === 'quick' ? async (phases: import('../../core/cycle.ts').PhaseResult[]) => {
+    phaseCheckpoint: fileRuntime ? async (phases: import('../../core/cycle.ts').PhaseResult[]) => {
       checkpoint.phases[sourceId] = phases;
       await rpc('task.maintenanceCheckpoint', [checkpoint]);
     } : undefined,
@@ -242,6 +245,7 @@ async function runDreamTask(engine: BrainEngine, input: Extract<ProductTask, { t
   return runCycle(engine, {
     ...resolveDreamRelationOptions(input.preset, input.phase),
     ...common, brainDir,
+    ...await resumeOptions(sourceId ?? 'default'),
     phases: input.phase && input.phase !== 'all' ? [input.phase as CyclePhase]
       : input.preset ? resolveDreamPresetPhases(input.preset) : undefined,
     forcePackPhases: input.preset === 'meeting' ? ['extract_atoms'] : undefined,

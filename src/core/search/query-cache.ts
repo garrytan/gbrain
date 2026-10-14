@@ -30,7 +30,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { filterCurrentMemoryHits } from '../pmbrain-adapters/memory-projections';
+import { filterCurrentMemoryHits } from '../pmbrain-adapters/memory-projections.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { SearchResult, HybridSearchMeta } from '../types.ts';
 import { buildPageGenerationsSnapshot, CACHE_GATE_WHERE_CLAUSE } from './query-cache-gate.ts';

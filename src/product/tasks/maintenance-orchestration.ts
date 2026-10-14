@@ -1,6 +1,7 @@
 import type { BrainEngine } from '../../core/engine.ts';
 import { ENTITY_CAPTURE_PENDING_PREFIX } from '../../core/pmbrain-adapters/entity-capture-request.ts';
 import type { ProductTask, MaintenanceCheckpoint } from './types.ts';
+import { usesSyncFileQueue } from '../../../shared/task-progress.ts';
 
 export function maintenanceFailure(result: unknown): string | null {
   if (!result || typeof result !== 'object') return null;
@@ -16,7 +17,7 @@ export async function claimMaintenanceCapture(engine: BrainEngine, id: number, t
     const [owner] = await tx.executeRaw<{ data: { task: ProductTask } }>(`SELECT j.data FROM minion_jobs j JOIN sources s ON s.id=$3
       WHERE j.id=$1 AND j.status='active' AND j.lock_token=$2 AND NOT s.archived FOR UPDATE OF j`, [id, token, sourceId]);
     const task = owner?.data.task;
-    if (!task || task.type !== 'dream' || task.input.preset !== 'quick' || (!task.input.allSources && (task.input.sourceId ?? 'default') !== sourceId)) throw new Error('实体识别不属于当前快速维护或Source已改变');
+    if (!task || task.type !== 'dream' || !usesSyncFileQueue(task.input) || task.input.phase === 'sync' || (!task.input.allSources && (task.input.sourceId ?? 'default') !== sourceId)) throw new Error('实体识别不属于当前整理任务或Source已改变');
     const checkpoint: MaintenanceCheckpoint = task.input.checkpoint ?? { phases: {}, reports: {} };
     const key = ENTITY_CAPTURE_PENDING_PREFIX + sourceId;
     const [pending] = await tx.executeRaw<{ value: string }>('SELECT value FROM config WHERE key=$1 FOR UPDATE', [key]);

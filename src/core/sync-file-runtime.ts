@@ -16,6 +16,7 @@ export type SyncFileOptions = {
 
 export interface SyncFileRuntime {
   signal: AbortSignal;
+  workingTree?: boolean;
   importFile(path: string, relativePath: string, options: SyncFileOptions): Promise<ImportResult & { deferred?: boolean }>;
   finish(): Promise<void>;
 }

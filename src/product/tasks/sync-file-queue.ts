@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir, stat, unlink, rmdir } from 'node:fs/promises';
+import { mkdir, stat, unlink, rmdir, lstat, realpath } from 'node:fs/promises';
 import { basename, join, dirname, resolve, sep } from 'node:path';
 import type { BrainEngine } from '../../core/engine.ts';
 import { MinionQueue } from '../../core/minions/queue.ts';
@@ -264,23 +264,39 @@ export class SyncFileQueue {
       const rows=await this.engine.executeRaw<{id:number;session_id:string;input:SyncFileInput}>(`SELECT child.id,child.data->>'sessionId' AS session_id,child.data->'task'->'input' AS input
         FROM minion_jobs child JOIN minion_jobs parent ON parent.id=child.parent_job_id
         WHERE child.queue=$1 AND child.id>$2 AND ($3::bigint IS NULL OR parent.id=$3)
-        AND parent.queue='pmbrain-product' AND parent.data->'task'->>'type'='dream' AND parent.data->'task'->'input'->>'preset'='quick'
+        AND parent.queue='pmbrain-product' AND parent.data->'task'->>'type'='dream' AND (parent.data->'task'->'input'->>'preset'='quick' OR parent.data->>'fileSession'='true')
         AND child.status IN ('paused','cancelled','dead','failed') AND parent.status IN ('cancelled','paused','dead','failed','completed')
-        AND child.data->'task'->'input'->>'originalPath' IS NOT NULL ORDER BY child.id LIMIT 200`,[SYNC_FILE_QUEUE,after,sessionId??null]);
+        AND (child.data->'task'->'input'->>'originalPath' IS NOT NULL OR child.data->'task'->'input'->>'sourceRoot' IS NOT NULL)
+        ORDER BY child.id LIMIT 200`,[SYNC_FILE_QUEUE,after,sessionId??null]);
       for(const row of rows){
         const input=row.input;
         const snapshot=await stat(input.path).catch(error=>{if(error.code==='ENOENT')return null;throw error;});
         if(!snapshot)continue;
-        const original=await stat(input.originalPath!).catch(()=>null);
-        if(!original?.isFile() || original.size!==input.originalSize || original.mtimeMs!==input.originalMtime)continue;
-        if(await streamFileHash(input.originalPath!).catch(()=>null)!==input.hash)continue;
+        let originalPath=input.originalPath;
+        if(!originalPath){
+          if(!input.sourceRoot || !input.relativePath)continue;
+          const root=resolve(input.sourceRoot);const candidate=resolve(root,input.relativePath);
+          if(!candidate.startsWith(root+sep) || !(await lstat(candidate).catch(()=>null))?.isFile())continue;
+          const resolvedRoot=await realpath(root).catch(()=>null);const resolvedFile=await realpath(candidate).catch(()=>null);
+          if(!resolvedRoot || !resolvedFile?.startsWith(resolvedRoot+sep))continue;
+          const source=await this.engine.executeRaw('SELECT id FROM sources WHERE id=$1 AND local_path=$2 AND NOT archived',[input.options?.sourceId??'default',input.sourceRoot]);
+          if(!source.length)continue;
+          originalPath=candidate;
+        }
+        const original=await stat(originalPath).catch(()=>null);
+        if(!original?.isFile() || original.size!==input.originalSize || (input.originalPath && original.mtimeMs!==input.originalMtime))continue;
+        if(await streamFileHash(originalPath).catch(()=>null)!==input.hash)continue;
         await this.engine.transaction(async tx=>{
           const owned=await tx.executeRaw(`SELECT child.id FROM minion_jobs child JOIN minion_jobs parent ON parent.id=child.parent_job_id
             WHERE child.id=$1 AND child.status IN ('paused','cancelled','dead','failed')
-            AND parent.queue='pmbrain-product' AND parent.data->'task'->>'type'='dream' AND parent.data->'task'->'input'->>'preset'='quick'
+            AND parent.queue='pmbrain-product' AND parent.data->'task'->>'type'='dream' AND (parent.data->'task'->'input'->>'preset'='quick' OR parent.data->>'fileSession'='true')
             AND parent.status IN ('cancelled','paused','dead','failed','completed') FOR UPDATE OF child,parent`,[row.id]);
           if(!owned.length)return;
-          const current=await stat(input.originalPath!).catch(()=>null);
+          if(!input.originalPath){
+            const source=await tx.executeRaw('SELECT id FROM sources WHERE id=$1 AND local_path=$2 AND NOT archived FOR SHARE',[input.options?.sourceId??'default',input.sourceRoot]);
+            if(!source.length)return;
+          }
+          const current=await stat(originalPath!).catch(()=>null);
           if(current?.size!==original.size || current.mtimeMs!==original.mtimeMs || current.ctimeMs!==original.ctimeMs)return;
           await this.removeSnapshot(Number(row.session_id),input.path);
         });

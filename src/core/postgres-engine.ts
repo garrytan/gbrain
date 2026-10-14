@@ -4,7 +4,7 @@ import { readMentionPolicy } from './mentions/policy.ts';
 import { writePageAliases } from './mentions/pass.ts';
 import { composablePostgresTransaction } from './page-state/transactions.ts';
 import { readRelationalFanout, readTakes } from './search/read-enrichment.ts';
-import { currentMemoryTakeSql, memoryPageIsCurrent, memoryPageFilterForSchema } from './pmbrain-adapters/memory-projections';
+import { currentMemoryTakeSql, memoryPageIsCurrent, memoryPageFilterForSchema } from './pmbrain-adapters/memory-projections.ts';
 import postgres from 'postgres';
 import type {
   BrainEngine,

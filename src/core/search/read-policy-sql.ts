@@ -1,7 +1,7 @@
 import type { PageReadScope, PageReadPolicy } from '../types.ts';
 import { privatePagesFilterFragment } from './private-visibility.ts';
 import { quarantineFilterFragment } from '../quarantine.ts';
-import { currentMemoryPageSql } from '../pmbrain-adapters/memory-projections';
+import { currentMemoryPageSql } from '../pmbrain-adapters/memory-projections.ts';
 
 export function hasReadPolicy(scope?: PageReadPolicy): boolean {
   return !!(scope?.sourceIds?.length || scope?.sourceId || scope?.excludePrivate || scope?.takesHoldersAllowList !== undefined);

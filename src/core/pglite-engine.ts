@@ -4,7 +4,7 @@ import { readMentionPolicy } from './mentions/policy.ts';
 import { writePageAliases } from './mentions/pass.ts';
 import { composablePgliteTransaction } from './page-state/transactions.ts';
 import { pageReadFilter } from './search/read-policy-sql.ts';
-import { currentMemoryTakeSql, memoryPageIsCurrent, memoryPageFilterForSchema } from './pmbrain-adapters/memory-projections';
+import { currentMemoryTakeSql, memoryPageIsCurrent, memoryPageFilterForSchema } from './pmbrain-adapters/memory-projections.ts';
 import { readRelationalFanout, readTakes } from './search/read-enrichment.ts';
 import { PGlite } from '@electric-sql/pglite';
 import { vector } from '@electric-sql/pglite/vector';

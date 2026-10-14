@@ -416,7 +416,8 @@ export class SidecarManager {
     if(action==='adjust'){
       const constrained=memoryPressure(sample).level!=='normal';
       await this.adminRequest('/admin/api/console/resource-stop',{method:'POST',body:JSON.stringify({action:'adjust',constrained}),signal:AbortSignal.timeout(5000)});
-      this.options.logger.write('desktop',constrained?`资源调节：${message}`:'资源调节：恢复正常后台并发');
+      const readings=`可用物理内存 ${Math.floor(sample.availableBytes/1024**2)} MB，提交余量 ${sample.commitHeadroomBytes===undefined?'未取得':Math.floor(sample.commitHeadroomBytes/1024**2)+' MB'}，后台占用 ${Math.floor(sample.bytes/1024**2)} MB`;
+      this.options.logger.write('desktop',`${constrained?`资源调节：${message}`:'资源调节：恢复正常后台并发'}（${readings}）`);
       return;
     }
     if(action==='drain'){

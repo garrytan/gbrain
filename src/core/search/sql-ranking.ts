@@ -1,4 +1,4 @@
-import { currentMemoryPageSql } from '../pmbrain-adapters/memory-projections';
+import { currentMemoryPageSql } from '../pmbrain-adapters/memory-projections.ts';
 
 /**
  * SQL Ranking Builders

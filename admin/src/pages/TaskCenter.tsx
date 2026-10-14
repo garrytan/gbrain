@@ -6,7 +6,7 @@ import { TaskTechnicalLogs } from '../product/TaskTechnicalLogs';
 import { describeRunRecovery } from '../lib/run-recovery';
 import { useProductTasks } from '../product/TaskActivity';
 import { TaskProgressCard, taskStatus, taskStopping } from '../product/TaskProgress';
-import { taskName } from '../../../shared/task-progress';
+import { taskName, taskUsesFileQueue } from '../../../shared/task-progress';
 import { taskRoundCompleted, taskRoundListSummary } from '../product/task-presentation';
 
 type TaskFilter = 'all' | 'running' | 'queued' | 'completed' | 'failed' | 'cancelled';
@@ -153,7 +153,7 @@ function TaskDetailDrawer({ run, onClose, onCancel, onRetry, busy }: { run: Cons
     <h2>{run.product?.name ?? taskName(run.kind)}</h2><p className="pm-hint">{formatDate(run.startedAt, '-')} · {taskTriggerLabel(run)}</p>
     <TaskProgressCard run={current} link={false} />
     {dream&&(detailError?<p role="alert">{detailError}</p>:detail?<React.Suspense fallback={<p role="status">正在读取整理内容…</p>}><DreamRunContent run={current} expanded /></React.Suspense>:<p role="status">正在读取整理内容…</p>)}
-    <div className="task-run-card-actions">{isActive(run) && <button type="button" className="pm-ghost" disabled={busy || taskStopping(run)} onClick={onCancel}>{taskStopping(run) ? '正在停止…' : '停止任务'}</button>}{['failed', 'cancelled'].includes(run.status) && run.id.startsWith('task-') && <button type="button" className="pm-ghost" disabled={busy} onClick={onRetry}>重新执行</button>}</div>
+    <div className="task-run-card-actions">{isActive(run) && <button type="button" className="pm-ghost" disabled={busy || taskStopping(run)} onClick={onCancel}>{taskStopping(run) ? '正在停止…' : '停止任务'}</button>}{['failed', 'cancelled'].includes(run.status) && run.id.startsWith('task-') && <button type="button" className="pm-ghost" disabled={busy} onClick={onRetry}>{taskUsesFileQueue(run.kind)?'继续未完成任务':'重新执行'}</button>}</div>
     <TaskTechnicalLogs key={run.id} run={run} />
   </aside></>;
 }
@@ -236,7 +236,7 @@ export function TaskCenterPage() {
   };
 
   const retry = async (run: ConsoleRun) => {
-    if (!window.confirm('将重新执行任务；导入会跳过已确认完成且未改变的文件。中断的模型请求可能已产生费用，重新执行可能再次计费。继续吗？')) return;
+    if (!window.confirm(taskUsesFileQueue(run.kind)?'将保留已完成资料，继续原任务未完成的同步和整理。中断的模型请求可能已产生费用，继续吗？':'将重新执行任务；导入会跳过已确认完成且未改变的文件。中断的模型请求可能已产生费用，重新执行可能再次计费。继续吗？')) return;
     setRetrying(run.id);
     try {
       await api.retryRun(run.id);

@@ -1,4 +1,4 @@
-import { MEMORY_TAKE_PREFIX } from '../../pmbrain-adapters/memory-projections';
+import { MEMORY_TAKE_PREFIX } from '../../pmbrain-adapters/memory-projections.ts';
 
 /**
  * v0.31 — Dream-cycle `consolidate` phase: facts → takes promotion.
