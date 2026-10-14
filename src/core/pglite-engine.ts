@@ -39,7 +39,8 @@ import {
 } from './vector-index.ts';
 import { DELETE_BATCH_SIZE } from './engine-constants.ts';
 import { acquireLock, previousOwnerConfirmedDeadFromLock, releaseLock, type LockHandle } from './pglite-lock.ts';
-import { DatabaseAlreadyOwnedError, PgliteOpenError, isPgliteToastInconsistencyError } from './pglite-errors.ts';
+import { DatabaseAlreadyOwnedError, PgliteOpenError, isPgliteProcessStartupFailure, isPgliteToastInconsistencyError } from './pglite-errors.ts';
+import { createWithStartupDetail } from './pglite-startup-detail.ts';
 import {
   GIN_REPAIR_DB_UNUSABLE_MESSAGE,
   GinIndexUnusableError,
@@ -227,7 +228,10 @@ export function classifyPgliteInitError(
   if (isPgliteToastInconsistencyError(message)) {
     return 'toast-corrupt';
   }
-  if (/aborted\s*\(\)|RuntimeError|unreachable|abort.*runtime|macos.*26\.3|wasm.*runtime/i.test(message)) {
+  if (
+    /aborted\s*\(\)|RuntimeError|unreachable|abort.*runtime|macos.*26\.3|wasm.*runtime/i.test(message)
+    || isPgliteProcessStartupFailure(message)
+  ) {
     return 'wasm-abort';
   }
   return 'unknown';
@@ -459,18 +463,22 @@ export class PGLiteEngine implements BrainEngine {
     }
 
     const openPersistent = () => preservingProcessExitCode(() =>
-      PGlite.create({
+      createWithStartupDetail(debug => PGlite.create({
         dataDir,
         loadDataDir,
         extensions: { vector, pg_trgm },
         ...this.runtimeAssets,
-      }),
+        ...(debug ? { debug } : {}),
+      })),
     );
-    const openAfterRepair = () => preservingProcessExitCode(() => PGlite.create({
-      dataDir,
-      extensions: { vector, pg_trgm },
-      ...this.runtimeAssets,
-    }));
+    const openAfterRepair = () => preservingProcessExitCode(() =>
+      createWithStartupDetail(debug => PGlite.create({
+        dataDir,
+        extensions: { vector, pg_trgm },
+        ...this.runtimeAssets,
+        ...(debug ? { debug } : {}),
+      })),
+    );
 
     try {
       if (dataDir && shouldRepairWalBeforeFirstOpen(dataDir)) {
@@ -612,11 +620,12 @@ export class PGLiteEngine implements BrainEngine {
       await this.closeHandleKeepLock();
       const attempt = await attemptWalRepairAndRetry(
         this._dataDir,
-        () => preservingProcessExitCode(() => PGlite.create({
+        () => preservingProcessExitCode(() => createWithStartupDetail(debug => PGlite.create({
           dataDir: this._dataDir,
           extensions: { vector, pg_trgm },
           ...this.runtimeAssets,
-        })),
+          ...(debug ? { debug } : {}),
+        }))),
         walRepairOptsFromLock(this._lock),
       );
       if (attempt.status !== 'repaired') throw err;

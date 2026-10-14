@@ -330,6 +330,10 @@ export function isPgliteToastInconsistencyError(error: unknown): boolean {
     );
 }
 
+export function isPgliteProcessStartupFailure(message: string): boolean {
+  return /PGlite failed to initialize properly/i.test(message);
+}
+
 function extractErrorText(error: unknown): string {
   if (error instanceof Error) {
     const cause = (error as Error & { cause?: unknown }).cause;

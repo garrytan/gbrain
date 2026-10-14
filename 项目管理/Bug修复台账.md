@@ -1,5 +1,18 @@
 # Bug 修复台账
 
+## 2026-10-14 PMBrain 1.4.65 PGLite 启动失败被误判为 WASM 损坏
+
+- 时间：2026-10-14
+- 版本号：PMBrain 1.4.65（统一产品版本，Schema 134 未变）
+- 标题：知识库服务启动时 PGLite 报 failed to initialize properly，未进入 WAL 修复
+- 编程工具：Grok 大模型：Grok 4.7
+- 描述：用户日志先在升级冷备副本上做了 WAL 修复，随后正式库 `E:\AI\PMBrain\PGLite\brain.pglite` 打开失败。界面显示「知识库服务没有启动」和「PGLite failed to initialize its WASM runtime」，原错是 `PGlite failed to initialize properly`。此前修复只把 `Aborted()` 送去 WAL 修复，这条 Postgres 进程退出码错误被当成未知 WASM 故障，正式库没有再试修复，Postgres 自己的启动日志也被丢掉。
+- 修复：该启动失败与 `Aborted()` 走同一套有备份、失败会恢复的 WAL 修复。打开失败时再以调试方式读一次 Postgres 日志；日志若指向目录损坏或 toast 大字段损坏，仍不重置 WAL。不删除知识库、原始资料或向量。
+- 是否完成：分类与启动日志定向测试通过，Admin 发布资源已按 1.4.65 重建。用户那台机器的正式库未在本机打开，安装包未打包。
+- 最终结果：`test/pglite-init-classifier.test.ts`、`test/pglite-startup-detail.test.ts`、`test/pglite-toast-repair.test.ts` 共 41 项通过。`bun run build:admin` 完成，发布清单 `d7bee2268b4b`。正式库是否能在修复后启动，要等用户打包安装 1.4.65 后用原库验证。
+- 与规划差异：冷备副本在日志里已经修过 WAL 仍打不开，所以不能保证正式库一定能被同一修复打开。这次保证正式库会尝试修复，并把 Postgres 原因留在错误里。
+- Skill/插件与工作流：无。未运行 build:win，未改用户知识库。
+
 ## 2026-10-14 PMBrain 1.4.64 深度整理同步无进度与中断续跑缺口
 
 - 时间：2026-10-14

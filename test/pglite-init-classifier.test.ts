@@ -68,6 +68,23 @@ describe('classifyPgliteInitError', () => {
     expect(classifyPgliteInitError('EPERM: operation not permitted, open brain.pglite', 'win32')).toBe('permission');
   });
 
+  test('PGLite process exit without Aborted() still uses guarded WAL repair', () => {
+    const msg = 'PGlite failed to initialize properly';
+    expect(classifyPgliteInitError(msg, 'win32')).toBe('wasm-abort');
+    expect(buildPgliteInitErrorMessage(classifyPgliteInitError(msg, 'win32'), msg, 'win32', { repair: 'not-attempted' }))
+      .toContain('WAL/checkpoint');
+  });
+
+  test('startup log that names catalog damage is not sent to WAL reset', () => {
+    const msg = 'PGlite failed to initialize properly\nERROR: type "vector" does not exist';
+    expect(classifyPgliteInitError(msg, 'win32')).toBe('corrupt');
+  });
+
+  test('startup log that names toast damage is not sent to WAL reset', () => {
+    const msg = 'PGlite failed to initialize properly\nunexpected chunk number 3 (expected 0) for toast value 191139 in pg_toast_16852';
+    expect(classifyPgliteInitError(msg, 'win32')).toBe('toast-corrupt');
+  });
+
   test('toast chunk inconsistency is toast-corrupt and must not auto-reset WAL', () => {
     const msg = 'unexpected chunk number 3 (expected 0) for toast value 191139 in pg_toast_16852';
     expect(classifyPgliteInitError(msg, 'win32')).toBe('toast-corrupt');
