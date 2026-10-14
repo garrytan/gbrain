@@ -54,6 +54,20 @@ const EMPTY_HEADER = /:\s*(\{\}|\[\]|~|null)\s*$/i;
 const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 const canonicalJson = (v: unknown): string => JSON.stringify(v, (_k, val) => (isObject(val) ? Object.fromEntries(Object.keys(val).sort().map((k) => [k, val[k]])) : val));
 const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v ?? null)) as T;
+/** An OWN property's value (never one inherited from Object.prototype, so a `__proto__`/`constructor` segment reads as absent). */
+const ownValue = (node: Record<string, unknown>, key: string): unknown => (Object.hasOwn(node, key) ? node[key] : undefined);
+/** Define an OWN data property; defineProperty never reaches a prototype setter, so `__proto__` becomes a plain key. */
+const setOwn = (node: Record<string, unknown>, key: string, value: unknown): void => {
+  Object.defineProperty(node, key, { value, writable: true, enumerable: true, configurable: true });
+};
+/** The mapping child at `seg`, created when absent or not a mapping. */
+const childMapping = (node: Record<string, unknown>, seg: string): Record<string, unknown> => {
+  const cur = ownValue(node, seg);
+  if (isObject(cur)) return cur;
+  const fresh: Record<string, unknown> = {};
+  setOwn(node, seg, fresh);
+  return fresh;
+};
 const indentOf = (l: string): number => l.length - l.trimStart().length;
 const skippable = (l: string): boolean => /^\s*(#.*)?$/.test(l);
 const readText = (configPath: string): string => (existsSync(configPath) ? readFileSync(configPath, 'utf8') : '');
@@ -105,7 +119,7 @@ function pick(configPath: string, doc: Record<string, unknown>, path: string[]):
   for (let i = 0; i < path.length; i++) {
     if (node === undefined || node === null) return undefined;
     if (!isObject(node)) throw new Error(`${configPath}: '${path.slice(0, i).join('.')}' is not a mapping; setup leaves it untouched.`);
-    node = node[path[i]!];
+    node = ownValue(node, path[i]!);
   }
   return node === null ? undefined : node;
 }
@@ -154,8 +168,19 @@ interface Level { idx: number; indent: number; inline: string }
 
 /** `key:` line among the direct children of lines[lo, hi); the child indent is that of the first content line. */
 function findKey(configPath: string, lines: string[], lo: number, hi: number, key: string): Level | null {
-  const k = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const re = new RegExp(`^( *)(?:${k}|"${k}"|'${k}'):(?:[ \\t]+(.*))?$`);
+  // `^( *)(?:key|"key"|'key'):(?:[ \t]+(.*))?$` without building a RegExp from the key: match by string operations.
+  const re = { exec(line: string): [string, string, string | undefined] | null {
+    const indent = line.length - line.replace(/^ +/, '').length;
+    const body = line.slice(indent);
+    for (const name of [key, `"${key}"`, `'${key}'`]) {
+      if (!body.startsWith(name) || body[name.length] !== ':') continue;
+      const after = body.slice(name.length + 1);
+      if (after === '') return [line, line.slice(0, indent), undefined];
+      if (after[0] !== ' ' && after[0] !== '\t') continue;
+      return [line, line.slice(0, indent), after.replace(/^[ \t]+/, '')];
+    }
+    return null;
+  } };
   let child = -1;
   for (let i = lo; i < hi; i++) {
     if (skippable(lines[i]!)) continue;
@@ -217,7 +242,7 @@ function withEntry(doc: Record<string, unknown>, containerPath: string[], entry:
   const copy = clone(doc);
   let node: Record<string, unknown> = copy;
   const walkTo = containerPath.slice(0, 'item' in entry ? -1 : undefined);
-  for (const seg of walkTo) { if (!isObject(node[seg])) node[seg] = {}; node = node[seg] as Record<string, unknown>; }
+  for (const seg of walkTo) node = childMapping(node, seg);
   if ('item' in entry) {
     const leaf = containerPath[containerPath.length - 1]!;
     node[leaf] = [...(Array.isArray(node[leaf]) ? (node[leaf] as unknown[]) : []), clone(entry.item)];

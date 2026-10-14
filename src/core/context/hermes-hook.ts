@@ -87,6 +87,16 @@ export function readHermesStdin(io: { stdin?: string }, hardMs: number, opts: { 
 
 const lastMatch = (raw: string, re: RegExp): RegExpExecArray | null => { let m: RegExpExecArray | null = null; for (const x of raw.matchAll(re)) m = x; return m; };
 const jsonString = (m: RegExpExecArray | null): string | undefined => { if (!m) return undefined; try { return JSON.parse(m[1]!) as string; } catch { return undefined; } };
+/** The payload string fields recovered from a torn payload: literal patterns (fresh /g instance per use, since lastIndex is stateful). */
+type HermesPayloadField = 'user_message' | 'hook_event_name' | 'session_id' | 'cwd' | 'platform' | 'parent_session_id';
+const FIELD_RES: Record<HermesPayloadField, () => RegExp> = {
+  user_message: () => /"user_message"\s*:\s*("(?:[^"\\]|\\.)*")/g,
+  hook_event_name: () => /"hook_event_name"\s*:\s*("(?:[^"\\]|\\.)*")/g,
+  session_id: () => /"session_id"\s*:\s*("(?:[^"\\]|\\.)*")/g,
+  cwd: () => /"cwd"\s*:\s*("(?:[^"\\]|\\.)*")/g,
+  platform: () => /"platform"\s*:\s*("(?:[^"\\]|\\.)*")/g,
+  parent_session_id: () => /"parent_session_id"\s*:\s*("(?:[^"\\]|\\.)*")/g,
+};
 
 /**
  * The payload object from Hermes' stdin text. A whole-document JSON.parse first; if that fails (the read was cut by the
@@ -103,7 +113,7 @@ export function parseHermesStdin(raw: string): Record<string, unknown> | null {
     return null;
   } catch { /* fall through to field extraction */ }
   if (!raw.trimStart().startsWith('{')) return null;
-  const field = (name: string) => new RegExp(`"${name}"\\s*:\\s*("(?:[^"\\\\]|\\\\.)*")`, 'g');
+  const field = (name: HermesPayloadField): RegExp => FIELD_RES[name]();
   const user = jsonString(field('user_message').exec(raw));
   if (user === undefined) return null;
   const first = lastMatch(raw, /"is_first_turn"\s*:\s*(true|false)/g);
