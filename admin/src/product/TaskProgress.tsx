@@ -4,6 +4,7 @@ import type { ConsoleRun } from '../lib/shared';
 import { taskName } from '../../../shared/task-progress';
 import './tasks.css';
 import { TaskRelationsDetails } from './TaskRelations';
+import { OPEN_CONVERSATION_KEY } from './home-model';
 import { taskStopping, taskStatus, taskPercent, taskRoundCompleted, taskRoundSummary, taskHasRemaining } from './task-presentation';
 
 export { taskStopping, taskStatus } from './task-presentation';
@@ -20,6 +21,7 @@ export function TaskProgressCard({ run, link = true, timeline = false }: { run: 
   const [now,setNow]=useState(Date.now);
   useEffect(()=>{if(!active)return;const timer=setInterval(()=>setNow(Date.now()),1000);return()=>clearInterval(timer);},[active]);
   const elapsed = run.durationMs === null ? null : Math.max(0, Math.floor(run.durationMs / 1000));
+  const assistantConversation = run.kind === 'assistant_task' ? (run.result as { conversationId?: string } | undefined)?.conversationId : undefined;
   return <section className={`product-task-progress${active ? ' task-is-active' : ''}${timeline ? ' product-task-timeline' : ''}`} aria-label={`${view?.name ?? taskName(run.kind)}进度`}>
     <header><div><h3>{view?.name ?? taskName(run.kind)}</h3><p>{view?.file ?? (run.trigger === 'scheduled' ? '自动任务' : '后台任务')}</p></div><span className={`product-task-state state-${run.status}`}>{taskStatus(run)}</span></header>
     {!roundCompleted && <><div className="product-task-current" role="status"><b>{taskStopping(run) ? view?.stage==='停止当前操作并恢复数据库'?view.stage:'正在停止并回滚当前操作' : run.status === 'failed' ? '任务未完成' : run.status === 'cancelled' ? '任务已停止' : view?.stage ?? (active ? '正在处理' : '任务完成')}</b><span>{percent != null ? `${percent}%` : active ? '进行中' : ''}</span></div>
@@ -52,6 +54,6 @@ export function TaskProgressCard({ run, link = true, timeline = false }: { run: 
     {view?.detail && (!roundCompleted||!/^部分完成[,，]/.test(view.detail)) && <p className="product-task-caption">{view.detail}</p>}
     {view?.errorReason && !roundCompleted && <p className="product-task-error" role="alert">{view.errorReason}</p>}
     {run.status === 'cancelled' && <p className="product-task-caption">已完成的内容会保留。</p>}
-    <footer>{elapsed !== null && <small>耗时 {elapsed < 60 ? `${elapsed} 秒` : `${Math.floor(elapsed / 60)} 分 ${elapsed % 60} 秒`}</small>}{link && <button type="button" onClick={() => taskLink(run)}>查看任务</button>}</footer>
+    <footer>{elapsed !== null && <small>耗时 {elapsed < 60 ? `${elapsed} 秒` : `${Math.floor(elapsed / 60)} 分 ${elapsed % 60} 秒`}</small>}{assistantConversation && <button type="button" onClick={() => { sessionStorage.setItem(OPEN_CONVERSATION_KEY, assistantConversation); window.location.hash = 'assistant'; }}>打开任务对话</button>}{link && <button type="button" onClick={() => taskLink(run)}>查看任务</button>}</footer>
   </section>;
 }

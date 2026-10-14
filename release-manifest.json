@@ -2,19 +2,19 @@
   "schemaVersion": 1,
   "product": "PMBrain",
   "core": {
-    "version": "1.4.64"
+    "version": "1.4.67"
   },
   "desktop": {
-    "version": "1.4.64"
+    "version": "1.4.67"
   },
   "admin": {
-    "buildSha256": "1d2b344ee8b58ac869d750fd2fac3409e1c88fb18fb966e44e5c9501101ad272",
+    "buildSha256": "e0b663379d41911c339375d02a9a8b2d51972ed4ee090229671ee3371cc78b84",
     "assetCount": 47
   },
   "database": {
     "latestSchemaVersion": 134
   },
   "sidecar": {
-    "version": "1.4.64"
+    "version": "1.4.67"
   }
 }

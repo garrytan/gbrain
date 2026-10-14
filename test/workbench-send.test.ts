@@ -4,7 +4,7 @@ import { filePayload } from '../admin/src/workbench/composer-attachments';
 import { mergePolledConversation } from '../admin/src/workbench/useWorkbench';
 import type { WorkbenchConversation } from '../shared/workbench';
 
-function sendHarness(failMessage = false, serviceReady = true, databaseReady = true, knowledge = false) {
+function sendHarness(failMessage = false, serviceReady = true, databaseReady = true, knowledge = false, assistantId = 'main') {
   const source = readFileSync(new URL('../admin/src/workbench/useWorkbench.ts', import.meta.url), 'utf8');
   const code = new Bun.Transpiler({ loader: 'ts' }).transformSync(source.slice(source.indexOf('  const send ='), source.indexOf('  const action =')));
   const requests: string[] = [];
@@ -13,6 +13,7 @@ function sendHarness(failMessage = false, serviceReady = true, databaseReady = t
   const env = {
     pending: false, running: false, conversation: undefined, model: 'local', knowledge, serviceReady, databaseReady,
     active: { current: undefined as string | undefined }, setPending: () => {}, setError: () => {},
+    assistantRef: { current: assistantId },
     setConversation: (value: any) => { current = value; },
     refresh: async () => { throw new Error('列表刷新失败'); },
     filePayload,
@@ -31,6 +32,26 @@ function sendHarness(failMessage = false, serviceReady = true, databaseReady = t
   const send = new Function(...Object.keys(env), `${code}; return send;`)(...Object.values(env));
   return { send, requests, bodies, env, current: () => current };
 }
+
+test('新对话绑定选中的助手，发送完成后列表失败仍保留这段对话', async () => {
+  const run = sendHarness(false, true, true, true, 'weekly-specialist');
+  expect(await run.send('写周报')).toBe('thread');
+  expect(run.bodies[0].assistantId).toBe('weekly-specialist');
+  expect(run.requests.some(path => path.startsWith('DELETE'))).toBe(false);
+});
+
+test('打开助手的旧对话时使用有效模型，已删除的模型按原选择规则处理', async () => {
+  const source = readFileSync(new URL('../admin/src/workbench/useWorkbench.ts', import.meta.url), 'utf8');
+  const code = new Bun.Transpiler({ loader: 'ts' }).transformSync(source.slice(source.indexOf('  const select ='), source.indexOf('  const send =')));
+  let selectedModel = ''; let selectedAssistant = '';
+  const { rememberedChatModel } = await import('../admin/src/workbench/chat-model');
+  const env = { active: { current: undefined as string | undefined }, setConversation: () => {}, setError: () => {}, setPending: () => {}, setKnowledge: () => {}, assistantRef: { current: 'main' }, setAssistantId: (id: string) => { selectedAssistant = id; }, agents: [{ id: 'weekly', model: 'configured' }], setAssistant: () => {}, setModel: (id: string) => { selectedModel = id; }, settingsModel: { current: '' }, defaultModel: { current: 'configured' }, modelsRef: { current: [{ id: 'configured' }, { id: 'previous' }] }, rememberedChatModel, workbenchRequest: async () => ({ id: 'history', assistantId: 'weekly', model: 'removed', knowledge: true }) };
+  const select = new Function(...Object.keys(env), `${code}; return select;`)(...Object.values(env));
+  await select('history'); expect(selectedModel).toBe('configured'); expect(selectedAssistant).toBe('weekly');
+  env.workbenchRequest = async () => ({ id: 'history', assistantId: 'weekly', model: 'previous', knowledge: true });
+  const valid = new Function(...Object.keys(env), `${code}; return select;`)(...Object.values(env));
+  await valid('history'); expect(selectedModel).toBe('previous');
+});
 
 test('发送已成功而列表刷新失败时，不删除会话并返回这个会话', async () => {
   const run = sendHarness();

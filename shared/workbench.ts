@@ -76,6 +76,7 @@ export interface WorkbenchMessage {
   stopReason?: 'end' | 'length' | 'other';
   toolCalls?: WorkbenchToolCall[];
   memory?: WorkbenchMemory;
+  artifacts?: Array<{ id: string; title: string; format: 'markdown' | 'docx' }>;
 }
 export interface WorkbenchConversation {
   id: string;
@@ -88,6 +89,8 @@ export interface WorkbenchConversation {
   summary?: string;
   summaryUntil?: string;
   sourceId?: string;
+  assistantId?: string;
+  taskKey?: string;
   revisions?: Array<{ id: string; createdAt: string; reason: 'edit' | 'retry'; messages: WorkbenchMessage[] }>;
 }
 export interface WorkbenchModel { id: string; name: string; contextWindow?: number; vision?: boolean }

@@ -353,6 +353,8 @@ async function execute(task: ProductTask, kind: BrainEngine['kind']) {
       }));
     }
     result = { results, errors: results.filter(row => ['blocked_by_failures', 'partial'].includes(row.status)).length };
+  } else if (task.type === 'assistant') {
+    throw new Error('助手任务由工作台执行器处理');
   } else {
     result = { ...await runEmbedCore(engine, {
       stale: true, forceReembed: task.input.forceReembed,

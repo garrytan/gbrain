@@ -4,6 +4,7 @@ import { filePayload } from './composer-attachments';
 import { CHAT_MODEL_DEFAULT_KEY, CHAT_MODEL_EVENT, CHAT_MODEL_KEY, rememberChatModel, rememberedChatModel } from './chat-model';
 import { productFetch } from '../lib/product-fetch';
 import {useProductTasks} from '../product/TaskActivity';
+import type { WorkbenchAgent } from '../../../shared/workbench-agents';
 
 type ConversationRow = Omit<WorkbenchConversation, 'messages'> & { messageCount: number; running: boolean };
 export async function workbenchRequest<T>(path: string, body?: unknown, method = body === undefined ? 'GET' : 'POST'): Promise<T> {
@@ -44,6 +45,9 @@ export function useWorkbench({ serviceReady = true, databaseReady = true }: { se
   const [model, setModel] = useState('');
   const [knowledge, setKnowledge] = useState(true);
   const [assistant, setAssistant] = useState<KnowledgeAssistantSettings>(defaultAssistant);
+  const [agents, setAgents] = useState<WorkbenchAgent[]>([]);
+  const [assistantId, setAssistantId] = useState('main');
+  const assistantRef = useRef('main');
   const [error, setError] = useState('');
   const [pending, setPending] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -55,8 +59,8 @@ export function useWorkbench({ serviceReady = true, databaseReady = true }: { se
   const settingsModel = useRef('');
   modelsRef.current = models;
   const refresh = async () => {
-    const result = await workbenchRequest<{ conversations: ConversationRow[] }>('/conversations');
-    if (mounted.current) setRows(result.conversations);
+    const [result, profiles] = await Promise.all([workbenchRequest<{ conversations: ConversationRow[] }>('/conversations'), workbenchRequest<{ agents: WorkbenchAgent[] }>('/agents')]);
+    if (mounted.current) { setRows(result.conversations); setAgents(profiles.agents); const chosen = profiles.agents.find(agent => agent.id === assistantRef.current); if (chosen) setAssistant(chosen); }
   };
   useEffect(() => {
     if (!serviceReady) return;
@@ -66,6 +70,7 @@ export function useWorkbench({ serviceReady = true, databaseReady = true }: { se
     const remembered = () => { try { const savedDefault = localStorage.getItem(CHAT_MODEL_DEFAULT_KEY); return savedDefault === null || savedDefault === defaultModel.current ? localStorage.getItem(CHAT_MODEL_KEY) || '' : ''; } catch { return ''; } };
     const fail = (reason: unknown) => { if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason)); };
     void Promise.allSettled([
+      workbenchRequest<{ agents: WorkbenchAgent[] }>('/agents').then(result => { if (!cancelled) { setAgents(result.agents); const chosen = result.agents.find(agent => agent.id === assistantRef.current); if (chosen) setAssistant(chosen); } }).catch(fail),
       workbenchRequest<{ conversations: ConversationRow[] }>('/conversations').then(history => { if (!cancelled) setRows(history.conversations); }).catch(fail),
       workbenchRequest<{ models: WorkbenchModel[]; defaultModel?: string }>('/models').then(available => {
         if (cancelled || revision !== 0) return;
@@ -75,6 +80,7 @@ export function useWorkbench({ serviceReady = true, databaseReady = true }: { se
       }).catch(fail),
       workbenchRequest<KnowledgeAssistantSettings>('/assistant').then(settings => {
         if (cancelled) return;
+        if (assistantRef.current !== 'main') return;
         setAssistant(settings); if (!active.current) setKnowledge(settings.knowledge); settingsModel.current = settings.model || '';
         setModel(current => rememberedChatModel(selectionRevision.current === initialSelection ? remembered() : current, settingsModel.current || defaultModel.current, modelsRef.current.map(item => item.id)));
       }).catch(fail),
@@ -125,7 +131,7 @@ export function useWorkbench({ serviceReady = true, databaseReady = true }: { se
     active.current = id; setConversation(undefined); setError('');
     if (!id) return;
     setPending(true);
-    try { const next = await workbenchRequest<WorkbenchConversation>(`/conversations/${id}`); if (active.current === id) { setConversation(next); setKnowledge(next.knowledge); } }
+    try { const next = await workbenchRequest<WorkbenchConversation>(`/conversations/${id}`); if (active.current === id) { setConversation(next); setKnowledge(next.knowledge); const agentId = next.assistantId ?? 'main'; assistantRef.current = agentId; setAssistantId(agentId); const profile = agents.find(agent => agent.id === agentId); if (profile) { setAssistant(profile); settingsModel.current = profile.model; } setModel(rememberedChatModel(next.model, settingsModel.current || defaultModel.current, modelsRef.current.map(model => model.id))); } }
     catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
     finally { setPending(false); }
   };
@@ -136,7 +142,7 @@ export function useWorkbench({ serviceReady = true, databaseReady = true }: { se
     let createdId: string | undefined;
     try {
       let id = conversation?.id;
-      if (!id) { const created = await workbenchRequest<WorkbenchConversation>('/conversations', { model, knowledge: useKnowledge }); id = created.id; createdId = id; active.current = id; setConversation(created); }
+      if (!id) { const created = await workbenchRequest<WorkbenchConversation>('/conversations', { model, knowledge: useKnowledge, assistantId: assistantRef.current }); id = created.id; createdId = id; active.current = id; setConversation(created); }
       const attachments = files ? await Promise.all(files.map(file => filePayload(file))) : undefined;
       const attachmentFields = editMessageId
         ? { editMessageId, attachments: attachments ?? [], attachmentsHydrated }
@@ -180,5 +186,14 @@ export function useWorkbench({ serviceReady = true, databaseReady = true }: { se
     return saved;
   };
   const chooseModel = (id: string) => { selectionRevision.current++; setModel(id); rememberChatModel(id, defaultModel.current); };
-  return { rows, models, modelsLoaded, conversation, model, setModel: chooseModel, knowledge: knowledge && databaseReady, setKnowledge, assistant, saveAssistant, error, setError, loaded, pending, running, select, send, action };
+  const selectAgent = async (id: string) => {
+    const chosen = agents.find(agent => agent.id === id); if (!chosen) return;
+    assistantRef.current = id; setAssistantId(id); setAssistant(chosen); settingsModel.current = chosen.model;
+    if (chosen.model) setModel(chosen.model); setKnowledge(chosen.knowledge); await select();
+  };
+  const saveAgent = async (value: WorkbenchAgent) => {
+    const saved = await workbenchRequest<WorkbenchAgent>(`/agents/${value.id}`, value, 'PUT');
+    await refresh(); setAssistant(saved); if (saved.model) setModel(saved.model); if (!conversation) setKnowledge(saved.knowledge); return saved;
+  };
+  return { rows: rows.filter(row => (row.assistantId ?? 'main') === assistantId), allRows: rows, agents, assistantId, selectAgent, saveAgent, refresh, models, modelsLoaded, conversation, model, setModel: chooseModel, knowledge: knowledge && databaseReady, setKnowledge, assistant, saveAssistant, error, setError, loaded, pending, running, select, send, action };
 }

@@ -7,6 +7,7 @@ const SettingsPage = React.lazy(() => import('../pages/Settings').then(module =>
 const AppearanceSettings = React.lazy(() => import('../pages/Settings').then(module => ({ default: module.AppearanceSettings })));
 import { desktopApi } from '../lib/product-fetch';
 import { applyThemeMode, readThemeMode, storeThemeMode, type ThemeMode } from '../lib/theme';
+import { useDesktopTheme } from '../lib/use-desktop-theme';
 import type { SidecarState, StartupProgress } from '../../../desktop/src/preload/index';
 import type { UpdateState } from '../../../shared/contracts/updates';
 import { PRODUCT_VERSION } from './product-version';
@@ -42,6 +43,7 @@ const desktopPanels = [ 'basic', 'integrations', 'system', 'updates', 'repair', 
 const currentPage = () => window.location.hash.replace(/^#/, '').split('?')[0] || 'home';
 const settingKey = (page: string) => page.startsWith('settings-') ? page.slice(9) : 'models';
 const shellPages = new Set(['home', 'create', 'assistant', 'import', 'docs', 'knowledge-import']);
+const legacyMobileQuery = '(max-width: 767px) and (hover: none) and (pointer: coarse)';
 const primaryNav = [
   [Home, '首页', 'home'],
   [Database, '知识库', 'data'],
@@ -55,8 +57,8 @@ const primaryNav = [
 export function ProductApp() {
   const desktop = desktopApi();
   const [page, setPage] = useState(currentPage);
-  const [legacyMobile] = useState(() => !desktop && window.matchMedia('(max-width: 767px)').matches);
-  const [theme, setTheme] = useState<ThemeMode>(() => desktop ? 'dark' : readThemeMode());
+  const [legacyMobile, setLegacyMobile] = useState(() => !desktop && window.matchMedia(legacyMobileQuery).matches);
+  const [theme, setTheme] = useState<ThemeMode>(readThemeMode);
   const [service, setService] = useState<SidecarState | null>(null);
   const availability = useServiceAvailability(service?.phase);
   const [needsSetup, setNeedsSetup] = useState<boolean | null>(desktop ? null : false);
@@ -64,7 +66,7 @@ export function ProductApp() {
   const [update, setUpdate] = useState<UpdateState | null>(null);
   const [stateError, setStateError] = useState('');
   const [filter, setFilter] = useState('');
-  const [collapsed, setCollapsed] = useState(() => localStorage.getItem(NAV_COLLAPSED_KEY) !== '0');
+  const [collapsed, setCollapsed] = useState(() => localStorage.getItem(NAV_COLLAPSED_KEY) === '1');
   const [maintenanceOpen, setMaintenanceOpen] = useState(false);
   const [healthOpen, setHealthOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
@@ -114,6 +116,14 @@ export function ProductApp() {
   const mode = libraryMode(Boolean(desktop), needsSetup);
   const maintenance = maintenanceView({ startup, servicePhase: service?.phase ?? null, updatePhase: update?.phase ?? null, updateMessage: update?.message, needsSetup: needsSetup === true });
   useEffect(() => {
+    if (desktop) return;
+    const query = window.matchMedia(legacyMobileQuery);
+    const updateMobile = () => setLegacyMobile(query.matches);
+    updateMobile();
+    query.addEventListener('change', updateMobile);
+    return () => query.removeEventListener('change', updateMobile);
+  }, [desktop]);
+  useEffect(() => {
     if (legacyMobile) return;
     const updatePage = () => {
       const next = currentPage();
@@ -127,6 +137,7 @@ export function ProductApp() {
     return () => { window.removeEventListener('hashchange', updatePage); window.removeEventListener('pmbrain:open-import', openImport); };
   }, [legacyMobile]);
   useEffect(() => applyThemeMode(theme), [theme]);
+  useDesktopTheme(!desktop && !legacyMobile && page !== 'login', setTheme, page);
   useEffect(() => {
     if (!healthOpen) return;
     const close = () => setHealthOpen(false);
@@ -172,8 +183,8 @@ export function ProductApp() {
   const showEmbedded = ready && !isSettings && !shellPages.has(page) && !menuMcp;
   const status = maintenance.visible
     ? <StatusChip kind="busy" label={maintenance.title} onClick={() => setMaintenanceOpen(true)} />
-    : Boolean(desktop) && mode === 'ready' && availability.databaseReady
-      ? <span className="home-health-anchor"><StatusChip kind="ready" label="知识库 · 正常" onClick={() => setHealthOpen(open => !open)} />{healthOpen && <div className="home-health-menu" onClick={event => event.stopPropagation()}><p>本机知识库服务正在运行。</p><button type="button" onClick={() => { setHealthOpen(false); navigate('settings-system'); }}>打开系统设置</button></div>}</span>
+    : mode === 'ready' && availability.databaseReady
+      ? <span className="home-health-anchor"><StatusChip kind="ready" label="知识库 · 正常" onClick={() => setHealthOpen(open => !open)} />{healthOpen && <div className="home-health-menu" onClick={event => event.stopPropagation()}><p>知识库服务正在运行。</p><button type="button" onClick={() => { setHealthOpen(false); navigate(desktop ? 'settings-system' : 'settings-knowledge'); }}>{desktop ? '打开系统设置' : '打开知识库设置'}</button></div>}</span>
       : ready && mode === 'ready' ? <StatusChip kind="busy" label="知识库正在准备" onClick={() => setMaintenanceOpen(true)} /> : null;
   return <TaskActivityProvider enabled={ready && needsSetup !== true}><React.Suspense fallback={<p className="pm-empty" role="status">正在打开页面…</p>}><div className={`product-app ${isSettings ? 'settings-open' : ''} ${collapsed ? 'nav-collapsed' : ''}`}>
     <aside className="product-nav" hidden={isSettings}>

@@ -1,15 +1,20 @@
 import React,{useEffect,useState} from 'react';
-import { BookOpen, User } from 'lucide-react';
+import { BookOpen, User, FileText, Download } from 'lucide-react';
+import type { WorkbenchAgent } from '../../../shared/workbench-agents';
 import type { WorkbenchMessage } from '../../../shared/workbench';
 import { MarkdownArticle } from '../pages/Documentation';
 import { CopyButton } from '../lib/clipboard';
 import { ToolActivity } from './ToolActivity';
 import { workbenchRequest } from './useWorkbench';
+import { downloadArtifact, ArtifactPreview } from './Artifacts';
+import { AgentCards } from './AgentCards';
 
-export function Message({ message, assistantName, assistantEmoji, canRetry, onRetry, canEdit, onEdit }: { message: WorkbenchMessage; assistantName: string; assistantEmoji: string; canRetry: boolean; onRetry: () => void; canEdit?: boolean; onEdit?: () => void }) {
+export function Message({ message, assistantName, assistantEmoji, canRetry, onRetry, canEdit, onEdit, agents, onAgent, onConversation }: { message: WorkbenchMessage; assistantName: string; assistantEmoji: string; canRetry: boolean; onRetry: () => void; canEdit?: boolean; onEdit?: () => void; agents?: WorkbenchAgent[]; onAgent?: (id: string) => void; onConversation?: (id: string) => void }) {
   const modelLabel = message.modelName || message.model;
   const [now,setNow]=useState(Date.now());
   const [origins,setOrigins]=useState<Record<number,string>>({});
+  const [preview, setPreview] = useState<string>();
+  const [artifactError, setArtifactError] = useState('');
   useEffect(()=>{if(message.status!=='running')return;const timer=setInterval(()=>setNow(Date.now()),1000);return()=>clearInterval(timer);},[message.status]);
   const waitingSeconds=message.request?Math.max(0,Math.floor((now-Date.parse(message.request.startedAt))/1000)):0;
   return <article className={`wb-message wb-${message.role}`} aria-label={message.role === 'user' ? '你的消息' : '助手回答'}>
@@ -20,6 +25,10 @@ export function Message({ message, assistantName, assistantEmoji, canRetry, onRe
       {message.status === 'running' && <p className="wb-progress" role="status"><i />{message.stage || '正在生成回答…'}{message.request&&waitingSeconds>=5?` · 已等待 ${waitingSeconds} 秒`:''}</p>}
       {message.status === 'error' && <p className="wb-error" role="alert">{message.error}</p>}
       {message.status === 'cancelled' && <p className="wb-muted">已停止生成，可以重试或继续提问。</p>}
+      {agents && onAgent && onConversation && <AgentCards calls={message.toolCalls ?? []} agents={agents} onAgent={onAgent} onConversation={onConversation} />}
+      {!!message.artifacts?.length && <div className="wb-deliverables">{message.artifacts.map(item => <div className="wb-artifact-card" key={item.id}><button className="wb-artifact-open" aria-label={`预览 ${item.title}`} onClick={() => setPreview(item.id)}><FileText size={24} /><span><strong>{item.title}</strong><small>{item.format === 'docx' ? 'Word 文档' : 'Markdown'} · 点击预览</small></span></button><button aria-label={`下载 ${item.title}`} title="下载文件" onClick={() => { setArtifactError(''); void downloadArtifact(item.id).catch(error => setArtifactError(String(error))); }}><Download size={16} /></button></div>)}</div>}
+      {artifactError && <p className="wb-error" role="alert">{artifactError}</p>}
+      {preview && <ArtifactPreview key={preview} id={preview} onClose={() => setPreview(undefined)} />}
       {message.stopReason === 'length' && message.status === 'complete' && <p className="wb-notice">回答因模型长度限制未能一次写完。你可以发送「继续」接着写。</p>}
       {!!message.citations?.length && <details className="wb-citations"><summary><BookOpen size={14} />参考了 {message.citations.length} 条知识与记忆</summary>{message.citations.map((citation, index) => <div key={`${citation.sourceId}/${citation.slug}/${citation.factId??''}`}><b>[{index + 1}] {citation.title}</b><small>{citation.kind==='memory'?'已保存的记忆':`${citation.sourceId} / ${citation.slug}`}</small><p>{citation.snippet}</p>{citation.kind==='memory'&&citation.conversationId&&citation.messageId&&<><button type="button" onClick={()=>void workbenchRequest<{text:string;createdAt:string}>(`/conversations/${citation.conversationId}/memory/${citation.messageId}${citation.memoryHash?`?hash=${citation.memoryHash}`:''}`).then(result=>setOrigins(old=>({...old,[index]:`${new Date(result.createdAt).toLocaleString()}\n${result.text}`}))).catch(reason=>setOrigins(old=>({...old,[index]:String(reason)})))}>查看对话出处</button>{origins[index]&&<p>{origins[index]}</p>}</>}</div>)}</details>}
       {message.memory&&['pending','queued','running'].includes(message.memory.status)&&<p className="wb-muted" role="status">正在后台沉淀对话记忆…</p>}

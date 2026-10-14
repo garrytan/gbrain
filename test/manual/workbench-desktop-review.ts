@@ -1,0 +1,26 @@
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
+import { spawn } from 'node:child_process';
+
+const previewLog = process.argv[2];
+if (!previewLog) throw new Error('需要本轮隔离助手预览日志路径');
+const preview = JSON.parse([...readFileSync(previewLog, 'utf8').matchAll(/PREVIEW (\{[^\n]+\})/g)].at(-1)![1]!);
+const previewConfig = JSON.parse(readFileSync(join(preview.root, '.pmbrain', 'config.json'), 'utf8'));
+const baseUrl = previewConfig.provider_base_urls?.['service-preview'];
+if (!baseUrl || new URL(baseUrl).hostname !== 'localhost' && new URL(baseUrl).hostname !== '127.0.0.1') throw new Error('桌面演示只使用本轮本机协议夹具');
+const desktopRoot = resolve('desktop');
+const executable = join(desktopRoot, 'node_modules', 'electron', 'dist', 'electron.exe');
+if (!existsSync(executable) || !existsSync(join(desktopRoot, 'out', 'main', 'index.js'))) throw new Error('当前源码桌面资源尚未准备');
+const root = mkdtempSync(join(tmpdir(), 'pmbrain-desktop-review-'));
+const configRoot = join(root, '.pmbrain'); const materials = join(root, 'materials'); mkdirSync(configRoot); mkdirSync(materials);
+writeFileSync(join(materials, '本周工作.md'), '2026-10-14：完成需求评审，确认三项修改。项目方案正在编写。下周计划上线，尚未完成上线。');
+const version = JSON.parse(readFileSync(join(desktopRoot, 'package.json'), 'utf8')).version;
+writeFileSync(join(configRoot, 'config.json'), JSON.stringify({ ...previewConfig, database_path: join(configRoot, 'brain.pglite'), embedding_disabled: true, desktop: { setup_completed: true, knowledge_directory: materials, knowledge_source_id: 'default', last_migrated_version: version, theme: 'light', network_mode: 'local', close_behavior: 'quit', start_minimized: false } }));
+const env = { ...process.env, PMBRAIN_HOME: root, PMBRAIN_E2E: '1' };
+for (const key of ['GBRAIN_HOME', 'GBRAIN_SOURCE', 'GBRAIN_BRAIN_ID', 'GBRAIN_MOUNTS_PATH', 'DATABASE_URL', 'PMBRAIN_DATABASE_URL', 'GBRAIN_DATABASE_URL', 'ELECTRON_RENDERER_URL', 'ELECTRON_RUN_AS_NODE']) delete env[key as keyof typeof env];
+const child = spawn(executable, [`--user-data-dir=${join(root, 'electron-user-data')}`, desktopRoot], { cwd: resolve('.'), env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: false });
+child.stdout?.on('data', data => process.stdout.write(data)); child.stderr?.on('data', data => process.stderr.write(data));
+writeFileSync(join(root, 'review.json'), JSON.stringify({ root, version, pid: child.pid, executable, materials, codeRoot: desktopRoot }));
+console.log(`DESKTOP ${JSON.stringify({ root, version, pid: child.pid, executable, materials })}`);
+child.once('exit', code => process.exit(code ?? 1));

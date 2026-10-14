@@ -99,10 +99,10 @@ describe('首页按有没有知识库区分，并接上现有能力', () => {
     expect(read('admin/src/workbench/Workbench.tsx')).toContain('pmbrain:open-conversation');
   });
 
-  test('菜单默认收起，两个 MCP 页对调，对话模型记住上次选择，停止按钮是蓝色', () => {
+  test('菜单默认展开且保留手动折叠，两个 MCP 页对调，对话模型记住上次选择，停止按钮是蓝色', () => {
     const app = read('admin/src/product/ProductApp.tsx');
     const workbench = read('admin/src/workbench/useWorkbench.ts');
-    expect(app).toContain("localStorage.getItem(NAV_COLLAPSED_KEY) !== '0'");
+    expect(app).toContain("localStorage.getItem(NAV_COLLAPSED_KEY) === '1'");
     expect(app).toContain('menuMcp');
     expect(app).toContain("menuMcp ? 'integrations'");
     expect(app).toContain("category === 'integrations'");

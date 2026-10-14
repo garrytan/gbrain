@@ -53,11 +53,15 @@ describe('Admin GUI update contract', () => {
   });
 
   test('admin theme supports a browser override with desktop fallback', () => {
+    const sharedTheme = readFileSync(join(process.cwd(), 'admin/src/lib/use-desktop-theme.ts'), 'utf8');
+    const product = readFileSync(join(process.cwd(), 'admin/src/product/ProductApp.tsx'), 'utf8');
     expect(normalizeThemeMode('light')).toBe('light');
     expect(normalizeThemeMode('system')).toBe('system');
     expect(resolveTheme(normalizeThemeMode('system'), true)).toBe('dark');
-    expect(appSource).toContain('api.theme()');
-    expect(appSource).toContain('readStoredThemeMode() === null');
+    expect(sharedTheme).toContain('api.theme()');
+    expect(sharedTheme).toContain('readStoredThemeMode() === null');
+    expect(appSource).toContain('useDesktopTheme(!embedded');
+    expect(product).toContain('useDesktopTheme(!desktop');
     expect(appSource).toContain('storeThemeMode(mode)');
     expect(settingsSource).toContain('onThemeModeChange(value)');
     expect(settingsSource).not.toContain('请在 PMBrain 桌面端修改界面主题');

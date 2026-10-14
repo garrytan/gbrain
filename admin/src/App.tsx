@@ -3,12 +3,11 @@ import type { SettingsSection } from './pages/Settings';
 import { api } from './api';
 import {
   applyThemeMode,
-  normalizeThemeMode,
-  readStoredThemeMode,
   readThemeMode,
   storeThemeMode,
   type ThemeMode,
 } from './lib/theme';
+import { useDesktopTheme } from './lib/use-desktop-theme';
 import {
   Activity, BookOpenText, Bot, BrainCircuit, Cable,
   Database, FileClock, FolderKanban, HeartHandshake, LayoutDashboard, ListTodo,
@@ -148,30 +147,7 @@ export function App({ embedded = false }: { embedded?: boolean } = {}) {
     if (!embedded) return applyThemeMode(themeMode);
   }, [themeMode, embedded]);
 
-  useEffect(() => {
-    if (embedded || page === 'login') return;
-    let active = true;
-    const syncDesktopTheme = () => {
-      void api.theme()
-        .then((result) => {
-          if (active && readStoredThemeMode() === null) {
-            setThemeMode(normalizeThemeMode((result as { source?: unknown }).source));
-          }
-        })
-        .catch(() => undefined);
-    };
-    const onVisibility = () => {
-      if (document.visibilityState === 'visible') syncDesktopTheme();
-    };
-    syncDesktopTheme();
-    window.addEventListener('focus', syncDesktopTheme);
-    document.addEventListener('visibilitychange', onVisibility);
-    return () => {
-      active = false;
-      window.removeEventListener('focus', syncDesktopTheme);
-      document.removeEventListener('visibilitychange', onVisibility);
-    };
-  }, [page, embedded]);
+  useDesktopTheme(!embedded && page !== 'login', setThemeMode, page);
 
   const navigate = (target: string) => {
     window.location.hash = target;

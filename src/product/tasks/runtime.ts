@@ -61,7 +61,7 @@ function toRun(job: MinionJob, stopping = false): ConsoleRun {
     startedAt: (job.started_at ?? job.created_at).toISOString(),
     completedAt: job.finished_at?.toISOString() ?? null,
     durationMs: job.finished_at ? job.finished_at.getTime() - (job.started_at ?? job.created_at).getTime() : null,
-    result: job.result ?? progress.result,
+    result: task?.type === 'assistant' ? { assistantId: task.input.assistantId, conversationId: task.input.conversationId, ...((job.result ?? progress.result) as Record<string, unknown> ?? {}) } : job.result ?? progress.result,
   };
 }
 
@@ -98,6 +98,14 @@ export class ProductTaskRuntime {
   private externalPressure=false;
   private reclaiming:Promise<void>|null=null;
   private workbenchMemory?: WorkbenchMemoryCoordinator;
+  private workbenchAssistant?: (input: import('../workbench/agent-tasks').WorkbenchAssistantTask, context: MinionJobContext) => Promise<unknown>;
+  private closeWorkbenchAssistant?: () => void;
+  attachWorkbenchAssistant(execute: NonNullable<ProductTaskRuntime['workbenchAssistant']>, close: () => void) {
+    this.closeWorkbenchAssistant?.(); this.workbenchAssistant = execute; this.closeWorkbenchAssistant = close;
+  }
+  async submitAssistant(input: import('../workbench/agent-tasks').WorkbenchAssistantTask, key: string, scheduled = false) {
+    return this.submit({ type: 'assistant', input }, 'assistant_task', key, scheduled ? 'scheduled' : 'manual');
+  }
   attachWorkbenchMemory(store: WorkbenchStore) {
     this.workbenchMemory?.close();
     this.workbenchMemory = new WorkbenchMemoryCoordinator(this.engine, store, (input, key) => this.submitMemory(input, key), id => this.getRun(id));
@@ -427,10 +435,11 @@ export class ProductTaskRuntime {
     if (task.type === 'dream') return this.submitDream(task.input);
     if (task.type === 'sync') return this.submitSync();
     if (task.type === 'embed') return this.submitEmbed(task.input);
-    if (task.type === 'memory') {
+    if (task.type === 'memory' || task.type === 'assistant') {
       await this.executions.get(Number(id.slice(5)))?.done;
       await this.engine.executeRaw(`UPDATE minion_jobs SET status='waiting',result=NULL,error_text=NULL,lock_token=NULL,lock_until=NULL,delay_until=NULL,finished_at=NULL,data=data-'resourceStopReason',updated_at=now()
         WHERE id=$1 AND status IN ('paused','cancelled','failed','dead')`,[Number(id.slice(5))]);
+      this.stopIntents.delete(Number(id.slice(5)));
       return this.getRun(id);
     }
     throw new Error('文件任务请通过快速维护继续');
@@ -445,6 +454,14 @@ export class ProductTaskRuntime {
     const record = await this.queue.getJob(context.id);
     if (!record?.lock_token) throw new Error('任务执行租约无效');
     const structuredTask = record.data.task as ProductTask;
+    if (structuredTask.type === 'assistant') {
+      if (!this.workbenchAssistant) return this.deferMaintenance(record, '等待助手服务启动');
+      const abort = new AbortController();
+      const agentContext = { ...context, signal: AbortSignal.any([context.signal, context.shutdownSignal, abort.signal]), updateProgress: async (progress: unknown) => { record.progress = progress; await context.updateProgress(progress); } };
+      const pending = this.workbenchAssistant(structuredTask.input, agentContext);
+      this.executions.set(context.id, { cancel: reason => abort.abort(new Error(reason ?? '任务已停止')), done: pending.then(() => undefined, () => undefined), run: () => toRun(record), ownsLockedTransaction: () => false, adjust: () => {} });
+      try { return await pending; } finally { this.executions.delete(context.id); }
+    }
     if (structuredTask.type === 'dream' && !structuredTask.input.dryRun) {
       const earlier = await this.engine.executeRaw(`SELECT id FROM minion_jobs WHERE queue=$1 AND id<$2
         AND data->'task'->>'type'='dream' AND data->'task'->'input'->>'dryRun' IS DISTINCT FROM 'true'
@@ -723,11 +740,11 @@ export class ProductTaskRuntime {
     }
   }
 
-  private async deferMaintenance(record: MinionJob): Promise<typeof MINION_DEFERRED> {
+  private async deferMaintenance(record: MinionJob, stage = '等待前面的整理任务完成'): Promise<typeof MINION_DEFERRED> {
     const progress = (record.progress ?? {}) as Progress;
     delete progress.result;
     const view = progress.product ?? new TaskProgressAdapter(String(record.data.kind)).view;
-    view.stage = '等待前面的整理任务完成'; view.percent = null; view.errorReason = null;
+    view.stage = stage; view.percent = null; view.errorReason = null;
     progress.product = view;
     await this.engine.executeRaw(`UPDATE minion_jobs SET status='delayed',delay_until=now()+interval '1 second',
       lock_token=NULL,lock_until=NULL,error_text=NULL,result=NULL,progress=$3::jsonb,
@@ -815,6 +832,7 @@ export class ProductTaskRuntime {
 
   async close(): Promise<void> {
     this.workbenchMemory?.close();
+    this.closeWorkbenchAssistant?.();
     this.stopped = true;
     if(this.resourceTimer)clearInterval(this.resourceTimer);
     if(this.idleTimer)clearTimeout(this.idleTimer);

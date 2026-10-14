@@ -7,10 +7,14 @@ import { compressTranscript, contextFailure,requestOutputTokens } from './contex
 import type {ChatRequestEvent} from '../../core/ai/chat-request-runtime';
 import {assistantSession} from './request';
 import { memoryVersion } from './memory-identity';
+import { WorkbenchAgentStore } from './agents';
+import type { WorkbenchAgent } from '../../../shared/workbench-agents';
 
 export { conversationContext } from './context';
 
 export interface WorkbenchAnswerInput {
+  agent?: WorkbenchAgent;
+  messageId?: string;
   sourceId?: string;
   conversationId?: string;
   messages: WorkbenchMessage[];
@@ -71,9 +75,10 @@ export class WorkbenchService {
     if (!model || !models.some(item => item.id === model)) throw new Error('请先在模型服务中启用并保存普通模型');
     return model;
   }
-  create(input: { model?: string; knowledge?: boolean; sourceId?: string }): WorkbenchConversation {
+  create(input: { model?: string; knowledge?: boolean; sourceId?: string; assistantId?: string }): WorkbenchConversation {
     const now = new Date().toISOString();
-    const conversation = { id: randomUUID(), title: '新对话', model: input.model || this.models()[0]?.id || '', knowledge: input.knowledge !== false, sourceId: input.sourceId ?? this.assistant().memorySourceId ?? 'default', createdAt: now, updatedAt: now, messages: [] };
+    const agent = new WorkbenchAgentStore(this.store).get(input.assistantId ?? 'main');
+    const conversation = { id: randomUUID(), title: '新对话', assistantId: agent.id, model: input.model || agent.model || this.models()[0]?.id || '', knowledge: input.knowledge ?? agent.knowledge, sourceId: input.sourceId ?? agent.memorySourceId ?? 'default', createdAt: now, updatedAt: now, messages: [] };
     this.store.save(conversation); return conversation;
   }
   rename(id: string, title: string) {
@@ -130,7 +135,7 @@ export class WorkbenchService {
       if (conversation.messages.length === 1) conversation.title = (text || nextAttachments[0]?.name || '\u9644\u4ef6').slice(0, 40);
     }
     conversation.model = model; conversation.knowledge = input.knowledge ?? conversation.knowledge; conversation.updatedAt = now;
-    const assistant = this.store.assistant();
+    const assistant = new WorkbenchAgentStore(this.store).get(conversation.assistantId ?? 'main');
     const contextWindow = this.models().find(item => item.id === model)?.contextWindow;
     const modelName = this.models().find(item => item.id === model)?.name || model;
     const hasAttachments = conversation.messages.some(message => message.attachments?.length);
@@ -238,6 +243,7 @@ export class WorkbenchService {
         if (older.length) reply.contextNote = `更早的 ${older.filter(message => message.role === 'user').length} 轮已压缩为摘要，仍会参与这次回答`;
         const compressionModel = assistant.context.summaryModel && this.models().some(item => item.id === assistant.context.summaryModel) ? assistant.context.summaryModel : model;
         const result = await this.answer({
+          agent: assistant, messageId: reply.id,
           contextWindow, contextThreshold: assistant.context.threshold,
           ...(this.summarize ? { contextSummarizer: { model: compressionModel, contextWindow: this.models().find(item => item.id === compressionModel)?.contextWindow, summarize: this.summarize } } : {}),
           sourceId: conversation.sourceId, conversationId: conversation.id,
@@ -278,6 +284,7 @@ export class WorkbenchService {
           reply.knowledge = result.knowledge ?? (conversation.knowledge ? (result.citations?.length ? 'used' : 'none') : 'off');
           if (result.stopReason) reply.stopReason = result.stopReason;
           reply.status = 'complete';
+          reply.artifacts = new WorkbenchAgentStore(this.store).artifacts().filter(item => item.conversationId === id && item.messageId === reply.id).map(({ id, title, format }) => ({ id, title, format }));
         }
       } catch (error) { if (opened && !abort.signal.aborted) { const failure = contextFailure(error); reply.status = 'error'; reply.error = failure.message; reply.errorCode = failure.code; } }
       finally {
@@ -288,10 +295,10 @@ export class WorkbenchService {
           delete reply.stage;
           conversation.updatedAt = new Date().toISOString();
           this.store.save(conversation);
-          if (this.memoryHooks) await this.memoryHooks.settled(id).catch(error => console.error('[workbench memory]', error));
         }
         this.active.delete(id);
         this.acceptance.delete(id);
+        if (opened && this.memoryHooks) await this.memoryHooks.settled(id).catch(error => console.error('[workbench memory]', error));
       }
     })();
     this.active.set(id, { abort, promise }); return conversation;

@@ -70,6 +70,7 @@ async function runKeywordSearch(
   engine: BrainEngine,
   query: string,
   limit: number,
+  sourceIds?: string[],
 ): Promise<SearchResult[]> {
   const chineseQuery = normalizeChineseQuery(query);
   const lexicalQueries = chineseQuery.lexicalQueries.length > 0
@@ -78,6 +79,7 @@ async function runKeywordSearch(
   const batches = await Promise.all(
     lexicalQueries.map((lexicalQuery) => engine.searchKeyword(lexicalQuery, {
       limit,
+      ...(sourceIds ? { sourceIds } : {}),
       ...(chineseQuery.since ? { afterDate: chineseQuery.since.toISOString() } : {}),
       ...(chineseQuery.until ? { beforeDate: chineseQuery.until.toISOString() } : {}),
     })),
@@ -89,11 +91,13 @@ async function runSemanticSearch(
   engine: BrainEngine,
   query: string,
   limit: number,
+  sourceIds?: string[],
 ): Promise<{ results: SearchResult[]; vectorEnabled: boolean }> {
   let vectorEnabled = false;
   // expansion:false — no chat model for multi-query rewrite
   const results = await hybridSearch(engine, query, {
     limit,
+    ...(sourceIds ? { sourceIds } : {}),
     expansion: false,
     mode: 'balanced',
     onMeta: (meta) => {
@@ -105,7 +109,7 @@ async function runSemanticSearch(
 
 export async function runAdminKnowledgeSearch(
   engine: BrainEngine,
-  input: { query: string; mode?: unknown; limit?: unknown },
+  input: { query: string; mode?: unknown; limit?: unknown; sourceIds?: string[] },
 ): Promise<AdminKnowledgeSearchResponse> {
   const query = typeof input.query === 'string' ? input.query.trim() : '';
   if (!query) throw new Error('搜索词不能为空');
@@ -116,7 +120,7 @@ export async function runAdminKnowledgeSearch(
   const indexRebuildPending = embeddingRebuildPausesVectorSearch();
 
   if (mode === 'keyword' || indexRebuildPending) {
-    const raw = await runKeywordSearch(engine, query, limit);
+    const raw = await runKeywordSearch(engine, query, limit, input.sourceIds);
     return {
       mode,
       query,
@@ -128,7 +132,7 @@ export async function runAdminKnowledgeSearch(
     };
   }
 
-  const { results, vectorEnabled } = await runSemanticSearch(engine, query, limit);
+  const { results, vectorEnabled } = await runSemanticSearch(engine, query, limit, input.sourceIds);
   return {
     mode,
     query,

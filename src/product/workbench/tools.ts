@@ -8,6 +8,7 @@ import { RequestContext, ToolResultBudget, trimToolOutput } from './context-runt
 import {assistantRequestPolicy,requestStage} from './request';
 import {normalizeToolText,toolTextPreview,modelAnswerText} from '../../core/ai/tool-text';
 import { workbenchMemoryTools, nativeMemoryHandlers, type WorkbenchNative } from './memory-tools';
+import { agentTools, agentHandlers, type WorkbenchAgentTools } from './agent-tools';
 export { chatMessageTokens } from './context-runtime';
 
 export const KNOWLEDGE_TOOLS: ChatToolDef[] = [
@@ -31,9 +32,11 @@ export async function runWorkbenchTools(input: WorkbenchAnswerInput & {
   citations: WorkbenchCitation[];
   context: RequestContext;
   native?: WorkbenchNative;
+  agents?: WorkbenchAgentTools;
 }) {
   const { signal, citations } = input;
-  const allowed = new Map(citations.filter(item => item.sourceId).map(item => [JSON.stringify([item.sourceId, item.slug]), item]));
+  const sourceIds = input.agent?.id !== 'main' ? input.agent?.sourceIds : undefined;
+  const allowed = new Map(citations.filter(item => item.sourceId && (!sourceIds || sourceIds.includes(item.sourceId))).map(item => [JSON.stringify([item.sourceId, item.slug]), item]));
   const calls = new Map<string, WorkbenchToolCall>();
   const reads = new Map<string,string>();
   let allocation = new ToolResultBudget(0, []); let requestTokens = 0; let requestCount = 0;
@@ -48,9 +51,10 @@ export async function runWorkbenchTools(input: WorkbenchAnswerInput & {
     ['knowledge_search', { idempotent: true, execute: async (raw, abort, execution) => {
       const p = params(raw); const query = typeof p.query === 'string' ? p.query.trim() : '';
       if (!query || query.length > 2000 || Object.keys(p).some(key => key !== 'query')) throw new Error('搜索词需为 1–2000 个字符');
-      const cap = allocation.limit(execution?.toolCallId ?? ''); const result = await input.search(input.engine, { query, mode: 'semantic', limit: 6 }); abort.throwIfAborted();
+      const cap = allocation.limit(execution?.toolCallId ?? ''); const result = await input.search(input.engine, { query, mode: 'semantic', limit: 6, ...(sourceIds ? { sourceIds } : {}) }); abort.throwIfAborted();
       const delivered: Array<Record<string, unknown>> = [];
       for (const hit of result.results) {
+        if (sourceIds && (!hit.source_id || !sourceIds.includes(hit.source_id))) continue;
         const row = { citation: 0, source_id: hit.source_id, slug: hit.slug, title: hit.title, snippet: hit.snippet.slice(0, 240) };
         delivered.push(row);
       }
@@ -65,7 +69,7 @@ export async function runWorkbenchTools(input: WorkbenchAnswerInput & {
       const p = params(raw); const sourceId = p.source_id; const slug = p.slug; const offset = p.offset ?? 0;
       if (typeof sourceId !== 'string' || typeof slug !== 'string' || !Number.isInteger(offset) || Number(offset) < 0 || Object.keys(p).some(key => !['source_id', 'slug', 'offset'].includes(key))) throw new Error('读取资料参数无效');
       const known = allowed.get(JSON.stringify([sourceId, slug]));
-      if (!known) throw new Error('请先搜索，再使用搜索结果中的精确 Source 和页面路径。');
+      if (!known || (sourceIds && !sourceIds.includes(sourceId))) throw new Error('请先搜索，再使用搜索结果中的精确 Source 和页面路径。');
       const cap = allocation.limit(execution?.toolCallId ?? ''); const page = await input.engine.getPage(slug, { sourceId }); abort.throwIfAborted();
       if (!page || page.deleted_at || (page.source_id && page.source_id !== sourceId)) throw new Error(`资料不存在或已删除：${sourceId}/${slug}`);
       const body = `${page.compiled_truth}\n${page.timeline}`; const from = Number(offset);
@@ -76,7 +80,17 @@ export async function runWorkbenchTools(input: WorkbenchAnswerInput & {
     } }],
   ]);
   if(input.native&&input.sourceId&&input.conversationId)for(const [name,handler] of nativeMemoryHandlers(input.engine,input.sourceId,input.conversationId,input.native,row=>{let index=citations.findIndex(item=>item.kind==='memory'&&item.factId===row.factId&&item.sourceId===row.sourceId);if(index<0){index=citations.length;citations.push(row);}return index+1;},reads))handlers.set(name,handler);
-  const tools=[...(input.knowledge?KNOWLEDGE_TOOLS:[]),...(input.native?workbenchMemoryTools(input.messages.filter(row=>row.role==='user').at(-1)?.text??'',input.knowledge):[])];
+  const userText = input.messages.filter(row=>row.role==='user').at(-1)?.text ?? '';
+  if (input.agents && input.agent && input.conversationId && input.messageId) {
+    const current = () => input.agents!.store.workbench.get(input.conversationId!).messages.some(row => row.id === input.messageId && row.status === 'running');
+    for (const [name, handler] of agentHandlers(input.agents, { agent: input.agent, userText, conversationId: input.conversationId, messageId: input.messageId, citations, cite: row => citation(row.sourceId, row.slug, row.title, row.snippet), active: current })) handlers.set(name, handler.idempotent ? { ...handler, execute: async (raw, abort, execution) => {
+      const output = await handler.execute(raw, abort, execution);
+      const trimmed = trimToolOutput(output, allocation.limit(execution?.toolCallId ?? '')) as Record<string, unknown>;
+      if (trimmed && Array.isArray(trimmed.results) && output && typeof output === 'object' && 'results' in output && Array.isArray(output.results) && trimmed.results.length < output.results.length) trimmed.nextOffset = Number('offset' in output ? output.offset : 0) + trimmed.results.length;
+      return trimmed;
+    } } : handler);
+  }
+  const tools=[...(input.knowledge?KNOWLEDGE_TOOLS:[]),...(input.native?workbenchMemoryTools(userText,input.knowledge):[]),...(input.agents && input.agent ? agentTools(input.agent,userText,input.agents) : [])];
   let history = input.history;
   let stopReason: 'end' | 'length' | 'other' = 'end';
   while (requestCount < 8) {
@@ -133,5 +147,18 @@ export async function runWorkbenchTools(input: WorkbenchAnswerInput & {
     if (result.stopReason === 'max_turns') throw new Error('知识工具已达到本轮调用上限，请继续提问。');
     stopReason = result.stopReason === 'end' ? 'end' : 'other'; break;
   }
-  return { text: modelAnswerText(composed + segment), model: answeredModel, citations, knowledge: citations.length ? 'used' as const : input.knowledge?'none' as const:'off' as const, stopReason };
+  for (const name of ['assistant_create', 'assistant_update', 'artifact_save', 'task_submit']) {
+    const last = [...calls.values()].filter(call => call.name === name).at(-1);
+    if (last?.status === 'error') throw new Error(last.error ?? '助手操作未完成');
+  }
+  const text = modelAnswerText(composed + segment);
+  if (input.agents) {
+    let protocol: { name?: unknown; arguments?: unknown; tool_calls?: Array<{ name?: unknown }> } | undefined;
+    try { protocol = JSON.parse(text); } catch {}
+    if (protocol && ((typeof protocol.name === 'string' && handlers.has(protocol.name) && typeof protocol.arguments === 'object') || (Array.isArray(protocol.tool_calls) && protocol.tool_calls.some(call => typeof call.name === 'string' && handlers.has(call.name))))) {
+      input.onReplace?.('', answeredModel);
+      throw new Error('模型仍在输出工具指令，本轮操作未完成。对话与已完成的工作已保留，请重试。');
+    }
+  }
+  return { text, model: answeredModel, citations, knowledge: citations.length ? 'used' as const : input.knowledge?'none' as const:'off' as const, stopReason };
 }

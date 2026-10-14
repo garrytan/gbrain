@@ -1,0 +1,45 @@
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { loadConfig } from '../../src/core/config';
+import { buildGatewayConfig } from '../../src/core/ai/gateway-config';
+import { configureGateway, resetGateway, chat, toolLoop } from '../../src/core/ai/gateway';
+import { WorkbenchStore } from '../../src/product/workbench/store';
+import { WorkbenchAgentStore } from '../../src/product/workbench/agents';
+import { WorkbenchService } from '../../src/product/workbench/service';
+import { knowledgeWorkbenchAnswer, workbenchModels } from '../../src/product/workbench/routes';
+import type { WorkbenchAgentTools } from '../../src/product/workbench/agent-tools';
+
+const config = loadConfig(); if (!config) throw new Error('没有可用的正式模型配置，只读取配置，不启用或修改它');
+const models = workbenchModels(config); const model = models.find(item => item.id === config.chat_model)?.id ?? models[0]?.id;
+if (!model) throw new Error('没有已配置的普通模型');
+const root = mkdtempSync(join(tmpdir(), 'pmbrain-agent-live-')); const materials = join(root, 'materials'); mkdirSync(materials);
+const path = join(materials, 'work.md');
+const original = '2026-10-14：完成需求评审，确认3项修改。项目方案正在编写。下周计划上线，尚未完成上线。';
+writeFileSync(path, original);
+const store = new WorkbenchStore(join(root, 'sessions')); const agents = new WorkbenchAgentStore(store);
+const engine = { getConfig: async () => null, executeRaw: async () => [{ id: 'default', name: '测试资料' }], getPage: async () => null } as any;
+const context: WorkbenchAgentTools = { store: agents, engine, config: () => config };
+configureGateway(buildGatewayConfig(config));
+const service = new WorkbenchService(store, () => models, knowledgeWorkbenchAnswer(engine, { search: async () => ({ results: [] } as any), answer: chat, loop: toolLoop }, undefined, context));
+try {
+  const main = service.create({ model, knowledge: false });
+  service.send(main.id, { text: `创建一个周报助手。读取 ${materials}，只写有依据的工作，使用 weekly-report 技能，区分已完成、推进中和下周计划，交付 Word。` });
+  await service.settled(main.id);
+  const mainReply = store.get(main.id).messages.at(-1)!;
+  if (mainReply.status !== 'complete') throw new Error(mainReply.error ?? '创建助手未完成');
+  const agent = agents.list().find(item => item.id !== 'main'); if (!agent) throw new Error('模型只回答了创建建议，没有实际创建助手');
+  if (!agent.skills.includes('weekly-report')) throw new Error('没有配置要求的周报技能');
+  const child = service.create({ assistantId: agent.id, model, knowledge: false });
+  service.send(child.id, { text: '请读取目录中的工作记录，写本周周报并实际保存 Word 文件。保留事实来源，计划上线不能写成已经上线。' });
+  await service.settled(child.id);
+  const reply = store.get(child.id).messages.at(-1)!;
+  if (reply.status !== 'complete') throw new Error(reply.error ?? '周报未完成');
+  const artifacts = agents.artifacts().filter(item => item.conversationId === child.id);
+  if (!artifacts.length) throw new Error('模型没有实际交付文件');
+  if (!artifacts[0]!.content.includes('需求评审') || !artifacts[0]!.content.includes('计划')) throw new Error('周报缺少工作事项或计划区分');
+  if (readFileSync(path, 'utf8') !== original) throw new Error('源文件改变');
+  const result = { model, assistant: agent.name, mainStatus: mainReply.status, childStatus: reply.status, mainTools: mainReply.toolCalls?.map(call => ({ name: call.name, status: call.status })), childTools: reply.toolCalls?.map(call => ({ name: call.name, status: call.status })), artifacts: artifacts.map(item => ({ id: item.id, title: item.title, format: item.format, citations: item.citations.length })), root };
+  writeFileSync(join(root, 'result.json'), JSON.stringify(result, null, 2));
+  console.log(JSON.stringify(result));
+} finally { resetGateway(); }
