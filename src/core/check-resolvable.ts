@@ -277,8 +277,10 @@ export function extractDelegationTargets(content: string): DelegationRef[] {
   const refs: DelegationRef[] = [];
   const lines = content.split('\n');
   // Match backtick-wrapped skills/ paths that point at a known delegation
-  // target. Scoped to conventions/ subtree and _brain-filing-rules.md.
-  const pathRe = /`skills\/((?:conventions\/[^`]+\.md)|(?:_brain-filing-rules\.md))`/g;
+  // target. Scoped to conventions/ subtree and _brain-filing-rules.md. An
+  // optional `#anchor` after `.md` still counts; the anchor is dropped so the
+  // path matches the `conventions` field.
+  const pathRe = /`skills\/((?:conventions\/[^`#]+\.md)|(?:_brain-filing-rules\.md))(?:#[A-Za-z0-9_-]+)?`/g;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     pathRe.lastIndex = 0;
