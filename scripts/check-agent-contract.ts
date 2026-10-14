@@ -68,6 +68,9 @@ export const INTERACTIVE_IO_ALLOW: Readonly<Record<string, Readonly<Record<strin
   'src/commands/hook.ts': {
     'process.stdin.on': 'harness hook payload: bounded, fail-open stream read with its own hard timeout (a hook never blocks the agent)',
   },
+  'src/core/context/hermes-hook.ts': {
+    'process.stdin.on': 'Hermes shell-hook payload (whole conversation_history): bounded, fail-open stream read with an idle + hard timeout (a hook never blocks the agent)',
+  },
   'src/commands/watch.ts': {
     createInterface: 'stdin IS the data: transcript turns streamed line by line until EOF or SIGINT',
   },

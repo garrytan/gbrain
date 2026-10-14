@@ -433,6 +433,7 @@ function sharedHttpWiring(selector: ReadinessHarness | 'all'): Action {
     return {
       argv: ['gbrain', 'hermes', 'setup', '--hermes-home', '<hermes-profile>', '--url', 'http://127.0.0.1:3131/mcp'],
       consent: ['persistent_install', 'credentials'], actor: 'user', requires_exclusive: false,
+      inputs: [{ name: 'hermes-profile', how: 'Absolute path of the Hermes profile to wire (HERMES_HOME, default ~/.hermes); replace the URL if the shared server listens elsewhere.' }],
       why: 'Connects the Hermes profile to the shared `gbrain serve --http` on this machine (it must be running) through the hosted/HTTP lane; bootstrap harness does not wire Hermes. The token comes from a private file or the profile .env, never an argument.',
       user_message: 'To let Hermes share this brain with other sessions, connect the profile to the local gbrain HTTP server with your token file. OK?',
       verify: VERIFY('harness_wiring'), docs: 'docs/mcp/HERMES.md',
