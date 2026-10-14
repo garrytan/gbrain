@@ -171,6 +171,37 @@ test('an explicit retry still runs a held page and clears it from doctor', async
   });
 }, 90_000);
 
+// Existing replay/held coverage never cancelled the explicit retry. Exercise
+// the real journal, source lease and gateway; only the provider is synthetic.
+for (const stop of ['caller', 'deadline'] as const) test(`explicit retry ${stop} cancellation reaches the real model and leaves no new strike`, async () => {
+  await managed(async () => {
+    const page = await writePage('A careful project record.');
+    const f = fixture();
+    await runPhaseExtractAtoms(engine, { _transcripts: [],
+      _pages: [{ slug: page.slug, content: page.compiled_truth, contentHash: page.content_hash! }], _chat: f.chat });
+    await disposePersistenceConsumer(engine);
+    const [before] = await checkpoints();
+    const controller = new AbortController();
+    const signals: AbortSignal[] = [];
+    __setChatTransportForTests(async opts => {
+      expect(opts.abortSignal).toBeInstanceOf(AbortSignal);
+      signals.push(opts.abortSignal!);
+      if (stop === 'caller') controller.abort(new Error('synthetic caller stop'));
+      if (!opts.abortSignal!.aborted) await new Promise<void>(resolve => opts.abortSignal!.addEventListener('abort', () => resolve(), { once: true }));
+      throw new Error('synthetic provider aborted');
+    });
+    const error = await retryManagedAtomBatch(engine, 'default', before.request_id, `job:stop-${stop}`,
+      { signal: controller.signal, deadlineAtMs: Date.now() + 500 }).catch(e => e);
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toContain(stop === 'caller' ? 'synthetic caller stop' : 'deadline');
+    expect(signals).toHaveLength(1);
+    expect(signals[0].aborted).toBe(true);
+    expect(await checkpoints()).toEqual([before]);
+    expect(await atomCount()).toBe(0);
+    expect(await engine.executeRaw("SELECT id FROM gbrain_cycle_locks WHERE id='gbrain-cycle:default'")).toEqual([]);
+  });
+}, 60_000);
+
 test('a transcript origin is bounded the same way', async () => {
   await managed(async (home) => {
     const file = join(home, 'session.txt');

@@ -17,7 +17,8 @@ export function makeExtractAtomsDrainHandler(engine: BrainEngine): MinionHandler
     if (job.data.retryRequestId !== undefined) {
       if (typeof job.data.retryRequestId !== 'string' || typeof job.data.sourceId !== 'string') throw new Error('Atom retry requires sourceId and retryRequestId strings.');
       const { retryManagedAtomBatch } = await import('../../persistence/atom-retry.ts');
-      return retryManagedAtomBatch(engine, job.data.sourceId, job.data.retryRequestId, `job:${job.id}`);
+      return retryManagedAtomBatch(engine, job.data.sourceId, job.data.retryRequestId, `job:${job.id}`,
+        { signal: job.signal, deadlineAtMs: job.deadlineAtMs });
     }
     const { formatDrainProviderFailure, runExtractAtomsDrainForSource, structuralAtomRefusal } =
       await import('../../cycle/extract-atoms-drain.ts');
