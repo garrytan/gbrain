@@ -6,7 +6,7 @@ import { readFix } from '../ops/op-fix.ts';
 import { pageIdentityError } from './page-identity.ts';
 import { assertPageRevision } from '../page-state/types.ts';
 import { parseFactsFence, renderFactsTable, replaceOrInsertFactsFence, upsertFactRow, formatFenceDate } from '../facts-fence.ts';
-import { serializePageToMarkdown } from '../markdown.ts';
+import { serializePageToMarkdown, splitBody } from '../markdown.ts';
 import { assertFactNotWithdrawn, decideReplacement, decideSingleFact, prepareFactEmbedding, type SingleFactIntent } from '../facts/single-prepare.ts';
 import { factEmbeddingDisabled } from '../embedding-disabled.ts';
 import { engineMutationPrecondition, parseMutationPrecondition } from './preconditions.ts';
@@ -149,7 +149,11 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
     if (target.fixes.length) fencesNormalized = { fences_normalized: pageFencesNormalized({ sourceId: row.source_id, slug: row.slug, fixes: target.fixes,
       writer: row.principal_kind, path: snapshot.page.source_path ?? null, remote: row.authority.remote }) };
     // #6385 R12: an entity fence that does not parse cleanly refuses typed instead of losing the rows it skipped.
-    const appended = refuseUnparsedRewrite(target.page, row.slug, row.source_id, () => upsertFactRow(target.page.compiled_truth, {
+    // An existing fence may live below the sentinel. Edit the complete body so
+    // the shared placement rule replaces it instead of creating a second fence.
+    const canonicalBody = target.page.timeline
+      ? `${target.page.compiled_truth}\n\n<!-- timeline -->\n\n${target.page.timeline}` : target.page.compiled_truth;
+    const appended = refuseUnparsedRewrite(target.page, row.slug, row.source_id, () => upsertFactRow(canonicalBody, {
       claim: input.fact, kind: input.kind, visibility: input.visibility, confidence: 1, notability: 'medium', validFrom: formatFenceDate(validFrom),
       validUntil: validUntil ? formatFenceDate(validUntil) : undefined, source: fact.source, context }));
     rowNum = appended.rowNum;
@@ -160,7 +164,7 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
         ? { ...f, active: false, supersededBy: rowNum, context: `superseded by #${rowNum}` } : f);
       body = replaceOrInsertFactsFence(body, renderFactsTable(rows));
     }
-    const content = serializePageToMarkdown({ ...snapshot.page, compiled_truth: body, timeline: target.page.timeline }, snapshot.tags);
+    const content = serializePageToMarkdown({ ...snapshot.page, ...splitBody(body) }, snapshot.tags);
     // Reuse the canonical parser/chunker and durable filesystem publication.
     // The original caller revision was checked above; this CAS binds this render.
     // #5575 ENG-1: the new row has no facts row yet; its chunks are cut at the append's tier.
