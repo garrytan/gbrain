@@ -45,7 +45,7 @@ export function recordedReconcilePath(root: string, page: { slug: string; source
  */
 export function fileClaimCandidatesSql(platform: NodeJS.Platform = process.platform): string {
   const pathMatch = platform === 'win32'
-    ? `source_path IS NOT NULL AND regexp_replace(replace(btrim(source_path), chr(92), '/'), '^.*/', '')=$6`
+    ? `source_path IS NOT NULL AND regexp_replace(replace(btrim(source_path), chr(92), '/'), '^.*/', '')=$6 AND $5::text IS NOT NULL`
     : `source_path IS NOT NULL AND regexp_replace(replace(btrim(source_path), chr(92), '/'), '^.*/', '')=$6 AND regexp_replace(btrim(source_path),'^.*/','')=$5`;
   return `SELECT id,slug,source_path,source_uri FROM pages WHERE source_id=$1 AND id<>$2 AND id>$3 AND id<=$4 AND deleted_at IS NULL AND (
     (${pathMatch}) OR (source_uri LIKE 'file:%' AND regexp_replace(source_uri, '^.*/', '')=ANY($7::text[])))

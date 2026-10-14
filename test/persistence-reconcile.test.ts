@@ -704,6 +704,19 @@ test('the file-claim census is served by the v219 name indexes on Postgres', asy
   expect(plan).toContain('pages_file_uri_name_idx');
 }), 120_000);
 
+// Windows drops the POSIX-only $5 clause but still binds it: an unreferenced placeholder fails on Postgres and PGLite
+// with 42P18 (could not determine data type of parameter $5), which broke every delete_page on a Windows host.
+test.each(['win32', 'linux'] as const)('the file-claim census references every placeholder it binds (%s)', platform => {
+  const sql = fileClaimCandidatesSql(platform);
+  for (const n of [1, 2, 3, 4, 5, 6, 7]) expect(sql).toMatch(new RegExp(String.fromCharCode(92) + '$' + n + '(?!' + String.fromCharCode(92) + 'd)'));
+});
+
+test('the Windows file-claim census runs on PGLite with the bound list', async () => isolated(async engine => {
+  const rows = await engine.executeRaw(fileClaimCandidatesSql('win32'),
+    ['default', 0, 0, 2147483647, 'example.md', 'example.md', ['example.md']]);
+  expect(rows).toEqual([]);
+}), 120_000);
+
 // The parser must not normalize an already-resolved identity a second time.
 // Existing reconcile cases only covered extension-free page keys.
 test.each(['notes/example.md', 'notes/example.md.md'])('reconciliation preserves extension-bearing identity %s', async slug =>
