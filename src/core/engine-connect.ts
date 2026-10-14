@@ -56,5 +56,7 @@ export async function connectEngineForServe(hooks: EngineConnectHooks, opts: { p
     await engine.disconnect().catch(() => {});
     throw e;
   }
+  // slug.transliterate is process-wide: read once per host-brain connect.
+  await (await import('./slug-transliterate.ts')).loadSlugTransliterate(engine).catch(() => {});
   return engine;
 }

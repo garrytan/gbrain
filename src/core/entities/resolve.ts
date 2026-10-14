@@ -24,6 +24,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { normalizeAlias } from '../search/alias-normalize.ts';
 import { foldNonDecomposingLatin } from '../latin-fold.ts';
+import { transliterateForSlug } from '../slug-transliterate.ts';
 
 /** Lazy: the mentions graph stays out of the OpenClaw plugin's static import graph. */
 const siblingCanonical: typeof import('../mentions/siblings.ts').siblingCanonical = async (...args) =>
@@ -718,7 +719,9 @@ function isMissingTrigramError(err: unknown): boolean {
 /**
  * Deterministic slugify: lowercase, fold accents and stroke letters to their
  * base letter, replace non-alphanumerics with hyphens, collapse repeated
- * hyphens, trim leading/trailing hyphens.
+ * hyphens, trim leading/trailing hyphens. With `slug.transliterate=cyrillic`
+ * Cyrillic letters are spelled in Latin first ("абв" → "abv")
+ * instead of being dropped; the default (`off`) is unchanged.
  *
  * Exported for tests + callers who want the same fallback shape independently.
  */
@@ -728,7 +731,7 @@ export function slugify(raw: string): string {
   // "ang-example". Fold after the strip so composed forms reduce in one pass
   // ("ǿ" → "ø" → "o").
   const folded = foldNonDecomposingLatin(
-    raw
+    transliterateForSlug(raw)
       .toLowerCase()
       .normalize('NFKD')
       // NFKD decomposes accents into combining marks (U+0300..U+036F);

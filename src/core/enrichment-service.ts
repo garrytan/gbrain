@@ -19,6 +19,7 @@ import { OperationError } from './ops/contract.ts';
 import { waitForCapacity } from './backoff.ts';
 import { quarantineMarkers } from './extraction-review.ts';
 import { SLUG_WORD_CHARS, SLUG_VARIATION_SELECTORS_RE } from './cjk.ts';
+import { transliterateForSlug } from './slug-transliterate.ts';
 // #3994: created stubs route through serializeMarkdown + importFromContent
 // (the same parse→chunk→embed pipeline put_page uses) instead of a bare
 // engine.putPage, so fresh entity pages land in the retrieval surface
@@ -101,10 +102,11 @@ const SLUGIFY_ENTITY_KEEP_RE = new RegExp(`[^${SLUG_WORD_CHARS}]`, 'gu');
  * '-', producing empty or colliding people/companies slugs. Now mirrors
  * sync.ts:slugifySegment's Unicode-aware keep-set: strip Latin accents to
  * their base letter (fold, don't drop), keep every script's own letters
- * as-is (Cyrillic, CJK, Devanagari, …).
+ * as-is (Cyrillic, CJK, Devanagari, …). With `slug.transliterate=cyrillic`
+ * (and `transliterate` left on) Cyrillic is spelled in Latin first.
  */
-export function slugifyEntity(name: string, type: 'person' | 'company'): string {
-  const slug = name
+export function slugifyEntity(name: string, type: 'person' | 'company', transliterate = true): string {
+  const slug = (transliterate ? transliterateForSlug(name) : name)
     .replace(/['‘’]/g, '')
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
@@ -179,6 +181,13 @@ export async function enrichEntity(
 
   // 3. Check if entity page exists
   let existingPage = await engine.getPage(slug, scope);
+  // slug.transliterate: a page minted before it was enabled keeps its native-script slug.
+  const nativeSlug = slugifyEntity(request.entityName, request.entityType, false);
+  if (!existingPage && nativeSlug !== candidateSlug) {
+    const nativeResolved = await engine.resolveSlugWithAlias(nativeSlug, sourceId);
+    const nativePage = await engine.getPage(nativeResolved, scope);
+    if (nativePage) { slug = nativeResolved; existingPage = nativePage; }
+  }
   if (!existingPage) {
     // A page an older brain created under the ASCII-only slug is the same entity.
     const legacy = legacyAsciiEntitySlug(request.entityName, request.entityType);

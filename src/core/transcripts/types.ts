@@ -22,7 +22,7 @@
 
 import { createHash } from 'crypto';
 import type { HostSpecTarget } from '../bootstrap/host-specs.ts';
-import { slugifySegment } from '../sync.ts';
+import { slugifyMintedSegment } from '../sync.ts';
 
 export type TranscriptFormat =
   | 'claude-code'
@@ -192,7 +192,7 @@ export function buildTranscriptSlug(
   if (HARNESS_FORMATS.has(format)) {
     return `${SLUG_DIRS[format]}/${day}-${format}-${id}`;
   }
-  const title = slugifySegment(meta.title ?? '').slice(0, TITLE_SLUG_MAX).replace(/-$/, '');
+  const title = slugifyMintedSegment(meta.title ?? '').slice(0, TITLE_SLUG_MAX).replace(/-$/, '');
   const label = title || 'untitled';
   return `${SLUG_DIRS[format]}/${day}-${label}-${id}`;
 }
