@@ -86,6 +86,30 @@ test('recovery keeps exact valid vectors and rejects model, hash, metadata and s
   }
 });
 
+for (const moved of [false, true]) for (const mismatch of ['none', 'model', 'hash']) {
+  test(`metadata repair retains only valid vectors (${moved ? 'moved' : 'same index'}, ${mismatch})`, async () => {
+    for (const engine of engines) {
+      const slug = await seed(engine, `missing-metadata-${moved}-${mismatch}`);
+      const before = (await readProjectionSnapshot(engine, slug, sourceId))!;
+      const vector = `[${Array.from({ length: 1536 }, (_, i) => i === 0 ? 1 : 0).join(',')}]`;
+      await engine.executeRaw(`UPDATE content_chunks SET embedding=$2::vector,model=$3,embedded_at=now(),embedded_text_hash=md5(chunk_text),
+        symbol_name=NULL,symbol_type=NULL,start_line=NULL,end_line=NULL,parent_symbol_path=NULL,doc_comment=NULL,symbol_name_qualified=NULL
+        WHERE page_id=$1`, [before.snapshot.page.id, vector, before.embeddingModel]);
+      if (moved) await engine.executeRaw('UPDATE content_chunks SET chunk_index=chunk_index+100 WHERE page_id=$1', [before.snapshot.page.id]);
+      if (mismatch === 'model') await engine.executeRaw("UPDATE content_chunks SET model='example:other' WHERE page_id=$1", [before.snapshot.page.id]);
+      if (mismatch === 'hash') await engine.executeRaw("UPDATE content_chunks SET embedded_text_hash='bad' WHERE page_id=$1", [before.snapshot.page.id]);
+      const old = await engine.getChunks(slug, { sourceId, includeEmbedding: true });
+      expect(old.every(c => c.symbol_name == null)).toBe(true);
+      expect(await reindexCodeProjection(engine, slug, sourceId, { force: true, noEmbed: true })).toMatchObject({ status: 'imported' });
+      const repaired = await engine.getChunks(slug, { sourceId, includeEmbedding: true });
+      expect(repaired.map(c => c.symbol_name).sort()).toEqual(['alpha', 'beta']);
+      expect(repaired.every(c => c.embedding_is_null)).toBe(mismatch !== 'none');
+      if (mismatch === 'none') expect(repaired.map(c => [c.id, c.embedding, c.embedded_at])).toEqual(old.map(c => [c.id, c.embedding, c.embedded_at]));
+      expect((await engine.readPageSnapshot(slug, { sourceId }))!.revision).toBe(before.snapshot.revision);
+    }
+  });
+}
+
 test('unchanged code import heals an unsealed page without canonical mutation', async () => {
   for (const engine of engines) {
     const slug = await seed(engine, 'unchanged');

@@ -210,16 +210,39 @@ export async function installPageProjection(engine: BrainEngine, prepared: Proje
         chunk.language ?? null, chunk.symbol_name ?? null, chunk.symbol_type ?? null,
         chunk.start_line ?? null, chunk.end_line ?? null, chunk.parent_symbol_path ?? null,
         chunk.doc_comment ?? null, chunk.symbol_name_qualified ?? null, chunk.modality ?? 'text']);
+      // Repair missing code metadata without discarding a vector for identical input.
+      // Populated metadata that disagrees still changes identity. Prefer the same
+      // index and refuse ambiguous moved matches; vector/model/input checks below
+      // continue to apply before any row is retained at a different index.
+      const metadata = ['language', 'symbol_name', 'symbol_type', 'start_line', 'end_line',
+        'parent_symbol_path', 'doc_comment', 'symbol_name_qualified'] as const;
+      const repairKey = (chunk: ChunkInput | Chunk) => digest([chunk.chunk_text, chunk.chunk_source, chunk.modality ?? 'text']);
+      const repairCandidates = new Map<string, ChunkInput[]>();
+      if (opts.code) for (const chunk of chunks) {
+        const key = repairKey(chunk), group = repairCandidates.get(key) ?? [];
+        group.push(chunk); repairCandidates.set(key, group);
+      }
+      const repairedIdentities = new Map<number, string>();
+      const storedIdentity = (chunk: Chunk): string => {
+        const cached = repairedIdentities.get(chunk.id);
+        if (cached) return cached;
+        if (!opts.code) return identity(chunk);
+        const matches = (repairCandidates.get(repairKey(chunk)) ?? []).filter(next => metadata.every(key => chunk[key] == null || digest(chunk[key]) === digest(next[key] ?? null)));
+        const sameIndex = matches.find(next => next.chunk_index === chunk.chunk_index);
+        const value = identity(sameIndex ?? (matches.length === 1 ? matches[0]! : chunk));
+        repairedIdentities.set(chunk.id, value);
+        return value;
+      };
       const atIndex = new Map(chunks.map(chunk => [chunk.chunk_index, identity(chunk)]));
       const elsewhere = new Map<string, number>();
       for (const chunk of chunks) elsewhere.set(identity(chunk), (elsewhere.get(identity(chunk)) ?? 0) + 1);
-      const inPlace = stored.filter(chunk => atIndex.get(chunk.chunk_index) === identity(chunk));
-      for (const chunk of inPlace) elsewhere.set(identity(chunk), elsewhere.get(identity(chunk))! - 1);
+      const inPlace = stored.filter(chunk => atIndex.get(chunk.chunk_index) === storedIdentity(chunk));
+      for (const chunk of inPlace) elsewhere.set(storedIdentity(chunk), elsewhere.get(storedIdentity(chunk))! - 1);
       const moved = stored.filter(chunk => {
-        const left = elsewhere.get(identity(chunk)) ?? 0;
-        if (atIndex.get(chunk.chunk_index) === identity(chunk) || left <= 0
+        const left = elsewhere.get(storedIdentity(chunk)) ?? 0;
+        if (atIndex.get(chunk.chunk_index) === storedIdentity(chunk) || left <= 0
           || !recorded.get(Number(chunk.id))?.movable || !currentInput(chunk)) return false;
-        elsewhere.set(identity(chunk), left - 1);
+        elsewhere.set(storedIdentity(chunk), left - 1);
         return true;
       });
       const kept = [...inPlace, ...moved];
