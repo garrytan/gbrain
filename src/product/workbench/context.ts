@@ -79,8 +79,12 @@ export function contextBudget(contextWindow: number | undefined, threshold: numb
   return Math.floor(usable * ratio);
 }
 
-export function planContext(messages: WorkbenchMessage[], policy: ContextPolicy, options: { contextWindow?: number; outputReserve?:number; summary?: string; summaryUntil?: string; systemPrompt?: string; additionalTokens?: number } = {}): { recent: WorkbenchMessage[]; older: WorkbenchMessage[] } {
+export function planContext(messages: WorkbenchMessage[], policy: ContextPolicy, options: { contextWindow?: number; outputReserve?:number; summary?: string; summaryUntil?: string; contextFloor?: string; systemPrompt?: string; additionalTokens?: number } = {}): { recent: WorkbenchMessage[]; older: WorkbenchMessage[] } {
   let complete = conversationContext(messages);
+  if (options.contextFloor) {
+    const floor = complete.findIndex(message => message.id === options.contextFloor);
+    if (floor >= 0) complete = complete.slice(floor + 1);
+  }
   if (options.summary && options.summaryUntil) {
     const anchor = complete.findIndex(message => message.id === options.summaryUntil);
     if (anchor >= 0) complete = complete.slice(anchor + 1);

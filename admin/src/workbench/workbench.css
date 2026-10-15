@@ -48,6 +48,12 @@
 .wb-toolbar select { max-width: 45%; min-width: 130px; padding: 8px 12px; font: inherit; border: 1px solid var(--product-line); border-radius: 7px; }
 .wb-knowledge { display: flex; align-items: center; gap: 7px; white-space: nowrap; font-size: 12px; }
 .wb-conversation-actions { display: flex; gap: 5px; margin-left: auto; }
+.wb-more { position: relative; }
+.wb-more summary { list-style: none; cursor: pointer; border: 1px solid var(--product-line); border-radius: 7px; padding: 8px 11px; }
+.wb-more summary::-webkit-details-marker { display: none; }
+.wb-more div { position: absolute; right: 0; top: calc(100% + 6px); z-index: 6; min-width: 196px; padding: 6px; background: var(--product-panel); border: 1px solid var(--product-line); border-radius: 8px; }
+.wb-more button { width: 100%; justify-content: flex-start; border: 0; white-space: nowrap; }
+.wb-context-floor { margin: 18px 0; color: var(--product-muted); font-size: 12px; text-align: center; }
 .wb-messages { overflow: auto; flex: 1; min-height: 0; scroll-behavior: smooth; }
 .wb-message-column { max-width: 950px; padding: 24px 30px; margin: auto; }
 .wb-welcome { padding-top: clamp(45px,12vh,130px); text-align: center; }
@@ -162,7 +168,7 @@ html[data-theme="dark"] .knowledge-workbench button.wb-cite:hover, html[data-the
 .wb-agent-meta b { display: block; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wb-agent-meta small { display: block; margin-top: 2px; font-size: 10px; }
 .wb-agent-list button.selected .wb-agent-meta small { color: #4c7dff; font-weight: 600; }
-.wb-agent-list { max-height: 230px; margin: 0; flex: none; }
+.wb-agent-list { max-height: none; margin: 0; flex: 1; min-height: 0; }
 .wb-agent-list button { border: 0; }
 .wb-history-label { color: var(--product-muted); padding: 6px 8px 0; }
 .wb-sidebar-links { display: grid; gap: 3px; padding-top: 10px; border-top: 1px solid var(--product-line); }

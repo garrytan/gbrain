@@ -24,7 +24,7 @@ export class WorkbenchAgentCoordinator {
     if (typeof prompt !== 'string' || !prompt.trim() || prompt.length > 8000) throw new Error('请填写 1–8000 字的任务要求');
     const agent = this.store.get(assistantId);
     const existing = key ? this.store.workbench.list().find(row => row.taskKey === key && row.assistantId === assistantId) : undefined;
-    const conversation = conversationId ? this.service.get(conversationId) : existing ?? this.service.create({ assistantId: agent.id });
+    const conversation = conversationId ? this.service.get(conversationId) : existing ?? this.service.openAssistant(agent.id) ?? this.service.create({ assistantId: agent.id });
     if (!conversation.messages.length && key) { conversation.taskKey = key; conversation.title = `${agent.name}任务`; this.store.workbench.save(conversation); }
     const digest = createHash('sha256').update(JSON.stringify([this.store.workbench.root, assistantId, key ?? randomUUID()])).digest('hex');
     const run = await this.tasks.submitAssistant({ root: this.store.workbench.root, assistantId, conversationId: conversation.id, prompt: prompt.trim() }, `assistant:${digest}`, scheduled);
@@ -40,7 +40,7 @@ export class WorkbenchAgentCoordinator {
         if (!occurrence || occurrence.getTime() < Date.parse(agent.createdAt)) continue;
         const slot = occurrence.toISOString(); const previous = this.store.scheduled(agent.id);
         if (previous?.slot === slot && previous.runId) continue;
-        const conversation = previous?.slot === slot ? this.service.get(previous.conversationId) : this.service.create({ assistantId: agent.id });
+        const conversation = previous?.slot === slot ? this.service.get(previous.conversationId) : this.service.openAssistant(agent.id) ?? this.service.create({ assistantId: agent.id });
         this.store.recordSchedule(agent.id, { slot, conversationId: conversation.id });
         const result = await this.submit(agent.id, `${agent.schedule.prompt}\n报告周期截止时间：${slot}。按资料中的实际事件日期区分本期完成、推进中和计划。`, `${agent.id}:${slot}`, true, conversation.id);
         this.store.recordSchedule(agent.id, { slot, conversationId: conversation.id, runId: result.run.id });
@@ -58,9 +58,11 @@ export class WorkbenchAgentCoordinator {
     let progressTimer: ReturnType<typeof setInterval> | undefined;
     let progressPending = Promise.resolve();
     try {
-      const previous = initial.messages.at(-1);
-      if (previous?.role !== 'assistant' || previous.status !== 'complete') {
-        this.service.send(initial.id, previous?.role === 'assistant' ? { retry: true } : { text: input.prompt });
+      const tail = initial.messages.at(-1);
+      const lastUser = [...initial.messages].reverse().find(message => message.role === 'user');
+      const samePrompt = lastUser?.text === input.prompt && tail?.role === 'assistant' ? tail : undefined;
+      if (!samePrompt || (samePrompt.status !== 'complete' && samePrompt.status !== 'running')) {
+        this.service.send(initial.id, samePrompt ? { retry: true } : { text: input.prompt });
         await this.service.accepted(initial.id);
         const adapter = new TaskProgressAdapter('assistant_task');
         adapter.view.name = agent.name; adapter.view.stage = '正在执行助手任务';

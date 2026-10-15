@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, statSync } from 'nod
 import { join, isAbsolute } from 'node:path';
 import { atomicWriteFileSync } from '../../core/atomic-write';
 import { defaultAssistant, normalizeAssistant } from '../../../shared/workbench';
+import { compactRule } from './turn-policy';
 import { isValidSourceId } from '../../core/source-id';
 import type { WorkbenchAgent, WorkbenchArtifact, WorkbenchSchedule } from '../../../shared/workbench-agents';
 import type { WorkbenchStore } from './store';
@@ -42,8 +43,11 @@ function normalizeProfile(input: Record<string, unknown>, previous?: WorkbenchAg
   });
   const deliveryFormat = input.deliveryFormat ?? previous?.deliveryFormat ?? 'docx';
   if (deliveryFormat !== 'docx' && deliveryFormat !== 'markdown') throw new Error('交付格式无效');
+  const ruleSource = Object.hasOwn(input, 'standingRules') ? input.standingRules : previous?.standingRules;
+  if (ruleSource !== undefined && (!Array.isArray(ruleSource) || ruleSource.length > 40 || ruleSource.some(rule => typeof rule !== 'string' || !rule.trim()))) throw new Error('工作规则无效');
+  const standingRules = ruleSource === undefined ? undefined : [...new Set(ruleSource.map(rule => compactRule(rule)))];
   const now = new Date().toISOString();
-  return { ...base, id: previous?.id ?? randomUUID(), revision: (previous?.revision ?? 0) + 1, sourceIds: [...new Set(sourceIds)], skills: [...new Set(skills)], workflow, readDirectories: [...new Set(readDirectories)], deliveryFormat, schedule: schedule(Object.hasOwn(input, 'schedule') ? input.schedule : previous?.schedule), createdAt: previous?.createdAt ?? now, updatedAt: now };
+  return { ...base, id: previous?.id ?? randomUUID(), revision: (previous?.revision ?? 0) + 1, sourceIds: [...new Set(sourceIds)], skills: [...new Set(skills)], workflow, readDirectories: [...new Set(readDirectories)], deliveryFormat, ...(standingRules ? { standingRules } : {}), schedule: schedule(Object.hasOwn(input, 'schedule') ? input.schedule : previous?.schedule), createdAt: previous?.createdAt ?? now, updatedAt: now };
 }
 export class WorkbenchAgentStore {
   constructor(readonly workbench: WorkbenchStore) {}
@@ -72,6 +76,16 @@ export class WorkbenchAgentStore {
     const agent = normalizeProfile(input);
     if (this.list().some(row => row.name === agent.name)) throw new Error('已有同名助手，请修改现有助手或使用其他名称');
     state.agents.push(agent); this.write(state); return agent;
+  }
+  rememberRules(id: string, rules: string[]): WorkbenchAgent {
+    const standingRules = [...new Set(rules.map(compactRule).filter(Boolean))].slice(-40);
+    if (standingRules.some(rule => rule.length > 240)) throw new Error('单条工作规则不超过 240 个字符');
+    const state = this.read();
+    const current = this.get(id);
+    const next = { ...current, standingRules, revision: current.revision + 1, updatedAt: new Date().toISOString() };
+    state.agents = [...state.agents.filter(agent => agent.id !== id), next];
+    this.write(state);
+    return this.get(id);
   }
   update(id: string, input: Record<string, unknown>): WorkbenchAgent {
     const state = this.read(); const previous = this.get(id);

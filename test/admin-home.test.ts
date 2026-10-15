@@ -105,7 +105,9 @@ describe('首页按有没有知识库区分，并接上现有能力', () => {
     const css = read('admin/src/workbench/workbench.css');
     expect(workbench).toContain('agentAvatar');
     expect(workbench).toContain('正在使用');
-    expect(workbench).toContain('{agentRoleLabel(wb.assistantId)} · 当前对话');
+    expect(workbench).toContain('{agentRoleLabel(wb.assistantId)}</small>');
+    expect(workbench).not.toContain('新建对话');
+    expect(workbench).toContain('清理当前任务上下文');
     expect(workbench).toContain('向${assistant.name}发送');
     expect(workbench).toContain('{assistant.name} · {wb.knowledge ? \'结合知识库回答\' : \'普通对话\'}');
     expect(message).toContain('已保存到 ${item.publishedPath}');

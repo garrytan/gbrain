@@ -9,6 +9,7 @@ import {assistantSession} from './request';
 import { memoryVersion } from './memory-identity';
 import { WorkbenchAgentStore } from './agents';
 import type { WorkbenchAgent } from '../../../shared/workbench-agents';
+import { learnTurn } from './turn-policy';
 
 export { conversationContext } from './context';
 
@@ -19,6 +20,7 @@ export interface WorkbenchAnswerInput {
   conversationId?: string;
   messages: WorkbenchMessage[];
   summary?: string;
+  taskNotes?: string[];
   priorCitations?: WorkbenchCitation[];
   model: string;
   knowledge: boolean;
@@ -78,8 +80,40 @@ export class WorkbenchService {
   create(input: { model?: string; knowledge?: boolean; sourceId?: string; assistantId?: string }): WorkbenchConversation {
     const now = new Date().toISOString();
     const agent = new WorkbenchAgentStore(this.store).get(input.assistantId ?? 'main');
-    const conversation = { id: randomUUID(), title: '新对话', assistantId: agent.id, model: input.model || agent.model || this.models()[0]?.id || '', knowledge: input.knowledge ?? agent.knowledge, sourceId: input.sourceId ?? agent.memorySourceId ?? 'default', createdAt: now, updatedAt: now, messages: [] };
+    const primary = !this.store.list().some(row => (row.assistantId ?? 'main') === agent.id && row.primary);
+    const conversation = { id: randomUUID(), title: '新对话', assistantId: agent.id, model: input.model || agent.model || this.models()[0]?.id || '', knowledge: input.knowledge ?? agent.knowledge, sourceId: input.sourceId ?? agent.memorySourceId ?? 'default', createdAt: now, updatedAt: now, messages: [], ...(primary ? { primary: true } : {}) };
     this.store.save(conversation); return conversation;
+  }
+  openAssistant(assistantId = 'main'): WorkbenchConversation | null {
+    const agent = new WorkbenchAgentStore(this.store).get(assistantId);
+    const mine = this.store.list().filter(row => (row.assistantId ?? 'main') === agent.id);
+    if (!mine.length) return null;
+    const chosen = [...mine].sort((a, b) => Number(b.messages.length > 0) - Number(a.messages.length > 0) || Number(Boolean(b.primary)) - Number(Boolean(a.primary)) || b.updatedAt.localeCompare(a.updatedAt))[0]!;
+    return this.adopt(chosen.id);
+  }
+  private adopt(id: string): WorkbenchConversation {
+    const chosen = this.get(id);
+    const assistantId = chosen.assistantId ?? 'main';
+    for (const row of this.store.list()) {
+      if ((row.assistantId ?? 'main') === assistantId && row.id !== id && row.primary) {
+        delete row.primary;
+        this.store.save(row);
+      }
+    }
+    if (!chosen.primary) { chosen.primary = true; chosen.updatedAt = new Date().toISOString(); this.store.save(chosen); }
+    return this.get(id);
+  }
+  clearTaskContext(id: string): WorkbenchConversation {
+    if (this.active.has(id)) throw new Error('请先停止当前生成');
+    const conversation = this.get(id);
+    const last = conversation.messages.at(-1);
+    if (last) conversation.contextFloor = last.id;
+    delete conversation.summary;
+    delete conversation.summaryUntil;
+    delete conversation.taskNotes;
+    conversation.updatedAt = new Date().toISOString();
+    this.store.save(conversation);
+    return conversation;
   }
   rename(id: string, title: string) {
     if (this.active.has(id)) throw new Error('请先停止当前生成');
@@ -135,13 +169,26 @@ export class WorkbenchService {
       if (conversation.messages.length === 1) conversation.title = (text || nextAttachments[0]?.name || '\u9644\u4ef6').slice(0, 40);
     }
     conversation.model = model; conversation.knowledge = input.knowledge ?? conversation.knowledge; conversation.updatedAt = now;
-    const assistant = new WorkbenchAgentStore(this.store).get(conversation.assistantId ?? 'main');
+    let assistant = new WorkbenchAgentStore(this.store).get(conversation.assistantId ?? 'main');
+    let turnScope: ReturnType<typeof learnTurn>['scope'] | undefined;
+    let ruleNotice: string | undefined;
+    if (!input.retry) {
+      const spoken = [...conversation.messages].reverse().find(message => message.role === 'user');
+      if (spoken?.text) {
+        const floor = conversation.contextFloor ? conversation.messages.findIndex(message => message.id === conversation.contextFloor) : -1;
+        const learning = learnTurn({ name: assistant.name, standingRules: assistant.standingRules, recentUserTexts: conversation.messages.filter((message, index) => message.role === 'user' && message.id !== spoken.id && index > floor).map(message => message.text), text: spoken.text });
+        turnScope = learning.scope;
+        ruleNotice = learning.notice;
+        if (learning.scope === 'once' && learning.taskNote) conversation.taskNotes = [...new Set([...(conversation.taskNotes ?? []), learning.taskNote])].slice(-8);
+        else if (learning.rules.join('\n') !== (assistant.standingRules ?? []).join('\n')) assistant = new WorkbenchAgentStore(this.store).rememberRules(assistant.id, learning.rules);
+      }
+    }
     const contextWindow = this.models().find(item => item.id === model)?.contextWindow;
     const modelName = this.models().find(item => item.id === model)?.name || model;
     const hasAttachments = conversation.messages.some(message => message.attachments?.length);
     const reply: WorkbenchMessage = {
       id: randomUUID(), role: 'assistant', text: '', createdAt: now, status: 'running', model, modelName,
-      stage: hasAttachments ? '正在读取附件' : '正在准备回答',
+      stage: hasAttachments ? '正在读取附件' : '正在准备回答', ...(ruleNotice ? { ruleNotice } : {}),
     };
     conversation.messages.push(reply); this.store.save(conversation);
     const abort = new AbortController();
@@ -177,7 +224,7 @@ export class WorkbenchService {
           session.signal.throwIfAborted();
           if (abort.signal.aborted) throw Object.assign(new Error('已停止生成'), { name: 'AbortError' });
           const moved = input.retry ? [] : advanceStoredReads(conversation.messages, userTurn?.text ?? '');
-          if (!input.retry && userTurn && this.memoryHooks) {
+          if (!input.retry && userTurn && this.memoryHooks && turnScope !== 'once') {
             try { userTurn.memory = await this.memoryHooks.capture(conversation, userTurn); }
             catch (error) { userTurn.memory = { sourceId: conversation.sourceId ?? 'default', hash: memoryVersion(userTurn), capturedAt: userTurn.createdAt, mode: 'off', visibility: 'private', ttl: '3d', status: 'held', error: error instanceof Error ? error.message : String(error) }; }
           }
@@ -197,7 +244,7 @@ export class WorkbenchService {
         }
         const priorCitations=conversationCitations(conversation.messages);
         const outputReserve=requestOutputTokens(model,contextWindow);
-        const contextOptions = { contextWindow,outputReserve, summaryUntil: conversation.summaryUntil, systemPrompt: assistant.systemPrompt, additionalTokens: conversation.knowledge ? knowledgeReserve(contextWindow, assistant.context.threshold,outputReserve) : 0 };
+        const contextOptions = { contextWindow,outputReserve, summaryUntil: conversation.summaryUntil, contextFloor: conversation.contextFloor, systemPrompt: assistant.systemPrompt, additionalTokens: conversation.knowledge ? knowledgeReserve(contextWindow, assistant.context.threshold,outputReserve) : 0 };
         let { recent, older } = planContext(conversation.messages, assistant.context, { ...contextOptions, summary: conversation.summary });
         const olderTurns = older.filter(message => message.role === 'user').length;
         reply.contextMessages = recent.length;
@@ -247,7 +294,7 @@ export class WorkbenchService {
           contextWindow, contextThreshold: assistant.context.threshold,
           ...(this.summarize ? { contextSummarizer: { model: compressionModel, contextWindow: this.models().find(item => item.id === compressionModel)?.contextWindow, summarize: this.summarize } } : {}),
           sourceId: conversation.sourceId, conversationId: conversation.id,
-          messages: this.modelMessages(conversation.id, recent), ...(summary ? { summary } : {}), ...(conversation.knowledge?{priorCitations}:{}), model, knowledge: conversation.knowledge,
+          messages: this.modelMessages(conversation.id, recent), ...(summary ? { summary } : {}), ...(conversation.taskNotes?.length ? { taskNotes: conversation.taskNotes } : {}), ...(conversation.knowledge?{priorCitations}:{}), model, knowledge: conversation.knowledge,
           ...(assistant.systemPrompt.trim() ? { systemPrompt: assistant.systemPrompt } : {}),
           ...(assistant.temperature !== null ? { temperature: assistant.temperature } : {}),
           signal: session.signal,

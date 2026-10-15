@@ -142,7 +142,11 @@ export function useWorkbench({ serviceReady = true, databaseReady = true }: { se
     let createdId: string | undefined;
     try {
       let id = conversation?.id;
-      if (!id) { const created = await workbenchRequest<WorkbenchConversation>('/conversations', { model, knowledge: useKnowledge, assistantId: assistantRef.current }); id = created.id; createdId = id; active.current = id; setConversation(created); }
+      if (!id) {
+        const opened = await workbenchRequest<{ conversation: WorkbenchConversation | null }>('/conversations/open', { assistantId: assistantRef.current });
+        if (opened.conversation) { id = opened.conversation.id; active.current = id; setConversation(opened.conversation); }
+        else { const created = await workbenchRequest<WorkbenchConversation>('/conversations', { model, knowledge: useKnowledge, assistantId: assistantRef.current }); id = created.id; createdId = id; active.current = id; setConversation(created); }
+      }
       const attachments = files ? await Promise.all(files.map(file => filePayload(file))) : undefined;
       const attachmentFields = editMessageId
         ? { editMessageId, attachments: attachments ?? [], attachmentsHydrated }
@@ -189,11 +193,22 @@ export function useWorkbench({ serviceReady = true, databaseReady = true }: { se
   const selectAgent = async (id: string) => {
     const chosen = agents.find(agent => agent.id === id); if (!chosen) return;
     assistantRef.current = id; setAssistantId(id); setAssistant(chosen); settingsModel.current = chosen.model;
-    if (chosen.model) setModel(chosen.model); setKnowledge(chosen.knowledge); await select();
+    if (chosen.model) setModel(chosen.model); setKnowledge(chosen.knowledge);
+    const opened = await workbenchRequest<{ conversation: WorkbenchConversation | null }>('/conversations/open', { assistantId: id });
+    if (opened.conversation) { await select(opened.conversation.id); return opened.conversation.id; }
+    await select();
+    return undefined;
+  };
+  const clearContext = async () => {
+    if (!conversation || running || pending) return;
+    const id = conversation.id; setError(''); setPending(true);
+    try { const next = await workbenchRequest<WorkbenchConversation>(`/conversations/${id}/context/clear`, {}); if (active.current === id) setConversation(next); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+    finally { setPending(false); }
   };
   const saveAgent = async (value: WorkbenchAgent) => {
     const saved = await workbenchRequest<WorkbenchAgent>(`/agents/${value.id}`, value, 'PUT');
     await refresh(); setAssistant(saved); if (saved.model) setModel(saved.model); if (!conversation) setKnowledge(saved.knowledge); return saved;
   };
-  return { rows: rows.filter(row => (row.assistantId ?? 'main') === assistantId), allRows: rows, agents, assistantId, selectAgent, saveAgent, refresh, models, modelsLoaded, conversation, model, setModel: chooseModel, knowledge: knowledge && databaseReady, setKnowledge, assistant, saveAssistant, error, setError, loaded, pending, running, select, send, action };
+  return { rows: rows.filter(row => (row.assistantId ?? 'main') === assistantId), allRows: rows, agents, assistantId, selectAgent, saveAgent, refresh, models, modelsLoaded, conversation, model, setModel: chooseModel, knowledge: knowledge && databaseReady, setKnowledge, assistant, saveAssistant, error, setError, loaded, pending, running, select, send, action, clearContext };
 }

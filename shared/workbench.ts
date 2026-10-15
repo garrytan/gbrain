@@ -71,6 +71,7 @@ export interface WorkbenchMessage {
   knowledge?: 'used' | 'none' | 'off';
   contextMessages?: number;
   contextNote?: string;
+  ruleNotice?: string;
   attachments?: WorkbenchAttachment[];
   attachmentSupplement?: string;
   stopReason?: 'end' | 'length' | 'other';
@@ -88,6 +89,9 @@ export interface WorkbenchConversation {
   messages: WorkbenchMessage[];
   summary?: string;
   summaryUntil?: string;
+  contextFloor?: string;
+  taskNotes?: string[];
+  primary?: boolean;
   sourceId?: string;
   assistantId?: string;
   taskKey?: string;
