@@ -12,6 +12,8 @@
 - 最终结果：修复前发布/诊断 3 项失败、串行清单 2 项失败、遗漏说明快速门禁 1 项失败均留有证据；修复后分片/发布/算法 51 项、诊断与启动锁 38 项、版本与发行契约 13 项通过（交叉测试不合并计数）。139 个串行文件两组清单完整且互斥，错误分片拒绝。按原提交日志估算，普通最慢分片 685 秒平衡为各约 206 秒，串行两组各约 600 秒；估算不当作新 SHA 实测。Admin 47 资源、内嵌文件及发布清单 920c3a22c305 完成，Windows Bun/Sidecar/Canvas/PGLite runtime 验收通过。
 - 与规划差异和边界：调查被取消任务时额外找到 doctor 的真实失败，并补齐快速版本门禁与前轮 Postgres 专项入口。未改知识库数据、原始资料、Wiki、向量内容、生产超时或业务阶段；未运行本地全量测试或 build:win。提交与推送按本轮用户明确授权执行。
 - 本地门禁：verify 40 项通过，CI 预演 236 项 / 569 断言通过；生成资源重建无漂移，Git 锁、冲突和受保护路径检查通过。当前工作区 Admin 1.4.73 预览已请求在 Codex 打开，返回 queued。
+- 首轮远端与跟进：af4a045f 的 E2E、Heavy、Core User Journeys 成功；新增 Postgres 增量专项实际 20 项 / 60 断言通过。旧第 7 分片及首个串行分片正常结束。重分配暴露 eval-trajectory 测试继承前序 1280 维 Gateway、却写入固定 1536 维夹具的三个失败；用同样无凭据前置配置在本机复现，改为独立 serial 文件，显式设置 1536 维测试模型并在结束后 resetGateway，原七条断言全部保留。污染前置复验 7 项 / 21 断言通过，分配回归 28 项 / 188 断言通过；隔离清单增至 140 个文件。同步迁移该文件的权重，不改产品维度、模型选择或 SQL。
+- 原生崩溃跟进：第二串行组用时 10 分 42 秒，已消除原 20 分钟超时，但 product-task-runtime 的并行等待/立即停止用例在 Bun 1.3.13 报 Segmentation fault（10 次 Worker 创建、9 次结束），没有断言失败。对照 GBrain 串行 CI 的 Bun 1.4.2 及 Bun 1.4 官方 Worker 结束崩溃修复，仅将 serial-tests 的 CI 运行时固定为 1.4.2；保留所有用例、超时、独立进程与停止语义。产品内置 Bun、Windows runtime 与真实用户流程仍为 1.3.14；其余 CI 仍覆盖 1.3.13。是否解决本次崩溃以跟进提交实际 Actions 为准，未修改生产 Worker 或增加重试。
 - Skill/插件与工作流：pmbrain-ci-governance；GitHub CLI 读取日志及推送验收，codex-app-tools 仅打开本地预览，无外部应用、无子代理。准确旧 SHA/失败步骤 → 本地复现 → 现有隔离与分配机制对照 → 最小修复 → 定向与 CI 预演/资源验证 → Git 锁及保护路径检查 → 提交推送 → 新 SHA Actions。
 - 证据：本聊天 visualization 目录 ci-1473-remote-before.log、ci-1473-serial-before.log、ci-1473-shard7-before.log、ci-1473-focused-before.log、ci-1473-shards-before.log、ci-1473-version-before.log、ci-1473-selection-after.log、ci-1473-doctor-after.log、ci-1473-version-after.log、ci-1473-preview.log、ci-1473-sidecar.log；原始时长提取为 ci-1473-measured-weights.json。
 

@@ -12,17 +12,27 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runEvalTrajectory } from '../src/commands/eval-trajectory.ts';
+import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 
 let engine: PGLiteEngine;
 
 beforeAll(async () => {
+  configureGateway({
+    embedding_model: 'openai:text-embedding-3-large',
+    embedding_dimensions: 1536,
+    env: {},
+  });
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
 });
 
 afterAll(async () => {
-  await engine.disconnect();
+  try {
+    await engine.disconnect();
+  } finally {
+    resetGateway();
+  }
 });
 
 beforeEach(async () => {

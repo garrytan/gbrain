@@ -466,7 +466,7 @@
   "test/eval-takes-quality-rubric.test.ts": 2,
   "test/eval-takes-quality-runner.serial.test.ts": 3682,
   "test/eval-takes-quality-trend.test.ts": 3576,
-  "test/eval-trajectory.test.ts": 2983,
+  "test/eval-trajectory.serial.test.ts": 2983,
   "test/eval-v041_2-scaffolds.test.ts": 3,
   "test/eval-whoknows.test.ts": 23,
   "test/eval.test.ts": 24,
