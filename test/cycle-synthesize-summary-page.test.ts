@@ -16,6 +16,8 @@ import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { __testing } from '../src/core/cycle/synthesize.ts';
 import type { PageInput } from '../src/core/types.ts';
+import { lintContent } from '../src/commands/lint.ts';
+import { parseMarkdown } from '../src/core/markdown.ts';
 
 type SummaryWriter = (
   engine: BrainEngine,
@@ -72,6 +74,13 @@ async function renderSummary(writtenSlugs: string[]): Promise<{ body: string; ma
 }
 
 describe('dream-cycle summary graph bounds (#4337)', () => {
+  // The summary generator must satisfy the same temporal contract as authored pages.
+  // Graph-bound tests only check dream provenance, which lint does not accept as a date.
+  test('generated summary passes lint with its original cycle date', async () => {
+    const { markdown } = await renderSummary(['wiki/originals/ideas/example-output']);
+    expect(lintContent(markdown, 'dream-cycle-summaries/2026-08-20.md')).toEqual([]);
+    expect(parseMarkdown(markdown).frontmatter.created).toBe('2026-08-20');
+  });
   test('more than 2,000 outputs produce one deterministic bounded sample with recoverable provenance', async () => {
     const slugs = Array.from(
       { length: 2_105 },

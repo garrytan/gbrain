@@ -3111,6 +3111,7 @@ async function writeSummaryPage(
       // stampDreamProvenance/renderPageToMarkdown; the summary is per-date so
       // both keys are simply the summary's own date.
       dream_created_cycle_date: summaryDate,
+      created: summaryDate,
       // #1978: deterministic index page — no source document of its own;
       // raw traces live on the listed pages. Explicit exemption keeps the
       // doctor raw_provenance check quiet.
