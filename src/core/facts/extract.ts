@@ -260,6 +260,31 @@ export type FactNotability = 'high' | 'medium' | 'low';
  */
 export const ENTITY_HINTS_CAP = 5;
 
+/**
+ * #6731 — an entity the caller already knows the turn is about: a bare
+ * canonical slug, or a slug with the page's display name so the model can
+ * match how people in the turn say it ("Alice" → people/alice-example).
+ */
+export type EntityHint = string | { slug: string; name?: string | null };
+
+/**
+ * Render the hints the prompt forwards, and offer their slugs as the
+ * canonical entity output: a fact about a hinted entity names it by slug, so
+ * the save-time resolver lands it on an exact page instead of guessing from
+ * a bare first name or a call title.
+ */
+export function renderEntityHints(hints: readonly EntityHint[] | undefined, cap = ENTITY_HINTS_CAP): string {
+  const shown = (hints ?? []).slice(0, Math.max(0, cap)).map((hint) => {
+    if (typeof hint === 'string') return hint;
+    let name = (hint.name ?? '').replace(/\s+/g, ' ').trim();
+    for (const p of INJECTION_PATTERNS) name = name.replace(p.rx, p.replacement);
+    return name && name !== hint.slug ? `${hint.slug} (${name})` : hint.slug;
+  }).filter(Boolean);
+  return shown.length
+    ? ` Known entities, by canonical slug: ${shown.join(', ')}. When a fact is about one of them, set entity to its exact slug.`
+    : '';
+}
+
 export interface FactEmbeddingSignature { model: string; dimensions: number; }
 
 export interface ExtractInput {
@@ -267,7 +292,9 @@ export interface ExtractInput {
   /** Opaque session id (MCP _meta.session_id, CLI --session, or null). */
   sessionId?: string | null;
   /** Existing canonical entity slugs the agent already resolved (D4 hint). */
-  entityHints?: string[];
+  entityHints?: readonly EntityHint[];
+  /** How many hints the prompt forwards; defaults to ENTITY_HINTS_CAP. */
+  entityHintsCap?: number;
   /** Source identifier for provenance — e.g. 'mcp:put_page' or 'mcp:extract_facts'. */
   source: string;
   /**
@@ -648,9 +675,7 @@ export async function extractFactsFromTurnWithOutcome(
   const responseSchema = factsResponseSchema(variant);
   const dateLine = variant.dateGrounding ? `${observationDateLine(input.observationDate ?? null)}\n` : '';
   const userContent = `${dateLine}<turn>\n${cleaned}\n</turn>\n\nExtract up to ${cap} facts.${
-    input.entityHints && input.entityHints.length
-      ? ` Known entity slugs the user already mentioned: ${input.entityHints.slice(0, ENTITY_HINTS_CAP).join(', ')}.`
-      : ''
+    renderEntityHints(input.entityHints, input.entityHintsCap)
   }`;
   let result: ChatResult;
   // The cap the last call was actually sent at. When the truncation retry

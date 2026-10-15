@@ -111,6 +111,7 @@ import {
   mergeSaveTimeResolutionCounts,
   resolveExtractedEntitiesForSave,
 } from '../core/entities/resolve-on-save.ts';
+import { CONVERSATION_ENTITY_HINTS_CAP, conversationEntityHints } from '../core/facts/conversation-entity-hints.ts';
 
 // Re-exported verbatim so existing importers (this file's own helpers below
 // and this file's tests) keep working unchanged; doctor.ts, jobs.ts,
@@ -1011,6 +1012,9 @@ async function processPage(
   let pageInsertedTotal = 0;
   const managedRows: Array<NewFact & { row_num: number; source_markdown_slug: string }> = [];
   const pageResolution = emptySaveTimeResolutionCounts();
+  // #6731: the entities the page itself names, so a fact about "Paul" lands
+  // on the attendee's page by slug instead of a guess from a first name.
+  const entityHints = await conversationEntityHints(state.engine, state.sourceId, page);
 
   for (const seg of segments) {
     if (state.segmentLimit > 0 && segmentsThisPage >= state.segmentLimit) break;
@@ -1032,6 +1036,8 @@ async function processPage(
         source: PER_SEGMENT_SOURCE_PREFIX,
         engine: state.engine,
         abortSignal: state.signal,
+        entityHints,
+        entityHintsCap: CONVERSATION_ENTITY_HINTS_CAP,
       });
     } else {
       const extraction = await extractFactsFromTurnWithOutcome({
@@ -1041,6 +1047,8 @@ async function processPage(
         engine: state.engine,
         abortSignal: state.signal,
         observationDate: segmentObservationDate(page, seg.startIso),
+        entityHints,
+        entityHintsCap: CONVERSATION_ENTITY_HINTS_CAP,
       });
       if (!extraction.ok) {
         // #3669 — rethrow BudgetExhausted UNWRAPPED. Wrapping it in a plain
