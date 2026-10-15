@@ -12,6 +12,13 @@ import { glossaryIsFresh } from '../scripts/check-eval-glossary-fresh.ts';
 import { validateVersionContract } from '../scripts/check-version-sync.ts';
 
 describe('release build guards', () => {
+  test('version gate rejects stale or missing release-note headings', () => {
+    const contract={versionFile:'1.4.73',corePackage:'1.4.73',desktopPackage:'1.4.73',
+      manifestCore:'1.4.73',manifestDesktop:'1.4.73',manifestSidecar:'1.4.73'};
+    expect(validateVersionContract({...contract,releaseNotesVersion:'1.4.73'})).toEqual([]);
+    for(const releaseNotesVersion of ['1.4.70',''])expect(validateVersionContract({...contract,releaseNotesVersion}))
+      .toEqual([`release notes=${releaseNotesVersion}, desktop/package.json=1.4.73`]);
+  });
   test('normalizes Windows and legacy line endings without changing LF text', () => {
     expect(normalizeLineEndings('a\r\nb\rc\n')).toBe('a\nb\nc\n');
     expect(normalizeLineEndings('already\nnormalized\n')).toBe('already\nnormalized\n');

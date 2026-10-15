@@ -25,16 +25,31 @@ const REPO_ROOT = resolve(import.meta.dir, '..', '..');
 const SERIAL_SH = resolve(REPO_ROOT, 'scripts/run-serial-tests.sh');
 const SHARD_SH = resolve(REPO_ROOT, 'scripts/run-unit-shard.sh');
 
-function dryRunList(scriptPath: string): string[] {
+function dryRunList(scriptPath: string, shard = ''): string[] {
   const out = execFileSync('bash', [scriptPath, '--dry-run-list'], {
     cwd: REPO_ROOT,
     encoding: 'utf-8',
-    env: { ...process.env, SHARD: '' },
+    env: { ...process.env, SHARD: shard },
   });
   return out.split('\n').map(s => s.trim()).filter(Boolean);
 }
 
 describe('run-serial-tests.sh contract', () => {
+  it('weighted CI shards cover the original serial set exactly once', () => {
+    const original=dryRunList(SERIAL_SH);
+    const first=dryRunList(SERIAL_SH,'1/2'),second=dryRunList(SERIAL_SH,'2/2');
+    expect(first.length).toBeGreaterThan(0);
+    expect(second.length).toBeGreaterThan(0);
+    expect(first.length).toBeLessThan(original.length);
+    expect(new Set([...first,...second]).size).toBe(original.length);
+    expect([...first,...second].sort()).toEqual([...original].sort());
+    expect(dryRunList(SERIAL_SH,'1/2')).toEqual(first);
+  });
+
+  it('rejects invalid serial shard selection before running tests', () => {
+    for(const shard of ['0/2','3/2','1/0','invalid'])expect(()=>dryRunList(SERIAL_SH,shard)).toThrow();
+  });
+
   it('discovers every *.serial.test.ts file', () => {
     const serialFiles = dryRunList(SERIAL_SH);
     // Every file the script lists must end in .serial.test.ts.

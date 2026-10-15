@@ -1,5 +1,20 @@
 # Bug 修复台账
 
+## 2026-10-15 PMBrain 1.4.73 CI 发布契约、诊断输出与测试分配修复
+
+- 时间：2026-10-15
+- 版本号：PMBrain 1.4.73（统一产品版本，Schema 135 未变）
+- 标题：修复实际失败的发布说明与 doctor JSON，并消除 CI 分片超时
+- 编程工具：Codex 大模型：GPT-6
+- 描述：按用户要求修复 CI 并推送。已读取 1c6fdfb7 的 Test Actions 38666683845：分片 8 两项断言因说明仍为 1.4.70、产品已为 1.4.72 而失败；分片 7 跑满 12 分钟，串行任务跑满 20 分钟。串行日志另有 doctor --json 被 PGLite 启动输出污染的真实失败。原提交 E2E、Heavy、Core User Journeys 成功，不将其算作新提交验收。
+- 修复：补齐最近五个版本的发行说明，并把首个说明版本校验加入现有 check-version-sync；PGLite 启动诊断沿用既有捕获范围，补上 Bun console.log 的捕获和恢复，保留锁权限与原错误。用原日志采集器提取 1197 个文件时长，更新既有 LPT 权重。串行通道复用同一分配器，拆到两个独立 runner；默认本地通道仍全选，每文件独立 Bun、max-concurrency=1，SHARD 不传入被测进程。原 12/20 分钟任务时限及 60 秒用例门槛均未扩大。增量向量 Postgres 专项接入既有 Tier 1 E2E。
+- 是否完成：代码、定向验证、本地 CI 预演、版本及运行资源已完成；准确推送 SHA 的最终远端状态以本聊天验收记录为准。
+- 最终结果：修复前发布/诊断 3 项失败、串行清单 2 项失败、遗漏说明快速门禁 1 项失败均留有证据；修复后分片/发布/算法 51 项、诊断与启动锁 38 项、版本与发行契约 13 项通过（交叉测试不合并计数）。139 个串行文件两组清单完整且互斥，错误分片拒绝。按原提交日志估算，普通最慢分片 685 秒平衡为各约 206 秒，串行两组各约 600 秒；估算不当作新 SHA 实测。Admin 47 资源、内嵌文件及发布清单 920c3a22c305 完成，Windows Bun/Sidecar/Canvas/PGLite runtime 验收通过。
+- 与规划差异和边界：调查被取消任务时额外找到 doctor 的真实失败，并补齐快速版本门禁与前轮 Postgres 专项入口。未改知识库数据、原始资料、Wiki、向量内容、生产超时或业务阶段；未运行本地全量测试或 build:win。提交与推送按本轮用户明确授权执行。
+- 本地门禁：verify 40 项通过，CI 预演 236 项 / 569 断言通过；生成资源重建无漂移，Git 锁、冲突和受保护路径检查通过。当前工作区 Admin 1.4.73 预览已请求在 Codex 打开，返回 queued。
+- Skill/插件与工作流：pmbrain-ci-governance；GitHub CLI 读取日志及推送验收，codex-app-tools 仅打开本地预览，无外部应用、无子代理。准确旧 SHA/失败步骤 → 本地复现 → 现有隔离与分配机制对照 → 最小修复 → 定向与 CI 预演/资源验证 → Git 锁及保护路径检查 → 提交推送 → 新 SHA Actions。
+- 证据：本聊天 visualization 目录 ci-1473-remote-before.log、ci-1473-serial-before.log、ci-1473-shard7-before.log、ci-1473-focused-before.log、ci-1473-shards-before.log、ci-1473-version-before.log、ci-1473-selection-after.log、ci-1473-doctor-after.log、ci-1473-version-after.log、ci-1473-preview.log、ci-1473-sidecar.log；原始时长提取为 ci-1473-measured-weights.json。
+
 ## 2026-10-15 PMBrain 1.4.72 实体重复补写、分块写入放大与阶段进度
 
 - 时间：2026-10-15

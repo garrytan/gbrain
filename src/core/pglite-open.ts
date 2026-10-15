@@ -56,9 +56,11 @@ export async function createPgliteDatabase(options: PGliteOptions): Promise<PGli
   }
 
   const lines: string[] = [];
+  const previousLog = console.log;
   const previousDebug = console.debug;
   const previousError = console.error;
   const previousWrite = process.stdout.write;
+  console.log = (...args: unknown[]) => recordStartupLine(lines, args);
   console.debug = (...args: unknown[]) => recordStartupLine(lines, args);
   console.error = (...args: unknown[]) => recordStartupLine(lines, args);
   process.stdout.write = ((chunk: string | Uint8Array, encoding?: BufferEncoding | ((error?: Error | null) => void), callback?: (error?: Error | null) => void) => {
@@ -81,6 +83,7 @@ export async function createPgliteDatabase(options: PGliteOptions): Promise<PGli
     }
     throw new Error(`${base}\n${detail}`, { cause: error });
   } finally {
+    console.log = previousLog;
     console.debug = previousDebug;
     console.error = previousError;
     process.stdout.write = previousWrite;

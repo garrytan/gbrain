@@ -9,6 +9,7 @@ export interface VersionContract {
   manifestCore: string;
   manifestDesktop: string;
   manifestSidecar: string;
+  releaseNotesVersion?: string;
 }
 
 export function validateVersionContract(contract: VersionContract): string[] {
@@ -31,6 +32,9 @@ export function validateVersionContract(contract: VersionContract): string[] {
       `release-manifest desktop=${contract.manifestDesktop}, desktop/package.json=${contract.desktopPackage}`,
     );
   }
+  if (contract.releaseNotesVersion !== undefined && contract.releaseNotesVersion !== contract.desktopPackage) {
+    errors.push(`release notes=${contract.releaseNotesVersion}, desktop/package.json=${contract.desktopPackage}`);
+  }
   return errors;
 }
 
@@ -49,6 +53,7 @@ export function checkWorkspaceVersions(root = join(import.meta.dir, '..')): void
     manifestCore: manifest.core?.version,
     manifestDesktop: manifest.desktop?.version,
     manifestSidecar: manifest.sidecar?.version,
+    releaseNotesVersion: readFileSync(join(root, 'desktop/build/release-notes.md'), 'utf8').match(/^## PMBrain (\d+\.\d+\.\d+)\s*$/m)?.[1] ?? '',
   });
 
   const embedded = readFileSync(join(root, 'admin/src/product/product-version.ts'), 'utf8').match(/PRODUCT_VERSION = '([^']+)'/)?.[1];

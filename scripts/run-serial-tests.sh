@@ -15,12 +15,34 @@ cd "$(dirname "$0")/.."
 
 # Serial files are still unit tests; keep the database URL boundary hermetic.
 unset DATABASE_URL GBRAIN_DATABASE_URL PMBRAIN_DATABASE_URL GBRAIN_TEST_ALLOW_DATABASE_URL
+SERIAL_SHARD="${SHARD:-}"
+unset SHARD
+if [ -n "$SERIAL_SHARD" ]; then
+  if ! [[ "$SERIAL_SHARD" =~ ^[0-9]+/[0-9]+$ ]]; then
+    echo "[serial-tests] invalid SHARD: expected N/M" >&2
+    exit 2
+  fi
+  shard_n=${SERIAL_SHARD%/*}
+  shard_m=${SERIAL_SHARD#*/}
+  if [ "$shard_n" -lt 1 ] || [ "$shard_m" -lt 1 ] || [ "$shard_n" -gt "$shard_m" ]; then
+    echo "[serial-tests] invalid SHARD: need 1 <= N <= M" >&2
+    exit 2
+  fi
+fi
 
 # Use while-read for portability to macOS bash 3.2 (no mapfile).
 files=()
 while IFS= read -r f; do
   files+=("$f")
 done < <(find test -name '*.serial.test.ts' -not -path 'test/e2e/*' | sort)
+
+if [ -n "$SERIAL_SHARD" ] && [ "${#files[@]}" -gt 0 ]; then
+  selected=$(printf '%s\n' "${files[@]}" | bun run scripts/sharding.ts "$shard_n" "$shard_m")
+  files=()
+  while IFS= read -r f; do
+    if [ -n "$f" ]; then files+=("$f"); fi
+  done <<< "$selected"
+fi
 
 if [ "${#files[@]}" -eq 0 ]; then
   echo "[serial-tests] no *.serial.test.ts files found"
