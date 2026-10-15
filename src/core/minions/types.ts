@@ -546,6 +546,8 @@ export interface AggregatorHandlerData {
 
 /** Tool execution context passed to every ToolDef.execute. */
 export interface ToolCtx {
+  preparePageCommit?: NonNullable<Parameters<typeof import('../import-file.ts').importFromContent>[3]>['prepareCommit'];
+  preparedPageImport?: (engine: import('../engine.ts').BrainEngine) => Promise<import('../import-file.ts').ImportResult>;
   /** Engine for DB-backed tools (brain_query, put_page, etc.). */
   engine: import('../engine.ts').BrainEngine;
   /** The subagent job id (used for audit + put_page namespace enforcement). */
@@ -568,6 +570,7 @@ export interface ToolCtx {
  * resume policy and are not supported in v0.15.
  */
 export interface ToolDef {
+  preparesPageImport?: boolean;
   name: string;
   description: string;
   input_schema: Record<string, unknown>;

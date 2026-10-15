@@ -34,11 +34,21 @@ function splitState(body:string):{facts:string;states:string[]}{
 function preserveExisting(existing:{compiled_truth:string;timeline:string}|null,body:string,timeline:string):{body:string;timeline:string}{
   if(!existing)return {body,timeline};
   const old=splitState(existing.compiled_truth),current=splitState(body);
-  const missing=old.facts.split(/\n\s*\n/).map(block=>block.trim()).filter(block=>block&&!/^#{1,6}[^\n]*$/.test(block)&&!body.includes(block));
-  const historical=missing.length?`\n\n## 历史事实\n\n${missing.join('\n\n')}`:'';
-  const state=!current.states.length&&old.states.length?`\n\n${old.states.at(-1)}`:'';
-  const priorTimeline=existing.timeline.trim();
-  return {body:body+historical+state,timeline:priorTimeline&&!timeline.includes(priorTimeline)?[priorTimeline,timeline].filter(Boolean).join('\n\n'):timeline};
+  const knownLines=new Set(old.facts.split('\n').map(line=>line.trim()).filter(Boolean));
+  const additions=current.facts.split(/\n\s*\n/).map(block=>block.trim())
+    .filter(block=>block&&!/^#{1,6}[^\n]*$/.test(block)&&!old.facts.includes(block))
+    .map(block=>block.split('\n').filter(line=>!knownLines.has(line.trim())).join('\n').trim()).filter(Boolean);
+  const facts=[old.facts.trim(),...new Set(additions)].filter(Boolean).join('\n\n');
+  const state=current.states.at(-1)??old.states.at(-1);
+  const priorTimeline=existing.timeline.trim(),knownTimeline=new Set(priorTimeline.split('\n').map(line=>line.trim()));
+  const timelineDelta=timeline.split('\n').filter(line=>!line.trim()||!knownTimeline.has(line.trim())).join('\n').trim();
+  return {body:[facts,state?.trim()].filter(Boolean).join('\n\n'),timeline:[priorTimeline,timelineDelta].filter(Boolean).join('\n\n')};
+}
+
+function orderedMetadata(value:unknown):unknown{
+  if(Array.isArray(value))return value.map(orderedMetadata);
+  if(value&&typeof value==='object'&&!(value instanceof Date))return Object.fromEntries(Object.entries(value).sort(([a],[b])=>a.localeCompare(b)).map(([key,item])=>[key,orderedMetadata(item)]));
+  return value;
 }
 
 export async function annotateIngestContent(engine:BrainEngine,context:EntityIngestContext,reference:string,content:string):Promise<string>{
@@ -57,7 +67,7 @@ export async function annotateIngestContent(engine:BrainEngine,context:EntityIng
     if(!line.includes(context.slug))continue;
     const lineHash=hash(line);
     const owned=next.find(record=>record.line===lineHash&&record.sourceId===context.sourceId&&record.slug===context.slug&&record.pageId===origin.id);
-    if(owned){if(incoming.has(lineHash)){owned.bodyHash=hash(context.body);owned.chunkHash=hash(context.chunkBody);}continue;}
+    if(owned){if(incoming.has(lineHash)&&owned.bodyHash!==hash(context.body)){owned.bodyHash=hash(context.body);owned.chunkHash=hash(context.chunkBody);}continue;}
     next.push({line:lineHash,sourceId:context.sourceId,slug:context.slug,pageId:origin.id,bodyHash:hash(context.body),chunkHash:hash(context.chunkBody)});
   }
   const frontmatter:Record<string,unknown>={...existing?.frontmatter,...parsed.frontmatter,[key]:next};
@@ -68,7 +78,7 @@ export async function annotateIngestContent(engine:BrainEngine,context:EntityIng
   const tags=[...new Set([...(existing?await engine.getTags(slug,{sourceId}):[]),...parsed.tags])];
   const title=String(metadata.title??existing?.title??parsed.title);
   if(existing&&title!==existing.title)frontmatter.aliases=[...new Set([existing.title,...aliases])];
-  return serializeMarkdown(frontmatter,preserved.body,preserved.timeline,{type:(metadata.type??existing?.type??parsed.type) as typeof parsed.type,title,tags});
+  return serializeMarkdown(orderedMetadata(frontmatter) as Record<string,unknown>,preserved.body,preserved.timeline,{type:(metadata.type??existing?.type??parsed.type) as typeof parsed.type,title,tags});
 }
 
 export async function activeIngestContent(engine:Pick<BrainEngine,'executeRaw'>,page:{compiled_truth:string|null;timeline?:string|null;frontmatter?:Record<string,unknown>}):Promise<{compiled_truth:string;timeline:string;origins:Array<{slug:string;sourceId:string;revision:string}>}>{

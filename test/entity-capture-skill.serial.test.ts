@@ -114,7 +114,7 @@ test('识别实体的提示、工具和可写范围按完整 ingest 契约收口
   expect(prompt).toContain('concepts/');
   expect(prompt).toContain('projects/');
   expect(prompt).toContain('add_link');
-  expect(prompt).toContain('保留已有事实');
+  expect(prompt).toContain('已有实体复用准确身份，只提交新事实');
   expect(prompt).toContain('另建原始资料页');
   expect(prompt).toContain('未知类型不建页');
   const withCandidates = buildEntityCapturePrompt({
@@ -302,17 +302,22 @@ test('脚本按技能搜索并创建人物和公司，正文关联随后连上�
     'OpenAI 的人员变动。[Source: notes/work] [[vault:notes/work]]',
   ].join('\n');
   const client = new FakeMessagesClient([
-    tool('search-person', 'brain_search', { query: '张三' }),
-    tool('search-company', 'brain_search', { query: 'OpenAI' }),
-    tool('write-person', 'brain_put_page', { slug: 'people/张三', content: person }),
-    tool('write-company', 'brain_put_page', { slug: 'companies/openai', content: company }),
+    {content:[...tool('search-person', 'brain_search', { query: '张三' }).content,
+      ...tool('search-company', 'brain_search', { query: 'OpenAI' }).content],stop_reason:'tool_use'},
+    {content:[...tool('write-person', 'brain_put_page', { slug: 'people/张三', content: person }).content,
+      ...tool('write-company', 'brain_put_page', { slug: 'companies/openai', content: company }).content],stop_reason:'tool_use'},
     text(JSON.stringify({entities:['people/张三','companies/openai'],relations:[{from:'people/张三',to:'companies/openai',link_type:'works_at',evidence:'张三在 OpenAI 工作'}]})),
   ]);
+  const progress:Array<{done:number;total:number;remaining:number;active:number;stage?:string}>=[];
   const result = await runPhaseCaptureEntities(engine, {
     sourceId: 'vault',
     handler: makeSubagentHandler({ engine, client }),
+    onProgress:value=>{progress.push(value);},
   });
   expect(result.status,result.summary).toBe('ok');
+  expect(client.calls).toHaveLength(3);
+  expect(progress.some(value=>value.active===1&&value.total===1&&value.remaining===1)).toBe(true);
+  expect(progress.some(value=>value.done===1&&value.remaining===0&&value.stage==='核对知识关联')).toBe(true);
   expect(result.details.written_slugs).toEqual(['vault:companies/openai', 'vault:people/张三']);
   const toolNames = client.calls.flatMap(call => (call.tools ?? []).map(item => item.name));
   expect(toolNames).toContain('brain_search');

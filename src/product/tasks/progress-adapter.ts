@@ -31,6 +31,7 @@ export class TaskProgressAdapter {
   private currentPhase = '';
   private currentFile = '';
   private completed = new Set<string>();
+  private resumedPhase?: { id: string; elapsedMs: number };
   view: TaskProductProgress;
 
   constructor(kind: string, saved?: TaskProductProgress) {
@@ -38,6 +39,8 @@ export class TaskProgressAdapter {
       name: taskName(kind), stage: '准备执行', percent: null, phasePercent: null, completedSteps: 0,
       steps: [], processed: null, total: null, file: null, metrics: [], errorReason: null,
     };
+    this.currentPhase = saved?.phaseProgress?.id ?? '';
+    if (saved?.phaseProgress) this.resumedPhase = { id: saved.phaseProgress.id, elapsedMs: saved.phaseProgress.elapsedMs };
     if (!saved) {
       if (kind === 'import_path') this.plan(['collect', 'process', 'vector', 'write']);
       else if (kind === 'embed_stale') this.plan(['embed']);
@@ -45,7 +48,11 @@ export class TaskProgressAdapter {
     }
   }
 
-  plan(phases: string[]): void {
+  plan(phases: string[], reset = false): void {
+    if (!reset && this.view.steps.flatMap(step => step.phases).join('\n') === phases.join('\n')) {
+      for (const step of this.view.steps) if (step.status === 'completed') for (const phase of step.phases) this.completed.add(phase);
+      return;
+    }
     this.view.steps = [];
     this.completed.clear();
     for (const phase of phases) {
@@ -56,11 +63,13 @@ export class TaskProgressAdapter {
     }
     this.view.completedSteps = 0;
     this.currentPhase = '';
+    this.view.phaseProgress = undefined;
+    this.resumedPhase = undefined;
   }
 
   scope(scope: { name: string; index: number; total: number }): void {
     const phases = this.view.steps.flatMap(step => step.phases);
-    this.plan(phases);
+    this.plan(phases, true);
     this.view.scope = scope;
     this.view.percent = Math.floor(scope.index / scope.total * 100);
     this.view.phasePercent=null;this.view.file=null;this.view.processed=null;this.view.total=null;
@@ -76,7 +85,8 @@ export class TaskProgressAdapter {
     this.view.phasePercent=total?Math.floor(scan.scanned/total*1000)/10:null;
   }
 
-  event(event: { phase: string; file?: string; event?: string; done?: number; total?: number }): void {
+  event(event: { phase: string; file?: string; event?: string; done?: number; total?: number; ts?: string;
+    elapsed_ms?: number; remaining?: number; active?: number; unit?: string; stage?: string }): void {
     const raw = event.phase.replace(/^cycle\./, '').replace(/^import\./, '');
     if (raw === 'files') {
       if(this.view.name==='快速维护' && this.currentPhase==='sync'){
@@ -98,6 +108,31 @@ export class TaskProgressAdapter {
     const phase = raw.split('.')[0]!;
     const step = this.view.steps.find(item => item.phases.includes(phase));
     if (!step) return;
+    const timestamp = event.ts && Number.isFinite(Date.parse(event.ts)) ? event.ts : new Date().toISOString();
+    const prior = this.view.phaseProgress;
+    const same = prior?.id === phase;
+    if (this.resumedPhase?.id !== phase) this.resumedPhase = undefined;
+    const phaseProgress = same ? prior : { id: phase, startedAt: timestamp, elapsedMs: 0,
+      completed: null, total: null, remaining: null, active: null, unit: event.unit ?? '项' };
+    if (!phaseProgress.startedAt && event.event !== 'finish') phaseProgress.startedAt = timestamp;
+    if (typeof event.elapsed_ms === 'number' && Number.isFinite(event.elapsed_ms)) {
+      phaseProgress.elapsedMs = (this.resumedPhase?.elapsedMs ?? 0) + Math.max(0, event.elapsed_ms);
+      phaseProgress.startedAt = event.event === 'finish' ? null : timestamp;
+    } else if (event.event === 'finish' && phaseProgress.startedAt) {
+      phaseProgress.elapsedMs += Math.max(0, Date.parse(timestamp) - Date.parse(phaseProgress.startedAt));
+      phaseProgress.startedAt = null;
+    }
+    if (typeof event.done === 'number') phaseProgress.completed = event.done;
+    if (typeof event.total === 'number') phaseProgress.total = event.total;
+    if (typeof event.remaining === 'number') phaseProgress.remaining = event.remaining;
+    else if (phaseProgress.total != null && phaseProgress.completed != null) phaseProgress.remaining = Math.max(0, phaseProgress.total - phaseProgress.completed);
+    if (typeof event.active === 'number') phaseProgress.active = event.active;
+    if (event.event === 'finish') phaseProgress.active = 0;
+    if (event.unit) phaseProgress.unit = event.unit;
+    this.view.phaseProgress = phaseProgress;
+    if (!same) { this.view.processed = null; this.view.total = null; }
+    if (typeof event.done === 'number') this.view.processed = event.done;
+    if (typeof event.total === 'number') this.view.total = event.total;
     if (event.file && phase === 'process' && event.file !== this.currentFile) {
       for (const item of this.view.steps) if (item.id !== 'collect') item.status = 'pending';
       this.currentPhase = '';
@@ -116,7 +151,7 @@ export class TaskProgressAdapter {
       this.completed.add(phase);
       if (step.phases.every(item => this.completed.has(item))) step.status = 'completed';
     } else step.status = 'running';
-    this.view.stage = step.label;
+    this.view.stage = event.stage ? `${step.label} · ${event.stage}` : step.label;
     if (typeof event.total === 'number' && event.total > 0 && typeof event.done === 'number') {
       this.view.phasePercent = Math.min(100, Math.floor(event.done / event.total * 100));
     }
@@ -143,8 +178,13 @@ export class TaskProgressAdapter {
   }
 }
 
-export function finishTaskProgress(view: TaskProductProgress, status: string, result: unknown, error: string | null): TaskProductProgress {
+export function finishTaskProgress(view: TaskProductProgress, status: string, result: unknown, error: string | null, now = Date.now()): TaskProductProgress {
   const next = structuredClone(view);
+  if (next.phaseProgress && ['completed', 'failed', 'cancelled', 'queued'].includes(status)) {
+    if (next.phaseProgress.startedAt) next.phaseProgress.elapsedMs += Math.max(0, now - Date.parse(next.phaseProgress.startedAt));
+    next.phaseProgress.startedAt = null;
+    next.phaseProgress.active = 0;
+  }
   const data = result && typeof result === 'object' ? result as Record<string, any> : {};
   if (data.status === 'skipped' && Array.isArray(data.phases)) {
     next.percent = null; next.phasePercent = null; next.stage = '任务未执行';

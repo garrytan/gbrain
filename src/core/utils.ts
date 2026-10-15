@@ -282,6 +282,8 @@ export function rowToChunk(row: Record<string, unknown>, includeEmbedding = fals
     chunk_source: row.chunk_source as 'compiled_truth' | 'timeline' | 'fenced_code',
     embedding: includeEmbedding ? parseEmbedding(row.embedding) : null,
     model: (row.model as string | null | undefined) ?? null,
+    embedding_input_hash: (row.embedding_input_hash as string | null | undefined) ?? null,
+    embedded_text_hash: (row.embedded_text_hash as string | null | undefined) ?? null,
     token_count: row.token_count as number | null,
     embedded_at: row.embedded_at ? new Date(row.embedded_at as string) : null,
     modality: (row.modality as 'text' | 'image' | undefined) ?? undefined,

@@ -569,6 +569,8 @@ export interface Chunk {
   embedding: Float32Array | null;
   /** Exact provider:model provenance; null until a text embedding exists. */
   model: string | null;
+  embedding_input_hash?: string | null;
+  embedded_text_hash?: string | null;
   token_count: number | null;
   embedded_at: Date | null;
   /** Multimodal discriminator returned by getChunks. */
@@ -634,6 +636,7 @@ export interface ChunkInput {
   chunk_source: 'compiled_truth' | 'timeline' | 'fenced_code' | 'image_asset' | 'office_child';
   embedding?: Float32Array;
   model?: string;
+  embedding_input_hash?: string;
   token_count?: number;
   /**
    * v0.27.1 multimodal. modality 'image' carries its 1024-dim Voyage vector

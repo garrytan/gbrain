@@ -264,6 +264,7 @@ export function buildBrainTools(opts: BuildBrainToolsOpts): ToolDef[] {
 
     return {
       name: toolName,
+      preparesPageImport: op.name === 'put_page',
       description: op.description,
       input_schema: schema,
       // v0.15 ships only idempotent brain tools (every allow-listed op is
@@ -284,6 +285,8 @@ export function buildBrainTools(opts: BuildBrainToolsOpts): ToolDef[] {
           sourceId: opts.sourceId,
           skillsDir: opts.skillsDir,
         });
+        opCtx.preparePageCommit = ctx.preparePageCommit;
+        opCtx.preparedPageImport = ctx.preparedPageImport;
         let params = (input && typeof input === 'object') ? input as Record<string, unknown> : {};
         if(opts.allowEntityLinks&&['get_page','get_backlinks','traverse_graph','put_page','add_timeline_entry'].includes(op.name)&&typeof params.slug==='string'){
           const at=params.slug.indexOf(':');

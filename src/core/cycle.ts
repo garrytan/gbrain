@@ -2250,6 +2250,7 @@ export async function runCycle(
         });
       } else {
         progress.start('cycle.capture_entities');
+        let captureReportedDone = 0;
         const { runPhaseCaptureEntities } = await import('./cycle/capture-entities.ts');
         const { result, duration_ms } = await timePhase(() => runPhaseCaptureEntities(engine, {
           sourceId: cycleSourceId,
@@ -2261,6 +2262,14 @@ export async function runCycle(
           deadlineAtMs: opts.deadlineAtMs ?? null,
           privateQueueOwnerJobId: opts.privateQueueOwnerJobId ?? null,
           handler: opts.captureEntitiesHandler,
+          onProgress: snapshot => {
+            if (snapshot.done > captureReportedDone) progress.tick(snapshot.done - captureReportedDone);
+            captureReportedDone = snapshot.done;
+            if (getCliOptions().progressJson) process.stderr.write(JSON.stringify({
+              ...snapshot, phase: 'cycle.capture_entities', event: 'tick', ts: new Date().toISOString(),
+            }) + '\n');
+            else progress.heartbeat(`${snapshot.done}/${snapshot.total} 分块，剩余 ${snapshot.remaining}`);
+          },
         }));
         result.duration_ms = duration_ms;
         phaseResults.push(result);

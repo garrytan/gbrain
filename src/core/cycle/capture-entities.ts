@@ -71,6 +71,8 @@ export interface EntityCaptureChunk extends EntityCaptureCandidate {
 }
 
 export interface CaptureEntitiesOpts {
+  onProgress?: (progress: { done: number; total: number; remaining: number; active: number; unit: string;
+    file?: string; stage?: string; elapsed_ms: number }) => void;
   sourceId?: string;
   dryRun?: boolean;
   signal?: AbortSignal;
@@ -144,9 +146,9 @@ ${candidateBlock}
 已写入同一份未变化原文并通过证据检查的实体（中断前已持久化；不要再次 search、get_page 或 put_page；全部列入最终 entities）：
 ${acknowledged.length?acknowledged.map(entity=>`${entity.sourceId}:${entity.slug} | ${entity.title}`).join('\n'):'无'}
 
-读取现有实体后保留已有事实，当前状态只保留一节。put_page 的 content 必须以完整 YAML frontmatter 开头，包含 title 和 type；Markdown 的 # 标题不能设置页面身份。title 使用本段原文名称，复用现有准确 slug，禁止将拼音 slug 当标题。类型是 person、company、organization、project、concept；未知类型不建页。项目和概念只有原文明确信息才建，不作普通关键词互连。
+put_page 只提交本段全部新增事实和需要更新的当前状态，程序读取旧页并合并保留旧事实、时间线、手工内容和隐私设置，无需把已有实体整页读回再重写。只有需要理解旧内容时才 get_page。一次提交本段关于同一实体的全部事实，避免拆成多次补写。当前状态只保留一节。content 必须以完整 YAML frontmatter 开头，包含 title 和 type；Markdown 的 # 标题不能设置页面身份。title 使用本段原文名称，复用现有准确 slug，禁止将拼音 slug 当标题。类型是 person、company、organization、project、concept；未知类型不建页。项目和概念只有原文明确信息才建，不作普通关键词互连。
 人物 people/、单位 companies/、项目 projects/、概念 concepts/。已有实体标题不在本段逐字出现时，在 YAML aliases 中记录本段明确使用的名称并保留原身份，禁止臆测别名。原始资料本身就是可用的 brain context，包含明确职责、项目或事件时可满足有意义内容要求；不需外部补充。正文每条事实带 [Source: ${page.slug}]。使用 [[${page.sourceId}:${page.slug}]] 回链资料，禁止猜测或缩写路径。同一明确日期事件传播到每个实际参与实体；add_timeline_entry 的 source 必须包含 ${page.slug}，date 必须为原文明确给出的 YYYY-MM-DD；只有月份或阶段范围的事实留在正文，不得编造某月 1 日。
-第一轮只调用一次 search，query 用逗号分隔本段所有候选名称，一次查重。没有同名实体时第二轮批量写入，禁止反复搜索、resolve_slugs 或整库 list_pages。新实体内容来自本段资料，不要求额外读取其他原始文档；实体已经存在时批量 get_page 读取并复用。只有增加明确新事实才 put_page。add_link 的 from/to 使用准确 slug，context 必须逐字引用本段同时包含两端名称的原文；不得凭共现编造任职、拥有或投资关系，普通引用使用 mentions。
+第一轮只调用一次 search，query 用逗号分隔本段所有候选名称，一次查重。第二轮批量提交各实体新增事实，同一轮中可独立提交有明确证据的 add_link 和 add_timeline_entry；程序按依赖顺序执行并统一读回验收。禁止反复搜索、resolve_slugs 或整库 list_pages。新实体内容来自本段资料，不要求额外读取其他原始文档；已有实体复用准确身份，只提交新事实。只有增加明确新事实才 put_page。add_link 的 from/to 使用准确 slug，context 必须逐字引用本段同时包含两端名称的原文；不得凭共现编造任职、拥有或投资关系，普通引用使用 mentions。
 优先完成资料的主题项目、牵头单位和明确职责关系，再处理有明确身份、职责或事件的人物；只有姓名的名单不单独建实体。一次批量完成查重，不要逐个姓名分轮搜索。本分块初始允许 ${Math.min(8,maxTurns)} 轮，按不同实体数量放宽，最多 ${maxTurns} 轮，包括最后的验收回执；不要重复操作已完成的实体。
 写入完成后返回唯一 JSON 验收清单（不写额外总结）。页面和关系由程序统一读回验收，不再要求模型反复查询图谱：
 {"entities":["people/姓名","companies/单位","projects/项目"],"relations":[{"from":"companies/单位","to":"projects/项目","link_type":"mentions","evidence":"本段逐字原文，包含两端名称"}]}
@@ -452,10 +454,12 @@ export async function runPhaseCaptureEntities(
   engine: BrainEngine,
   opts: CaptureEntitiesOpts = {},
 ): Promise<PhaseResult> {
+  const captureStartedAt = Date.now();
   throwIfAborted(opts.signal, '[dream] capture entities');
   const selected = await selectEntityCaptureCandidates(engine, opts.sourceId);
   const candidates = opts.slugs ? selected.filter(page=>opts.slugs!.includes(page.slug)) : selected;
   if (candidates.length === 0) {
+    opts.onProgress?.({done:0,total:0,remaining:0,active:0,unit:'分块',elapsed_ms:Date.now()-captureStartedAt});
     return phaseResult('ok', '没有需要识别实体的资料', {
       pages_seen: 0,
       pages_submitted: 0,
@@ -568,10 +572,12 @@ export async function runPhaseCaptureEntities(
   const declaredOutputLimit=await engine.getConfig('dream.entity_capture.model_max_output_tokens');
   const modelOutputLimit=declaredOutputLimit?readTokenCap(declaredOutputLimit,defaultMaxOutputTokens(chosen.model)):undefined;
   const nonce = Date.now();
+  let totalCaptureChunks = 0;
   const pendingPages: Array<{ page: EntityCaptureCandidate; chunks: EntityCaptureChunk[] }> = [];
   for (const page of candidates) {
     const pendingChunks: EntityCaptureChunk[] = [];
     for (const chunk of splitEntityCaptureCandidate(page)) {
+      totalCaptureChunks++;
       const key = entityCaptureIdempotencyKey(page, chunk.chunkIndex, chunk.chunkBody);
       if (await hasCompletedCaptureJob(engine, key)) continue;
       pendingChunks.push(chunk);
@@ -579,6 +585,7 @@ export async function runPhaseCaptureEntities(
     if (pendingChunks.length > 0) pendingPages.push({ page, chunks: pendingChunks });
   }
   if (pendingPages.length === 0) {
+    opts.onProgress?.({done:totalCaptureChunks,total:totalCaptureChunks,remaining:0,active:0,unit:'分块',elapsed_ms:Date.now()-captureStartedAt});
     return phaseResult('ok', '这些资料已经按 ingest 识别过实体', {
       ...modelDetails,
       pages_seen: candidates.length,
@@ -615,6 +622,13 @@ export async function runPhaseCaptureEntities(
   let pagesProcessed = 0;
   let chunksSubmitted = 0;
   let chunksProcessed = 0;
+  const previouslyCompleted = totalCaptureChunks - pendingPages.reduce((sum, item) => sum + item.chunks.length, 0);
+  const reportProgress = (active = 0, file?: string, stage?: string) => opts.onProgress?.({
+    done: previouslyCompleted + chunksProcessed, total: totalCaptureChunks,
+    remaining: Math.max(0, totalCaptureChunks - previouslyCompleted - chunksProcessed), active,
+    unit: '分块', file, stage, elapsed_ms: Date.now() - captureStartedAt,
+  });
+  reportProgress();
   let directLinks = 0;
   const recognizedEntities=new Map<string,{slug:string;sourceId:string}>();
   const unresolvedReferences:unknown[]=[];
@@ -732,6 +746,7 @@ export async function runPhaseCaptureEntities(
           chunksSubmitted += 1;
           childIds.push(child.id);
           const reused=child.status==='completed';
+          reportProgress(reused ? 0 : 1, chunk.slug, '处理当前分块');
           if(!reused)executedChildIds.push(child.id);
            if(child.status!=='completed')try{await runSubagentsInline(
             engine,
@@ -808,11 +823,13 @@ export async function runPhaseCaptureEntities(
             else if(/ingest_provider_(auth|billing|model_not_found)/.test(modelError))failureReason='model_unavailable';
             else if(!budgetStop&&/\bingest /.test(modelError))fatalFailure=false;
             pageFailures.push({slug:chunk.slug,sourceId:chunk.sourceId,reason:modelError,stage:failureReason==='ingest_validation'?'entity_verification':'entity_ingest',kind:budgetStop??failureReason,input_tokens:usage.input,output_tokens:usage.output,input_limit:data.usage_limits!.input,output_limit:data.usage_limits!.output,model_output_limit:modelOutputLimit??null,turn_timeout_ms:turnTimeoutMs,job_timeout_ms:child.timeout_ms??configuredJobTimeout});
+            reportProgress(0, chunk.slug);
             break;
           }
           completedForPage += 1;
           verifiedChildIds.push(child.id);
           chunksProcessed += 1;
+          reportProgress(0, chunk.slug);
         }
         if (submittedForPage > 0) pagesSubmitted += 1;
         if (!budgetStop && completedForPage === item.chunks.length) pagesProcessed += 1;
@@ -836,6 +853,7 @@ export async function runPhaseCaptureEntities(
           rememberRelationError(error);
         }
       }
+      reportProgress(0, undefined, '核对知识关联');
       await alignWrittenGraph([]);
        if(!opts.signal?.aborted)await opts.yieldDuringPhase?.();
        if(opts.signal?.aborted){failureStop=true;fatalFailure=true;failureReason=ingestAbortKind(opts.signal);}
@@ -853,6 +871,7 @@ export async function runPhaseCaptureEntities(
         [executedChildIds],
       );
     const writtenSlugs = written.map(row => row.slug).filter(slug => typeof slug === 'string' && slug.length > 0).sort();
+    reportProgress(0, undefined, '核对知识关联');
     await alignWrittenGraph(writtenSlugs);
     if(verifiedChildIds.length&&!opts.signal?.aborted){
       try{

@@ -28,7 +28,7 @@ describe('migration 121 legacy embedding compatibility', () => {
     expect(migration?.sql).toContain('ADD COLUMN IF NOT EXISTS embedding_signature TEXT');
     expect(migration?.sql).toContain('ADD COLUMN IF NOT EXISTS embedded_text_hash TEXT');
     expect(migration?.sql).not.toMatch(/UPDATE\s+(content_chunks|pages)\b/i);
-    expect(LATEST_VERSION).toBe(134);
+    expect(LATEST_VERSION).toBe(135);
   });
 
   test('PGLite keeps legacy vectors and NULL receipts untouched when upgrading from schema 120', async () => {

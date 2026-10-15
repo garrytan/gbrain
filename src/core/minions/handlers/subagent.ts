@@ -797,6 +797,7 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
   for (const t of toolDefs) {
     toolHandlers.set(t.name, {
       idempotent: t.idempotent === true,
+      readOnly: !!data.ingest_context && ['brain_search', 'brain_get_page'].includes(t.name),
       async execute(input: unknown, signal: AbortSignal): Promise<unknown> {
         return await t.execute(input, {
           engine,
@@ -899,6 +900,8 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
     initialMessages,
     tools: chatTools,
     toolHandlers,
+    toolConcurrency: data.ingest_context ? 2 : undefined,
+    parallelReadOnlyTools: !!data.ingest_context,
     maxTurns,
     maxTokens: Math.min(defaultMaxOutputTokens(model),data.usage_limits?.output??Infinity),
     modelOutputLimit:data.model_output_limit,

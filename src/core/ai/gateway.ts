@@ -3116,6 +3116,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
  */
 export interface ToolHandler {
   idempotent?: boolean;
+  readOnly?: boolean;
   execute(input: unknown, signal: AbortSignal, context?: { toolCallId: string }): Promise<unknown>;
 }
 
@@ -3144,6 +3145,7 @@ export interface ToolLoopOpts {
   onTextReset?: (model: string) => void;
   beforeModelCall?: (input: { turnIdx: number; messages: readonly ChatMessage[]; finalTurn?: boolean;maxTokens:number }) => void | { messages: ChatMessage[]; maxTokens?: number; contextWindow?: number; system?: string } | Promise<void | { messages: ChatMessage[]; maxTokens?: number; contextWindow?: number; system?: string }>;
   toolConcurrency?: number;
+  parallelReadOnlyTools?: boolean;
   retryLength?: boolean;
   jsonToolCalls?: boolean;
   jsonToolFallback?: boolean;
@@ -3518,7 +3520,8 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
       return toolResultBlocks;
     };
     const toolResultBlocks: ChatBlock[] = [];
-    const concurrency = !opts.replayState && toolCalls.every(call => handlers.get(call.toolName)?.idempotent === true)
+    const concurrency = ((!opts.replayState && toolCalls.every(call => handlers.get(call.toolName)?.idempotent === true))
+      || (opts.parallelReadOnlyTools === true && toolCalls.every(call => handlers.get(call.toolName)?.readOnly === true)))
       ? Math.max(1, Math.min(4, Math.floor(opts.toolConcurrency ?? 1))) : 1;
     for (let offset = 0; offset < toolCalls.length; offset += concurrency) {
       const results = await Promise.all(toolCalls.slice(offset, offset + concurrency).map((_call, index) => executeCall(offset + index)));

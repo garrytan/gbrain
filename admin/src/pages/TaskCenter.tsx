@@ -7,7 +7,7 @@ import { describeRunRecovery } from '../lib/run-recovery';
 import { useProductTasks } from '../product/TaskActivity';
 import { TaskProgressCard, taskStatus, taskStopping } from '../product/TaskProgress';
 import { taskName, taskUsesFileQueue } from '../../../shared/task-progress';
-import { taskRoundCompleted, taskRoundListSummary } from '../product/task-presentation';
+import { taskRoundCompleted, taskRoundListSummary, taskPhaseSummary } from '../product/task-presentation';
 
 type TaskFilter = 'all' | 'running' | 'queued' | 'completed' | 'failed' | 'cancelled';
 const DreamRunContent=React.lazy(()=>import('./Dream').then(module=>({default:module.DreamRunContent})));
@@ -338,11 +338,13 @@ export function TaskCenterPage() {
         <div className="task-section-head"><h2>后台任务</h2><div className="task-filter-bar" role="tablist" aria-label="任务筛选">
           {([['all', '全部'], ['running', '执行中'], ['queued', '排队中'], ['completed', '已完成'], ['failed', '失败'], ['cancelled', '已停止']] as Array<[TaskFilter, string]>).map(([value, label]) => <button role="tab" aria-selected={filter === value} key={value} type="button" className={filter === value ? 'active' : ''} onClick={() => setFilter(value)}>{label}</button>)}
         </div></div>
-        <div className="task-table-wrap"><table className="task-table"><thead><tr><th>任务</th><th>状态</th><th>进度</th><th>结果 / 当前阶段</th><th>操作</th></tr></thead><tbody>{historyRows.map(run => <tr key={run.id}>
+        <div className="task-table-wrap"><table className="task-table"><thead><tr><th>任务</th><th>状态</th><th>已完成 / 总数</th><th>当前阶段</th><th>阶段耗时</th><th>剩余子任务</th><th>操作</th></tr></thead><tbody>{historyRows.map(run => <tr key={run.id}>
           <td><button type="button" onClick={() => { setSelectedRun(run); window.history.replaceState(null, '', `#tasks?run=${encodeURIComponent(run.id)}`); }}>{run.product?.name ?? taskName(run.kind)}</button><small>{run.product?.file ?? formatDate(run.startedAt, '-')}</small></td>
           <td><span className={statusClass(run.status)}>{statusLabel(run)}</span></td>
-          <td>{taskRoundCompleted(run)?'—':run.product?.percent != null ? `${run.product.percent}%` : isActive(run) ? '进行中' : '—'}{!taskRoundCompleted(run)&&run.product?.percent != null && <div className="product-task-bar"><i style={{ width: `${run.product.percent}%` }} /></div>}</td>
+          <td>{taskPhaseSummary(run).count}{!taskRoundCompleted(run)&&run.product?.percent != null && <div className="product-task-bar" aria-label={`任务进度 ${run.product.percent}%`}><i style={{ width: `${run.product.percent}%` }} /></div>}</td>
           <td>{taskRoundCompleted(run)?taskRoundListSummary(run):run.product?.errorReason ?? (isActive(run) ? run.product?.stage ?? '等待执行' : taskResult(run) ?? run.product?.stage ?? statusLabel(run))}</td>
+          <td>{taskPhaseSummary(run).duration}</td>
+          <td>{taskPhaseSummary(run).remaining}</td>
           <td><div className="task-table-actions"><button type="button" className="pm-ghost" onClick={() => { setSelectedRun(run); window.history.replaceState(null, '', `#tasks?run=${encodeURIComponent(run.id)}`); }}>查看详情</button>{isActive(run) && <button type="button" className="pm-ghost" disabled={cancelling === run.id} onClick={() => void cancel(run)}>停止</button>}{['failed', 'cancelled'].includes(run.status) && run.id.startsWith('task-') && <button type="button" className="pm-ghost" disabled={retrying === run.id} onClick={() => void retry(run)}>重试</button>}</div></td>
         </tr>)}</tbody></table>{historyRows.length === 0 && <div className="task-empty">暂无任务记录</div>}</div>
         <p className="task-retention-note">关闭页面不影响后台任务。最近的结果已保存，重启后仍可查看。</p>

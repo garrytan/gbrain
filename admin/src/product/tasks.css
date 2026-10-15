@@ -1,6 +1,11 @@
 .product-task-progress { border: 1px solid var(--product-line, var(--border)); border-radius: 12px; background: var(--product-panel, var(--bg-card)); padding: 20px; color: inherit; }
 .product-task-progress header { display: flex; justify-content: space-between; align-items: start; gap: 16px; }
 .product-task-progress h3 { margin: 0; font-size: 16px; font-weight: 600; }
+.product-task-phase-summary { display: grid; grid-template-columns: minmax(0, 1.6fr) repeat(3, minmax(0, 1fr)); gap: 16px; margin: 0 0 18px; padding: 14px 0; border-top: 1px solid var(--product-line, var(--border)); border-bottom: 1px solid var(--product-line, var(--border)); }
+.product-task-phase-summary dt { font-size: 12px; color: var(--product-muted, var(--text-muted)); }
+.product-task-phase-summary dd { margin: 7px 0 0; font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.product-task-phase-summary small { font-size: 11px; font-weight: 400; color: var(--product-muted, var(--text-muted)); }
+.task-detail-drawer .product-task-phase-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .product-task-progress header p { margin: 5px 0 18px; font-size: 12px; color: var(--product-muted, var(--text-muted)); overflow-wrap: anywhere; }
 .product-task-state { font-size: 12px; color: var(--product-muted, var(--text-muted)); white-space: nowrap; }
 .product-task-state.state-running, .product-task-state.state-queued { color: var(--accent); }

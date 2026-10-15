@@ -5,7 +5,7 @@ import { taskName } from '../../../shared/task-progress';
 import './tasks.css';
 import { TaskRelationsDetails } from './TaskRelations';
 import { OPEN_CONVERSATION_KEY } from './home-model';
-import { taskStopping, taskStatus, taskPercent, taskRoundCompleted, taskRoundSummary, taskHasRemaining } from './task-presentation';
+import { taskStopping, taskStatus, taskPercent, taskRoundCompleted, taskRoundSummary, taskHasRemaining, taskPhaseSummary } from './task-presentation';
 
 export { taskStopping, taskStatus } from './task-presentation';
 export const taskLink = (run: ConsoleRun) => { window.location.hash = `tasks?run=${encodeURIComponent(run.id)}`; };
@@ -21,16 +21,24 @@ export function TaskProgressCard({ run, link = true, timeline = false }: { run: 
   const [now,setNow]=useState(Date.now);
   useEffect(()=>{if(!active)return;const timer=setInterval(()=>setNow(Date.now()),1000);return()=>clearInterval(timer);},[active]);
   const elapsed = run.durationMs === null ? null : Math.max(0, Math.floor(run.durationMs / 1000));
+  const phase = view?.phaseProgress;
+  const stageSummary=taskPhaseSummary(run,now);
   const assistantConversation = run.kind === 'assistant_task' ? (run.result as { conversationId?: string } | undefined)?.conversationId : undefined;
   return <section className={`product-task-progress${active ? ' task-is-active' : ''}${timeline ? ' product-task-timeline' : ''}`} aria-label={`${view?.name ?? taskName(run.kind)}进度`}>
     <header><div><h3>{view?.name ?? taskName(run.kind)}</h3><p>{view?.file ?? (run.trigger === 'scheduled' ? '自动任务' : '后台任务')}</p></div><span className={`product-task-state state-${run.status}`}>{taskStatus(run)}</span></header>
+    <dl className="product-task-phase-summary" aria-label="当前阶段进度">
+      <div><dt>当前阶段</dt><dd>{view?.stage ?? (active ? '等待执行' : '暂未记录')}</dd></div>
+      <div><dt>已完成 / 总数</dt><dd>{stageSummary.count}</dd></div>
+      <div><dt>阶段耗时</dt><dd>{stageSummary.duration}</dd></div>
+      <div><dt>剩余子任务</dt><dd>{stageSummary.remaining}{stageSummary.active != null && stageSummary.active > 0 ? <small> · 执行中 {stageSummary.active}</small> : null}</dd></div>
+    </dl>
     {!roundCompleted && <><div className="product-task-current" role="status"><b>{taskStopping(run) ? view?.stage==='停止当前操作并恢复数据库'?view.stage:'正在停止并回滚当前操作' : run.status === 'failed' ? '任务未完成' : run.status === 'cancelled' ? '任务已停止' : view?.stage ?? (active ? '正在处理' : '任务完成')}</b><span>{percent != null ? `${percent}%` : active ? '进行中' : ''}</span></div>
     <div className={`product-task-bar ${active && percent == null ? 'indeterminate' : ''}`} role="progressbar" aria-label="任务进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent ?? undefined}><i style={{ width: `${percent ?? (active ? 35 : 0)}%` }} /></div></>}
     {roundCompleted && <section className="product-task-round" aria-label="本轮整理结果">
       <div><h4>本轮成果</h4>{summary.completed.length?<ul>{summary.completed.map(item=><li key={item}>{item}</li>)}</ul>:<p>{view?'本轮没有新增知识成果。':'此历史任务未保存成果统计，可查看任务详情。'}</p>}</div>
       <div><h4>剩余事项</h4>{summary.remaining.length?<ul>{summary.remaining.map(item=><li key={item}>{item}</li>)}</ul>:<p>{taskHasRemaining(run)?'还有未完成事项，详见本轮说明。':'本轮没有待处理事项。'}</p>}{summary.reason&&<p className="product-task-round-reason">未完成原因：{summary.reason}</p>}</div>
     </section>}
-    {view && <p className="product-task-caption">{view.scope && active ? `知识源 ${view.scope.index + 1} / ${view.scope.total} · ${view.scope.name} · ` : ''}{active && view.syncScan?.active ? `正在检查 ${view.syncScan.scanned}${view.syncScan.total!=null?` / ${view.syncScan.total}`:''} 份资料` : view.total != null ? `已处理 ${view.processed ?? 0} / ${view.total} 份资料` : view.steps.length ? `已完成 ${view.completedSteps} / ${view.steps.length} 个步骤 · 按步骤计进度` : '等待处理结果'}{active && view.phasePercent != null ? ` · 当前阶段 ${view.phasePercent}%` : ''}</p>}
+    {view && <p className="product-task-caption">{view.scope && active ? `知识源 ${view.scope.index + 1} / ${view.scope.total} · ${view.scope.name} · ` : ''}{active && view.syncScan?.active ? `正在检查 ${view.syncScan.scanned}${view.syncScan.total!=null?` / ${view.syncScan.total}`:''} 份资料` : view.total != null ? `已处理 ${view.processed ?? 0} / ${view.total} ${phase?.unit ?? '份资料'}` : view.steps.length ? `已完成 ${view.completedSteps} / ${view.steps.length} 个步骤 · 按步骤计进度` : '等待处理结果'}{active && view.phasePercent != null ? ` · 当前阶段 ${view.phasePercent}%` : ''}</p>}
     {view?.syncFiles && <p className="product-task-caption" aria-label="同步文件统计">本任务文件队列 · 待同步 {view.syncFiles.total} · 已完成 {view.syncFiles.completed} · 失败 {view.syncFiles.failed} · 未处理 {view.syncFiles.remaining}</p>}
     {view?.syncScan && <p className="product-task-caption">已检查 {view.syncScan.scanned} · 未变化 {view.syncScan.unchanged}</p>}
     {active && view?.syncScan?.active && <div className="product-active-files" aria-label="当前检查资料"><article><b>{view.syncScan.path}</b>

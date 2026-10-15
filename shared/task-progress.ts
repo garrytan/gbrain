@@ -36,6 +36,8 @@ export interface SyncFileActivity {
 }
 
 export interface TaskProductProgress {
+  phaseProgress?: { id: string; startedAt: string | null; elapsedMs: number; completed: number | null;
+    total: number | null; remaining: number | null; active: number | null; unit: string };
   relations?: { total: number; available: boolean };
   gitResults?: Array<{ sourceId: string; committed: boolean; commit: string | null; files: string[]; pending: Array<{path: string; reason: string}>; error?: string }>;
   syncScan?: { scanned: number; unchanged: number; total?:number; path?:string; bytes?:number; updatedAt?:string; active?:boolean };

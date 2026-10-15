@@ -2698,7 +2698,7 @@ export class PGLiteEngine implements BrainEngine {
     // list. Image chunks pass embedding=null + embedding_image=Float32Array
     // (1024-dim Voyage). Text/code chunks pass embedding=Float32Array +
     // embedding_image=null. Default modality='text' when omitted.
-    const cols = '(page_id, chunk_index, chunk_text, chunk_source, embedding, model, token_count, embedded_at, language, symbol_name, symbol_type, start_line, end_line, parent_symbol_path, doc_comment, symbol_name_qualified, modality, embedding_image)';
+    const cols = '(page_id, chunk_index, chunk_text, chunk_source, embedding, model, token_count, embedded_at, language, symbol_name, symbol_type, start_line, end_line, parent_symbol_path, doc_comment, symbol_name_qualified, modality, embedding_image, embedding_input_hash)';
     const rowParts: string[] = [];
     const params: unknown[] = [];
     let paramIdx = 1;
@@ -2725,7 +2725,7 @@ export class PGLiteEngine implements BrainEngine {
         `${embeddingPh}, $${paramIdx++}, $${paramIdx++}, ${embeddedAtPh}, ` +
         `$${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, ` +
         `$${paramIdx++}::text[], $${paramIdx++}, $${paramIdx++}, ` +
-        `$${paramIdx++}, ${embeddingImagePh})`,
+        `$${paramIdx++}, ${embeddingImagePh}, $${paramIdx++})`,
       );
 
       // Param push order MUST match placeholder allocation order. Both
@@ -2739,7 +2739,7 @@ export class PGLiteEngine implements BrainEngine {
         chunk.language || null, chunk.symbol_name || null, chunk.symbol_type || null,
         chunk.start_line ?? null, chunk.end_line ?? null,
         parentPath, chunk.doc_comment || null, chunk.symbol_name_qualified || null,
-        modality,
+        modality, chunk.embedding ? (chunk.embedding_input_hash ?? null) : null,
       );
     }
 
@@ -2772,6 +2772,14 @@ export class PGLiteEngine implements BrainEngine {
                 AND (content_chunks.embedded_at IS NULL OR EXCLUDED.embedded_at > content_chunks.embedded_at)
                 THEN EXCLUDED.model
            ELSE content_chunks.model
+         END,
+         embedding_input_hash = CASE
+           WHEN EXCLUDED.chunk_text != content_chunks.chunk_text THEN EXCLUDED.embedding_input_hash
+           WHEN content_chunks.embedding IS NULL THEN EXCLUDED.embedding_input_hash
+           WHEN EXCLUDED.embedded_at IS NOT NULL
+                AND (content_chunks.embedded_at IS NULL OR EXCLUDED.embedded_at > content_chunks.embedded_at)
+                THEN EXCLUDED.embedding_input_hash
+           ELSE content_chunks.embedding_input_hash
          END,
          token_count = EXCLUDED.token_count,
          embedded_at = CASE

@@ -5529,6 +5529,8 @@ export const MIGRATIONS: Migration[] = [
   { version: 132, name: 'persistent_mention_index', idempotent: true, sql: MENTION_INDEX_SCHEMA_SQL },
   {version:133,name:'wanted_links',idempotent:true,sql:WANTED_LINKS_SCHEMA_SQL},
   {version:134,name:'search_write_amplification',idempotent:true,sql:SEARCH_WRITE_SCHEMA_SQL},
+  {version:135,name:'markdown_embedding_input_provenance',idempotent:true,
+    sql:'ALTER TABLE content_chunks ADD COLUMN IF NOT EXISTS embedding_input_hash TEXT;'},
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

@@ -579,8 +579,9 @@ const put_page: Operation = {
       // Pack load failed; fall through to legacy inferType behavior.
       activePack = undefined;
     }
-    const result = await importFromContent(ctx.engine, slug, p.content as string, {
+    const result = ctx.preparedPageImport ? await ctx.preparedPageImport(ctx.engine) : await importFromContent(ctx.engine, slug, p.content as string, {
       noEmbed,
+      prepareCommit: ctx.preparePageCommit,
       ...(ctx.sourceId ? { sourceId: ctx.sourceId } : {}),
       // v0.39.0.0 T1.5: pack-aware type inference (loaded above; legacy
       // inferType behavior when undefined).

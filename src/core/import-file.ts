@@ -14,7 +14,7 @@ import { extractCodeRefs, imageOfCandidates } from './link-extraction.ts';
 import { embedBatch, embedMultimodal, getEmbeddingDimensions } from './embedding.ts';
 import { getEmbeddingModel, isAvailable as isAiAvailable } from './ai/gateway.ts';
 import { slugifyPath, slugifyCodePath, isCodeFilePath } from './sync.ts';
-import type { ChunkInput, PageInput, PageType } from './types.ts';
+import type { Chunk, ChunkInput, PageInput, PageType } from './types.ts';
 import { computeEffectiveDate } from './effective-date.ts';
 import { MARKDOWN_CHUNKER_VERSION } from './chunkers/recursive.ts';
 import { logSlugFallback } from './audit-slug-fallback.ts';
@@ -43,6 +43,7 @@ import { loadSearchModeConfig, resolveSearchMode } from './search/mode.ts';
 import { normalizeAliasList } from './search/alias-normalize.ts';
 import { isUndefinedTableError, warnOncePerProcess } from './utils.ts';
 import { computeCorpusGeneration } from './contextual-retrieval-service.ts';
+import { markdownEmbeddingInputHash, reuseMarkdownEmbeddings } from './document/markdown-embedding-reuse.ts';
 import {
   batchLargeDocumentChunks,
   logLargeDocumentProgress,
@@ -249,6 +250,7 @@ export async function importFromContent(
   content: string,
   opts: {
     noEmbed?: boolean;
+    prepareCommit?: (apply: (engine: BrainEngine) => Promise<ImportResult>) => Promise<ImportResult>;
     sourceId?: string;
     /**
      * v0.29.1: basename without extension for filename-date precedence on
@@ -568,7 +570,8 @@ export async function importFromContent(
     }
   }
   if (contentUnchanged && !trustedLargeDocument) {
-    return { slug, status: 'skipped', chunks: 0, parsedPage };
+    const skipped: ImportResult = { slug, status: 'skipped', chunks: 0, parsedPage };
+    return opts.prepareCommit ? opts.prepareCommit(async () => skipped) : skipped;
   }
 
   // v0.41.13 (#1309) — identity-based cross-slug dedup pre-check.
@@ -711,6 +714,10 @@ export async function importFromContent(
   let wrappedTexts: string[] = [];
   let embeddingModel: string | undefined;
   let embeddingDimensions: number | undefined;
+  let markdownReused = 0;
+  let markdownEmbedded = 0;
+  let markdownStored: Chunk[] | undefined;
+  const markdownReusableIndices = new Set<number>();
   if (!opts.noEmbed && chunks.length > 0) {
     const safeTitle = sanitizeTitle(parsed.title);
     const prefix =
@@ -723,14 +730,37 @@ export async function importFromContent(
     embeddingModel = getEmbeddingModel();
     embeddingDimensions = getEmbeddingDimensions();
     if (!trustedLargeDocument) {
-      const embeddings = await embedBatch(wrappedTexts);
-      for (let i = 0; i < chunks.length; i++) {
-        chunks[i].embedding = embeddings[i];
+      let pending = chunks.map((_, index) => index);
+      const protectedBody = /<!---?\s*gbrain:(?:facts|takes):begin/.test(
+        `${existing?.compiled_truth ?? ''}\n${existing?.timeline ?? ''}\n${parsed.compiled_truth}\n${parsed.timeline ?? ''}`,
+      );
+      if (existing && !existing.deleted_at && !opts.forceRechunk && !protectedBody) {
+        const [state] = await engine.executeRaw<{chunker_version:number}>(
+          'SELECT chunker_version FROM pages WHERE slug=$1 AND source_id=$2 AND deleted_at IS NULL', [slug, sourceId ?? 'default']);
+        if (state && state.chunker_version >= MARKDOWN_CHUNKER_VERSION) {
+          const stored = await engine.getChunks(slug, { sourceId: sourceId ?? 'default' });
+          markdownStored = stored;
+          const vectors = await engine.getEmbeddingsByChunkIds(stored.map(chunk => chunk.id));
+          for (const chunk of stored) chunk.embedding = vectors.get(chunk.id) ?? null;
+          const reuse = reuseMarkdownEmbeddings(chunks, stored, wrappedTexts, embeddingModel, embeddingDimensions,
+            effectiveCRMode, existing.contextual_retrieval_mode);
+          markdownReused = reuse.reused;
+          pending = reuse.pending;
+          const pendingIndices = new Set(pending);
+          for (const [index] of chunks.entries()) if (!pendingIndices.has(index)) markdownReusableIndices.add(index);
+        }
+      }
+      const embeddings = pending.length ? await embedBatch(pending.map(index => wrappedTexts[index])) : [];
+      if (embeddings.length !== pending.length) throw new Error(`Embedding gateway returned ${embeddings.length} vectors for ${pending.length} chunks`);
+      for (const [offset, i] of pending.entries()) {
+        chunks[i].embedding = embeddings[offset];
         chunks[i].model = embeddingModel;
+        chunks[i].embedding_input_hash = markdownEmbeddingInputHash(embeddingModel, embeddingDimensions, effectiveCRMode, wrappedTexts[i]);
         // token_count tracks the wrapped string length so cost reporting
         // reflects what we actually sent to the embedder.
         chunks[i].token_count = Math.ceil(wrappedTexts[i].length / 4);
       }
+      markdownEmbedded = pending.length;
     }
   }
 
@@ -822,8 +852,16 @@ export async function importFromContent(
 
   if (opts.checkOnly) return { slug, status: 'skipped', chunks: 0, error: '同步检查：需要处理', parsedPage };
 
+  if (!trustedLargeDocument && existing && !markdownStored) markdownStored = await engine.getChunks(slug, { sourceId: sourceId ?? 'default' });
+  const publish = async (engine: BrainEngine): Promise<ImportResult> => {
   const txOpts = sourceId ? { sourceId } : undefined;
   const batchedBody = chunks.length > 100;
+  const storedMarkdown = new Map((markdownStored ?? []).map(chunk => [chunk.chunk_index, chunk]));
+  const needsMarkdownWrite = (chunk: ChunkInput) => {
+    const old = storedMarkdown.get(chunk.chunk_index);
+    return opts.forceRechunk || !old || old.chunk_text !== chunk.chunk_text || old.chunk_source !== chunk.chunk_source
+      || (chunk.embedding != null && !markdownReusableIndices.has(chunk.chunk_index));
+  };
   let bodyUpdatedAt:Date|undefined;
   const guardBody=async(tx:BrainEngine)=>{
     const current=await tx.executeRaw<{id:number}>(`SELECT id FROM pages WHERE slug=$1 AND source_id=$2
@@ -877,7 +915,8 @@ export async function importFromContent(
 
   if (!largeProgress && chunks.length > 0) {
     largeProgress = {mode:'batched',phase:'chunked',documentHash:hash,bytes:byteLength,sections:opts.parentSections?.length??0,
-      chunksTotal:chunks.length,embedded:opts.noEmbed?0:chunks.length,reused:0,pending:0,failed:0,batchesCompleted:0};
+      chunksTotal:chunks.length,embedded:markdownReused+markdownEmbedded,reused:markdownReused,
+      generated:markdownEmbedded,pending:0,failed:0,batchesCompleted:0};
     logLargeDocumentProgress(slug,largeProgress);
   }
   try {
@@ -947,7 +986,13 @@ export async function importFromContent(
           );
         }
       } else {
-        await tx.upsertChunks(slug, chunks, txOpts);
+        const changed = chunks.filter(needsMarkdownWrite);
+        if (changed.length) await tx.upsertChunks(slug, changed, { ...txOpts, replaceExisting: false });
+        const indices = new Set(chunks.map(chunk => chunk.chunk_index));
+        if ((markdownStored ?? []).some(chunk => !indices.has(chunk.chunk_index))) await tx.executeRaw(
+          'DELETE FROM content_chunks WHERE page_id=(SELECT id FROM pages WHERE slug=$1 AND source_id=$2) AND chunk_index != ALL($3::int[])',
+          [slug, sourceId ?? 'default', [...indices]],
+        );
         if(largeProgress){largeProgress={...largeProgress,bodyWritten:chunks.length};logLargeDocumentProgress(slug,largeProgress);}
       }
     } else if (!batchedBody) {
@@ -1003,9 +1048,10 @@ export async function importFromContent(
       for (const [index,batch] of batches.entries()) {
         if(largeProgress){largeProgress={...largeProgress,phase:'writing',bodyWritten:written,bodyCommitted:false,
           bodyBatchesCompleted:index,bodyBatchesTotal:batches.length};logLargeDocumentProgress(slug,largeProgress);}
-        await engine.transaction(async tx => {
+        const remaining=batch.filter(chunk=>trustedLargeDocument
+          ? committed.get(chunk.chunk_index)!==chunk.chunk_text : needsMarkdownWrite(chunk));
+        if(trustedLargeDocument||remaining.length)await engine.transaction(async tx => {
           await guardBody(tx);
-          const remaining=batch.filter(chunk=>committed.get(chunk.chunk_index)!==chunk.chunk_text);
           if(remaining.length)await tx.upsertChunks(slug,remaining,{...(txOpts??{}),replaceExisting:false});
           if(!opts.noEmbed && trustedLargeDocument){
             const clear=batch.filter(chunk=>pendingIndices.has(chunk.chunk_index)).map(chunk=>chunk.chunk_index);
@@ -1135,6 +1181,8 @@ export async function importFromContent(
     ...(pageQuarantined ? { quarantined: true } : {}),
     ...(pageFlagged ? { flagged: true, flag_reason: pageFlagReason } : {}),
   };
+  };
+  return opts.prepareCommit ? opts.prepareCommit(publish) : publish(engine);
 }
 
 /**

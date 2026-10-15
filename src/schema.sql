@@ -282,6 +282,7 @@ CREATE TABLE IF NOT EXISTS content_chunks (
   token_count           INTEGER,
   embedded_at           TIMESTAMPTZ,
   embedded_text_hash    TEXT,
+  embedding_input_hash  TEXT,
   created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
   -- v0.19.0: code chunk metadata. Nullable — markdown chunks leave these NULL.
   -- Powers `query --lang`, `code-def <symbol>`, and `code-refs <symbol>`.

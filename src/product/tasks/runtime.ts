@@ -53,7 +53,7 @@ function toRun(job: MinionJob, stopping = false): ConsoleRun {
     sourceId: task.input.sourceId ?? 'default', directory: task.input.directory === true,
   };
   return {
-    product: finishTaskProgress(adapter.view, status, job.result ?? progress.result, failure ?? job.error_text),
+    product: finishTaskProgress(adapter.view, status, job.result ?? progress.result, failure ?? job.error_text, (job.finished_at ?? job.updated_at).getTime()),
     id: `task-${job.id}`, kind: String(job.data.kind), command: [], status,
     trigger: job.data.trigger === 'scheduled' ? 'scheduled' : 'manual',
     stdout: progress.output ?? '', stderr: '', error: stopping ? '正在停止任务…' : failure ?? job.error_text,

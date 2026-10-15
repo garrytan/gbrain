@@ -41,7 +41,8 @@ export function locateIngestSkillsDir(): string | null {
 export function readIngestContract(skillsDir=locateIngestSkillsDir()): string {
   if(!skillsDir)throw new Error('ingest Skill not found');
   return ['ingest/SKILL.md','_brain-filing-rules.md','conventions/quality.md']
-    .map(path=>readFileSync(join(skillsDir,path),'utf8')).join('\n\n');
+    .map(path=>readFileSync(join(skillsDir,path),'utf8')).join('\n\n')
+    +'\n\n本执行器的 put_page 已由程序执行旧页读取、增量合并、版本校验和提交后验收。模型只提交本段新增事实与当前状态，不需要为完成读取契约额外 get_page 或重写整页；只有需要理解旧内容时才读取。各实体、时间线和有原文证据的关系尽量在同一轮提交，保留最终 JSON 验收清单。';
 }
 
 export function ingestOriginField(context:Pick<EntityIngestContext,'sourceId'|'body'>): string {
@@ -181,7 +182,9 @@ export function entityIngestTools(tools:ToolDef[],context:EntityIngestContext):T
         .map(page=>({slug:`${page.source_id}:${page.slug}`,title:page.title,type:page.type,source_id:page.source_id,aliases:page.aliases}));
     }};
     if(!['put_page','add_link','add_timeline_entry'].includes(name))return tool;
-    return {...tool,async execute(raw,ctx){
+    return {...tool,description:name==='put_page'
+      ? '提交本段关于一个实体的全部新增事实和当前状态，包含 YAML title/type 与原文出处；程序读取并保留旧事实、旧时间线和手工内容，无需先读回或重写整页。一次提交本段全部新增事实；只有需要理解旧内容时才 get_page。'
+      :tool.description,async execute(raw,ctx){
       const input=name==='add_link'?(raw&&typeof raw==='object'?raw as Record<string,unknown>:{}):await canonicalInput(raw,ctx.engine);
       if(name==='put_page'&&unchanged(input))return {status:'unchanged',slug:input.slug,ingest_links_created:0,instruction:'Already persisted for this unchanged source chunk. Include in the final receipt and move to unfinished entities.'};
       if(name==='add_link'){
@@ -204,29 +207,33 @@ export function entityIngestTools(tools:ToolDef[],context:EntityIngestContext):T
         }
       }
       await validateIngestWrite(ctx.engine,context,name,input);
+      const reference=String(input.slug),colon=reference.indexOf(':');
+      const sourceId=colon<0?context.sourceId:reference.slice(0,colon),slug=colon<0?reference:reference.slice(colon+1);
+      const [observed]=await ctx.engine.executeRaw<{revision:string}>('SELECT knowledge_revision::text revision FROM pages WHERE slug=$1 AND source_id=$2',[slug,sourceId]);
+      if(name==='put_page'&&observed){
+        const [read]=await ctx.engine.executeRaw<{revision:string}>(`SELECT o->>'ingest_revision' revision FROM
+          (SELECT id,CASE WHEN jsonb_typeof(input)='string' THEN (input #>> '{}')::jsonb ELSE input END i,CASE WHEN jsonb_typeof(output)='string' THEN (output #>> '{}')::jsonb ELSE output END o
+           FROM subagent_tool_executions WHERE job_id=$1 AND tool_name IN ('brain_get_page','brain_put_page') AND status='complete') x
+          WHERE i->>'slug'=ANY($2::text[]) AND COALESCE(o->>'source_id',CASE WHEN strpos(o->>'slug',':')>0 THEN split_part(o->>'slug',':',1) END,CASE WHEN strpos(i->>'slug',':')>0 THEN split_part(i->>'slug',':',1) END,$3)=$4 ORDER BY id DESC LIMIT 1`,[ctx.jobId,[slug,`${sourceId}:${slug}`],context.sourceId,sourceId]);
+        if(read&&read.revision!==observed.revision)throw new UnrecoverableError('ingest revision conflict; read the changed entity before merging');
+      }
+      const writeInput=name==='put_page'?{...input,content:await annotateIngestContent(ctx.engine,context,reference,String(input.content))}:input;
+      let prepared:((engine:BrainEngine)=>Promise<import('../import-file.ts').ImportResult>)|undefined;
+      if(name==='put_page'&&tool.preparesPageImport){
+        const ready=new Error('prepared ingest import');
+        try{
+          await tool.execute(writeInput,{...ctx,preparePageCommit:async apply=>{prepared=apply;throw ready;}});
+          throw new Error('ingest put_page did not prepare its import');
+        }catch(error){if(error!==ready)throw error;}
+      }
       return ctx.engine.transaction(async tx=>{
         await tx.executeRaw('SELECT id FROM pages WHERE slug=$1 AND source_id=$2 FOR SHARE',[context.slug,context.sourceId]);
         const original=await tx.getPage(context.slug,{sourceId:context.sourceId});
         if(!original||original.deleted_at||original.compiled_truth!==context.body)throw new UnrecoverableError('ingest source changed before entity write');
-        const reference=String(input.slug),colon=reference.indexOf(':');
-        const sourceId=colon<0?context.sourceId:reference.slice(0,colon),slug=colon<0?reference:reference.slice(colon+1);
         const [current]=await tx.executeRaw<{revision:string}>('SELECT knowledge_revision::text revision FROM pages WHERE slug=$1 AND source_id=$2 FOR UPDATE',[slug,sourceId]);
-        if(name==='put_page'&&current){
-          const [read]=await tx.executeRaw<{revision:string}>(`SELECT o->>'ingest_revision' revision FROM
-            (SELECT id,CASE WHEN jsonb_typeof(input)='string' THEN (input #>> '{}')::jsonb ELSE input END i,CASE WHEN jsonb_typeof(output)='string' THEN (output #>> '{}')::jsonb ELSE output END o
-             FROM subagent_tool_executions WHERE job_id=$1 AND tool_name IN ('brain_get_page','brain_put_page') AND status='complete') x
-            WHERE i->>'slug'=ANY($2::text[]) AND COALESCE(o->>'source_id',CASE WHEN strpos(o->>'slug',':')>0 THEN split_part(o->>'slug',':',1) END,CASE WHEN strpos(i->>'slug',':')>0 THEN split_part(i->>'slug',':',1) END,$3)=$4 ORDER BY id DESC LIMIT 1`,[ctx.jobId,[slug,`${sourceId}:${slug}`],context.sourceId,sourceId]);
-          if(!read){
-            const reader=tools.find(candidate=>candidate.name.replace(/^brain_/,'')==='get_page');
-            if(!reader)throw new UnrecoverableError('ingest existing page requires get_page before merge');
-            const page=await reader.execute({slug:`${sourceId}:${slug}`},{...ctx,engine:tx});
-            return {status:'merge_required',slug:`${sourceId}:${slug}`,page,ingest_revision:current.revision,ingest_links_created:0,instruction:'The existing page was read for you and has not been overwritten. Merge new facts into this page while retaining previous facts and timeline; rewrite State only. Call put_page again with the merged page. Do not repeat discovery.'};
-          }
-          if(read.revision!==current.revision)throw new UnrecoverableError('ingest revision conflict; read the changed entity before merging');
-        }
+        if(name==='put_page'&&(current?.revision??null)!==(observed?.revision??null))throw new UnrecoverableError('ingest revision conflict; read the changed entity before merging');
         const [before]=await tx.executeRaw<{id:number}>('SELECT COALESCE(max(id),0)::int id FROM links');
-        const writeInput=name==='put_page'?{...input,content:await annotateIngestContent(tx,context,String(input.slug),String(input.content))}:input;
-        const output=await tool.execute(writeInput,{...ctx,engine:tx});
+        const output=await tool.execute(writeInput,{...ctx,engine:tx,preparedPageImport:prepared});
         const [after]=await tx.executeRaw<{n:number}>('SELECT count(*)::int n FROM links WHERE id>$1',[before?.id??0]);
         const [written]=await tx.executeRaw<{revision:string}>('SELECT knowledge_revision::text revision FROM pages WHERE slug=$1 AND source_id=$2',[slug,sourceId]);
         return {...output as object,slug:`${sourceId}:${slug}`,source_id:sourceId,ingest_links_created:after?.n??0,ingest_revision:written?.revision};

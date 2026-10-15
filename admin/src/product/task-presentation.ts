@@ -1,5 +1,18 @@
 import type { ConsoleRun } from '../lib/shared';
 
+export function taskPhaseSummary(run: ConsoleRun, now = Date.now()) {
+  const view=run.product,phase=view?.phaseProgress;
+  const elapsed=phase?phase.elapsedMs+(run.status==='running'&&phase.startedAt?Math.max(0,now-Date.parse(phase.startedAt)):0):null;
+  const seconds=elapsed==null?null:Math.floor(elapsed/1000);
+  const sync=phase?.id==='sync'&&!view?.syncScan?.active?view?.syncFiles:undefined;
+  const completed=sync?.completed??phase?.completed??(phase?null:view?.processed??null);
+  const total=sync?.total??phase?.total??(phase?null:view?.total??null);
+  const remaining=sync?.remaining??phase?.remaining;
+  return {count:completed==null?'待统计':`${completed} / ${total??'待统计'} ${sync?'份资料':phase?.unit??'项'}`,
+    duration:seconds==null?'暂未记录':seconds<60?`${seconds} 秒`:`${Math.floor(seconds/60)} 分 ${seconds%60} 秒`,
+    remaining:remaining==null?'待统计':`${remaining} 个`,active:run.status==='running'?phase?.active:null};
+}
+
 export const taskStopping = (run: ConsoleRun) => run.status === 'running' && run.error === '正在停止任务…';
 const taskWasSkipped = (run: ConsoleRun) => (run.result as {status?:string}|undefined)?.status === 'skipped' || run.product?.stage === '任务未执行';
 export const taskRoundCompleted = (run: ConsoleRun) => run.kind.startsWith('dream_') && run.status === 'completed' && !taskWasSkipped(run);

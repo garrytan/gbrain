@@ -79,7 +79,8 @@
     "PMBrain 1.4.53 adapts Cherry context-management ideas in the Workbench: per-request budgets, immutable tool shares, structural output trimming and full-exchange compaction. Gateway request shaping is opt-in; readonly concurrency is explicit, capped at four, preserves result order and persist-before-execute for each tool. Default callers, non-idempotent writes and crash replay stay serial. Ollama native tools receive bounded context windows; reasoning-only output is not a tool answer. No knowledge data/schema, Core retrieval, Minion phases or upstream-pinned hashes are changed.",
     "PMBrain 1.4.54 adds opt-in request lifecycle boundaries, same-request stream recovery and per-endpoint validated JSON/DSML tool normalization. Canonical tool history is preserved while Workbench uses a budgeted projection with one output reservation and a protocol-free final answer. Existing Core/Minion timeout, replay, write ordering and default serial execution remain unchanged. No knowledge schema/data, retrieval or upstream-pinned hash changes.",
     "PMBrain 1.4.57 removes cross-document cumulative entity-capture input/output token ceilings and owner-task token allowance subtraction. Token usage, owner-linked monetary budgets, completed ingest receipts, per-document limits, request timeouts, bounded truncation retry and resource guards remain. Legacy total-token settings are retained but ignored; API ceilings are null. No knowledge schema/data or upstream-pinned hash changes.",
-    "PMBrain 1.4.58 scopes ingest turns and token allowance to each chunk. Durable distinct entity references extend the default eight-turn allowance up to the existing shared Minion twenty-turn ceiling; duplicate entity operations do not extend it. Explicit operator turn limits remain. Exhausted chunk turns or tokens leave that document pending while subsequent documents continue; monetary limits and provider/resource stops still bound the task. Successful chunks and original Source/evidence checks remain reusable. No new loop, knowledge schema/data or upstream-pinned hash changes."
+    "PMBrain 1.4.58 scopes ingest turns and token allowance to each chunk. Durable distinct entity references extend the default eight-turn allowance up to the existing shared Minion twenty-turn ceiling; duplicate entity operations do not extend it. Explicit operator turn limits remain. Exhausted chunk turns or tokens leave that document pending while subsequent documents continue; monetary limits and provider/resource stops still bound the task. Successful chunks and original Source/evidence checks remain reusable. No new loop, knowledge schema/data or upstream-pinned hash changes.",
+    "PMBrain 1.4.72 prepares entity embeddings before the guarded write transaction, merges fact deltas deterministically, and writes only changed ordinary Markdown chunk rows. Explicit ingest-only read concurrency is bounded at two with durable persist-before-execute and ordered results; writes and chunk jobs remain serial. Phase counts, remaining children and elapsed time reuse the persistent product task projection. Existing Source, revision, evidence, budget and phase-order rules remain; the upstream coordinator and managed filesystem are not imported."
   ],
   "deferred": [
     "whole-repository GBrain upgrade",
@@ -595,7 +596,7 @@
       "path": "src/core/ai/gateway.ts",
       "upstream_path": "src/core/ai/gateway.ts",
       "mode": "adapted",
-      "sha256": "3eb4b1b9c2e5e276405c61e1fd8d0aff055d3ed17073ad665b398000fea6d878",
+      "sha256": "cc5c19d420afd8441d9fd7f3e26f206b442f920656cd83652e967c8e333070d9",
       "upstream_sha256": "622b81db5282117c6e2b32b566e2e35c36117400d416051011dbcc0e8e9c565f"
     },
     {

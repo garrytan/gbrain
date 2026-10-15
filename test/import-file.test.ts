@@ -25,6 +25,7 @@ function mockEngine(overrides: Partial<Record<string, any>> = {}): BrainEngine {
     get(_, prop: string) {
       if (prop === '_calls') return calls;
       if (prop === 'getTags') return overrides.getTags || (() => Promise.resolve([]));
+      if (prop === 'getChunks') return overrides.getChunks || (() => Promise.resolve([]));
       if (prop === 'getPage') return overrides.getPage || (() => Promise.resolve(null));
       // transaction: just call the fn with the same engine (no real DB transaction in tests)
       if (prop === 'transaction') return async (fn: (tx: BrainEngine) => Promise<any>) => fn(engine);
