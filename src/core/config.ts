@@ -1668,7 +1668,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // Entity mention index (core/mentions/policy.ts): off switch, +type/-type linkable types, names never linked, pages never linked (#5829),
   // aliases never derived, multi-word declared aliases, identity siblings; search's alias fan-out cap and generated-page demotion.
   'mentions.auto_link', 'mentions.entity_types', 'mentions.ignore', 'mentions.exclude_slugs', 'mentions.alias_deny', 'mentions.multiword_aliases',
-  'mentions.sibling_merge', 'search.alias_fanout_max', 'search.demote_generated',
+  'mentions.sibling_merge', 'search.alias_fanout_max', 'search.demote_generated', 'slug.transliterate', // slug.transliterate: off (default) | cyrillic (slug-transliterate.ts)
   // #4987: the write-path timeline extractor's off switch (read by
   // isAutoTimelineEnabled); registered so `gbrain config set auto_timeline off`
   // works without --force, as the compiled-truth guide documents.

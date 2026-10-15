@@ -81,7 +81,7 @@ import { classifyRunStop, providerHaltReason, upsertExtractRollup } from '../ext
 import { abortableSleep } from '../retry.ts';
 import { throwIfAborted } from '../abort-check.ts';
 import { createHash } from 'crypto';
-import { slugifySegment } from '../sync.ts';
+import { slugifyMintedSegment } from '../sync.ts';
 import { resolveTierDefault } from '../model-config.ts';
 import { isUndefinedTableError, warnOncePerProcess } from '../utils.ts';
 import { utcDate } from './cycle-date.ts';
@@ -1512,7 +1512,7 @@ async function retireStaleAtoms(
  * "trailing-dash twin" duplicate bug.
  */
 function atomSlugStem(title: string): string {
-  return slugifySegment(title).slice(0, 60).replace(/-+$/g, '') || 'untitled';
+  return slugifyMintedSegment(title).slice(0, 60).replace(/-+$/g, '') || 'untitled';
 }
 
 /**

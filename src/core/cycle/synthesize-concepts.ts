@@ -38,7 +38,7 @@ import { priceFor, type PricingOverrides } from '../budget/reservation-cost.ts';
 import { loadPricingOverrides } from '../budget/budget-tracker.ts';
 import { pricingSetCommand } from '../budget/no-pricing.ts';
 import { createHash } from 'node:crypto';
-import { slugifySegment } from '../sync.ts';
+import { slugifyMintedSegment } from '../sync.ts';
 import { validatePageSlug } from '../ops/context.ts';
 import { privatePagesFilterFragment, strictestVisibility, type Visibility } from '../search/private-visibility.ts';
 import { maintenancePreflight } from '../persistence/prepared-maintenance.ts';
@@ -689,7 +689,7 @@ async function resolveAtomConceptStems(engine: BrainEngine, sourceId: string, at
  * valid slug is dropped.
  */
 function conceptStemFor(ref: string): string | null {
-  const stem = slugifySegment(String(ref).trim().split('/').pop() ?? '');
+  const stem = slugifyMintedSegment(String(ref).trim().split('/').pop() ?? '');
   if (!stem) return null;
   try {
     validatePageSlug(`concepts/${stem}`);

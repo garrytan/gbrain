@@ -12,6 +12,7 @@
  */
 
 import { SLUG_WORD_CHARS, SLUG_VARIATION_SELECTORS_RE } from './cjk.ts';
+import { transliterateForSlug } from './slug-transliterate.ts';
 // v0.37.7.0 #1169 submodule-detection helpers. Bottom-of-file already
 // aliases existsSync as `_existsSync` for other purposes; the top-of-file
 // import keeps the pruneDir helper's deps near its callsite.
@@ -665,6 +666,17 @@ export function slugifySegment(segment: string): string {
     .replace(/[\s]+/g, '-')              // Spaces → hyphens
     .replace(/-+/g, '-')                 // Collapse multiple hyphens
     .replace(/^-|-$/g, '');              // Strip leading/trailing hyphens
+}
+
+/**
+ * slugifySegment for a slug MINTED from free text — an atom title, a concept
+ * label, a conversation title — with `slug.transliterate` applied first, so
+ * Cyrillic is spelled in Latin before the NFD strip turns "й" into "и".
+ * File paths and link targets keep plain slugifySegment: they must keep
+ * resolving to pages that already exist.
+ */
+export function slugifyMintedSegment(text: string): string {
+  return slugifySegment(transliterateForSlug(text));
 }
 
 /**
