@@ -3,6 +3,7 @@ import {
   buildSourceFactorCase,
   buildHardExcludeClause,
   buildVisibilityClause,
+  buildGatedRelaxedStatement,
   escapeLikePattern as topLevelEscapeLikePattern,
   __test__,
 } from '../src/core/search/sql-ranking.ts';
@@ -345,5 +346,23 @@ describe('buildVisibilityClause (v0.26.5)', () => {
     const clause = buildVisibilityClause('p', 's');
     expect(clause).not.toContain('@>');
     expect(clause).not.toContain('config');
+  });
+});
+
+describe('buildGatedRelaxedStatement (#6721)', () => {
+  const sql = 'SELECT score, page_id FROM t WHERE q @@ to_tsquery($1) AND x = $10 AND y = $11 ORDER BY score DESC LIMIT $2';
+  const gated = buildGatedRelaxedStatement(sql, 12, 'score DESC, page_id ASC');
+  const [strictPart, relaxedPart] = gated.split('relaxed_rows AS (');
+
+  test('the strict copy keeps $1; the relaxed copy binds the OR query instead and leaves $10/$11 alone', () => {
+    expect(strictPart).toContain('to_tsquery($1) AND x = $10 AND y = $11');
+    expect(relaxedPart).toContain('to_tsquery($12) AND x = $10 AND y = $11');
+    expect(relaxedPart).not.toMatch(/\$1(?!\d)/);
+  });
+
+  test('relaxed rows only when the strict rows are empty, tagged and ordered after them', () => {
+    expect(gated).toContain('SELECT *, false AS relaxed_attempt FROM strict_rows');
+    expect(gated).toContain('SELECT *, true AS relaxed_attempt FROM relaxed_rows WHERE NOT EXISTS (SELECT 1 FROM strict_rows)');
+    expect(gated.trim().endsWith('ORDER BY relaxed_attempt, score DESC, page_id ASC')).toBe(true);
   });
 });

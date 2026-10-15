@@ -42,7 +42,7 @@
  */
 import type { SearchOpts, SearchResult } from '../types.ts';
 import { searchLimitCap } from '../search/eval-pool-depth.ts';
-import { boundWebsearchQuery, buildOrFallbackWebsearchQuery } from '../search/sql-ranking.ts';
+import { boundWebsearchQuery, buildGatedRelaxedStatement, buildOrFallbackWebsearchQuery } from '../search/sql-ranking.ts';
 import { buildSearchTitlesStatement, type SearchTitlesDialect } from '../search/title-statement.ts';
 import { rowToSearchResult } from '../utils.ts';
 import type { ScopedReadRunner } from './cjk-search.ts';
@@ -63,24 +63,22 @@ export async function searchTitles(
     console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${searchLimitCap()}`);
   }
   const statement = buildSearchTitlesStatement(query, opts, dialect);
-  const run = (queryText: string, relaxed: boolean) => {
-    const preferIndex = relaxed && dialect.relaxedPrefersIndex && !statement.safeChunks;
-    const settings = {
-      ...(dialect.statementTimeout ? { statement_timeout: dialect.statementTimeout } : {}),
-      ...(preferIndex ? { enable_seqscan: 'off' } : {}),
-    };
-    const params = [...statement.params];
-    params[0] = queryText;
-    return scoped(async exec => (await exec.unsafe(statement.sql, params)).rows, Object.keys(settings).length ? settings : undefined);
+  // When the strict query matches no title, the OR-of-terms query runs
+  // instead, in the same statement (#6721, buildGatedRelaxedStatement).
+  // enable_seqscan off keeps that OR query on the title index where the
+  // dialect asks for it; the strict query's plan uses the index either way.
+  const orQuery = buildOrFallbackWebsearchQuery(statement.params[0] as string);
+  const preferIndex = orQuery !== null && dialect.relaxedPrefersIndex && !statement.safeChunks;
+  const settings = {
+    ...(dialect.statementTimeout ? { statement_timeout: dialect.statementTimeout } : {}),
+    ...(preferIndex ? { enable_seqscan: 'off' } : {}),
   };
-
-  const strictQuery = statement.params[0] as string;
-  const rows = await run(strictQuery, false);
-  if (rows.length > 0) return rows.map(rowToSearchResult);
-  const orQuery = buildOrFallbackWebsearchQuery(strictQuery);
-  if (!orQuery) return [];
+  const params = orQuery ? [...statement.params, boundWebsearchQuery(orQuery)] : statement.params;
+  const sql = orQuery
+    ? buildGatedRelaxedStatement(statement.sql, params.length, 'exact_title DESC, score DESC, page_id ASC')
+    : statement.sql;
+  const rows = await scoped(async exec => (await exec.unsafe(sql, params)).rows, Object.keys(settings).length ? settings : undefined);
   // 2026-09 (#3617 follow-up): relaxed rows are TAGGED so hybrid's fusion can
   // demote them (SearchResult.keyword_relaxed).
-  const relaxedRows = await run(boundWebsearchQuery(orQuery), true);
-  return relaxedRows.map((r) => ({ ...rowToSearchResult(r), keyword_relaxed: true as const }));
+  return rows.map((r) => (r.relaxed_attempt ? { ...rowToSearchResult(r), keyword_relaxed: true as const } : rowToSearchResult(r)));
 }

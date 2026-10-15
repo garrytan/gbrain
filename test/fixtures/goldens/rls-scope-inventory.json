@@ -2950,7 +2950,6 @@
           "tx"
         ],
         "flagOnScopes": [
-          "*",
           "*"
         ]
       },
@@ -3092,7 +3091,6 @@
           "tx"
         ],
         "flagOnScopes": [
-          "src-a",
           "src-a"
         ]
       },

@@ -119,7 +119,7 @@ import { sanitizeForJsonb, sanitizeText, buildLinkRows, buildTimelineRows } from
 import { PAGE_SORT_SQL } from './types.ts';
 import { finalizeLastSeen } from './chronicle/last-seen.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
-import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery, boundWebsearchQuery, collapseWebsearchDashRuns } from './search/sql-ranking.ts';
+import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildBestPerPagePoolCte, buildGatedRelaxedStatement, buildOrFallbackWebsearchQuery, boundWebsearchQuery, collapseWebsearchDashRuns } from './search/sql-ranking.ts';
 import { privatePagesFilterFragment, privateSnapshotFilterFragment, privateLinkOriginFilterFragment, privateTimelineEventFilterFragment, privateProvenanceFilterFragment } from './search/private-visibility.ts';
 import { EMBED_SKIP_FILTER_FRAGMENT } from './embed-skip.ts';
 import {
@@ -1507,30 +1507,23 @@ export class PGLiteEngine implements BrainEngine {
        ORDER BY score DESC, page_id ASC, chunk_id ASC
        LIMIT $3 OFFSET $4`;
 
-    let { rows } = await this.db.query(keywordSql, params);
     // D2 fix (fix/title-retrieval-arm): websearch AND semantics at chunk
-    // grain mean one non-co-occurring token zeroes keyword recall. When the
-    // strict query returns nothing, retry ONCE with OR-of-terms. Strict-AND
-    // results always win when non-empty (no change for working queries).
-    // Opt-in via SearchOpts.orFallback (Reviewer F1): only hybridSearch's
-    // recall arm relaxes; precision consumers (countMentions,
-    // link-extraction, eval) keep the strict-AND contract.
-    if (rows.length === 0 && opts?.orFallback) {
-      const orQuery = buildOrFallbackWebsearchQuery(query);
-      if (orQuery) {
-        const fallbackParams = [...params];
-        fallbackParams[0] = orQuery;
-        ({ rows } = await this.db.query(keywordSql, fallbackParams));
-        settle();
-        // 2026-09 (#3617 follow-up): relaxed rows are TAGGED so hybrid's
-        // fusion can demote them — an OR-of-common-terms match must not
-        // outvote a healthy vector arm (SearchResult.keyword_relaxed doc).
-        return (rows as Record<string, unknown>[]).map((r) => ({ ...rowToSearchResult(r), keyword_relaxed: true as const }));
-      }
-    }
-
+    // grain mean one non-co-occurring token zeroes keyword recall, so when
+    // the strict query returns nothing the OR-of-terms query runs instead.
+    // Strict-AND results always win when non-empty (no change for working
+    // queries). Opt-in via SearchOpts.orFallback (Reviewer F1): only
+    // hybridSearch's recall arm relaxes; precision consumers (countMentions,
+    // link-extraction, eval) keep the strict-AND contract. Both attempts are
+    // one gated statement (buildGatedRelaxedStatement), as on Postgres.
+    const orQuery = opts?.orFallback ? buildOrFallbackWebsearchQuery(query) : null;
+    const { rows } = orQuery
+      ? await this.db.query(buildGatedRelaxedStatement(keywordSql, params.length + 1, 'score DESC, page_id ASC, chunk_id ASC'), [...params, orQuery])
+      : await this.db.query(keywordSql, params);
     settle();
-    return (rows as Record<string, unknown>[]).map(rowToSearchResult);
+    // 2026-09 (#3617 follow-up): relaxed rows are TAGGED so hybrid's fusion
+    // can demote them — an OR-of-common-terms match must not outvote a
+    // healthy vector arm (SearchResult.keyword_relaxed doc).
+    return (rows as Record<string, unknown>[]).map((r) => (r.relaxed_attempt ? { ...rowToSearchResult(r), keyword_relaxed: true as const } : rowToSearchResult(r)));
   }
 
   /**

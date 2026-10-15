@@ -366,6 +366,27 @@ export function buildOrFallbackWebsearchQuery(query: string): string | null {
   return tokens.join(' OR ');
 }
 
+/**
+ * #6721: a strict keyword statement and its OR-relaxed retry as ONE
+ * statement, so the retry costs no transaction of its own. `sql` binds the
+ * query text as `$1` (every keyword and title builder does); the relaxed copy
+ * binds `$relaxedParam` there instead. The relaxed copy runs only when the
+ * strict one returned no rows: its `NOT EXISTS` over the strict rows is
+ * uncorrelated, so the planner makes it a one-time filter and never starts
+ * the relaxed scan otherwise. Each row carries `relaxed_attempt`. `orderBy`
+ * restates the statement's own output order over its output columns.
+ */
+export function buildGatedRelaxedStatement(sql: string, relaxedParam: number, orderBy: string): string {
+  const relaxed = sql.replace(/\$1(?!\d)/g, `$${relaxedParam}`);
+  return `
+    WITH strict_rows AS MATERIALIZED (${sql}),
+    relaxed_rows AS (${relaxed})
+    SELECT *, false AS relaxed_attempt FROM strict_rows
+    UNION ALL
+    SELECT *, true AS relaxed_attempt FROM relaxed_rows WHERE NOT EXISTS (SELECT 1 FROM strict_rows)
+    ORDER BY relaxed_attempt, ${orderBy}`;
+}
+
 // ============================================================
 // v0.29.1 — Recency component SQL builder
 // ============================================================

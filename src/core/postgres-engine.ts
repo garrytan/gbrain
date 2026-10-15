@@ -111,7 +111,7 @@ import { logConnectionEvent } from './connection-audit.ts';
 import { drainBackgroundWorkBeforeDisconnect } from './background-work.ts';
 import { validateSlug, contentHash, isBlankBody, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding, isUndefinedTableError, warnOncePerProcess } from './utils.ts';
 import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
-import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery, boundWebsearchQuery, collapseWebsearchDashRuns } from './search/sql-ranking.ts';
+import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildBestPerPagePoolCte, buildGatedRelaxedStatement, buildOrFallbackWebsearchQuery, boundWebsearchQuery, collapseWebsearchDashRuns } from './search/sql-ranking.ts';
 import { buildKeywordChunkMatch } from './search/keyword-chunk-match.ts';
 import { privatePagesFilterFragment, privateSnapshotFilterFragment, privateLinkOriginFilterFragment, privateTimelineEventFilterFragment, privateProvenanceFilterFragment } from './search/private-visibility.ts';
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
@@ -1131,47 +1131,47 @@ export class PostgresEngine implements BrainEngine {
       OFFSET ${offsetParam}
     `;
 
+    // D2 fix (fix/title-retrieval-arm): websearch AND semantics at chunk
+    // grain mean one non-co-occurring token zeroes keyword recall, so when
+    // the strict query returns nothing the OR-of-terms query runs instead.
+    // Strict-AND results always win when non-empty (no change for working
+    // queries). Opt-in via SearchOpts.orFallback (Reviewer F1): only
+    // hybridSearch's recall arm relaxes; precision consumers (countMentions,
+    // link-extraction, eval) keep the strict-AND contract. #6721: both
+    // attempts are one gated statement (buildGatedRelaxedStatement), so the
+    // retry costs no second transaction.
+    const orQuery = opts?.orFallback ? buildOrFallbackWebsearchQuery(query) : null;
+    const boundParams = [...params];
+    boundParams[0] = collapseWebsearchDashRuns(query);
+    if (orQuery) boundParams.push(collapseWebsearchDashRuns(orQuery));
+    const statement = orQuery
+      ? buildGatedRelaxedStatement(rawQuery, boundParams.length, 'score DESC, page_id ASC, chunk_id ASC')
+      : rawQuery;
+
     // RLS scope binding (opt-in via GBRAIN_RLS_SCOPE_BINDING) + search-only
     // timeout. alwaysTransaction: this method needed sql.begin() on master
     // already (a transaction-local statement_timeout can never leak onto a
-    // pooled connection). The scope, JIT off, the timeout and the relaxed
-    // attempt's enable_seqscan are one settings statement
-    // (postgres-engine/search-settings.ts).
+    // pooled connection). The scope, JIT off, the timeout and, with an OR
+    // retry in the statement, enable_seqscan off are one settings statement
+    // (postgres-engine/search-settings.ts). enable_seqscan off keeps the
+    // relaxed OR query on the search_vector index; the strict query's plan
+    // uses that index either way.
     const statementTimeout = await this.keywordStatementTimeoutSetting();
-    const runKeyword = (queryText: string, relaxed = false) =>
-      this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, (tx) => {
-        const boundParams = [...params];
-        boundParams[0] = collapseWebsearchDashRuns(queryText);
-        return tx.unsafe(rawQuery, boundParams as Parameters<typeof tx.unsafe>[1]);
-      }, { alwaysTransaction: true, jitOff: true, settings: relaxed ? { statement_timeout: statementTimeout, enable_seqscan: 'off' } : { statement_timeout: statementTimeout } });
-    let rows = await runKeyword(query);
-    // D2 fix (fix/title-retrieval-arm): websearch AND semantics at chunk
-    // grain mean one non-co-occurring token zeroes keyword recall. When the
-    // strict query returns nothing, retry ONCE with OR-of-terms — through
-    // the SAME scoped wrapper (the retry is a fresh scoped transaction, so
-    // RLS scope binding applies identically). Strict-AND results always win
-    // when non-empty (no change for working queries).
-    // Opt-in via SearchOpts.orFallback (Reviewer F1): only hybridSearch's
-    // recall arm relaxes; precision consumers (countMentions,
-    // link-extraction, eval) keep the strict-AND contract.
-    if (rows.length === 0 && opts?.orFallback) {
-      const orQuery = buildOrFallbackWebsearchQuery(query);
-      if (orQuery) {
-        rows = await runKeyword(orQuery, true);
-        // 2026-09 (#3617 follow-up): relaxed rows are TAGGED so hybrid's
-        // fusion can demote them — an OR-of-common-terms match must not
-        // outvote a healthy vector arm (SearchResult.keyword_relaxed doc).
-        return rows.map((r) => ({ ...rowToSearchResult(r), keyword_relaxed: true as const }));
-      }
-    }
-    return rows.map(rowToSearchResult);
+    const rows = await this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId,
+      (tx) => tx.unsafe(statement, boundParams as Parameters<typeof tx.unsafe>[1]),
+      { alwaysTransaction: true, jitOff: true, settings: orQuery ? { statement_timeout: statementTimeout, enable_seqscan: 'off' } : { statement_timeout: statementTimeout } });
+    // 2026-09 (#3617 follow-up): relaxed rows are TAGGED so hybrid's fusion
+    // can demote them — an OR-of-common-terms match must not outvote a
+    // healthy vector arm (SearchResult.keyword_relaxed doc).
+    return rows.map((r) => (r.relaxed_attempt ? { ...rowToSearchResult(r), keyword_relaxed: true as const } : rowToSearchResult(r)));
   }
 
   /**
    * fix/title-retrieval-arm (D1): page-grain title candidate arm. SQL lives
    * once in engine-sql/titles.ts (exact-title key #5889, index-backed remote
-   * predicate). Each attempt (strict, then OR fallback) runs in its own
-   * scoped read transaction under the keyword statement timeout (#6495 knob).
+   * predicate). The strict query and its OR fallback are one gated statement
+   * in one scoped read transaction under the keyword statement timeout
+   * (#6495 knob, #6721).
    */
   /** Cat 40 Hard F2 strict keyword count and keyword-mode pages; SQL in engine-sql/keyword-pages.ts. */
   async countKeywordPages(query: string, opts?: SearchOpts & { timeoutMs?: number }): Promise<number> {

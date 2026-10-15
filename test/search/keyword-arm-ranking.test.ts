@@ -14,9 +14,10 @@
  * never change a row, an order or a score.
  * Regenerate with KEYWORD_RANKING_WRITE=1 only for an intended ranking change.
  *
- * It also pins how many keyword statements one search runs: one when the
- * strict (AND) query matches, two when it matches nothing and the OR fallback
- * re-runs it.
+ * It also pins how many keyword statements one search runs: one, whether the
+ * strict (AND) query matches or the OR fallback answers in its place (#6721:
+ * the fallback is gated inside the same statement), with the fallback's rows
+ * tagged keyword_relaxed.
  */
 import { afterAll, beforeAll, describe, expect, setSystemTime, test } from 'bun:test';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -185,7 +186,7 @@ for (const kind of testBackends()) {
       expect(search('quarterly budget review')).toEqual([]);
     });
 
-    test('one keyword statement per search, two when the strict query matches nothing', async () => {
+    test('one keyword statement per search, also when the strict query matches nothing and the OR fallback answers', async () => {
       let statements = 0;
       const count = (sql: unknown) => { if (typeof sql === 'string' && sql.includes('ts_rank(cc.search_vector')) statements++; };
       const restore = spyKeywordStatements(engine, kind, count);
@@ -193,10 +194,17 @@ for (const kind of testBackends()) {
         const runs = async (q: string) => { statements = 0; await hybridSearch(engine, q, { limit: 10, expansion: false }); return statements; };
         expect(await runs(phrase(3, 0))).toBe(1);
         expect(await runs(COMMON)).toBe(1);
-        expect(await runs('what did we decide about vindre and talquo')).toBe(2);
+        expect(await runs('what did we decide about vindre and talquo')).toBe(1);
       } finally {
         restore();
       }
+      const relaxed = async (q: string) => (await engine.searchKeyword(q, { limit: 50, orFallback: true })).map((r) => r.keyword_relaxed === true);
+      const strictHits = await relaxed(phrase(3, 0));
+      expect(strictHits.length).toBeGreaterThan(0);
+      expect(strictHits.every((tagged) => !tagged)).toBe(true);
+      const fallbackHits = await relaxed('what did we decide about vindre and talquo');
+      expect(fallbackHits.length).toBeGreaterThan(0);
+      expect(fallbackHits.every(Boolean)).toBe(true);
     });
   });
 }

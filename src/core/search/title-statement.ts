@@ -125,7 +125,7 @@ export function buildSearchTitlesStatement(query: string, opts: SearchOpts | und
       COALESCE(rep.chunk_index, 0) AS chunk_index,
       COALESCE(rep.chunk_text, '') AS chunk_text,
       COALESCE(rep.chunk_source, 'compiled_truth') AS chunk_source,
-      tp.score,
+      tp.score, tp.exact_title,
       ${staleSql} AS stale
     FROM top_pages tp
     LEFT JOIN LATERAL (

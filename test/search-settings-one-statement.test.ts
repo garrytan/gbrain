@@ -12,7 +12,9 @@
  * vendored driver reads the `statement_timeout` it binds (#6543); a setting
  * name is never spliced from outside the code. Regression that fails it on
  * master: the strict keyword attempt sends three statements in its
- * transaction and the relaxed one six.
+ * transaction and the relaxed one six. The keyword arm's OR fallback is gated
+ * inside its one query (buildGatedRelaxedStatement), so a keyword search is
+ * one transaction of two statements either way.
  *
  * Unit test over a recording postgres.js handle; the Postgres behavior
  * (settings in effect for the query, caller values restored) is pinned by
@@ -119,15 +121,24 @@ describe('PostgresEngine.searchKeyword: statements per search transaction', () =
     return { engine, transactions };
   }
 
-  test('strict attempt: settings then query; OR fallback: the same two, with enable_seqscan off in the one settings statement', async () => {
+  test('strict query alone: settings then query', async () => {
+    const { engine, transactions } = recordingEngine();
+    expect(await engine.searchKeyword('alpha beta')).toEqual([]);
+    expect(transactions).toHaveLength(1);
+    expect(transactions[0]!.map(s => s.sql.trim().split('\n')[0]!.slice(0, 60))).toEqual(["SELECT set_config('jit', $1, true), set_config('statement_ti", 'WITH ranked_chunks AS (']);
+    expect(transactions[0]![0]!.params).toEqual(['off', '8000ms']);
+  });
+
+  test('with the OR fallback: the same two statements, enable_seqscan off in the settings and the OR query bound in the one gated query', async () => {
     const { engine, transactions } = recordingEngine();
     expect(await engine.searchKeyword('alpha beta', { orFallback: true })).toEqual([]);
-    expect(transactions).toHaveLength(2);
-    const [strict, relaxed] = transactions.map(statements => statements.map(s => s.sql.trim().split('\n')[0]!.slice(0, 60)));
-    expect(strict).toEqual(["SELECT set_config('jit', $1, true), set_config('statement_ti", 'WITH ranked_chunks AS (']);
-    expect(relaxed).toEqual(["SELECT set_config('jit', $1, true), set_config('statement_ti", 'WITH ranked_chunks AS (']);
-    expect(transactions[0]![0]!.params).toEqual(['off', '8000ms']);
-    expect(transactions[1]![0]!.sql).toBe("SELECT set_config('jit', $1, true), set_config('statement_timeout', $2, true), set_config('enable_seqscan', $3, true)");
-    expect(transactions[1]![0]!.params).toEqual(['off', '8000ms', 'off']);
+    expect(transactions).toHaveLength(1);
+    const [settings, query] = transactions[0]!;
+    expect(transactions[0]).toHaveLength(2);
+    expect(settings!.sql).toBe("SELECT set_config('jit', $1, true), set_config('statement_timeout', $2, true), set_config('enable_seqscan', $3, true)");
+    expect(settings!.params).toEqual(['off', '8000ms', 'off']);
+    expect(query!.sql.trim().split('\n')[0]).toBe('WITH strict_rows AS MATERIALIZED (');
+    expect(query!.params[0]).toBe('alpha beta');
+    expect(query!.params.at(-1)).toBe('alpha OR beta');
   });
 });
