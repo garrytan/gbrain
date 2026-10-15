@@ -61,6 +61,7 @@
 import { observationDateLine, observationDateRule } from '../ai/date-grounding.ts';
 import { isConsumerDateGroundingOn } from '../facts/extract.ts';
 import type { BrainEngine, LinkBatchInput } from '../engine.ts';
+import type { Page } from '../types.ts';
 import type { PhaseResult } from '../cycle.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { ProgressReporter } from '../progress.ts';
@@ -85,6 +86,7 @@ import { slugifySegment } from '../sync.ts';
 import { resolveTierDefault } from '../model-config.ts';
 import { isUndefinedTableError, warnOncePerProcess } from '../utils.ts';
 import { utcDate } from './cycle-date.ts';
+import { computeEffectiveDate } from '../effective-date.ts';
 import { normalizeForGrounding } from './synthesize-verify.ts';
 import type { TranscriptPageIndex } from '../transcripts/discover.ts';
 import { managedAtomSession, readAtomOrigin, resumeManagedAtoms, publishManagedAtoms, MANAGED_ATOM_DISCOVERY_SQL, type AtomOrigin } from '../persistence/atom-maintenance.ts';
@@ -99,6 +101,18 @@ import { derivedGateInput } from '../trust/derived-gate.ts';
 import { ATOM_TYPES, ATOMS_RESPONSE_SCHEMA } from './extract-atoms-schema.ts';
 import { parseAtomsOutcome } from './extract-atoms-parse.ts';
 export { parseAtomsOutcome, parseAtomsResponse, type AtomsParseOutcome } from './extract-atoms-parse.ts';
+
+// Capture the source's content date before inference. Serialize it into the
+// atom so classic imports and retained managed publication use the same date.
+async function atomSourceDate(engine: BrainEngine, page: Page | null): Promise<Date | null> {
+  if (!page) return null;
+  if (page.effective_date) return new Date(page.effective_date);
+  return computeEffectiveDate({
+    slug: page.slug, frontmatter: page.frontmatter, filename: page.slug.split('/').pop(),
+    createdAt: new Date(page.created_at), updatedAt: new Date(page.updated_at),
+    timeZone: await engine.getConfig('brain.timezone') ?? undefined,
+  }).date;
+}
 
 const DEFAULT_BUDGET_USD = 0.3;
 // #4529 + #4540: per-item extractor caps, overridable via
@@ -1088,15 +1102,16 @@ export async function runPhaseExtractAtoms(
     const { promptContent, truncated } = input;
     try {
       const origin: AtomOrigin | null = managed ? { ...await readAtomOrigin(engine, managed, item), ...(truncated ? { partialInputChars: maxInputChars } : {}) } : null;
+      const sourcePage = item.kind === 'page' ? await engine.getPage(item.slug, { sourceId }) : null;
+      const sourceDate = await atomSourceDate(engine, sourcePage);
       const visibility = origin?.visibility ?? effectiveVisibility(item.kind === 'transcript' ? { kind: 'transcript' } // #5525
-        : { kind: 'page', page: await engine.getPage(item.slug, { sourceId }) });
+        : { kind: 'page', page: sourcePage });
       throwIfAborted(opts.signal, 'extract_atoms');
       const resumed = !opts.dryRun && managed && origin ? await resumeManagedAtoms(engine, managed, origin) : 'run';
       if (resumed === 'done') { duplicatesSkipped++; continue; }
       if (resumed === 'held') { heldFailed++; continue; } // #6325: settled after repeated failures; doctor lists it
       const cutLine = truncated ? inputTruncatedLine(originLabel, input, maxInputChars) : null; // A7: a complete appended-tail read prints nothing
       if (cutLine) { inputTruncated++; console.error(cutLine); } // counted only for a model call
-
       const result = await chat({
         model: extractModel,
         ...atomsPrompt(dateGrounding, originLabel, promptContent),
@@ -1175,7 +1190,6 @@ export async function runPhaseExtractAtoms(
         // write below). Page-kind items only — transcripts are files, not
         // pages, so there is no from-endpoint to link.
         const provenanceLinks: LinkBatchInput[] = [];
-        const sourcePage = item.kind === 'page' ? await engine.getPage(item.slug, { sourceId }) : null;
         const undatedDate = sourcePage?.created_at ? utcDate(new Date(sourcePage.created_at)) : 'undated';
         for (const atom of atoms) {
           const srcRef = item.kind === 'transcript' ? item.filePath : item.slug;
@@ -1228,6 +1242,7 @@ export async function runPhaseExtractAtoms(
             {
               atom_type: atom.atom_type,
               ...originFrontmatter,
+              ...(sourceDate ? { date: new Date(sourceDate).toISOString() } : {}),
               // Provisional until the whole item's atoms persist (see above).
               source_hash: `pending:${hash16}`,
               visibility, ...(origin ? { managed_extraction: true } : {}),

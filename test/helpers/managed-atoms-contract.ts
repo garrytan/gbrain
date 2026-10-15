@@ -39,7 +39,9 @@ export async function exerciseManagedAtoms(engine: BrainEngine, scenario: Case):
       await disposePersistenceConsumer(engine);
       await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
       await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [sourceId]);
-      await engine.putPage('notes/example', { type: 'source', title: 'Example', compiled_truth: 'A private project record. '.repeat(40), frontmatter: { visibility: 'private' } }, { sourceId });
+      const contentDate = '2026-07-09T15:45:00.000Z';
+      await engine.putPage('notes/example', { type: 'source', title: 'Example', compiled_truth: 'A private project record. '.repeat(40),
+        frontmatter: { visibility: 'private', date: contentDate }, effective_date: new Date(contentDate), effective_date_source: 'date' }, { sourceId });
       const page = (await engine.getPage('notes/example', { sourceId }))!;
       const transcript = scenario.startsWith('transcript') ? join(home, 'meeting.txt') : null;
       if (transcript) writeFileSync(transcript, page.compiled_truth);
@@ -178,6 +180,8 @@ export async function exerciseManagedAtoms(engine: BrainEngine, scenario: Case):
         await runPhaseExtractAtoms(engine, opts);
         expect(calls).toBe(expectedCalls);
         expect(await engine.executeRaw("SELECT id FROM pages WHERE source_id=$1 AND type='atom'", [sourceId])).toHaveLength(1);
+        const [retainedAtom] = await engine.executeRaw<{ slug: string }>("SELECT slug FROM pages WHERE source_id=$1 AND type='atom'", [sourceId]);
+        expect((await engine.getPage(retainedAtom.slug, { sourceId }))?.effective_date?.toISOString()).toBe(contentDate);
         const [unchanged] = await engine.executeRaw<{ state: string; outcome: unknown }>('SELECT state,outcome FROM persistence_requests WHERE request_id=$1::uuid', [receipt.request_id]);
         expect(unchanged).toEqual(original);
         expect(await readState()).toEqual([{ content_hash: page.content_hash!, fail_count: scenario === 'malformed_retry_failure' ? 2 : scenario.startsWith('malformed_retry') ? 1 : 0, tombstoned: true }]);
@@ -255,6 +259,15 @@ export async function exerciseManagedAtoms(engine: BrainEngine, scenario: Case):
       expect(atoms).toHaveLength(scenario === 'zero_yield' || scenario === 'malformed' ? 0 : 1);
       if (atoms.length) {
         expect(atoms[0].visibility).toBe('private');
+        const atom = (await engine.getPage(atoms[0].slug, { sourceId }))!;
+        if (!transcript) {
+          expect(atom.effective_date?.toISOString()).toBe(contentDate);
+          if (root) expect(readFileSync(join(root, `${atoms[0].slug}.md`), 'utf8')).toContain(contentDate);
+        } else {
+          // A raw transcript has no page date. Never borrow an unrelated page's date.
+          expect(atom.frontmatter.date).toBeUndefined();
+          expect(atom.effective_date_source).toBe('fallback');
+        }
         expect(await engine.executeRaw('SELECT c.id FROM content_chunks c JOIN pages p ON p.id=c.page_id WHERE p.source_id=$1 AND p.slug=$2', [sourceId, atoms[0].slug])).not.toHaveLength(0);
         if (!transcript) expect(await engine.executeRaw('SELECT l.id FROM links l JOIN pages f ON f.id=l.from_page_id JOIN pages t ON t.id=l.to_page_id WHERE f.source_id=$1 AND t.source_id=$1 AND f.slug=$2 AND t.slug=$3', [sourceId, page.slug, atoms[0].slug])).toHaveLength(1);
         if (root) expect(readFileSync(join(root, `${atoms[0].slug}.md`), 'utf8')).toContain('visibility: private');
