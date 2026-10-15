@@ -225,6 +225,41 @@ function createMcpRequestServer(
   return server;
 }
 
+
+/**
+ * #6721: one mcp_request_log row per JSON-RPC call, written off the reply path. The table is a
+ * volatile audit trail (docs/architecture/system-of-record.md) and every insert was already
+ * best-effort, yet each was awaited, putting one more database round trip before every reply.
+ * The insert now starts where it always did and the reply does not wait for it; a failure is
+ * logged, never thrown. In-flight inserts are tracked so shutdown (and a test reading the rows)
+ * can wait for them: settleMcpRequestLog. Same contract as the legacy transport's logRequest.
+ */
+const requestLogWrites = new Set<Promise<void>>();
+
+function logMcpRequest(
+  engine: ServeHttpContext['engine'],
+  tokenName: string | null,
+  agentName: string,
+  row: { operation: string; latency: number; status: string; error?: string; params: unknown },
+): void {
+  const write: Promise<void> = executeRawJsonb(
+    engine,
+    `INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, error_message, params)
+     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
+    [tokenName, agentName, row.operation, row.latency, row.status, row.error ?? null],
+    [row.params],
+  ).then(
+    () => undefined,
+    (e: unknown) => { console.error(`[serve-http] mcp_request_log insert failed (${row.operation}): ${e instanceof Error ? e.message : String(e)}`); },
+  ).finally(() => { requestLogWrites.delete(write); });
+  requestLogWrites.add(write);
+}
+
+/** Resolves once every mcp_request_log insert started so far has landed or failed. */
+export async function settleMcpRequestLog(): Promise<void> {
+  await Promise.all([...requestLogWrites]);
+}
+
 async function listMcpTools(ctx: ServeHttpContext, state: McpRequestState) {
   const { engine, config, broadcastEvent } = ctx;
   const { authInfo, agentName, startTime, mcpOperations, surface, surfaceAllowedOps } = state;
@@ -275,15 +310,7 @@ async function listMcpTools(ctx: ServeHttpContext, state: McpRequestState) {
   // params carry the listed-tool count so per-token-class list sizes are
   // queryable (`params->>'tool_count'`) without new telemetry plumbing.
   const latency = Date.now() - startTime;
-  try {
-    await executeRawJsonb(
-      engine,
-      `INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params)
-       VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
-      [authInfo.clientId, agentName, 'tools/list', latency, 'success'],
-      [{ tool_count: tools.length }],
-    );
-  } catch { /* best effort */ }
+  logMcpRequest(engine, authInfo.clientId, agentName, { operation: 'tools/list', latency, status: 'success', params: { tool_count: tools.length } });
   broadcastEvent({
     agent: agentName,
     operation: 'tools/list',
@@ -435,15 +462,7 @@ async function callMcpTool(ctx: ServeHttpContext, state: McpRequestState, reques
     // real object, not a JSON-encoded string.
     const latency = Date.now() - startTime;
     const errorPayload = serializeError(e);
-    try {
-      await executeRawJsonb(
-        engine,
-        `INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, error_message, params)
-         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
-        [authInfo.clientId, agentName, name, latency, 'error', errorPayload.message],
-        [logParamsObj],
-      );
-    } catch { /* best effort */ }
+    logMcpRequest(engine, authInfo.clientId, agentName, { operation: name, latency, status: 'error', error: errorPayload.message, params: logParamsObj });
     broadcastEvent({
       agent: agentName,
       operation: name,
@@ -468,15 +487,7 @@ async function rejectUnknownMcpOperation(ctx: ServeHttpContext, state: McpReques
   // misbehaving agents need to see the full attempt log, not just
   // valid-op success/error.
   const latency = Date.now() - startTime;
-  try {
-    await executeRawJsonb(
-      engine,
-      `INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, error_message, params)
-       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
-      [authInfo.clientId, agentName, name, latency, 'error', `unknown_operation: ${name}`],
-      [null],
-    );
-  } catch { /* best effort */ }
+  logMcpRequest(engine, authInfo.clientId, agentName, { operation: name, latency, status: 'error', error: `unknown_operation: ${name}`, params: null });
   broadcastEvent({
     agent: agentName,
     operation: name,
@@ -511,15 +522,7 @@ async function rejectInsufficientMcpScope(
   // list, or list/call drifted). status='denied_after_list' makes the
   // honest-catalog metric a one-line count that trends to zero.
   const latency = Date.now() - startTime;
-  try {
-    await executeRawJsonb(
-      engine,
-      `INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, error_message, params)
-       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
-      [authInfo.clientId, agentName, name, latency, 'denied_after_list', `insufficient_scope: requires '${requiredScope}'`],
-      [null],
-    );
-  } catch { /* best effort */ }
+  logMcpRequest(engine, authInfo.clientId, agentName, { operation: name, latency, status: 'denied_after_list', error: `insufficient_scope: requires '${requiredScope}'`, params: null });
   broadcastEvent({
     agent: agentName,
     operation: name,
@@ -567,15 +570,7 @@ async function recordMcpToolResult(
     const errStatus = requestLogStatusForResult(toolResult);
     // #5249: the opaque request id lets admin stats count pending writes that later fail.
     const pending = errStatus === 'accepted_pending' ? acceptedPendingReceipt(toolResult) : null;
-    try {
-      await executeRawJsonb(
-        engine,
-        `INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, error_message, params)
-         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
-        [authInfo.clientId, agentName, name, latency, errStatus, errMsg],
-        [pending ? { ...(logParamsObj && typeof logParamsObj === 'object' ? logParamsObj : {}), write_request_id: pending.request_id } : logParamsObj],
-      );
-    } catch { /* best effort */ }
+    logMcpRequest(engine, authInfo.clientId, agentName, { operation: name, latency, status: errStatus, error: errMsg, params: pending ? { ...(logParamsObj && typeof logParamsObj === 'object' ? logParamsObj : {}), write_request_id: pending.request_id } : logParamsObj });
     broadcastEvent({
       agent: agentName,
       operation: name,
@@ -594,15 +589,7 @@ async function recordMcpToolResult(
   // the reject-flip decision is evidence-based (count per client via the
   // status column). Warn CONTENTS (the raw unknown keys) are never logged.
   const successStatus = requestLogStatusForResult(toolResult);
-  try {
-    await executeRawJsonb(
-      engine,
-      `INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params)
-       VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
-      [authInfo.clientId, agentName, name, latency, successStatus],
-      [logParamsObj],
-    );
-  } catch { /* best effort */ }
+  logMcpRequest(engine, authInfo.clientId, agentName, { operation: name, latency, status: successStatus, params: logParamsObj });
   broadcastEvent({
     agent: agentName,
     operation: name,

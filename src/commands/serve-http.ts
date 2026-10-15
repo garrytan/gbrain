@@ -31,7 +31,7 @@ import { createAdminLimiters } from './serve-http-admin-limits.ts';
 import { mountOAuth, mountOAuthConsent, mountOwnerLoginLinks } from './serve-http-oauth.ts';
 import { createRequireAdmin, mountAdminApi, mountAdminLogin } from './serve-http-admin-api.ts';
 import { mountSpa } from './serve-http-spa.ts';
-import { mountMcp } from './serve-http-mcp.ts';
+import { mountMcp, settleMcpRequestLog } from './serve-http-mcp.ts';
 import { createWebhookLimiters, mountWebhooks } from './serve-http-webhooks.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { operations, type Operation } from '../core/operations.ts';
@@ -915,6 +915,7 @@ ${bootstrapFromEnv
   const deregisterEngineCleanup = registerCleanup('pglite-engine-disconnect', async () => {
     movementWatch.stop();
     await factsDrain.stop();
+    await settleMcpRequestLog();
     await engine.disconnect();
   });
   try {
@@ -922,6 +923,8 @@ ${bootstrapFromEnv
   } finally {
     movementWatch.stop();
     await factsDrain.stop();
+    // The last replies' request-log rows land before the cli teardown closes the engine.
+    await settleMcpRequestLog();
     // Close the IPC listener + reap the socket file on orderly shutdown
     // (abnormal termination goes through the registered cleanup above).
     ipcBinding.close();
