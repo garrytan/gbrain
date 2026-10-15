@@ -3,10 +3,11 @@ import { existsSync, lstatSync, realpathSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { SqlEngine } from './model.ts';
+import { coordinationLockPath } from './coordination-lock.ts';
 import { persistenceHome } from './identity.ts';
 import { canonicalFilesystemPath } from './root-registry.ts';
 import { adoptTransferredRootStamp, assertNoPhysicalRootOverlap, assertPhysicalRoot, assertPhysicalRootStamp, PHYSICAL_ROOT_MARKER, physicalRootDeviceChange, physicalRootError,
-  readPhysicalRootReservation, readPhysicalRootStamp, reservePhysicalRootRecord, restampPhysicalRootDevice, samePhysicalBirth, writePhysicalRootStamp, type PhysicalRootReservation } from './physical-root-record.ts';
+  readPhysicalRootReservation, readPhysicalRootStamp, repairReservationCoordinationPath, reservePhysicalRootRecord, restampPhysicalRootDevice, samePhysicalBirth, writePhysicalRootStamp, type PhysicalRootReservation } from './physical-root-record.ts';
 
 export { assertPhysicalRoot, isPhysicalRootMetadata, readPhysicalRootReservation } from './physical-root-record.ts';
 export interface PhysicalRootClaim { hostId: string; worktreeId?: string; coordinationPath?: string; }
@@ -15,6 +16,14 @@ async function brainIdentity(tx: SqlEngine): Promise<string> {
   if (!brain) throw physicalRootError();
   return brain.brain_id;
 }
+/** Only a never-committed first claim can relocate a malformed coordination path. */
+export async function repairUnclaimedReservation(tx: SqlEngine, root: string, hostId: string): Promise<void> {
+  const brainId = await brainIdentity(tx);
+  await repairReservationCoordinationPath(root, id => coordinationLockPath(root, id), brainId, hostId, async id => {
+    const owners = await tx.executeRaw('SELECT id FROM persistence_worktrees WHERE id=$1::uuid', [id]);
+    return owners.length === 0;
+  });
+}
 /**
  * Caller holds the brain/topology transaction guard. The private shared-path
  * reservation is a veto, never database ownership authority. It is deliberately
@@ -22,6 +31,7 @@ async function brainIdentity(tx: SqlEngine): Promise<string> {
  */
 export async function reservePhysicalRoot(tx: SqlEngine, path: string, opts: PhysicalRootClaim): Promise<PhysicalRootReservation> {
   const root = canonicalFilesystemPath(path), brainId = await brainIdentity(tx);
+  await repairUnclaimedReservation(tx, root, opts.hostId);
   const previous = readPhysicalRootReservation(root);
   const worktreeId = opts.worktreeId ?? previous?.worktreeId ?? randomUUID();
   const coordinationPath = opts.coordinationPath ?? previous?.coordinationPath ?? canonicalFilesystemPath(join(persistenceHome(), 'locks', `${worktreeId}.lock`));

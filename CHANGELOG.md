@@ -10,6 +10,18 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.249.0] - 2026-10-15
+
+**Recover a first claim blocked by its old reservation.** Retrying a first write claim can now repair a reservation whose lock was placed inside the checkout. The repair keeps the reservation identity and moves only the lock location, allowing the original claim to finish. Reservations belonging to another brain or host, or to an already recorded owner, remain unchanged.
+
+### Itemized changes
+
+- The repair runs automatically on retry and uses a shared repair lock plus an unchanged-record check before publication.
+
+### To take advantage of v0.60.249.0
+
+Run `gbrain upgrade`. No additional setup is required.
+
 ## [0.60.244.0] - 2026-10-15
 
 **More timing tests now measure the work instead of how busy the CI machine is, and the write-gate check at the 24 MiB page limit is back to a fair bound (tests only, no behavior change).** On #6738's CI, `write-gate-perf`'s 5 MB adversarial p95 read 1585 ms against its 1500 ms bound. The cause wasn't load. #6733 raised the page import limit (`MAX_FILE_SIZE`) to 24 MiB, and the check sized its test text by that constant, so it had been timing about 5x the bytes against bounds calibrated for 5 MB, with no change to the write-gate code (adversarial p95: 151 ms at ee922300, 777 ms at 44eb0493). The 5 MB check now uses 5 MB of text again, and a new linearity check covers the real 24 MiB limit. Ten awaited-PGLite timing asserts now measure the test thread's CPU time. Two size-ratio checks now alternate their sizes so a slow spell on a shared machine can't skew them. All bounds and correctness asserts are unchanged.

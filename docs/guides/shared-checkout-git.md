@@ -351,3 +351,16 @@ gbrain git commit-push -m "host sync: daily notes" -- daily/
 - [Live sync](live-sync.md)
 - [Agent operator protocol](../protocol/AGENT_OPERATOR_v1.md)
 - [Error codes](error-codes.md)
+
+
+### Retrying a first claim with an invalid lock reservation
+
+A first claim interrupted after recording a lock inside its checkout can now
+retry without deleting ownership markers. GBrain moves only that malformed
+lock path outside the checkout, retaining the original reservation identity.
+The reservation must belong to this brain and host and have no committed
+worktree owner. Existing owned checkouts still require verified writer recovery.
+When the normal persistence location is inside the checkout, the repair uses
+the per-user persistence directory or an absolute `GBRAIN_COORDINATION_HOME`
+outside the checkout. All repairers serialize on the same reservation-derived
+guard, regardless of their fallback settings.

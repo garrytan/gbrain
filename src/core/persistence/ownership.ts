@@ -16,7 +16,7 @@ import type { SqlEngine, WriteRequest } from './model.ts';
 import { acquireNativeLock, tryAcquireNativeLock, type NativeLockHandle } from './native-lock.ts';
 import { acquireShared, deferToLease, exclusiveAcquired, joinLease, yieldLease } from './worktree-lease.ts';
 import { managedFilesystemDatastorePath, refreshManagedFilesystemRoots } from './filesystem-guard.ts';
-import { assertPhysicalRoot, claimPhysicalRoot, preparePhysicalRootTransfer, readPhysicalRootReservation, restampPhysicalRoot } from './physical-root.ts';
+import { assertPhysicalRoot, claimPhysicalRoot, preparePhysicalRootTransfer, readPhysicalRootReservation, repairUnclaimedReservation, restampPhysicalRoot } from './physical-root.ts';
 import { assertPhysicalRootReservation, readPhysicalRootStamp } from './physical-root-record.ts';
 import { canonicalFilesystemPath, nativeFilesystemPath } from './root-registry.ts';
 import { assertWriterAdminState } from './admin-intent.ts';
@@ -99,6 +99,7 @@ export async function claimWorktree(engine: BrainEngine, sourceId: string, path:
   try { root = realpathSync(discoverGitRoot(root)); } catch { /* ordinary directory source */ }
   // Probe the native capability before recording ownership. Stable lock lives
   // outside any source directory, so reclone cannot produce a second inode.
+  await repairUnclaimedReservation(engine, root, hostId);
   const existingPhysical = readPhysicalRootReservation(root);
   const candidateId = existingPhysical?.worktreeId ?? randomUUID();
   const lockPath = existingPhysical?.coordinationPath ?? canonicalFilesystemPath(join(persistenceHome(), 'locks', `${candidateId}.lock`));
