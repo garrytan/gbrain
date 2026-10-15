@@ -129,7 +129,7 @@ test('识别实体的提示、工具和可写范围按完整 ingest 契约收口
   expect(withCandidates).toContain('张老师');
   expect(withCandidates).toContain('add_link');
   expect([...ENTITY_CAPTURE_TOOLS]).toEqual([
-    'search','get_page','put_page','add_timeline_entry','add_link',
+    'search','get_page','put_page','add_timeline_entry','add_link','complete_ingest','capture_entities',
   ]);
   expect(ENTITY_CAPTURE_TOOLS).toContain('add_link');
   expect([...ENTITY_CAPTURE_SLUG_PREFIXES]).toEqual(['people/*', 'companies/*', 'concepts/*', 'projects/*']);

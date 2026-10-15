@@ -36,6 +36,10 @@ export interface SyncFileActivity {
 }
 
 export interface TaskProductProgress {
+  heartbeatAt?: string;
+  lastProgressAt?: string;
+  failedUnits?: number;
+  activity?: { kind: 'database' | 'model' | 'processing' | 'recovery'; since: string; operation?: string };
   phaseProgress?: { id: string; startedAt: string | null; elapsedMs: number; completed: number | null;
     total: number | null; remaining: number | null; active: number | null; unit: string };
   relations?: { total: number; available: boolean };

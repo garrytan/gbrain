@@ -2,7 +2,7 @@ import {afterEach,afterAll,expect,test} from 'bun:test';
 import {mkdtempSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {configureGateway,resetGateway,toolLoop,chat} from '../src/core/ai/gateway.ts';
+import {configureGateway,resetGateway,toolLoop,chat,chatOutputLimit} from '../src/core/ai/gateway.ts';
 let server:ReturnType<typeof Bun.serve>|undefined;
 const previous=process.env.PMBRAIN_HOME;process.env.PMBRAIN_HOME=mkdtempSync(join(tmpdir(),'pmbrain-ingest-gateway-'));
 afterAll(()=>{if(previous===undefined)delete process.env.PMBRAIN_HOME;else process.env.PMBRAIN_HOME=previous;});
@@ -31,4 +31,19 @@ test('接近预算时提前收口验收，保留轮数上限且不再暴露工�
   const result=await toolLoop({system:'ingest',initialMessages:[{role:'user',content:'原文'}],tools:[{name:'write',description:'write',inputSchema:{type:'object'}}],toolHandlers:new Map([['write',{execute:async()=>{throw new Error('验收不允许再写');},idempotent:false}]]),maxTurns:6,finalizeOnLastTurn:true,shouldFinalize:async()=>true,prepareFinalMessages:async()=>[{role:'user',content:'持久化结果验收'}]});
   expect(result.totalTurns).toBe(1);expect(result.stopReason).toBe('end');expect(requests[0].tools).toBeUndefined();
   expect(requests[0].messages.at(-1).content).toBe('持久化结果验收');
+});
+
+test('模型能力未知时仍作一次有界截断恢复，MiMo 使用官方输出能力上限', async () => {
+  const requests:any[]=[];
+  server=Bun.serve({port:0,async fetch(req){
+    requests.push(await req.json());
+    return Response.json({id:'length-retry',object:'chat.completion',created:1,model:'unknown-limit',choices:[{index:0,finish_reason:requests.length===1?'length':'stop',message:{role:'assistant',content:requests.length===1?'incomplete':'complete'}}],usage:{prompt_tokens:10,completion_tokens:5,total_tokens:15}});
+  }});
+  configureGateway({generative_enabled:true,chat_model:'custom-openai:unknown-limit',base_urls:{'custom-openai':server.url.origin+'/v1'},env:{CUSTOM_OPENAI_API_KEY:'isolated-test-only'}});
+  const result=await toolLoop({system:'test',initialMessages:[{role:'user',content:'合成文本'}],tools:[],toolHandlers:new Map(),retryLength:true,maxTurns:2,maxTokens:4096});
+  expect(result.stopReason).toBe('end');
+  expect(requests.map(request=>request.max_tokens??request.max_completion_tokens)).toEqual([4096,8192]);
+  expect(chatOutputLimit('mimo:mimo-v2.6-flash')).toBe(131072);
+  expect(chatOutputLimit('mimo:mimo-v2.5')).toBe(32768);
+  expect(chatOutputLimit('custom-openai:unknown-limit')).toBeUndefined();
 });

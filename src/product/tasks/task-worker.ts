@@ -22,6 +22,8 @@ import { setImmediate as yieldExecution } from 'node:timers/promises';
 import { streamFileHash, assertImportFileSize } from './resource-guard.ts';
 import { relative, isAbsolute, join } from 'node:path';
 import { SyncFilesDeferred, type SyncFileRuntime } from '../../core/sync-file-runtime.ts';
+import {EntityCaptureWindowDeferred} from '../../core/pmbrain-adapters/entity-capture-window.ts';
+import {mergeCaptureWindow} from './capture-window.ts';
 import { classifyErrorCode, isInfrastructureFailureCode } from '../../core/sync-failure-ledger.ts';
 import { performSync } from '../../commands/sync.ts';
 import { readTaskCheckpoint, taskModelFingerprint, syncFileContentFingerprint } from './checkpoint.ts';
@@ -121,7 +123,7 @@ setCliOptions({ ...DEFAULT_CLI_OPTIONS, progressJson: true });
 
 async function runDreamTask(engine: BrainEngine, input: Extract<ProductTask, { type: 'dream' }>['input']) {
   const checkpoint: MaintenanceCheckpoint = input.checkpoint ?? { phases: {}, reports: {} };
-  const captureModel = usesSyncFileQueue(input) && input.phase !== 'sync' ? await chooseCaptureModel(engine, {}) : null;
+  const captureModel = (usesSyncFileQueue(input) || input.phase==='capture_entities') && input.phase !== 'sync' ? await chooseCaptureModel(engine, {}) : null;
   let pendingFiles = false;
   let capacityReached = false;
   let scanned = 0;
@@ -163,11 +165,11 @@ async function runDreamTask(engine: BrainEngine, input: Extract<ProductTask, { t
     let captureEntitySlugs: string[] | undefined;
     let captureEntityBudget: import('../../core/cycle/capture-entities.ts').CaptureEntitiesOpts['budget'];
     if (captureModel?.ok) {
-      const requested = await rpc('task.captureRequest', [sourceId]) as string[] | undefined;
+      const requested = usesSyncFileQueue(input)?await rpc('task.captureRequest', [sourceId]) as string[] | undefined:undefined;
       captureEntitySlugs = input.preset === 'quick' ? requested : input.slugs;
       if (requested?.length) checkpoint.captureRequests = { ...checkpoint.captureRequests, [sourceId]: requested };
-      if (input.preset === 'quick' && captureEntitySlugs?.length) {
-        const [usage] = await engine.executeRaw<{ input: string; output: string }>(`SELECT COALESCE(sum(tokens_input),0) AS input,COALESCE(sum(tokens_output),0) AS output FROM minion_jobs WHERE private_queue_owner_job_id=$1`, [ownerJobId]);
+      if (input.preset!=='quick'||captureEntitySlugs?.length) {
+        const [usage] = await engine.executeRaw<{ input: string; output: string }>(`SELECT COALESCE(sum(tokens_input),0) AS input,COALESCE(sum(tokens_output),0) AS output FROM minion_jobs WHERE private_queue_owner_job_id=$1 AND data ? 'ingest_context'`, [ownerJobId]);
         const inputTokens = Number(usage?.input ?? 0), outputTokens = Number(usage?.output ?? 0);
         const cardPrices = configuredCnyPrices(captureModel.model, splitProviderModelId(captureModel.model).provider);
         const inputPrice = storedPrice(await engine.getConfig('dream.entity_capture.price.input_cny_per_million')) ?? cardPrices.input;
@@ -184,10 +186,17 @@ async function runDreamTask(engine: BrainEngine, input: Extract<ProductTask, { t
     captureEntityBudget,
     syncFileRuntime: fileRuntime,
     completedPhases: checkpoint.phases[sourceId],
-    phaseCheckpoint: fileRuntime ? async (phases: import('../../core/cycle.ts').PhaseResult[]) => {
-      checkpoint.phases[sourceId] = phases;
+    phaseCheckpoint: async (phases: import('../../core/cycle.ts').PhaseResult[]) => {
+      const capture=phases.find(phase=>phase.phase==='capture_entities');
+      if(capture&&!checkpoint.phases[sourceId]?.some(phase=>phase.phase==='capture_entities')){
+        const combined=mergeCaptureWindow(checkpoint.captureWindows?.[sourceId],capture);
+        Object.assign(capture,combined);
+        if(capture.details.window_deferred)checkpoint.captureWindows={...checkpoint.captureWindows,[sourceId]:combined};
+        else if(checkpoint.captureWindows)delete checkpoint.captureWindows[sourceId];
+      }
+      checkpoint.phases[sourceId] = phases.filter(phase=>!phase.details.window_deferred);
       await rpc('task.maintenanceCheckpoint', [checkpoint]);
-    } : undefined,
+    },
     });
   };
   const phases = input.preset === 'quick' ? ALL_PHASES.filter(phase => resolveQuickMaintenancePhases().includes(phase) || (captureModel?.ok && phase === 'capture_entities'))
@@ -200,7 +209,8 @@ async function runDreamTask(engine: BrainEngine, input: Extract<ProductTask, { t
     afterSync: input.preset === 'quick' && !input.dryRun ? (sourceId: string, root: string, result: import('../../commands/sync.ts').SyncResult) => rpc('task.gitCommit', [sourceId, root, result]) : undefined,
     dryRun: input.dryRun, sourceId,
     captureEntitySlugs:input.slugs,
-    captureEntitiesConcurrency:()=>constrained?1:2,
+    captureEntitiesConcurrency:()=>constrained||engine.kind==='pglite'?1:2,
+    captureEntityWindow:{maxChunks:32,maxDurationMs:300000},
     privateQueueOwnerJobId: ownerJobId,
     signal: abort.signal,
     includeOffice: true,
@@ -402,6 +412,7 @@ parentPort!.on('message', message => {
     abort = new AbortController();
     importFile = undefined;
     void execute(message.task, message.kind).catch(error => {
+      if(error instanceof EntityCaptureWindowDeferred){send({type:'deferred',phase:'capture_entities'});return;}
       if (error instanceof SyncFilesDeferred) { send({ type: 'deferred' }); return; }
       send({ type: 'error', error: error instanceof Error ? error.message : String(error) });
     });

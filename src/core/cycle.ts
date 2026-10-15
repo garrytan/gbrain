@@ -384,6 +384,7 @@ export interface CycleReport {
 export interface CycleOpts {
   captureEntitySlugs?: string[];
   captureEntityBudget?: import('./cycle/capture-entities.ts').CaptureEntitiesOpts['budget'];
+  captureEntityWindow?: import('./cycle/capture-entities.ts').CaptureEntitiesOpts['window'];
   syncFileRuntime?: SyncFileRuntime;
   afterSync?: (sourceId: string, root: string, result: import('../commands/sync.ts').SyncResult) => Promise<unknown>;
   completedPhases?: PhaseResult[];
@@ -1805,7 +1806,8 @@ export async function runCycle(
     let syncPagesAffected: string[] | undefined = (restored.find(item => item.phase === 'sync') as SyncPhaseResult | undefined)?.pagesAffected;
     let syncAttempted = restored.some(item => item.phase === 'sync');
     let synthesizeWrittenSlugs: string[] | undefined;
-    let entityCaptureSlugs: string[] = [];
+    const restoredCapture=restored.find(item=>item.phase==='capture_entities');
+    let entityCaptureSlugs: string[] = restoredCapture?['written_slugs','source_slugs','relation_slugs'].flatMap(key=>Array.isArray(restoredCapture.details[key])?restoredCapture.details[key] as string[]:[]):[];
     let stopDbWrites = false;
     const noteSearchIndexAbort = (result: PhaseResult) => {
       if (result.status !== 'fail' || stopDbWrites) return;
@@ -2257,6 +2259,7 @@ export async function runCycle(
           sourceId: cycleSourceId,
           slugs:opts.captureEntitySlugs,
           budget:opts.captureEntityBudget,
+          window:opts.captureEntityWindow,
           dryRun,
           signal: opts.signal,
           yieldDuringPhase: opts.yieldDuringPhase,
@@ -2279,9 +2282,17 @@ export async function runCycle(
         const sources = Array.isArray(result.details?.source_slugs) ? result.details.source_slugs as string[] : [];
         const relationSlugs = Array.isArray(result.details?.relation_slugs) ? result.details.relation_slugs as string[] : [];
         entityCaptureSlugs = [...written, ...sources, ...relationSlugs];
-        progress.finish(result.summary);
       }
       await checkpoint();
+      const captured=phaseResults.find(item=>item.phase==='capture_entities');
+      if(captured?.details?.window_deferred){
+        const {EntityCaptureWindowDeferred}=await import('./pmbrain-adapters/entity-capture-window.ts');
+        throw new EntityCaptureWindowDeferred();
+      }
+      if(captured){
+        if(engine)progress.finish(captured.summary);
+        entityCaptureSlugs=[...new Set(['written_slugs','source_slugs','relation_slugs'].flatMap(key=>Array.isArray(captured.details[key])?captured.details[key] as string[]:[]))];
+      }
     }
 
     // ── Phase 6: patterns (v0.23) ───────────────────────────────

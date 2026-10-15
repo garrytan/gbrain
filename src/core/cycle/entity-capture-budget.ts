@@ -4,7 +4,7 @@ import { serviceNeedsApiKey } from '../../../shared/model-services.ts';
 export const DEFAULT_ENTITY_CAPTURE_COST_CAP_CNY = 5;
 export const ENTITY_CAPTURE_CANDIDATE_LIMIT = 60;
 
-export type CaptureStopReason = 'completed' | 'tokens' | 'document_tokens' | 'document_turns' | 'cost' | 'failure' | 'ingest_validation' | 'relation_failure' | 'aborted' | 'user_stop' | 'service_shutdown' | 'model_unavailable'|'truncated'|'parse'|'timeout'|'network'|'rate_limit'|'provider_5xx';
+export type CaptureStopReason = 'completed' | 'window' | 'tokens' | 'document_tokens' | 'document_turns' | 'cost' | 'failure' | 'ingest_validation' | 'relation_failure' | 'aborted' | 'user_stop' | 'service_shutdown' | 'model_unavailable'|'truncated'|'parse'|'timeout'|'network'|'rate_limit'|'provider_5xx';
 
 import { CJK_PLAIN_MENTION_BLOCKLIST } from '../pmbrain-adapters/mention-policy.ts';
 export { CJK_PLAIN_MENTION_BLOCKLIST };
@@ -159,6 +159,7 @@ export function selectReadyCaptureModel(input: {
 }
 
 const STOP_REASON_TEXT: Record<CaptureStopReason, string> = {
+  window:'本批已保存，等待继续剩余资料',
   truncated:'模型输出被截断，失败页面可继续',
   parse:'模型输出解析失败，失败页面可继续',
   timeout:'模型请求超时',

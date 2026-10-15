@@ -1,4 +1,5 @@
 import postgres from 'postgres';
+import {closePostgresPool} from './postgres-lifecycle.ts';
 import { GBrainError, type EngineConfig } from './types.ts';
 import { SCHEMA_SQL } from './schema-embedded.ts';
 import type { BrainEngine } from './engine.ts';
@@ -237,7 +238,7 @@ export async function disconnect(): Promise<void> {
     logDbDisconnect('postgres', 'module');
   } catch { /* best-effort; never block disconnect on audit failure */ }
   if (sql) {
-    await sql.end();
+    await closePostgresPool(sql);
     sql = null;
     connectedUrl = null;
   }

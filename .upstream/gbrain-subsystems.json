@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "reviewed_at": "2026-10-13",
-  "product_version": "1.4.63",
+  "reviewed_at": "2026-10-16",
+  "product_version": "1.4.76",
   "subsystem": "entity-relations",
   "status": "release-blocked-pending-package-acceptance",
   "upstream": {
@@ -38,7 +38,11 @@
     "src/core/import-file.ts",
     "src/core/schema-pack/load-active.ts",
     "src/core/schema-pack/manifest-v1.ts",
-    "src/core/schema-pack/link-inference.ts"
+    "src/core/schema-pack/link-inference.ts",
+    "src/core/pmbrain-adapters/entity-capture-batch.ts",
+    "src/core/pmbrain-adapters/entity-capture-manifest.ts",
+    "src/core/postgres-lifecycle.ts",
+    "src/product/tasks/capture-window.ts"
   ],
   "adapters": [
     "src/core/pmbrain-adapters",
@@ -64,7 +68,7 @@
     "base pack concept path prefixes remain explicit after PMBrain changes unknown document types to note",
     "pre-ingested original documents retain their raw pages; current Source then shared default is enforced by the same Core resolver",
     "protected ingest tools validate provenance and page read revisions; target parsing, link publication and SQL readback run deterministically",
-    "per-document six normal tool rounds plus at most one bounded truncation recovery and 120000 input tokens; ordinary output budget 20000, recognized thinking-model default 128000, explicit operator limits retained; last call reserves verification; unknown CNY prices do not enforce an amount cap",
+    "per-document at most twenty normal tool rounds plus at most one bounded truncation recovery and 120000 input tokens; ordinary output budget 20000, recognized thinking-model default 128000, explicit operator limits retained; last call reserves verification; unknown CNY prices do not enforce an amount cap",
     "generated fact-line provenance suppresses stale derived links while preserving original entity text and manual relationships",
     "only scoped imported-document requests auto-run; legacy unscoped UUID requests remain pending and do not silently rescan a knowledge base",
     "Minion entity receipts and the subsequent Mention/NER/reconciliation checkpoint are separate so interruption resumes without repeated model extraction",
@@ -81,7 +85,12 @@
     "PMBrain 1.4.57 removes cross-document cumulative entity-capture input/output token ceilings and owner-task token allowance subtraction. Token usage, owner-linked monetary budgets, completed ingest receipts, per-document limits, request timeouts, bounded truncation retry and resource guards remain. Legacy total-token settings are retained but ignored; API ceilings are null. No knowledge schema/data or upstream-pinned hash changes.",
     "PMBrain 1.4.58 scopes ingest turns and token allowance to each chunk. Durable distinct entity references extend the default eight-turn allowance up to the existing shared Minion twenty-turn ceiling; duplicate entity operations do not extend it. Explicit operator turn limits remain. Exhausted chunk turns or tokens leave that document pending while subsequent documents continue; monetary limits and provider/resource stops still bound the task. Successful chunks and original Source/evidence checks remain reusable. No new loop, knowledge schema/data or upstream-pinned hash changes.",
     "PMBrain 1.4.72 prepares entity embeddings before the guarded write transaction, merges fact deltas deterministically, and writes only changed ordinary Markdown chunk rows. Explicit ingest-only read concurrency is bounded at two with durable persist-before-execute and ordered results; writes and chunk jobs remain serial. Phase counts, remaining children and elapsed time reuse the persistent product task projection. Existing Source, revision, evidence, budget and phase-order rules remain; the upstream coordinator and managed filesystem are not imported.",
-    "PMBrain 1.4.74 projects the existing ingest, filing and quality contracts for pre-imported entity capture. Verified content-addressed chunk receipts retain Source incarnation, page identity, model and contract dependencies; preserved fact-line proofs and graph reconciliation gate reuse. Product capture permits at most two model requests and one mutating tool at a time with a 32 MiB active-input window; pressure or unknown sampling shrinks admission to one, and priced finite monetary caps retain serial requests. CLI defaults, the PGLite owner, durable queue/lease, source evidence, native validation and phase order remain. Model wait/attempt/error stages use existing task progress; certificate errors retain their original message. No new upstream subsystem, schema migration or production backfill is introduced."
+    "PMBrain 1.4.74 projects the existing ingest, filing and quality contracts for pre-imported entity capture. Verified content-addressed chunk receipts retain Source incarnation, page identity, model and contract dependencies; preserved fact-line proofs and graph reconciliation gate reuse. Product capture permits at most two model requests and one mutating tool at a time with a 32 MiB active-input window; pressure or unknown sampling shrinks admission to one, and priced finite monetary caps retain serial requests. CLI defaults, the PGLite owner, durable queue/lease, source evidence, native validation and phase order remain. Model wait/attempt/error stages use existing task progress; certificate errors retain their original message. No new upstream subsystem, schema migration or production backfill is introduced.",
+    "Authorized task cancellation is journaled before business database access, shares bounded owner recovery, and explicitly resumes the same task ID",
+    "Entity extraction uses a durable bounded batch tool with atomic per-entity receipts, paginated planning and revision/policy/graph-validated metadata manifests; unchanged pages do not reread bodies or call models",
+    "Completion from persisted tools retains source evidence, required-write validation and final graph reconciliation; output truncation recovery remains budget bounded",
+    "Product entity capture returns its existing task lease after at most 32 admitted chunks or a cooperative five-minute window; checkpoints retain completed phases, receipts and cumulative token/cost accounting",
+    "Postgres connection-loss scopes are revoked and native pool shutdown has a finite five-second grace period; native cancellation, rollback, locks and server-side disconnection are tested separately"
   ],
   "deferred": [
     "whole-repository GBrain upgrade",
@@ -597,7 +606,7 @@
       "path": "src/core/ai/gateway.ts",
       "upstream_path": "src/core/ai/gateway.ts",
       "mode": "adapted",
-      "sha256": "cc5c19d420afd8441d9fd7f3e26f206b442f920656cd83652e967c8e333070d9",
+      "sha256": "f3f18d96f3785f8c4f85aa94c229a1e37bf927078e52c43378face856956fdf8",
       "upstream_sha256": "622b81db5282117c6e2b32b566e2e35c36117400d416051011dbcc0e8e9c565f"
     },
     {
@@ -673,7 +682,7 @@
       "132": 206,
       "133": 214
     },
-    "latest": 134
+    "latest": 135
   },
   "test_adaptations": {
     "mentions-parity": "index, aliases and links; entity-card UI outside scope",

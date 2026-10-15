@@ -546,6 +546,8 @@ export interface AggregatorHandlerData {
 
 /** Tool execution context passed to every ToolDef.execute. */
 export interface ToolCtx {
+  toolUseId?: string;
+  persistCommit?: (engine: import('../engine.ts').BrainEngine, output: unknown) => Promise<void>;
   preparePageCommit?: NonNullable<Parameters<typeof import('../import-file.ts').importFromContent>[3]>['prepareCommit'];
   preparedPageImport?: (engine: import('../engine.ts').BrainEngine) => Promise<import('../import-file.ts').ImportResult>;
   /** Engine for DB-backed tools (brain_query, put_page, etc.). */
@@ -614,6 +616,7 @@ export type SubagentStopReason =
 
 /** Terminal result payload emitted by the subagent handler. */
 export interface SubagentResult {
+  length_retries?: number;
   ingest_verified?: boolean;
   graph_reconciled?: boolean;
   ingest_links_created?: number;

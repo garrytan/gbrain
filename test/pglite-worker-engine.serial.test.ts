@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { DatabaseAlreadyOwnedError } from '../src/core/pglite-errors';
 import {tryAcquireDbLock} from '../src/core/db-lock';
 import {TaskEngineHost} from '../src/product/tasks/engine-host';
+import { withDatabaseRequest } from '../src/product/database/request-context';
 
 let engine: BrainEngine;
 const originalHome = [process.env.PMBRAIN_HOME, process.env.GBRAIN_HOME];
@@ -43,6 +44,24 @@ test('重数据库计算期间服务线程仍能响应不读数据库的请求',
     await query;
   } finally { server.stop(true); }
 }, 30000);
+
+test('取消尚未执行的数据库请求立即返回，不打断其他任务的事务', async () => {
+  let release!: () => void;
+  let entered!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const started = new Promise<void>(resolve => { entered = resolve; });
+  const held = engine.transaction(async tx => { await tx.setConfig('other-task', 'kept'); entered(); await gate; });
+  await started;
+  const abort = new AbortController();
+  const request = withDatabaseRequest({ taskId: 999, token: 'queued', signal: abort.signal, onTimeout: () => {} }, () => engine.getConfig('other-task'));
+  void request.catch(() => {});
+  await Bun.sleep(30);
+  const start = performance.now();
+  abort.abort(new Error('user_stop'));
+  try { await expect(request).rejects.toThrow('尚未执行'); expect(performance.now() - start).toBeLessThan(1000); }
+  finally { release(); await held; }
+  expect(await engine.getConfig('other-task')).toBe('kept');
+});
 
 test('数据库同步 SQL 不返回时可结束唯一执行进程，原生重开保留提交并回滚未提交内容', async () => {
   const owner = engine as unknown as WorkerPgliteEngine;

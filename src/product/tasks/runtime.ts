@@ -1,7 +1,7 @@
 import { enqueueImportedEntityCapture } from './imported-entity-capture.ts';
 import { createHash, randomUUID } from 'node:crypto';
 import { Worker } from 'node:worker_threads';
-import { stat, mkdir, writeFile, rename, unlink, readdir } from 'node:fs/promises';
+import { stat, mkdir, open, readFile, rename, unlink, readdir } from 'node:fs/promises';
 import { dirname, basename } from 'node:path';
 import type { BrainEngine } from '../../core/engine.ts';
 import { MinionQueue } from '../../core/minions/queue.ts';
@@ -31,6 +31,8 @@ import { WorkbenchMemoryCoordinator, memoryVersion, type WorkbenchMemoryTask } f
 import { WorkbenchStore } from '../workbench/store';
 import { resolveWritebackConfig } from '../../core/facts/writeback-config';
 import { loadConfigFileOnly } from '../../core/config';
+import { withDatabaseRequest } from '../database/request-context.ts';
+import { withDeadline } from '../deadline.ts';
 
 export const PRODUCT_TASK_QUEUE = 'pmbrain-product';
 const TASK_NAME = 'pmbrain-product-task';
@@ -74,6 +76,7 @@ export class ProductTaskRuntime {
   private fileSessions = new Map<number, number>();
   private sessionViews = new Map<number, ConsoleRun>();
   private stoppingSessions = new Map<number, Promise<void>>();
+  private stopAcknowledgements = new Map<number, Promise<void>>();
   private stopIntents = new Set<number>();
   private fileProjection = new FileProjection();
   private recoveringOwner: Promise<void> | null = null;
@@ -319,7 +322,7 @@ export class ProductTaskRuntime {
   }
 
   cachedRuns(): ConsoleRun[] {
-    const live = [...this.executions.values()].map(execution => execution.run()).filter(run => run.kind !== 'sync_file');
+    const live = [...this.executions.entries()].map(([id,execution]) => this.stopIntents.has(id)?this.sessionViews.get(id)??execution.run():execution.run()).filter(run => run.kind !== 'sync_file');
     live.push(...[...this.sessionViews.values()].filter(run => !live.some(row => row.id === run.id)
       && (this.stoppingSessions.has(Number(run.id.slice(5))) || !this.cached.some(row=>row.id===run.id && ['completed','cancelled'].includes(row.status)))));
     for (const run of live) {
@@ -333,6 +336,8 @@ export class ProductTaskRuntime {
 
   async getRun(id: string): Promise<ConsoleRun | null> {
     if (!/^task-\d+$/.test(id)) return null;
+    const stopping = this.sessionViews.get(Number(id.slice(5)));
+    if (stopping && this.stopIntents.has(Number(id.slice(5)))) return stopping;
     const execution = this.executions.get(Number(id.slice(5)));
     if (execution) {
       const live = execution.run(), saved = await this.queue.getJob(Number(id.slice(5)));
@@ -354,45 +359,40 @@ export class ProductTaskRuntime {
   }
 
   async cancel(id: string): Promise<ConsoleRun | null> {
-    const run = await this.getRun(id);
-    if (!run || !['running', 'queued'].includes(run.status)) return run;
+    const run = await this.requestCancel(id);
+    if (!run) return null;
     const jobId = Number(id.slice(5));
-    if (taskUsesFileQueue(run.kind)) {
-      if (!this.stoppingSessions.has(jobId)) {
-        this.sessionViews.set(jobId, { ...run, status: 'running', error: '正在停止任务…' });
-        this.stopIntents.add(jobId);
-        const pending = this.stopSession(jobId).catch(error=>{
-          this.sessionViews.set(jobId,{...run,status:'failed',error:error instanceof Error?error.message:String(error),product:run.product?{...run.product,errorReason:error instanceof Error?error.message:String(error)}:undefined});
-          throw error;
-        }).finally(() => { this.stoppingSessions.delete(jobId); });
-        this.stoppingSessions.set(jobId, pending);
-      }
-      await this.stoppingSessions.get(jobId);
-      return this.getRun(id);
-    }
-    const execution = this.executions.get(jobId);
-    this.stopIntents.add(jobId);
-    execution?.cancel();
-    await withDatabasePriority(0, () => this.queue.cancelJob(jobId));
-    await execution?.done;
-    const started=this.executions.get(jobId);
-    started?.cancel();
-    await started?.done;
-    return this.getRun(id);
+    await this.stoppingSessions.get(jobId);
+    return this.sessionViews.get(jobId) ?? this.getRun(id);
   }
 
-  async requestCancel(id: string): Promise<ConsoleRun | null> {
-    const execution = /^task-\d+$/.test(id) ? this.executions.get(Number(id.slice(5))) : undefined;
-    const view = execution?.run() ?? await this.getRun(id);
-    if (view && taskUsesFileQueue(view.kind) && ['running','queued'].includes(view.status)) {
-      void this.cancel(id).catch(error => console.error('[tasks] stop sync:', error));
-      return { ...view, status: 'running', error: '正在停止任务…' };
+  async requestCancel(id: string, reason?: string): Promise<ConsoleRun | null> {
+    if (!/^task-\d+$/.test(id)) return null;
+    const jobId = Number(id.slice(5));
+    if (this.stopAcknowledgements.has(jobId)) {
+      await this.stopAcknowledgements.get(jobId);
+      return this.sessionViews.get(jobId) ?? this.cached.find(run => run.id === id) ?? null;
     }
-    if (!execution) return this.cancel(id);
-    execution.cancel();
-    void withDatabasePriority(0, () => this.queue.cancelJob(Number(id.slice(5))))
-      .catch(error => console.error('[tasks] cancel failed:', error instanceof Error ? error.message : error));
-    return execution.run();
+    const view = this.executions.get(jobId)?.run() ?? this.sessionViews.get(jobId)
+      ?? this.cached.find(run => run.id === id)
+      ?? await withDeadline(this.getRun(id), 1000, '数据库未及时响应，无法确认该任务的状态');
+    if (!view || !['running','queued'].includes(view.status)) return view;
+    this.stopIntents.add(jobId);
+    this.executions.get(jobId)?.cancel(reason);
+    for (const [child, owner] of this.fileSessions) if (owner === jobId) this.executions.get(child)?.cancel(reason);
+    this.sessionViews.set(jobId, { ...view, status: 'running', error: '正在停止任务…' });
+    const acknowledgement = this.persistStopIntent(jobId, reason);
+    this.stopAcknowledgements.set(jobId, acknowledgement);
+    const pending = this.stopSession(jobId, view, acknowledgement, reason).catch(error => {
+      const message = error instanceof Error ? error.message : String(error);
+      this.sessionViews.set(jobId, { ...view, status: 'failed', error: message,
+        product: view.product ? { ...view.product, activeFiles: [], errorReason: message, stage: '停止未完成' } : undefined });
+      throw error;
+    }).finally(() => { this.stoppingSessions.delete(jobId); });
+    this.stoppingSessions.set(jobId, pending);
+    void pending.catch(error => console.error('[tasks] stop:', error instanceof Error ? error.message : String(error)));
+    await acknowledgement;
+    return this.sessionViews.get(jobId)!;
   }
 
   async retry(id: string): Promise<ConsoleRun | null> {
@@ -405,6 +405,9 @@ export class ProductTaskRuntime {
     if (!['failed', 'cancelled'].includes(run.status) && !(taskUsesFileQueue(run.kind) && (run.result as Record<string, unknown> | undefined)?.status === 'partial')) throw new Error('只有失败、中断或已取消的任务可以重新执行');
     const record = await this.queue.getJob(Number(id.slice(5)));
     const task = record!.data.task as ProductTask;
+    const resumedId = Number(id.slice(5));
+    await this.stoppingSessions.get(resumedId);
+    await this.executions.get(resumedId)?.done;
     if (task.type === 'dream' && usesSyncFileQueue(task.input)) {
       const jobId = Number(id.slice(5));
       record!.data.fileSession = true;
@@ -423,23 +426,23 @@ export class ProductTaskRuntime {
         await this.engine.executeRaw(`UPDATE minion_jobs SET data = data || ($2::jsonb - 'relations' - 'gitFiles' - 'gitResults') WHERE id = $1`, [jobId, { ...record!.data, task }]);
       }
       await this.engine.executeRaw(`UPDATE minion_jobs SET status = 'paused', result = NULL WHERE queue = $1 AND (data->>'sessionId')::bigint = $2 AND result->>'status' IN ('failed','error','partial')`, [SYNC_FILE_QUEUE, jobId]);
-      this.sessionViews.delete(jobId);
-      this.stopIntents.delete(jobId);
-      await unlink(taskArtifactPath(jobId,'stop.json')).catch(error=>{if(error.code!=='ENOENT')throw error;});
+      await this.clearStopIntent(jobId);
       await this.fileQueue.resume(jobId);
       return this.getRun(id);
     }
-    if (task.type === 'import') {
-      return this.submitImport({ ...task.input, resumeCheckpointId: Number(id.slice(5)) });
-    }
-    if (task.type === 'dream') return this.submitDream(task.input);
-    if (task.type === 'sync') return this.submitSync();
-    if (task.type === 'embed') return this.submitEmbed(task.input);
-    if (task.type === 'memory' || task.type === 'assistant') {
-      await this.executions.get(Number(id.slice(5)))?.done;
-      await this.engine.executeRaw(`UPDATE minion_jobs SET status='waiting',result=NULL,error_text=NULL,lock_token=NULL,lock_until=NULL,delay_until=NULL,finished_at=NULL,data=data-'resourceStopReason',updated_at=now()
-        WHERE id=$1 AND status IN ('paused','cancelled','failed','dead')`,[Number(id.slice(5))]);
-      this.stopIntents.delete(Number(id.slice(5)));
+    if (task.type !== 'sync-file') {
+      await this.reconcileMaintenanceChildren(resumedId);
+      if (task.type === 'import') task.input.resumeCheckpointId = resumedId;
+      if (task.type === 'dream' && task.input.checkpoint) resumeMaintenanceCheckpoint(task.input.checkpoint, true);
+      const progress = (record!.progress ?? {}) as Progress;
+      delete progress.result;
+      if (progress.product) progress.product.errorReason = null;
+      delete record!.data.resourceStopReason;
+      record!.data.authorizedAttempt = record!.attempts_started + 1;
+      await this.clearStopIntent(resumedId);
+      await this.engine.executeRaw(`UPDATE minion_jobs SET status='waiting',result=NULL,error_text=NULL,lock_token=NULL,lock_until=NULL,delay_until=NULL,finished_at=NULL,
+        data=(data-'resourceStopReason') || ($2::jsonb - 'relations' - 'gitFiles' - 'gitResults'),progress=$3::jsonb,updated_at=now()
+        WHERE id=$1 AND queue=$4 AND status IN ('paused','cancelled','failed','dead')`, [resumedId, record!.data, progress, PRODUCT_TASK_QUEUE]);
       return this.getRun(id);
     }
     throw new Error('文件任务请通过快速维护继续');
@@ -487,9 +490,16 @@ export class ProductTaskRuntime {
       const counts = await this.fileQueue.counts(context.id);
       if (counts.total > 0) record.progress = { ...(record.progress as Progress ?? {}), product: { ...toRun(record).product!, syncFiles: counts } };
     }
-    if (record.attempts_started > 1 && structuredTask.type !== 'sync-file' && structuredTask.type !== 'memory' && !(structuredTask.type === 'dream' && usesSyncFileQueue(structuredTask.input))) throw new Error('任务执行曾中断，结果不确定，请查看已完成内容后手动继续');
+    if (record.attempts_started > 1 && record.data.authorizedAttempt !== record.attempts_started && structuredTask.type !== 'sync-file' && structuredTask.type !== 'memory' && !(structuredTask.type === 'dream' && usesSyncFileQueue(structuredTask.input))) throw new Error('任务执行曾中断，结果不确定，请查看已完成内容后手动继续');
     let progress = (record.progress ?? {}) as Progress;
     const adapter = new TaskProgressAdapter(String(record.data.kind), toRun(record).product);
+    let progressDirty=true,lastPersistedAt=0;
+    let modelWaitingSince:string|undefined;
+    const databaseOperations=new Map<number,NonNullable<TaskProductProgress['activity']>>();
+    const updateExecutionActivity=()=>{
+      adapter.view.activity=databaseOperations.values().next().value??(modelWaitingSince?{kind:'model',since:modelWaitingSince}:undefined);
+      adapter.view.heartbeatAt=new Date().toISOString();progressDirty=true;
+    };
     let activity:import('../../../shared/task-progress.ts').SyncFileActivity|undefined=structuredTask.type==='sync-file'?{
       id:context.id,sourceId:structuredTask.input.options.sourceId??'default',path:structuredTask.input.relativePath,
       bytes:structuredTask.input.originalSize??0,stage:'读取资料',noEmbed:structuredTask.input.options.noEmbed,updatedAt:new Date().toISOString(),
@@ -505,6 +515,7 @@ export class ProductTaskRuntime {
     let persisting = false;
     let progressVersion = 0;
     const persist = () => {
+      progressDirty=false;lastPersistedAt=Date.now();
       progress.product = adapter.view;
       progressVersion++;
       if (!persisting) {
@@ -550,6 +561,7 @@ export class ProductTaskRuntime {
     const gitOperations = new Set<Promise<unknown>>();
     let completed = false;
     let deferred = false;
+    let deferredPhase:string|undefined;
     let flush: ReturnType<typeof setInterval> | undefined;
     const cancel = (reason?:string) => {
       if (cancelRequested) return;
@@ -600,6 +612,8 @@ export class ProductTaskRuntime {
     thread.once('exit', code => settleReject(new Error(`任务 Worker 意外退出（${code}）`)));
     thread.on('message', (message: TaskWorkerMessage) => {
       if (message.type === 'rpc') {
+        databaseOperations.set(message.id,{kind:message.method.startsWith('task.')?'processing':'database',since:new Date().toISOString(),operation:message.method});
+        updateExecutionActivity();
         updateActivity({operation:message.method,operationStartedAt:new Date().toISOString()});
         const dispatch = async () => {
           if(cancelRequested) throw new Error('任务已取消');
@@ -649,22 +663,32 @@ export class ProductTaskRuntime {
             if (!rows.length) throw new Error('维护任务已停止或租约失效');
             return null;
           }
-          return host.dispatch(message);
+          return withDatabaseRequest({ taskId: context.id, token: record.lock_token!, signal: gitController.signal,
+            onTimeout: error => { void this.requestCancel(`task-${context.id}`, error.message).catch(reason => console.error('[tasks] database timeout:', reason)); },
+          }, () => host.dispatch(message));
         };
         void withDatabasePriority(['import','sync-file'].includes(structuredTask.type) ? 2 : 3, dispatch).then(value => {
+          databaseOperations.delete(message.id);updateExecutionActivity();
           if(activity?.operation===message.method)updateActivity({operation:undefined,operationStartedAt:undefined});
           if (!cancelRequested) thread.postMessage({ type: 'reply', id: message.id, value });
         }, error => {
+          databaseOperations.delete(message.id);updateExecutionActivity();
           if(activity?.operation===message.method)updateActivity({operation:undefined,operationStartedAt:undefined});
           if (!cancelRequested) thread.postMessage({ type: 'reply', id: message.id, error: error instanceof Error ? error.message : String(error) });
         });
       } else if (message.type === 'log') {
+        progressDirty=true;
         adapter.write(message.text);
         progress.output = `${progress.output ?? ''}${message.text}`.slice(-100_000);
       } else if (message.type === 'progress') {
+        progressDirty=true;
         if (message.phases) adapter.plan(message.phases);
         if (message.scope) adapter.scope(message.scope);
-        if (message.event) { adapter.event(message.event); host.setRelationPhase(message.event.phase); }
+        if (message.event) {
+          adapter.event(message.event); host.setRelationPhase(message.event.phase);
+          const stage=message.event.stage??'';
+          if(stage.includes('模型第')){modelWaitingSince=stage.includes('等待')?modelWaitingSince??new Date().toISOString():undefined;updateExecutionActivity();}
+        }
         if (message.syncScan) adapter.scan(message.syncScan);
         if (message.page && adapter.view.material) adapter.view.material.page = message.page;
         if(message.event)updateActivity({stage:({'import.process':'解析与切分','import.vector':'生成向量','import.write':'写入知识库'} as Record<string,string>)[message.event.phase]??activity?.stage});
@@ -682,16 +706,21 @@ export class ProductTaskRuntime {
         progress.result = message.result;
         void persist().then(() => settleReject(new Error(message.error)), settleReject);
       } else if (message.type === 'deferred') {
+        deferredPhase=message.phase;
         deferred = true;
         void persist().then(() => settleResolve(MINION_DEFERRED), settleReject);
       }
     });
-    flush = setInterval(() => void persist().catch(settleReject), 1000);
+    flush = setInterval(() => {if(progressDirty&&Date.now()-lastPersistedAt>=5000)void persist().catch(settleReject);}, 1000);
     thread.postMessage({ type: 'start', kind: this.engine.kind, task: record.data.task, ownerJobId: context.id, ownerToken:record.lock_token, constrained:this.localPressure||this.externalPressure });
     try {
       const outcome = await finished;
       if (structuredTask.type === 'dream' && outcome !== MINION_DEFERRED && (outcome as { reason?: string })?.reason === 'cycle_already_running') return this.deferMaintenance(record);
       if (outcome === MINION_DEFERRED && !this.stopIntents.has(context.id)) {
+        if(deferredPhase==='capture_entities'){
+          await persist();record.progress=progress;
+          return this.deferMaintenance(record,'本批已保存，等待继续识别实体');
+        }
         if(adapter.view.syncScan)adapter.view.syncScan.active=false;
         const counts = await this.fileQueue.counts(context.id);
         adapter.view.syncFiles = counts;
@@ -821,7 +850,8 @@ export class ProductTaskRuntime {
       for(const execution of this.executions.values())execution.cancel(message);
       this.resourceDrain=(async()=>{
         await Promise.all([...this.idleFileThreads.splice(0),...this.idleMaintenanceThreads.splice(0)].map(thread=>thread.terminate()));
-        await Promise.allSettled([...this.executions.values()].map(execution=>execution.done));
+        try { await withDeadline(Promise.allSettled([...this.executions.values()].map(execution=>execution.done)),3000,'资源停止等待数据库响应'); }
+        catch { await this.recoverStoppedDatabase(); }
         await this.loop;await this.fileLoop;
         await this.engine.executeRaw(`UPDATE minion_jobs SET status='paused',lock_token=NULL,lock_until=NULL,
           data=jsonb_set(data,'{resumeOnRestart}','false'::jsonb),error_text=$3,updated_at=now()
@@ -851,7 +881,7 @@ export class ProductTaskRuntime {
     const closed = await Promise.race([drained.then(() => true), new Promise<boolean>(resolve => { closeTimer=setTimeout(()=>resolve(false),3000); })]).finally(()=>clearTimeout(closeTimer));
     if (!closed) {
       if (!(this.engine instanceof WorkerPgliteEngine)) throw new Error('退出尚未完成：数据库操作未响应取消');
-      await (this.engine as unknown as WorkerPgliteEngine).interruptAndRecover();
+      await this.recoverStoppedDatabase();
       await drained.catch(()=>{});
       await this.engine.executeRaw(`UPDATE minion_jobs SET status='paused',lock_token=NULL,lock_until=NULL,
         data=jsonb_set(data,'{resumeOnRestart}','false'::jsonb),error_text='退出时数据库操作未响应，已保留提交内容，请手动继续。',updated_at=now()
@@ -926,52 +956,86 @@ export class ProductTaskRuntime {
     this.sessionRefresh.set(id, refresh);
   }
 
-  private async stopSession(id: number) {
-    this.executions.get(id)?.cancel();
+  private async persistStopIntent(id: number, reason?: string): Promise<void> {
+    const path = taskArtifactPath(id, 'stop.json');
+    await mkdir(dirname(path), { recursive: true });
+    const temporary = `${path}.${randomUUID()}.tmp`;
+    try {
+      const file = await open(temporary, 'wx', 0o600);
+      try { await file.writeFile(JSON.stringify({ id, requestedAt: new Date().toISOString(), reason })); await file.sync(); }
+      finally { await file.close(); }
+      await rename(temporary, path);
+    } catch (error) { await unlink(temporary).catch(() => {}); throw error; }
+  }
+
+  private async clearStopIntent(id: number): Promise<void> {
+    await unlink(taskArtifactPath(id, 'stop.json')).catch(error => { if (error.code !== 'ENOENT') throw error; });
+    this.sessionViews.delete(id);
+    this.stopIntents.delete(id);
+    this.stopAcknowledgements.delete(id);
+  }
+
+  private async stopSession(id: number, original: ConsoleRun, acknowledgement: Promise<void>, reason?: string) {
+    await acknowledgement;
     const files = [...this.fileSessions].filter(([, owner]) => owner === id).map(([child]) => this.executions.get(child)).filter(Boolean);
-    for (const execution of files) execution!.cancel();
-    const path=taskArtifactPath(id,'stop.json');
-    await mkdir(dirname(path),{recursive:true});
-    const temporary=path+'.tmp';
-    await writeFile(temporary,JSON.stringify({id,requestedAt:new Date().toISOString()}),{mode:0o600});
-    await rename(temporary,path);
-    const stopping=withDatabasePriority(0, async () => {
-      await this.engine.executeRaw(`UPDATE minion_jobs SET status = 'cancelled', lock_token = NULL, lock_until = NULL,
-        data = jsonb_set(data, '{resumeOnRestart}', 'false'::jsonb), finished_at = now(), updated_at = now()
-        WHERE id = $1 AND status IN ('waiting','active','waiting-children','delayed')`, [id]);
-      await this.fileQueue.pause(id);
+    let failure: unknown;
+    let saved:MinionJob|null=null;
+    const stopping = withDatabasePriority(0, async () => {
+      saved=await this.queue.cancelJob(id);
+      await this.applyStop(id, reason);
       await Promise.allSettled([this.executions.get(id)?.done, ...files.map(execution => execution!.done)]);
       await this.reconcileMaintenanceChildren(id);
-      void this.fileQueue.cleanupStoppedSnapshots(id).catch(error=>console.error('[tasks] stopped snapshot cleanup:',error));
     });
-    let timer:ReturnType<typeof setTimeout>|undefined;
-    const settled=await Promise.race([stopping.then(()=>true),new Promise<boolean>(resolve=>{timer=setTimeout(()=>resolve(false),3000);})]).finally(()=>clearTimeout(timer));
-    if(!settled){
-      const view=this.sessionViews.get(id);if(view?.product)view.product.stage='停止当前操作并恢复数据库';
-      if(!(this.engine instanceof WorkerPgliteEngine))throw new Error('停止尚未完成：数据库操作未响应取消，请检查数据库连接');
-      if(!this.recoveringOwner){
-        this.paused=true;this.worker.stop();this.fileWorker.stop();
-        for(const execution of this.executions.values())execution.cancel();
-        this.recoveringOwner=(async()=>{
-          await (this.engine as unknown as WorkerPgliteEngine).interruptAndRecover();
-          await Promise.allSettled([...this.executions.values()].map(execution=>execution.done));
-          await this.engine.executeRaw(`UPDATE minion_jobs SET status='paused',lock_token=NULL,lock_until=NULL,
-            data=jsonb_set(data,'{resumeOnRestart}','false'::jsonb),error_text='数据库执行曾中断，请查看已完成资料后手动继续。',updated_at=now()
-            WHERE queue IN ($1,$2) AND status IN ('active','waiting-children')`,[PRODUCT_TASK_QUEUE,SYNC_FILE_QUEUE]);
-          await this.loop;await this.fileLoop;
-          this.loop=null;this.fileLoop=null;this.failure=null;
-          this.sessionViews.clear();
-        })();
-      }
-      try{await this.recoveringOwner;}finally{this.recoveringOwner=null;}
-      await stopping.catch(()=>{});
-      await this.applyStop(id);
-      this.paused=false;
-      await this.start();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const settled = await Promise.race([
+      stopping.then(() => true, error => { failure = error; return true; }),
+      new Promise<boolean>(resolve => { timer = setTimeout(() => resolve(false), 3000); }),
+    ]).finally(() => clearTimeout(timer));
+    if (!settled || (failure && this.recoveringOwner)) {
+      const view = this.sessionViews.get(id);
+      if (view?.product) view.product.stage = '停止当前操作并恢复数据库';
+      if (view?.product) view.product.activity = { kind:'recovery',since:new Date().toISOString() };
+      await this.recoverStoppedDatabase();
+      await stopping.catch(() => {});
+      saved=await this.queue.cancelJob(id);
+      await this.applyStop(id, reason);
+      await this.reconcileMaintenanceChildren(id);
+    } else if (failure) throw failure;
+    if (taskUsesFileQueue(original.kind)) {
+      await this.hydrateFiles([id]);
+      await this.fileProjection.flush();
+      void this.fileQueue.cleanupStoppedSnapshots(id).catch(error => console.error('[tasks] stopped snapshot cleanup:', error));
     }
-    await this.hydrateFiles([id]);
-    await this.fileProjection.flush();
-    this.sessionViews.delete(id);
+    const status = reason ? 'failed' as const : 'cancelled' as const;
+    const persisted=saved as MinionJob|null;
+    const finished = persisted?.status==='completed'?toRun(persisted):{ ...original, status, error: reason ?? null, completedAt: new Date().toISOString(),
+      product: original.product ? finishTaskProgress(original.product, status, original.result, reason ?? null) : undefined };
+    this.sessionViews.set(id, finished);
+    this.cached = [finished, ...this.cached.filter(run => run.id !== original.id)].slice(0, 100);
+  }
+
+  private async recoverStoppedDatabase(): Promise<void> {
+    if (this.recoveringOwner) return this.recoveringOwner;
+    if (!(this.engine instanceof WorkerPgliteEngine)) throw new Error('停止尚未完成：数据库操作未响应取消，请检查数据库连接');
+    const wasPaused = this.paused;
+    const wasRunning = this.loop !== null;
+    this.paused = true;
+    this.worker.stop(); this.fileWorker.stop();
+    for (const execution of this.executions.values()) execution.cancel();
+    this.recoveringOwner = (async () => {
+      await (this.engine as unknown as WorkerPgliteEngine).interruptAndRecover();
+      await withDeadline(Promise.allSettled([...this.executions.values()].map(execution => execution.done)), 10000, '数据库已恢复，旧任务未在 10 秒内结束');
+      await this.engine.executeRaw(`UPDATE minion_jobs SET status='paused',lock_token=NULL,lock_until=NULL,
+        data=jsonb_set(data,'{resumeOnRestart}','false'::jsonb),error_text='数据库执行曾中断，请查看已完成资料后手动继续。',updated_at=now()
+        WHERE queue IN ($1,$2) AND status IN ('active','waiting-children')`, [PRODUCT_TASK_QUEUE, SYNC_FILE_QUEUE]);
+      await withDeadline(Promise.all([this.loop, this.fileLoop]), 10000, '数据库已恢复，旧队列未在 10 秒内结束');
+      this.loop = null; this.fileLoop = null; this.failure = null;
+    })();
+    try { await this.recoveringOwner; }
+    catch (error) { this.failure = error instanceof Error ? error : new Error(String(error)); throw error; }
+    finally { this.recoveringOwner = null; }
+    this.paused = wasPaused;
+    if (wasRunning && !this.stopped && !this.paused) await this.start();
   }
 
   private async reconcileMaintenanceChildren(id: number) {
@@ -982,10 +1046,10 @@ export class ProductTaskRuntime {
     for (const row of queues) await this.queue.reconcilePrivateQueue(row.queue, 'maintenance stopped before continuation');
   }
 
-  private async applyStop(id:number){
-    await this.engine.executeRaw(`UPDATE minion_jobs SET status='cancelled',lock_token=NULL,lock_until=NULL,
+  private async applyStop(id:number, reason?:string){
+    await this.engine.executeRaw(`UPDATE minion_jobs SET status=$3,lock_token=NULL,lock_until=NULL,error_text=$4,
       data=jsonb_set(data,'{resumeOnRestart}','false'::jsonb),finished_at=now(),updated_at=now()
-      WHERE id=$1 AND queue=$2 AND status NOT IN ('completed','cancelled')`,[id,PRODUCT_TASK_QUEUE]);
+      WHERE id=$1 AND queue=$2 AND status<>'completed'`,[id,PRODUCT_TASK_QUEUE,reason?'failed':'cancelled',reason??null]);
     await this.fileQueue.pause(id);
   }
 
@@ -996,7 +1060,11 @@ export class ProductTaskRuntime {
     for(const name of entries){
       if(!name.startsWith(prefix)||!name.endsWith('.stop.json'))continue;
       const id=Number(name.slice(prefix.length,-'.stop.json'.length));
-      if(Number.isSafeInteger(id)&&id>0){this.stopIntents.add(id);await this.applyStop(id);}
+      if(Number.isSafeInteger(id)&&id>0){
+        const command=JSON.parse(await readFile(taskArtifactPath(id,'stop.json'),'utf8'));
+        if(command.id!==id)throw new Error('停止命令与任务身份不一致');
+        this.stopIntents.add(id);await this.applyStop(id,typeof command.reason==='string'?command.reason:undefined);
+      }
     }
   }
 
