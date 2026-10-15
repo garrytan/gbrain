@@ -51,7 +51,6 @@ method	src/core/pglite-engine.ts	PGLiteEngine.unsetConfig
 method	src/core/pglite-engine.ts	probePgliteScratchStore
 method	src/core/pglite-engine/checkpoint-guard.ts	PgliteCheckpointGuard.issueProbe
 method	src/core/pglite-engine/code-edges.ts	getEdgesByChunk
-method	src/core/postgres-engine.ts	PostgresEngine._searchKeywordCJK
 method	src/core/postgres-engine.ts	PostgresEngine.deleteEvalCandidatesBefore
 method	src/core/postgres-engine.ts	PostgresEngine.discoverOntologyDimensions
 method	src/core/postgres-engine.ts	PostgresEngine.findOntologyConflicts
@@ -79,6 +78,5 @@ method	src/core/postgres-engine.ts	PostgresEngine.searchKeywordChunks
 method	src/core/postgres-engine.ts	PostgresEngine.setConfig
 method	src/core/postgres-engine.ts	PostgresEngine.sweepDreamVerdicts
 method	src/core/postgres-engine.ts	PostgresEngine.unsetConfig
-method	src/core/postgres-engine.ts	PostgresEngine.withScopedReadTransaction
 method	src/core/postgres-engine/init-schema-lock.ts	acquireInitSchemaAdvisoryLock
 method	src/core/postgres-engine/init-schema-lock.ts	lockHolderPid

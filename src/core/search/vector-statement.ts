@@ -65,7 +65,6 @@ import { resolveBoostMap, resolveHardExcludes } from './source-boost.ts';
 import { buildBestPerPagePoolCte, buildHardExcludeClause, buildSourceFactorCase, buildVisibilityClause } from './sql-ranking.ts';
 
 export const VECTOR_EXTENSION_VERSION_SQL = `SELECT extversion FROM pg_extension WHERE extname = 'vector'`;
-export const SET_STATEMENT_TIMEOUT_SQL = `SELECT set_config('statement_timeout', $1, true)`;
 
 export interface VectorSearchStatementInput {
   dialect: 'postgres' | 'pglite';

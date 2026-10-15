@@ -63,22 +63,16 @@ export async function searchTitles(
     console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${searchLimitCap()}`);
   }
   const statement = buildSearchTitlesStatement(query, opts, dialect);
-  const run = (queryText: string, relaxed: boolean) =>
-    scoped(async (exec) => {
-      if (dialect.statementTimeout) {
-        await exec.query(`SELECT set_config('statement_timeout', $1, true)`, [dialect.statementTimeout]);
-      }
-      const preferIndex = relaxed && dialect.relaxedPrefersIndex && !statement.safeChunks;
-      const previous = preferIndex
-        ? (await exec.query<{ enable_seqscan: string }>(`SHOW enable_seqscan`)).rows[0].enable_seqscan
-        : '';
-      if (preferIndex) await exec.query(`SELECT set_config('enable_seqscan', 'off', true)`);
-      const params = [...statement.params];
-      params[0] = queryText;
-      const { rows } = await exec.unsafe(statement.sql, params);
-      if (preferIndex) await exec.query(`SELECT set_config('enable_seqscan', $1, true)`, [previous]);
-      return rows;
-    });
+  const run = (queryText: string, relaxed: boolean) => {
+    const preferIndex = relaxed && dialect.relaxedPrefersIndex && !statement.safeChunks;
+    const settings = {
+      ...(dialect.statementTimeout ? { statement_timeout: dialect.statementTimeout } : {}),
+      ...(preferIndex ? { enable_seqscan: 'off' } : {}),
+    };
+    const params = [...statement.params];
+    params[0] = queryText;
+    return scoped(async exec => (await exec.unsafe(statement.sql, params)).rows, Object.keys(settings).length ? settings : undefined);
+  };
 
   const strictQuery = statement.params[0] as string;
   const rows = await run(strictQuery, false);

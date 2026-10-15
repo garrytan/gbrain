@@ -23,10 +23,8 @@ export async function countKeywordPages(
   const statement = buildKeywordCountStatement(query, opts);
   if (!statement) return 0;
   const timeout = dialect.statementTimeout && dialect.timeoutMs ? `${Math.max(1, Math.floor(dialect.timeoutMs))}ms` : dialect.statementTimeout;
-  const rows = await scoped(async (exec) => {
-    if (timeout) await exec.query(`SELECT set_config('statement_timeout', $1, true)`, [timeout]);
-    return (await exec.unsafe<{ n: number }>(statement.sql, statement.params)).rows;
-  });
+  const rows = await scoped(async exec => (await exec.unsafe<{ n: number }>(statement.sql, statement.params)).rows,
+    timeout ? { statement_timeout: timeout } : undefined);
   return Number(rows[0]?.n ?? 0);
 }
 
@@ -36,9 +34,7 @@ export async function searchKeywordPages(
 ): Promise<SearchResult[]> {
   const statement = buildKeywordPagesStatement(query, opts, page);
   if (!statement) return [];
-  const rows = await scoped(async (exec) => {
-    if (dialect.statementTimeout) await exec.query(`SELECT set_config('statement_timeout', $1, true)`, [dialect.statementTimeout]);
-    return (await exec.unsafe(statement.sql, statement.params)).rows;
-  });
+  const rows = await scoped(async exec => (await exec.unsafe(statement.sql, statement.params)).rows,
+    dialect.statementTimeout ? { statement_timeout: dialect.statementTimeout } : undefined);
   return rows.map(rowToSearchResult);
 }

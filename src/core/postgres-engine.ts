@@ -69,8 +69,8 @@ import { SCHEMA_SQL } from './schema-embedded.generated.ts';
 import { verifySchema } from './schema-verify.ts';
 import { applyChunkEmbeddingIndexPolicy, dropZombieIndexes, supportsHnswIterativeScan } from './vector-index.ts';
 import { searchIndexWalk, searchVectorPool, readVectorPool, remainingVectorBudget, type VectorPoolAttempt, POOL_MAX_SCAN_TUPLES } from './search/vector-pool.ts';
-import { buildVectorSearchStatement, PAGE_SOURCE_STATS_SQL, SCOPE_CHUNKS_SQL, SET_STATEMENT_TIMEOUT_SQL, VECTOR_EXTENSION_VERSION_SQL, vectorScopeLoader, type PageSourceStats, type ScopeChunkCount, type VectorSearchStatement } from './search/vector-statement.ts';
-import { withVectorSettings } from './search/vector-settings.ts';
+import { buildVectorSearchStatement, PAGE_SOURCE_STATS_SQL, SCOPE_CHUNKS_SQL, VECTOR_EXTENSION_VERSION_SQL, vectorScopeLoader, type PageSourceStats, type ScopeChunkCount, type VectorSearchStatement } from './search/vector-statement.ts';
+import { VECTOR_SETTING_DEFAULTS, vectorScanSettings } from './search/vector-settings.ts';
 import { guardSearchStatistics } from './search/projection-statistics.ts';
 import {
   vectorCastSuffix,
@@ -120,7 +120,7 @@ import { DELETE_BATCH_SIZE, TRAVERSE_PATH_ROW_CAP, TRAVERSE_WALK_ROW_CAP } from 
 import { PageMissingError } from './engine-errors.ts';
 import { EMBED_SKIP_FILTER_FRAGMENT } from './embed-skip.ts';
 import { acquireInitSchemaAdvisoryLock } from './postgres-engine/init-schema-lock.ts';
-import { withSearchJitOff } from './postgres-engine/search-settings.ts';
+import { SEARCH_JIT_OFF, withSearchSettings, type SearchSettings } from './postgres-engine/search-settings.ts';
 import { loadKeywordStatementTimeout } from './postgres-engine/keyword-statement-timeout.ts';
 import { applyPostgresForwardReferenceBootstrap } from './engine-sql/bootstrap.ts';
 import * as factsImpl from './engine-sql/facts.ts';
@@ -338,7 +338,7 @@ export class PostgresEngine implements BrainEngine {
     sourceIds: string[] | undefined,
     sourceId: string | undefined,
     callback: (tx: ReturnType<typeof postgres>) => Promise<T>,
-    opts?: { alwaysTransaction?: boolean; jitOff?: boolean },
+    opts?: { alwaysTransaction?: boolean; jitOff?: boolean; settings?: SearchSettings | (() => SearchSettings) },
   ): Promise<T> {
     // Flag off + no pre-existing transaction need: call through on the
     // shared pool exactly as master does. No tx round-trip, no pool slot
@@ -357,20 +357,24 @@ export class PostgresEngine implements BrainEngine {
     }
     return this.transaction(async engine => {
       const tx = (engine as PostgresEngine).sql;
-      const previous = this.rlsScopeBindingEnabled
-        ? await tx`SELECT current_setting('app.scopes', true) AS scopes` : [];
-      if (this.rlsScopeBindingEnabled) await tx`SELECT set_config('app.scopes', ${scopesValue}, true)`;
-      const result = opts?.jitOff ? await withSearchJitOff(tx, this._pageTransaction, () => callback(tx)) : await callback(tx);
-      // Successful RELEASE SAVEPOINT retains SET LOCAL; a failed callback
-      // rolls it back with the savepoint and must preserve its original error.
-      if (this.rlsScopeBindingEnabled) await tx`SELECT set_config('app.scopes', ${previous[0]?.scopes ?? ''}, true)`;
-      return result;
+      // One settings statement for the scope binding, JIT off and the
+      // caller's settings (a thunk is read here, after BEGIN, so a deadline
+      // budget is measured one round trip before the query). A savepoint in
+      // a caller's transaction restores the caller's values afterwards; a
+      // failed callback rolls them back with the savepoint and keeps its
+      // original error (postgres-engine/search-settings.ts).
+      const settings = {
+        ...(this.rlsScopeBindingEnabled ? { 'app.scopes': scopesValue } : {}),
+        ...(opts?.jitOff ? SEARCH_JIT_OFF : {}),
+        ...(typeof opts?.settings === 'function' ? opts.settings() : opts?.settings),
+      };
+      return withSearchSettings(tx, this._pageTransaction, settings, () => callback(tx), VECTOR_SETTING_DEFAULTS);
     });
   }
 
   /** An unscoped read in its own transaction with JIT off (search-settings.ts); a savepoint inside a caller's transaction. */
   private jitOffRead<T>(callback: (tx: ReturnType<typeof postgres>) => Promise<T>): Promise<T> {
-    return this.transaction(engine => withSearchJitOff((engine as PostgresEngine).sql, this._pageTransaction, () => callback((engine as PostgresEngine).sql)));
+    return this.transaction(engine => withSearchSettings((engine as PostgresEngine).sql, this._pageTransaction, SEARCH_JIT_OFF, () => callback((engine as PostgresEngine).sql)));
   }
 
   // Lifecycle
@@ -1129,22 +1133,17 @@ export class PostgresEngine implements BrainEngine {
 
     // RLS scope binding (opt-in via GBRAIN_RLS_SCOPE_BINDING) + search-only
     // timeout. alwaysTransaction: this method needed sql.begin() on master
-    // already (SET LOCAL statement_timeout must be transaction-scoped so
-    // the GUC can never leak onto a pooled connection). Flag off → the
-    // wrap is identical to master's; flag on → set_config('app.scopes')
-    // shares the same transaction as the timeout.
+    // already (a transaction-local statement_timeout can never leak onto a
+    // pooled connection). The scope, JIT off, the timeout and the relaxed
+    // attempt's enable_seqscan are one settings statement
+    // (postgres-engine/search-settings.ts).
     const statementTimeout = await this.keywordStatementTimeoutSetting();
     const runKeyword = (queryText: string, relaxed = false) =>
-      this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, async (tx) => {
-        await tx`SELECT set_config('statement_timeout', ${statementTimeout}, true)`;
-        const previous = relaxed ? await tx`SHOW enable_seqscan` : [];
-        if (relaxed) await tx`SET LOCAL enable_seqscan = off`;
+      this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, (tx) => {
         const boundParams = [...params];
         boundParams[0] = collapseWebsearchDashRuns(queryText);
-        const rows = await tx.unsafe(rawQuery, boundParams as Parameters<typeof tx.unsafe>[1]);
-        if (relaxed) await tx`SELECT set_config('enable_seqscan', ${previous[0].enable_seqscan}, true)`;
-        return rows;
-      }, { alwaysTransaction: true, jitOff: true });
+        return tx.unsafe(rawQuery, boundParams as Parameters<typeof tx.unsafe>[1]);
+      }, { alwaysTransaction: true, jitOff: true, settings: relaxed ? { statement_timeout: statementTimeout, enable_seqscan: 'off' } : { statement_timeout: statementTimeout } });
     let rows = await runKeyword(query);
     // D2 fix (fix/title-retrieval-arm): websearch AND semantics at chunk
     // grain mean one non-co-occurring token zeroes keyword recall. When the
@@ -1176,15 +1175,15 @@ export class PostgresEngine implements BrainEngine {
    */
   /** Cat 40 Hard F2 strict keyword count and keyword-mode pages; SQL in engine-sql/keyword-pages.ts. */
   async countKeywordPages(query: string, opts?: SearchOpts & { timeoutMs?: number }): Promise<number> {
-    return keywordPagesImpl.countKeywordPages((read) => this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, tx => read(scopedRead(this.engineSqlOn(tx))), { alwaysTransaction: true, jitOff: true }), query, opts, { statementTimeout: await this.keywordStatementTimeoutSetting(), timeoutMs: opts?.timeoutMs });
+    return keywordPagesImpl.countKeywordPages((read, settings) => this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, tx => read(scopedRead(this.engineSqlOn(tx))), { alwaysTransaction: true, jitOff: true, settings }), query, opts, { statementTimeout: await this.keywordStatementTimeoutSetting(), timeoutMs: opts?.timeoutMs });
   }
   async searchKeywordPages(query: string, opts: SearchOpts | undefined, page: KeywordPageWindow): Promise<SearchResult[]> {
-    return keywordPagesImpl.searchKeywordPages((read) => this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, tx => read(scopedRead(this.engineSqlOn(tx))), { alwaysTransaction: true, jitOff: true }), query, opts, page, { statementTimeout: await this.keywordStatementTimeoutSetting() });
+    return keywordPagesImpl.searchKeywordPages((read, settings) => this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, tx => read(scopedRead(this.engineSqlOn(tx))), { alwaysTransaction: true, jitOff: true, settings }), query, opts, page, { statementTimeout: await this.keywordStatementTimeoutSetting() });
   }
 
   async searchTitles(query: string, opts?: SearchOpts): Promise<SearchResult[]> {
     return titlesImpl.searchTitles(
-      (read) => this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, tx => read(scopedRead(this.engineSqlOn(tx))), { alwaysTransaction: true, jitOff: true }),
+      (read, settings) => this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, tx => read(scopedRead(this.engineSqlOn(tx))), { alwaysTransaction: true, jitOff: true, settings }),
       query,
       opts,
       { statementTimeout: await this.keywordStatementTimeoutSetting(), relaxedPrefersIndex: true, staleProbe: false },
@@ -1328,13 +1327,12 @@ export class PostgresEngine implements BrainEngine {
     `;
 
     // RLS scope binding + search-only timeout. alwaysTransaction: master
-    // already wrapped this in sql.begin() for the SET LOCAL; flag off is
-    // identical to that wrap, flag on adds set_config in the same tx.
+    // already wrapped this in sql.begin() for the transaction-local timeout;
+    // scope, JIT off and the timeout are one settings statement.
     const statementTimeout = await this.keywordStatementTimeoutSetting();
-    const rows = await this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, async (tx) => {
-      await tx`SELECT set_config('statement_timeout', ${statementTimeout}, true)`;
-      return await tx.unsafe(rawQuery, params as Parameters<typeof tx.unsafe>[1]);
-    }, { alwaysTransaction: true, jitOff: true });
+    const rows = await this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId,
+      tx => tx.unsafe(rawQuery, params as Parameters<typeof tx.unsafe>[1]),
+      { alwaysTransaction: true, jitOff: true, settings: { statement_timeout: statementTimeout } });
     return rows.map(rowToSearchResult);
   }
 
@@ -1349,12 +1347,11 @@ export class PostgresEngine implements BrainEngine {
     return searchKeywordCJKImpl(
       async (read) =>
         await this.withScopedReadTransaction(ctx.opts?.sourceIds, ctx.opts?.sourceId, async (tx) => {
-          await tx`SELECT set_config('statement_timeout', ${statementTimeout}, true)`;
           return await read(scopedRead(postgresExecutor(tx, {
             runUnsafe: (conn, sql, params, opts) => this.runUnsafe(conn, sql, params, opts),
             gauge: this.checkoutGauge,
           })));
-        }, { alwaysTransaction: true, jitOff: true }),
+        }, { alwaysTransaction: true, jitOff: true, settings: { statement_timeout: statementTimeout } }),
       query,
       ctx,
     );
@@ -1382,12 +1379,9 @@ export class PostgresEngine implements BrainEngine {
       async (pool, remainingMs) => {
         const deadline = performance.now() + remainingMs;
         return this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, async tx => {
-          const previous = await tx`SHOW statement_timeout`;
-          await tx.unsafe(SET_STATEMENT_TIMEOUT_SQL, [String(remainingVectorBudget(deadline))]);
           const rows = await tx.unsafe(stmt.hasMoreSql, [...stmt.params.slice(0, stmt.innerLimitIdx), pool + 1] as Parameters<typeof tx.unsafe>[1]);
-          await tx.unsafe(SET_STATEMENT_TIMEOUT_SQL, [previous[0].statement_timeout]);
           return Number(rows[0].eligible) > pool;
-        }, { alwaysTransaction: true, jitOff: true });
+        }, { alwaysTransaction: true, jitOff: true, settings: () => ({ statement_timeout: String(remainingVectorBudget(deadline)) }) });
       },
       opts?.onVectorPoolMeta,
     );
@@ -1434,15 +1428,12 @@ export class PostgresEngine implements BrainEngine {
     run: (tx: ReturnType<typeof postgres>, sql: string, bound: Parameters<ReturnType<typeof postgres>['unsafe']>[1]) => Promise<Record<string, unknown>[]>,
   ): Promise<Record<string, unknown>[]> {
     const deadline = performance.now() + remainingMs;
-    return this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, async tx => {
-      const walk = indexWalk && stmt.indexWalkSql;
-      return withVectorSettings((sql, values) => tx.unsafe(sql, values as Parameters<typeof tx.unsafe>[1]), iterative, innerLimit, maxScanTuples, async () => {
-        const bound = [...stmt.params];
-        bound[stmt.innerLimitIdx] = exact ? null : innerLimit;
-        await tx.unsafe(SET_STATEMENT_TIMEOUT_SQL, [String(remainingVectorBudget(deadline))]);
-        return run(tx, (scopeScan && stmt.scopeScanSql) || walk || (exact ? stmt.exactSql : stmt.sql), bound as Parameters<typeof tx.unsafe>[1]);
-      }, deadline, opts?.hnswIterativeScan, walk ? stmt.indexWalkOverfetch : undefined);
-    }, { alwaysTransaction: true, jitOff: true });
+    const walk = indexWalk && stmt.indexWalkSql;
+    return this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, tx => {
+      const bound = [...stmt.params];
+      bound[stmt.innerLimitIdx] = exact ? null : innerLimit;
+      return run(tx, (scopeScan && stmt.scopeScanSql) || walk || (exact ? stmt.exactSql : stmt.sql), bound as Parameters<typeof tx.unsafe>[1]);
+    }, { alwaysTransaction: true, jitOff: true, settings: () => vectorScanSettings(iterative, innerLimit, maxScanTuples, deadline, opts?.hnswIterativeScan, walk ? stmt.indexWalkOverfetch : undefined) });
   }
 
   async getEmbeddingsByChunkIds(ids: number[], column: string = 'embedding'): Promise<Map<number, Float32Array>> {

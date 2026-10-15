@@ -71,20 +71,20 @@ describe('postgres-engine / search path timeout isolation', () => {
     const helper = stripComments(SRC).split('private async withScopedReadTransaction<T>')[1]!.split('async connect(')[0]!;
     expect(helper).toMatch(/this\.transaction\(async engine =>/);
     expect(helper).toMatch(/const tx = \(engine as PostgresEngine\)\.sql;/);
-    expect(helper).toMatch(/await callback\(tx\)/);
+    // One settings statement (scope, JIT off, the caller's settings) runs before the callback; nested reads restore.
+    expect(helper).toMatch(/withSearchSettings\(tx, this\._pageTransaction, settings, \(\) => callback\(tx\), VECTOR_SETTING_DEFAULTS\)/);
     // Flag off without a transaction requirement preserves pool passthrough.
     expect(helper).toMatch(
       /if\s*\(!this\.rlsScopeBindingEnabled\s*&&\s*!opts\?\.alwaysTransaction\)\s*\{\s*return\s+await\s+callback\(this\.sql\);/,
     );
   });
 
-  test('both search methods use SET LOCAL for the timeout', () => {
-    const keyword = extractMethod(SRC, 'searchKeyword');
+  test('both search methods bind a transaction-local timeout through the transaction settings', () => {
+    const keyword = stripComments(extractMethod(SRC, 'searchKeyword'));
     const attempt = stripComments(SRC).split('private runVectorAttempt(')[1]!.split('async getEmbeddingsByChunkIds(')[0]!;
-    expect(keyword).toMatch(/SET\s+LOCAL\s+statement_timeout/);
-    expect(VECTOR_STATEMENT_SRC).toContain("export const SET_STATEMENT_TIMEOUT_SQL = `SELECT set_config('statement_timeout', $1, true)`;");
-    expect(attempt).toMatch(/tx\.unsafe\(SET_STATEMENT_TIMEOUT_SQL, \[String\(remainingVectorBudget\(deadline\)\)\]\)/);
-    expect(attempt).toContain('withVectorSettings');
+    expect(keyword).toMatch(/settings: relaxed \? \{ statement_timeout: statementTimeout, enable_seqscan: 'off' \} : \{ statement_timeout: statementTimeout \}/);
+    // A thunk: the deadline's remaining budget is read after BEGIN, one round trip before the query.
+    expect(attempt).toMatch(/settings: \(\) => vectorScanSettings\(iterative, innerLimit, maxScanTuples, deadline,/);
   });
 
   test('connect() with poolSize honors resolvePrepare (PgBouncer regression guard)', () => {

@@ -11,6 +11,9 @@
  *  - flag ON: sql.begin() + SELECT set_config('app.scopes', $1, true)
  *    with federated-array > scalar > '*' precedence, and the CSV value
  *    carried as a BOUND PARAMETER, never interpolated into the SQL text.
+ *    At the top level that one statement is all (the setting ends with the
+ *    transaction); inside a caller's transaction the caller's scope is read
+ *    first and restored after (postgres-engine/search-settings.ts).
  */
 
 import { describe, test, expect } from 'bun:test';
@@ -22,21 +25,25 @@ type Recorded = { text: string; params: unknown[]; lane: 'pool' | 'transaction' 
 function makeFakeSql() {
   const queries: Recorded[] = [];
   let beginCalls = 0; let savepointCalls = 0; let scopes = 'outside';
-  const record = (lane: Recorded['lane'], strings: TemplateStringsArray, ...params: unknown[]) => {
-    // Join the literal segments with a placeholder marker so the test can
-    // assert the exact SQL text shape around each bound parameter.
-    const text = strings.join('${}'); queries.push({ text, params, lane });
-    if (text.includes('current_setting')) return Promise.resolve([{ scopes }]);
-    if (text.includes('set_config')) scopes = String(params[0]);
+  // Tagged templates join their literal segments with a placeholder marker
+  // so the test can assert the exact SQL text around each bound parameter;
+  // `unsafe` statements keep their $n text.
+  const record = (lane: Recorded['lane'], text: string, params: unknown[]) => {
+    queries.push({ text, params, lane });
+    if (text.includes("current_setting('app.scopes'")) return Promise.resolve([{ 'app.scopes': scopes }]);
+    const bound = /set_config\('app\.scopes', \$(\d+)/.exec(text);
+    if (bound) scopes = String(params[Number(bound[1]) - 1]);
     return Promise.resolve([]);
   };
-  const sql = ((strings: TemplateStringsArray, ...params: unknown[]) =>
-    record('pool', strings, ...params)) as unknown as Record<string, unknown> & {
+  const handle = (lane: Recorded['lane']) => Object.assign(
+    (strings: TemplateStringsArray, ...params: unknown[]) => record(lane, strings.join('${}'), params),
+    { unsafe: (text: string, params: unknown[] = []) => record(lane, text, params) },
+  );
+  const sql = handle('pool') as unknown as Record<string, unknown> & {
     (strings: TemplateStringsArray, ...params: unknown[]): Promise<unknown[]>;
     begin: (cb: (tx: unknown) => Promise<unknown>) => Promise<unknown>;
   };
-  const tx = ((strings: TemplateStringsArray, ...params: unknown[]) =>
-    record('transaction', strings, ...params)) as unknown as Record<string, unknown>;
+  const tx = handle('transaction') as unknown as Record<string, unknown>;
   tx.savepoint = async (cb: (tx: unknown) => Promise<unknown>) => {
     savepointCalls++; const prior = scopes;
     try { return await cb(tx); } catch (error) { scopes = prior; throw error; }
@@ -54,10 +61,12 @@ interface ScopedEngine {
   withScopedReadTransaction<T>(sourceIds: string[] | undefined, sourceId: string | undefined,
     cb: (tx: unknown) => Promise<T>, opts?: { alwaysTransaction?: boolean }): Promise<T>;
 }
-function makeEngine(fake: ReturnType<typeof makeFakeSql>): ScopedEngine {
+function makeEngine(fake: ReturnType<typeof makeFakeSql>, inTransaction = false): ScopedEngine {
   const e = new PostgresEngine();
   (e as unknown as { _sql: unknown })._sql = fake.sql;
   (e as unknown as { _connectionStyle: string })._connectionStyle = 'instance';
+  // An engine over a transaction handle is a page transaction, as transaction() builds it.
+  if (inTransaction) Object.defineProperty(e, '_pageTransaction', { value: true });
   // private method, invoked directly for the pin
   return e as unknown as ScopedEngine;
 }
@@ -128,12 +137,13 @@ describe('withScopedReadTransaction / flag on', () => {
       });
       expect(fake.beginCalls()).toBe(1);
       const sc = setConfigQueries(fake.queries);
-      expect(sc).toHaveLength(2);
+      // Top level: one settings statement, nothing read first or restored after.
+      expect(sc).toHaveLength(1);
       expect(sc[0].params).toEqual(['src-a']);
-      expect(sc[1].params).toEqual(['outside']);
+      expect(fake.queries).toHaveLength(1);
       // set_config was emitted before the callback ran
-      expect(queriesAtCallback).toBe(2);
-      expect(fake.queries[1]).toBe(sc[0]);
+      expect(queriesAtCallback).toBe(1);
+      expect(fake.queries[0]).toBe(sc[0]);
     });
   });
 
@@ -142,7 +152,7 @@ describe('withScopedReadTransaction / flag on', () => {
       const fake = makeFakeSql();
       const engine = makeEngine(fake);
       await engine.withScopedReadTransaction(undefined, 'src-a', async () => null);
-      expect(setConfigQueries(fake.queries)).toHaveLength(2);
+      expect(setConfigQueries(fake.queries)).toHaveLength(1);
     });
   });
 
@@ -181,7 +191,7 @@ describe('withScopedReadTransaction / flag on', () => {
       await engine.withScopedReadTransaction(undefined, hostile, async () => null);
       const sc = setConfigQueries(fake.queries)[0];
       // Exact literal-segment shape: the value slot is the tagged-template hole.
-      expect(sc.text).toBe("SELECT set_config('app.scopes', ${}, true)");
+      expect(sc.text).toBe("SELECT set_config('app.scopes', $1, true)");
       expect(sc.params).toEqual([hostile]);
       expect(sc.text).not.toContain(hostile);
     });
@@ -193,7 +203,7 @@ describe('withScopedReadTransaction / flag on', () => {
       await engine.transaction(async outer => {
         await outer.withScopedReadTransaction(undefined, 'parent', async tx => {
           // Nested work uses the scoped handle, never its waiting parent.
-          const nested = makeEngine({ ...fake, sql: tx as typeof fake.sql });
+          const nested = makeEngine({ ...fake, sql: tx as typeof fake.sql }, true);
           expect(fake.scopes()).toBe('parent');
           await nested.withScopedReadTransaction(undefined, 'child', async () => { expect(fake.scopes()).toBe('child'); });
           expect(fake.scopes()).toBe('parent');
@@ -205,6 +215,9 @@ describe('withScopedReadTransaction / flag on', () => {
       });
       expect(fake.beginCalls()).toBe(1); expect(fake.savepointCalls()).toBe(3);
       expect(fake.queries.every(query => query.lane === 'transaction')).toBe(true);
+      // Each savepoint reads the caller's scope, sets its own, and restores the caller's on success.
+      expect(fake.queries.map(query => query.text.startsWith('SELECT current_setting') ? 'read' : query.params[0])).toEqual(
+        ['read', 'parent', 'read', 'child', 'parent', 'read', 'failing-child', 'outside']);
     });
   });
 });

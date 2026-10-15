@@ -98,6 +98,28 @@ function lanesOf(trace: Awaited<ReturnType<typeof runCase>>['trace']): string[] 
   return [...new Set(trace.filter((t): t is RecordedStatement => t.kind === 'query').map((t) => t.lane))].sort();
 }
 
+/**
+ * The scope statements that enter a scoped read, in order. A top-level read
+ * sets the scope once (it ends with the transaction); a read nested in a
+ * caller's transaction reads the caller's scope, sets its own, and restores
+ * the caller's after (postgres-engine/search-settings.ts), so a set that
+ * follows an entered nested read is its restore.
+ */
+function scopesEntered(trace: Awaited<ReturnType<typeof runCase>>['trace']): RecordedStatement[] {
+  const nested: Array<'read' | 'entered'> = [];
+  const entered: RecordedStatement[] = [];
+  for (const t of trace) {
+    if (t.kind !== 'query') continue;
+    if (t.text.startsWith("SELECT current_setting('app.scopes'")) nested.push('read');
+    else if (t.text.startsWith("SELECT set_config('app.scopes'")) {
+      if (nested.at(-1) === 'entered') { nested.pop(); continue; }
+      if (nested.at(-1) === 'read') nested[nested.length - 1] = 'entered';
+      entered.push(t);
+    }
+  }
+  return entered;
+}
+
 async function observe(cases: SqlCase[]): Promise<Record<string, RuntimeObservation>> {
   const out: Record<string, RuntimeObservation> = {};
   const on = await withPinnedSqlEnvironment('1', async () => Promise.all(cases.map(runCase)));
@@ -105,7 +127,7 @@ async function observe(cases: SqlCase[]): Promise<Record<string, RuntimeObservat
   cases.forEach((c, i) => {
     const onTrace = on[i].trace;
     const sets = onTrace.filter((t): t is RecordedStatement => t.kind === 'query' && t.text.startsWith("SELECT set_config('app.scopes'"));
-    const entered = sets.filter((_, k) => k % 2 === 0);
+    const entered = scopesEntered(onTrace);
     if (on[i].error || off[i].error) throw new Error(`${c.method}#${c.variant}: ${on[i].error ?? off[i].error}`);
     out[`${c.method}#${c.variant}`] = {
       flagOn: sets.length > 0 ? 'scoped' : 'unscoped',

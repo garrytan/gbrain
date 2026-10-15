@@ -44,8 +44,13 @@ import { buildCJKCandidateSql, buildCJKKeywordSql, type CjkKeywordCtx, type CjkK
 import { scopedRead, type ScopedRead } from './brands.ts';
 import type { SqlExecutor } from './executor.ts';
 
-/** Runs `read` on the engine's scoped read executor. */
-export type ScopedReadRunner = <T>(read: (exec: ScopedRead) => Promise<T>) => Promise<T>;
+/**
+ * Runs `read` on the engine's scoped read executor. `settings` (setting name
+ * to transaction-local value) are applied before `read` in the same scoped
+ * transaction: Postgres folds them into its one settings statement
+ * (postgres-engine/search-settings.ts); PGLite's dialects never ask for any.
+ */
+export type ScopedReadRunner = <T>(read: (exec: ScopedRead) => Promise<T>, settings?: Readonly<Record<string, string>>) => Promise<T>;
 
 export const CJK_CANDIDATE_CAP = 2000;
 export const PGLITE_CJK_CAPPED_CHUNKS = 50_000;

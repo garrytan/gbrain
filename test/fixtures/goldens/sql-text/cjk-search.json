@@ -31,17 +31,12 @@
           },
           {
             "lane": "tx",
-            "params": [],
-            "sql": "SET LOCAL jit = off",
-            "textSha256": "3286993e90f6ecea02245803a4da85e7814ccb11a1cde6dea0cb4e8e77877b4c"
-          },
-          {
-            "lane": "tx",
             "params": [
+              "string",
               "string"
             ],
-            "sql": "SELECT set_config('statement_timeout', $1, true)",
-            "textSha256": "4ff5eea87475148656b3e4c0a62fb90fdc1e96997a8b96873e48285836003675"
+            "sql": "SELECT set_config('jit', $1, true), set_config('statement_timeout', $2, true)",
+            "textSha256": "3f17856484987276b18d4a16a713dd25c07aa188d48e8c2a07aa2ece6739d5c7"
           },
           {
             "lane": "tx",
@@ -95,17 +90,12 @@
           },
           {
             "lane": "tx",
-            "params": [],
-            "sql": "SET LOCAL jit = off",
-            "textSha256": "3286993e90f6ecea02245803a4da85e7814ccb11a1cde6dea0cb4e8e77877b4c"
-          },
-          {
-            "lane": "tx",
             "params": [
+              "string",
               "string"
             ],
-            "sql": "SELECT set_config('statement_timeout', $1, true)",
-            "textSha256": "4ff5eea87475148656b3e4c0a62fb90fdc1e96997a8b96873e48285836003675"
+            "sql": "SELECT set_config('jit', $1, true), set_config('statement_timeout', $2, true)",
+            "textSha256": "3f17856484987276b18d4a16a713dd25c07aa188d48e8c2a07aa2ece6739d5c7"
           },
           {
             "lane": "tx",
@@ -148,17 +138,12 @@
           },
           {
             "lane": "tx",
-            "params": [],
-            "sql": "SET LOCAL jit = off",
-            "textSha256": "3286993e90f6ecea02245803a4da85e7814ccb11a1cde6dea0cb4e8e77877b4c"
-          },
-          {
-            "lane": "tx",
             "params": [
+              "string",
               "string"
             ],
-            "sql": "SELECT set_config('statement_timeout', $1, true)",
-            "textSha256": "4ff5eea87475148656b3e4c0a62fb90fdc1e96997a8b96873e48285836003675"
+            "sql": "SELECT set_config('jit', $1, true), set_config('statement_timeout', $2, true)",
+            "textSha256": "3f17856484987276b18d4a16a713dd25c07aa188d48e8c2a07aa2ece6739d5c7"
           },
           {
             "lane": "tx",
@@ -196,17 +181,12 @@
           },
           {
             "lane": "tx",
-            "params": [],
-            "sql": "SET LOCAL jit = off",
-            "textSha256": "3286993e90f6ecea02245803a4da85e7814ccb11a1cde6dea0cb4e8e77877b4c"
-          },
-          {
-            "lane": "tx",
             "params": [
+              "string",
               "string"
             ],
-            "sql": "SELECT set_config('statement_timeout', $1, true)",
-            "textSha256": "4ff5eea87475148656b3e4c0a62fb90fdc1e96997a8b96873e48285836003675"
+            "sql": "SELECT set_config('jit', $1, true), set_config('statement_timeout', $2, true)",
+            "textSha256": "3f17856484987276b18d4a16a713dd25c07aa188d48e8c2a07aa2ece6739d5c7"
           },
           {
             "lane": "tx",

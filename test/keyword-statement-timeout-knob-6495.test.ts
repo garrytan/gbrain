@@ -33,9 +33,14 @@ import {
   keywordStatementTimeoutValueProblem,
   resolveKeywordStatementTimeoutMs,
 } from '../src/core/postgres-engine/keyword-statement-timeout.ts';
+import { searchSettingsStatement, type SearchSettings } from '../src/core/postgres-engine/search-settings.ts';
 import { installFixtureChunks } from './helpers/page-projection.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
+
+const { default: Connection } = await import(new URL('../vendor/postgres/src/connection.js', import.meta.url).href) as {
+  default: { statementTimeoutChanges: (text: string, parameters?: unknown[]) => Array<{ kind: string; ms?: number }> };
+};
 
 interface Recorded { sql: string; params: unknown[] }
 
@@ -63,14 +68,19 @@ async function recordingEngine(opts: { dbValue?: string | null; fileValue?: unkn
     { unsafe: async (sql: string, params?: unknown[]) => { recorded.push({ sql, params: params ?? [] }); return rows(sql); } },
   );
   const priv = engine as unknown as {
-    withScopedReadTransaction: (ids: unknown, id: unknown, cb: (tx: unknown) => Promise<unknown>) => Promise<unknown>;
+    withScopedReadTransaction: (ids: unknown, id: unknown, cb: (tx: unknown) => Promise<unknown>, opts?: { settings?: SearchSettings | (() => SearchSettings) }) => Promise<unknown>;
     getConfig: (key: string) => Promise<string | null>;
     executeRaw: (sql: string, params?: unknown[]) => Promise<unknown[]>;
     _savedConfig: { keyword_statement_timeout_ms?: unknown } | undefined;
     _pageTransaction: boolean;
   };
   let configReads = 0;
-  priv.withScopedReadTransaction = (_ids, _id, cb) => cb(tx);
+  // The transaction's one settings statement, as withScopedReadTransaction sends it (postgres-engine/search-settings.ts).
+  priv.withScopedReadTransaction = async (_ids, _id, cb, txOpts) => {
+    const settings = typeof txOpts?.settings === 'function' ? txOpts.settings() : txOpts?.settings;
+    if (settings) { const set = searchSettingsStatement(settings); await tx.unsafe(set.sql, set.params); }
+    return cb(tx);
+  };
   priv.getConfig = async key => { configReads++; return key === KEYWORD_STATEMENT_TIMEOUT_KEY ? opts.dbValue ?? null : null; };
   priv.executeRaw = async (sql, params) => {
     if (opts.connected === false) throw new Error('No database connection');
@@ -84,15 +94,10 @@ async function recordingEngine(opts: { dbValue?: string | null; fileValue?: unkn
   return { engine, recorded, configReads: () => configReads };
 }
 
-/** Every statement timeout a recording set: the `set_config('statement_timeout', $1, true)` argument or a `SET LOCAL` literal. */
+/** Every statement timeout a recording set, as the vendored driver reads it from the statement it sends (#6543). */
 function timeoutsSet(recorded: Recorded[]): string[] {
-  const out: string[] = [];
-  for (const { sql, params } of recorded) {
-    if (/set_config\('statement_timeout'/.test(sql)) out.push(String(params[0]));
-    const literal = /SET LOCAL statement_timeout\s*=\s*'([^']+)'/.exec(sql);
-    if (literal) out.push(literal[1]);
-  }
-  return out;
+  return recorded.flatMap(({ sql, params }) => Connection.statementTimeoutChanges(sql, params)
+    .map(change => (change.kind === 'set' ? `${change.ms}ms` : `unreadable ${change.kind}`)));
 }
 
 async function timeoutFor(site: string, opts: { dbValue?: string | null; fileValue?: unknown }, countTimeoutMs?: number): Promise<string[]> {
