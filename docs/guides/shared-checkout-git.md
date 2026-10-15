@@ -351,3 +351,14 @@ gbrain git commit-push -m "host sync: daily notes" -- daily/
 - [Live sync](live-sync.md)
 - [Agent operator protocol](../protocol/AGENT_OPERATOR_v1.md)
 - [Error codes](error-codes.md)
+
+
+### Coordination locks when the brain home is inside the checkout
+
+New checkout coordination locks must live outside the canonical source root.
+If the brain's persistence directory is inside that root, GBrain uses the
+per-user persistence directory instead. Set `GBRAIN_COORDINATION_HOME` to an
+absolute directory outside the checkout when that fallback is also inside it.
+Paths containing `..` or resolving through a symlink into the checkout are
+refused. The fallback is namespaced by canonical root and local host identity;
+changing this setting does not relocate existing valid reservation locks.

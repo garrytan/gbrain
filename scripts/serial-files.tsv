@@ -83,6 +83,7 @@ test/context-engine-checkpoint.serial.test.ts	R1	R1: mutates process.env (GBRAIN
 test/context-pack-wb-lane.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)
 test/contextual-retrieval-doctor.serial.test.ts	R1	R1: mutates process.env (GBRAIN_AUDIT_DIR)
 test/contextual-synopsis-model.serial.test.ts	global-state	global-state: process-wide test seams __setGenerateTextTransportForTests; configureGateway changes the process-wide AI gateway; patches process stdout/stderr/console
+test/coordination-lock-placement.serial.test.ts	R1	R1: changes GBRAIN_HOME and GBRAIN_COORDINATION_HOME for canonical-root claim fixtures
 test/core/audit-week-file.serial.test.ts	R1	R1: mutates process.env (GBRAIN_AUDIT_DIR)
 test/core/cycle.serial.test.ts	R2	R2: mock.module(../../src/commands/lint.ts, ../../src/commands/backlinks.ts, ../../src/commands/sync.ts, ../../src/commands/extract.ts (+3 more)) replaces modules for every file in the process
 test/core/remediation-checkpoint.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)

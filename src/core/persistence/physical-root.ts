@@ -3,7 +3,7 @@ import { existsSync, lstatSync, realpathSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { SqlEngine } from './model.ts';
-import { persistenceHome } from './identity.ts';
+import { coordinationLockPath } from './coordination-lock.ts';
 import { canonicalFilesystemPath } from './root-registry.ts';
 import { adoptTransferredRootStamp, assertNoPhysicalRootOverlap, assertPhysicalRoot, assertPhysicalRootStamp, PHYSICAL_ROOT_MARKER, physicalRootDeviceChange, physicalRootError,
   readPhysicalRootReservation, readPhysicalRootStamp, reservePhysicalRootRecord, restampPhysicalRootDevice, samePhysicalBirth, writePhysicalRootStamp, type PhysicalRootReservation } from './physical-root-record.ts';
@@ -24,7 +24,7 @@ export async function reservePhysicalRoot(tx: SqlEngine, path: string, opts: Phy
   const root = canonicalFilesystemPath(path), brainId = await brainIdentity(tx);
   const previous = readPhysicalRootReservation(root);
   const worktreeId = opts.worktreeId ?? previous?.worktreeId ?? randomUUID();
-  const coordinationPath = opts.coordinationPath ?? previous?.coordinationPath ?? canonicalFilesystemPath(join(persistenceHome(), 'locks', `${worktreeId}.lock`));
+  const coordinationPath = opts.coordinationPath ?? previous?.coordinationPath ?? coordinationLockPath(root, worktreeId);
   // A copied marker without its original sibling reservation is not a new root.
   if (!previous && existsSync(join(root, PHYSICAL_ROOT_MARKER))) throw physicalRootError();
   const reservation = previous ?? reservePhysicalRootRecord(root, { brainId, worktreeId, hostId: opts.hostId, coordinationPath });

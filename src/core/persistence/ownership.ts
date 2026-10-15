@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { realpathSync, statSync } from 'node:fs';
-import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { pipelined } from '../page-state/transactions.ts';
 import type { BrainEngine } from '../engine.ts';
 import { OperationError, opError } from '../ops/contract.ts';
@@ -11,14 +11,15 @@ import { discoverGitRoot } from '../sync-git.ts';
 import { cliOptsToProgressOptions, getCliOptions } from '../cli-options.ts';
 import type { ProgressOptions } from '../progress.ts';
 import { detectManifestScope, storedManifestScope, worktreeManifest, type StoredWorktreeManifest, type WorktreeManifest } from './worktree-manifest.ts';
-import { localHostId, persistenceHome } from './identity.ts';
+import { localHostId } from './identity.ts';
+import { coordinationLockPath } from './coordination-lock.ts';
 import type { SqlEngine, WriteRequest } from './model.ts';
 import { acquireNativeLock, tryAcquireNativeLock, type NativeLockHandle } from './native-lock.ts';
 import { acquireShared, deferToLease, exclusiveAcquired, joinLease, yieldLease } from './worktree-lease.ts';
 import { managedFilesystemDatastorePath, refreshManagedFilesystemRoots } from './filesystem-guard.ts';
 import { assertPhysicalRoot, claimPhysicalRoot, preparePhysicalRootTransfer, readPhysicalRootReservation, restampPhysicalRoot } from './physical-root.ts';
 import { assertPhysicalRootReservation, readPhysicalRootStamp } from './physical-root-record.ts';
-import { canonicalFilesystemPath, nativeFilesystemPath } from './root-registry.ts';
+import { nativeFilesystemPath } from './root-registry.ts';
 import { assertWriterAdminState } from './admin-intent.ts';
 import { readGraduationRow } from './graduation-schema.ts';
 import { assertWriterAdminUnlocked } from './admin-lock.ts';
@@ -101,7 +102,7 @@ export async function claimWorktree(engine: BrainEngine, sourceId: string, path:
   // outside any source directory, so reclone cannot produce a second inode.
   const existingPhysical = readPhysicalRootReservation(root);
   const candidateId = existingPhysical?.worktreeId ?? randomUUID();
-  const lockPath = existingPhysical?.coordinationPath ?? canonicalFilesystemPath(join(persistenceHome(), 'locks', `${candidateId}.lock`));
+  const lockPath = existingPhysical?.coordinationPath ?? coordinationLockPath(root, candidateId);
   const probe = await tryAcquireNativeLock(lockPath);
   if (!probe) throw opError('writer_lock_unavailable', 'Cannot acquire the new worktree coordination lock.',
     `Another gbrain process holds the coordination lock for this checkout, so source ${sourceId} was not claimed. Check writer status and run the claim again once that process has finished.`,
@@ -350,7 +351,7 @@ export async function acceptWriterTransfer(engine: BrainEngine, sourceId: string
   if (opts.selfTransfer && root !== binding.local_path) throw opError('source_changed', 'Self-transfer must target the recorded canonical path.',
     `A self-transfer of source ${sourceId} only repairs its recorded checkout, so nothing was accepted. Pass --path ${binding.local_path ?? 'with the recorded canonical path from writer status'} instead.`,
     { fix: writerStatusFix(sourceId) });
-  const coordination = opts.selfTransfer ? binding.coordination_path : readPhysicalRootReservation(root)?.coordinationPath ?? join(persistenceHome(), 'locks', `${binding.worktree_id}.lock`);
+  const coordination = opts.selfTransfer ? binding.coordination_path : readPhysicalRootReservation(root)?.coordinationPath ?? coordinationLockPath(root, binding.worktree_id);
   if (!coordination) throw opError('recovery_required', 'The recorded coordination path is missing.',
     `Source ${sourceId}'s host binding has no coordination lock path, so no transfer was accepted. Inspect writer status and show it to the user; repairing the binding is a deliberate topology change (docs/architecture/topologies.md).`,
     { fix: writerStatusFix(sourceId) });

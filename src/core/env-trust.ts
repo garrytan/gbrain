@@ -176,6 +176,7 @@ export const CWD_DOTENV_PROTECTED_KEYS: readonly string[] = [
   'GBRAIN_JOB_CHILD_CLI',            // CLI the job-isolation worker spawns per job
   'GBRAIN_BIN_OVERRIDE',             // gbrain binary used by claw-test
   // --- root / registry redirect ------------------------------------------
+  'GBRAIN_COORDINATION_HOME',        // relocates stable checkout coordination locks
   'GBRAIN_HOME',                     // relocates ~/.gbrain (config, .env, keys, registry)
   'GBRAIN_MOUNTS_PATH',              // brain mounts registry file
   'GBRAIN_WORKER_STATUS_PATH',
