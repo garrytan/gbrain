@@ -1,3 +1,4 @@
+import { isSingleInputOverLengthError } from './ai/embed-overlength.ts';
 // ─────────────────────────────────────────────────────────────────
 // Sync failure ledger — issue #1939 (was "Bug 9" in src/core/sync.ts)
 // ─────────────────────────────────────────────────────────────────
@@ -277,7 +278,7 @@ export function classifyErrorCode(errorMsg: string): string {
   if (/insufficient_quota|quota exceeded|exceeded.*quota|credit balance is too low|billing|EMBEDDING_QUOTA/i.test(errorMsg)) {
     return 'EMBEDDING_QUOTA';
   }
-  if (/maximum context length|max_tokens|context length|input too long|input length exceeds|tokens? exceed|too many tokens|EMBEDDING_OVERSIZE/i.test(errorMsg)) {
+  if (isSingleInputOverLengthError(errorMsg) || /maximum context length|max_tokens|context length|input too long|input length exceeds|tokens? exceed|too many tokens|EMBEDDING_OVERSIZE/i.test(errorMsg)) {
     return 'EMBEDDING_OVERSIZE';
   }
 

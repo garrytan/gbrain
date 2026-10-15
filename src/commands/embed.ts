@@ -45,6 +45,7 @@ import {
 } from '../core/pace-mode.ts';
 import { tryAcquireDbLock, type DbLockHandle } from '../core/db-lock.ts';
 import { embedBackfillLockId } from '../core/embed-backfill-lock.ts';
+import { isSingleInputOverLengthError } from '../core/ai/embed-overlength.ts';
 import { AITransientError } from '../core/ai/errors.ts';
 import { resolveEmbedConcurrency } from '../core/embed-concurrency.ts';
 export { resolveEmbedConcurrency, _resetEmbedConcurrencyClampWarningForTest } from '../core/embed-concurrency.ts';
@@ -2240,7 +2241,7 @@ async function embedPageTexts(
     if (texts.length <= 1) throw e; // nothing to isolate
     // #3374 — network-transient exhaustion isn't chunk-specific either:
     // fanning out during an outage multiplies failing calls per page.
-    if (isEmbedRetriableError(e) || isTransientNetworkEmbedError(e) || e instanceof AITransientError) throw e;
+    if (isEmbedRetriableError(e) || isTransientNetworkEmbedError(e) || e instanceof AITransientError && !isSingleInputOverLengthError(e)) throw e;
     const status = statusFromCause(e);
     if (status === 401 || status === 403) throw e;
 

@@ -114,6 +114,19 @@ describe('#3037 — one bad chunk no longer darkens its page', () => {
     expect(stamps).toHaveLength(0);
   });
 
+  test('a permanent overflow in a transient wrapper still isolates usable sibling chunks', async () => {
+    embedBatchBehavior = async texts => {
+      if (texts.length > 1 || texts[0] === 'BAD') throw new AITransientError('input length exceeds the context length', { status: 500 });
+      return texts.map(() => new Float32Array(1536));
+    };
+    const stale = THREE_CHUNKS.map(c => ({ ...c, slug: 'poisoned-page', model: null, source_id: 'default', page_id: 1 }));
+    const engine = mockEngine({ countStaleChunks: async () => 3, listStaleChunks: async () => stale, getChunks: async () => THREE_CHUNKS });
+    const result = await runEmbedCore(engine, { stale: true });
+    expect(result.embedded).toBe(2);
+    expect(embeddingUpdates(engine)).toHaveLength(2);
+    expect(embedCalls.map(c => c.length)).toEqual([3, 1, 1, 1]);
+  });
+
   test('--all: same isolation on the listPages path', async () => {
     oneBadChunkBehavior();
     const engine = mockEngine({

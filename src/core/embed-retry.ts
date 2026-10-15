@@ -12,6 +12,7 @@
  * historical import sites and tests never chase the peel.
  */
 
+import { isSingleInputOverLengthError } from './ai/embed-overlength.ts';
 import { embedBatch } from './embedding.ts';
 import { isEmbeddingZeroNormError, type EmbeddingZeroNormError } from './ai/embedding-guard.ts';
 import { serr } from './console-prefix.ts';
@@ -275,6 +276,7 @@ export async function embedBatchKeepingUsable(texts: string[], opts: EmbedBatchW
  * providers whose wrappers strip `cause.status`.
  */
 export function isEmbedRetriableError(e: unknown): boolean {
+  if (isSingleInputOverLengthError(e)) return false;
   if (isEmbeddingZeroNormError(e)) return false; // #4616: terminal per item, never retried
   const msg = e instanceof Error ? e.message : String(e);
   return (
@@ -315,6 +317,7 @@ export function transientBackoffMs(attempt: number, rng: () => number = Math.ran
  * @internal exported for unit tests.
  */
 export function isTransientNetworkEmbedError(e: unknown): boolean {
+  if (isSingleInputOverLengthError(e)) return false;
   if (isEmbeddingZeroNormError(e)) return false;
   const TRANSIENT_CODES = /^(DNS_ETIMEOUT|ETIMEOUT|ETIMEDOUT|ESOCKETTIMEDOUT|ECONNRESET|EPIPE|ECONNABORTED|EAI_AGAIN|UND_ERR_CONNECT_TIMEOUT|UND_ERR_HEADERS_TIMEOUT|UND_ERR_BODY_TIMEOUT|UND_ERR_SOCKET)$/;
   let cur: unknown = e;

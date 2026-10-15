@@ -90,9 +90,9 @@ describe('recognising a single-input over-length rejection', () => {
     expect(isSingleInputOverLengthError(http(400, 'Incorrect API key provided'))).toBe(false);
     expect(isSingleInputOverLengthError(http(400, 'model not found: nomic-embed-text'))).toBe(false);
     expect(isSingleInputOverLengthError(http(404, 'input length exceeds the context length'))).toBe(false);
-    expect(isSingleInputOverLengthError(http(500, 'input length exceeds the context length'))).toBe(false);
+    expect(isSingleInputOverLengthError(http(500, 'input length exceeds the context length'))).toBe(true);
     expect(isSingleInputOverLengthError(http(429, 'rate limit exceeded; token limit exceeded for the minute'))).toBe(false);
-    expect(isSingleInputOverLengthError(new Error('input length exceeds the context length'))).toBe(false);
+    expect(isSingleInputOverLengthError(new Error('input length exceeds the context length'))).toBe(true);
     expect(isSingleInputOverLengthError(null)).toBe(false);
   });
 
@@ -142,12 +142,12 @@ describe('healPageAfterOverLength against a PGLite brain', () => {
     return prepared.snapshot;
   }
 
-  test('a recognised over-length 400 on an undeclared model learns the cap, splits the page now, and the pieces fit', async () => {
+  for (const status of [400, 500, 503]) test(`over-length ${status} learns the cap and splits the page under its guard`, async () => {
     await withoutChunkTokenEnv(async () => {
       const body = fatParagraph(40);
       const snapshot = await seed('overlength-a', body);
       expect(resolveMaxChunkTokens()).toBe(DEFAULT_MAX_CHUNK_TOKENS);
-      const err = http(400, 'Input length 1460 exceeds maximum allowed token size 512');
+      const err = http(status, 'Input length 1460 exceeds maximum allowed token size 512');
       const outcome = await healPageAfterOverLength(engine, 'overlength-a', 'default', err, [body]);
       expect(outcome).toMatchObject({ kind: 'healed', cap: 307 });
       expect(outcome.kind === 'healed' && outcome.splitCount).toBe(1);
@@ -196,7 +196,7 @@ describe('healPageAfterOverLength against a PGLite brain', () => {
       const before = await engine.getChunks('overlength-c');
       for (const err of [
         http(400, 'Incorrect API key provided'),
-        http(500, 'input length exceeds the context length'),
+        http(500, 'Internal server error'),
         http(400, 'Too many tokens overall, split into more batches.'),
         new Error('socket hang up'),
       ]) {
