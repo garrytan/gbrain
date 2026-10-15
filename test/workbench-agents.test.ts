@@ -7,7 +7,8 @@ import * as XLSX from 'xlsx';
 import { defaultAssistant } from '../shared/workbench';
 import { WorkbenchStore } from '../src/product/workbench/store';
 import { WorkbenchAgentStore, compatibleSkill, scheduleOccurrence } from '../src/product/workbench/agents';
-import { readLocalFile, listLocalFiles, saveWorkbenchArtifact } from '../src/product/workbench/files';
+import { agentAvatar, agentRoleLabel } from '../shared/workbench-agents';
+import { readLocalFile, listLocalFiles, saveWorkbenchArtifact, publishArtifactToSource, artifactFilename } from '../src/product/workbench/files';
 
 const fixture = () => mkdtempSync(join(tmpdir(), 'pmbrain-agent-test-'));
 test('legacy assistant and conversations remain available while specialist settings persist separately', () => {
@@ -16,6 +17,11 @@ test('legacy assistant and conversations remain available while specialist setti
   const store = new WorkbenchAgentStore(legacy);
   expect(store.get('main').name).toBe('我的知识助手');
   const agent = store.create({ name: '周报助手', systemPrompt: '只写有依据的工作', workflow: '查本周工作，分清完成与计划', skills: ['weekly-report'], sourceIds: ['work'] });
+  expect(agent.emoji).toBe('周');
+  expect(agentAvatar({ id: agent.id, name: agent.name, emoji: '知' })).toBe('周');
+  expect(agentRoleLabel(agent.id)).toBe('专用助手');
+  expect(agentRoleLabel('main')).toBe('主助手');
+  expect(agentAvatar({ id: 'main', name: '知识库助手', emoji: '知' })).toBe('知');
   const reopened = new WorkbenchAgentStore(new WorkbenchStore(root));
   expect(reopened.get(agent.id).workflow).toContain('分清');
   expect(reopened.get(agent.id).skills).toEqual(['weekly-report']);
@@ -73,6 +79,53 @@ test('deliverables are real docx files, preserve citation provenance and are ide
   const xml = await zip.file('word/document.xml')!.async('string');
   expect(xml).toContain('完成需求评审'); expect(xml).toContain('work/projects/review');
   await expect(saveWorkbenchArtifact(store, { ...input, content: '错误引用 [9]' })).rejects.toThrow('引用');
+});
+
+test('周报成果写入主数据源本地目录，不覆盖已有不同文件，也不改原始资料', async () => {
+  const root = fixture();
+  const sourceDir = join(root, 'knowledge');
+  mkdirSync(sourceDir);
+  const original = join(sourceDir, '项目笔记.md');
+  writeFileSync(original, '原始资料保持不动');
+  const store = new WorkbenchAgentStore(new WorkbenchStore(join(root, 'store')));
+  const agent = store.create({ name: '周报助手', deliveryFormat: 'markdown', sourceIds: ['default'] });
+  const engine = {
+    getConfig: async () => null,
+    executeRaw: async (sql: string) => sql.includes('local_path') ? [{ id: 'default', local_path: sourceDir }] : [{ id: 'default' }],
+  } as any;
+  expect(artifactFilename('本周周报 (2026-10-12 至 2026-10-15)', 'docx')).toBe('本周周报 (2026-10-12 至 2026-10-15).docx');
+  const artifact = await saveWorkbenchArtifact(store, {
+    agent,
+    conversationId: '00000000-0000-4000-8000-000000000010',
+    messageId: '00000000-0000-4000-8000-000000000011',
+    title: '本周周报',
+    content: '已完成需求评审',
+    citations: [],
+  });
+  const published = await publishArtifactToSource(engine, agent, artifact);
+  expect(published).toEqual({ ok: true, path: join(sourceDir, '本周周报.md'), sourceId: 'default' });
+  expect(readFileSync(join(sourceDir, '本周周报.md'), 'utf8')).toContain('已完成需求评审');
+  expect(readFileSync(original, 'utf8')).toBe('原始资料保持不动');
+  const again = await publishArtifactToSource(engine, agent, artifact);
+  expect(again.ok && again.path).toBe(join(sourceDir, '本周周报.md'));
+  writeFileSync(join(sourceDir, '冲突.md'), '人工改过的文件');
+  const conflict = await saveWorkbenchArtifact(store, {
+    agent,
+    conversationId: '00000000-0000-4000-8000-000000000012',
+    messageId: '00000000-0000-4000-8000-000000000013',
+    title: '冲突',
+    content: '新的周报正文',
+    citations: [],
+  });
+  const renamed = await publishArtifactToSource(engine, agent, conflict);
+  expect(renamed).toEqual({ ok: true, path: join(sourceDir, '冲突 (2).md'), sourceId: 'default' });
+  expect(readFileSync(join(sourceDir, '冲突.md'), 'utf8')).toBe('人工改过的文件');
+  const missing = {
+    getConfig: async () => null,
+    executeRaw: async () => [{ id: 'default' }],
+  } as any;
+  const skipped = await publishArtifactToSource(missing, agent, artifact);
+  expect(skipped).toEqual({ ok: false, reason: '知识来源没有绑定可用的本地目录' });
 });
 
 test('local spreadsheet reads reuse the native parser and keep budget rows intact', async () => {

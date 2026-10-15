@@ -27,10 +27,18 @@ export interface WorkbenchArtifact {
   title: string;
   format: 'markdown' | 'docx';
   path: string;
+  publishedPath?: string;
   content: string;
   citations: WorkbenchCitation[];
   createdAt: string;
   hash: string;
+}
+export function agentRoleLabel(id: string) {
+  return id === 'main' ? '主助手' : '专用助手';
+}
+export function agentAvatar(input: { id: string; name: string; emoji: string }) {
+  if (input.id !== 'main' && input.emoji === '知') return [...input.name][0] || input.emoji;
+  return input.emoji;
 }
 export interface WorkbenchSkill {
   name: string;

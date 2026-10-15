@@ -284,7 +284,7 @@ export class WorkbenchService {
           reply.knowledge = result.knowledge ?? (conversation.knowledge ? (result.citations?.length ? 'used' : 'none') : 'off');
           if (result.stopReason) reply.stopReason = result.stopReason;
           reply.status = 'complete';
-          reply.artifacts = new WorkbenchAgentStore(this.store).artifacts().filter(item => item.conversationId === id && item.messageId === reply.id).map(({ id, title, format }) => ({ id, title, format }));
+          reply.artifacts = new WorkbenchAgentStore(this.store).artifacts().filter(item => item.conversationId === id && item.messageId === reply.id).map(({ id, title, format, publishedPath }) => ({ id, title, format, publishedPath }));
         }
       } catch (error) { if (opened && !abort.signal.aborted) { const failure = contextFailure(error); reply.status = 'error'; reply.error = failure.message; reply.errorCode = failure.code; } }
       finally {

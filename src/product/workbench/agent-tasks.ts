@@ -1,16 +1,17 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { MinionJobContext } from '../../core/minions/types';
 import type { ProductTaskRuntime } from '../tasks/runtime';
+import type { BrainEngine } from '../../core/engine';
 import { WorkbenchAgentStore, scheduleOccurrence } from './agents';
 import type { WorkbenchService } from './service';
-import { saveWorkbenchArtifact } from './files';
+import { publishArtifactToSource, saveWorkbenchArtifact } from './files';
 import { TaskProgressAdapter } from '../tasks/progress-adapter';
 
 export interface WorkbenchAssistantTask { root: string; assistantId: string; conversationId: string; prompt: string; timeoutMs?: number }
 export class WorkbenchAgentCoordinator {
   private timer?: ReturnType<typeof setInterval>;
   private scanning = false;
-  constructor(private store: WorkbenchAgentStore, private service: WorkbenchService, private tasks: ProductTaskRuntime) {
+  constructor(private store: WorkbenchAgentStore, private service: WorkbenchService, private tasks: ProductTaskRuntime, private engine: BrainEngine) {
     tasks.attachWorkbenchAssistant((input, context) => this.execute(input, context), () => this.close());
   }
   start() {
@@ -80,9 +81,17 @@ export class WorkbenchAgentCoordinator {
       if (agent.skills.includes('weekly-report') && !reply.citations?.length) throw new Error('缺少可核对的工作材料，请在任务对话补充资料后继续');
       if (!artifacts.length) {
         artifacts = [await saveWorkbenchArtifact(this.store, { agent, conversationId: initial.id, messageId: reply.id, title: `${agent.name}成果`, content: reply.text, citations: reply.citations ?? [], signal })];
-        reply.artifacts = artifacts.map(({ id, title, format }) => ({ id, title, format })); this.store.workbench.save(conversation);
       }
-      return { assistantId: agent.id, assistantName: agent.name, conversationId: conversation.id, artifacts: artifacts.map(({ id, title, format }) => ({ id, title, format })), status: 'completed' };
+      artifacts = await Promise.all(artifacts.map(async artifact => {
+        const published = await publishArtifactToSource(this.engine, agent, artifact);
+        if (!published.ok) return artifact;
+        const next = { ...artifact, publishedPath: published.path };
+        this.store.recordArtifact(next);
+        return next;
+      }));
+      reply.artifacts = artifacts.map(({ id, title, format, publishedPath }) => ({ id, title, format, publishedPath }));
+      this.store.workbench.save(conversation);
+      return { assistantId: agent.id, assistantName: agent.name, conversationId: conversation.id, artifacts: artifacts.map(({ id, title, format, publishedPath }) => ({ id, title, format, publishedPath })), status: 'completed' };
     } finally { clearInterval(progressTimer); await progressPending; signal.removeEventListener('abort', cancel); }
   }
 }

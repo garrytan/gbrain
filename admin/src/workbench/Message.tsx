@@ -9,7 +9,7 @@ import { workbenchRequest } from './useWorkbench';
 import { downloadArtifact, ArtifactPreview } from './Artifacts';
 import { AgentCards } from './AgentCards';
 
-export function Message({ message, assistantName, assistantEmoji, canRetry, onRetry, canEdit, onEdit, agents, onAgent, onConversation }: { message: WorkbenchMessage; assistantName: string; assistantEmoji: string; canRetry: boolean; onRetry: () => void; canEdit?: boolean; onEdit?: () => void; agents?: WorkbenchAgent[]; onAgent?: (id: string) => void; onConversation?: (id: string) => void }) {
+export function Message({ message, assistantName, assistantEmoji, assistantRole, canRetry, onRetry, canEdit, onEdit, agents, onAgent, onConversation }: { message: WorkbenchMessage; assistantName: string; assistantEmoji: string; assistantRole?: string; canRetry: boolean; onRetry: () => void; canEdit?: boolean; onEdit?: () => void; agents?: WorkbenchAgent[]; onAgent?: (id: string) => void; onConversation?: (id: string) => void }) {
   const modelLabel = message.modelName || message.model;
   const [now,setNow]=useState(Date.now());
   const [origins,setOrigins]=useState<Record<number,string>>({});
@@ -17,16 +17,16 @@ export function Message({ message, assistantName, assistantEmoji, canRetry, onRe
   const [artifactError, setArtifactError] = useState('');
   useEffect(()=>{if(message.status!=='running')return;const timer=setInterval(()=>setNow(Date.now()),1000);return()=>clearInterval(timer);},[message.status]);
   const waitingSeconds=message.request?Math.max(0,Math.floor((now-Date.parse(message.request.startedAt))/1000)):0;
-  return <article className={`wb-message wb-${message.role}`} aria-label={message.role === 'user' ? '你的消息' : '助手回答'}>
+  return <article className={`wb-message wb-${message.role}`} data-kind={message.role === 'assistant' ? (assistantRole === '主助手' ? 'main' : 'specialist') : undefined} aria-label={message.role === 'user' ? '你的消息' : '助手回答'}>
     <div className="wb-avatar">{message.role === 'user' ? <User size={17} /> : <span>{assistantEmoji}</span>}</div>
-    <div className="wb-message-body"><header><strong>{message.role === 'user' ? '你' : assistantName}</strong><span>{message.role === 'assistant' ? modelLabel : new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></header>
+    <div className="wb-message-body"><header><strong>{message.role === 'user' ? '你' : assistantName}</strong><span>{message.role === 'assistant' ? `${assistantRole ? `${assistantRole} · ` : ''}${modelLabel}` : new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></header>
       {message.knowledge === 'none' && message.status === 'complete' && <p className="wb-notice">这次没有从知识库检索到相关资料。下面的内容是模型基于一般知识的回答，请再核对。</p>}
       {!!message.attachments?.length && <ul className="wb-attachments">{message.attachments.map(item => <li key={item.id} className={item.preview ? 'wb-thumb' : 'wb-file-card'}>{item.preview ? <img src={item.preview} alt={item.name} /> : <span className="wb-attachment-name">{item.name}</span>}{item.note && <small className="wb-attachment-note">{item.note}</small>}</li>)}</ul>}{!!message.toolCalls?.length && <ToolActivity calls={message.toolCalls} />}{message.text && <MarkdownArticle markdown={message.text} citations={message.role === 'assistant' ? message.citations : undefined} />}
       {message.status === 'running' && <p className="wb-progress" role="status"><i />{message.stage || '正在生成回答…'}{message.request&&waitingSeconds>=5?` · 已等待 ${waitingSeconds} 秒`:''}</p>}
       {message.status === 'error' && <p className="wb-error" role="alert">{message.error}</p>}
       {message.status === 'cancelled' && <p className="wb-muted">已停止生成，可以重试或继续提问。</p>}
       {agents && onAgent && onConversation && <AgentCards calls={message.toolCalls ?? []} agents={agents} onAgent={onAgent} onConversation={onConversation} />}
-      {!!message.artifacts?.length && <div className="wb-deliverables">{message.artifacts.map(item => <div className="wb-artifact-card" key={item.id}><button className="wb-artifact-open" aria-label={`预览 ${item.title}`} onClick={() => setPreview(item.id)}><FileText size={24} /><span><strong>{item.title}</strong><small>{item.format === 'docx' ? 'Word 文档' : 'Markdown'} · 点击预览</small></span></button><button aria-label={`下载 ${item.title}`} title="下载文件" onClick={() => { setArtifactError(''); void downloadArtifact(item.id).catch(error => setArtifactError(String(error))); }}><Download size={16} /></button></div>)}</div>}
+      {!!message.artifacts?.length && <div className="wb-deliverables">{message.artifacts.map(item => <div className="wb-artifact-card" key={item.id}><button className="wb-artifact-open" aria-label={`预览 ${item.title}`} onClick={() => setPreview(item.id)}><FileText size={24} /><span><strong>{item.title}</strong><small>{item.publishedPath ? `已保存到 ${item.publishedPath}` : `${item.format === 'docx' ? 'Word 文档' : 'Markdown'} · 点击预览`}</small></span></button><button aria-label={`下载 ${item.title}`} title="下载文件" onClick={() => { setArtifactError(''); void downloadArtifact(item.id).catch(error => setArtifactError(String(error))); }}><Download size={16} /></button></div>)}</div>}
       {artifactError && <p className="wb-error" role="alert">{artifactError}</p>}
       {preview && <ArtifactPreview key={preview} id={preview} onClose={() => setPreview(undefined)} />}
       {message.stopReason === 'length' && message.status === 'complete' && <p className="wb-notice">回答因模型长度限制未能一次写完。你可以发送「继续」接着写。</p>}
