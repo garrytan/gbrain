@@ -379,7 +379,11 @@ export const SAVED_FACT_HAYSTACK_SQL = `lower(f.fact || ' ' || COALESCE(f.entity
  * page search never returns them (gbrain-evals Cat 40: agents saved a
  * correction with remember and the next session's search missed it). This
  * finds active facts whose text or entity shares at least three quarters of the query's words,
- * under the same source scope and visibility rules recall applies.
+ * under the same source scope and visibility rules recall applies: the five with the most of the
+ * words, newest first among equals. The statement applies the threshold and picks the five; it
+ * used to fetch the 200 newest facts sharing ANY word and apply both here, which dropped a
+ * qualifying fact older than the 200th and fetched and visibility-checked rows it then discarded
+ * (#6721).
  */
 async function matchingSavedFacts(ctx: OperationContext, scope: SourceScope, queryText: string, aliases: AliasDeclaration[] = []): Promise<SavedFactMatch[]> {
   // A query naming one of two declared names also matches facts saved under the other.
@@ -404,26 +408,33 @@ async function matchingSavedFacts(ctx: OperationContext, scope: SourceScope, que
       [sources, [...AUDIT_ROW_SOURCES]],
     );
     if (any.length === 0) return [];
-    const rows = await ctx.engine.executeRaw<SavedFactMatch & { haystack: string }>(
-      `SELECT f.id, f.fact, f.entity_slug, f.kind, f.valid_from::text AS valid_from, f.source,
-         ${SAVED_FACT_HAYSTACK_SQL} AS haystack
-       FROM facts f
-       WHERE f.source_id = ANY($1::text[])
-         AND f.expired_at IS NULL AND (f.valid_until IS NULL OR f.valid_until > now())
-         AND f.source != ALL($2::text[])
-         AND ${SAVED_FACT_HAYSTACK_SQL} LIKE ANY($3::text[])
+    // Text first, visibility on the survivors. `matched` answers LIKE ANY from idx_facts_match_trgm and
+    // lowercases each matching fact once; `scored` counts the words each contains (one bound LIKE per
+    // word, summed; the SQL text varies with the word count, never with the words). Materializing
+    // `matched` keeps the visibility joins below the threshold: the planner cannot estimate the summed
+    // count, and left to itself it scanned every fact to sort before those joins (#6721).
+    const hits = terms.map((_, i) => `(m.haystack LIKE ($3::text[])[${i + 1}])::int`).join(' + ');
+    const rows = await ctx.engine.executeRaw<SavedFactMatch>(
+      `WITH matched AS MATERIALIZED (
+         SELECT f.id, ${SAVED_FACT_HAYSTACK_SQL} AS haystack
+         FROM facts f
+         WHERE f.source_id = ANY($1::text[])
+           AND f.expired_at IS NULL AND (f.valid_until IS NULL OR f.valid_until > now())
+           AND f.source != ALL($2::text[])
+           AND ${SAVED_FACT_HAYSTACK_SQL} LIKE ANY($3::text[])
+       ), scored AS (
+         SELECT m.id, ${hits} AS hits FROM matched m
+       )
+       SELECT f.id, f.fact, f.entity_slug, f.kind, f.valid_from::text AS valid_from, f.source
+       FROM scored s JOIN facts f ON f.id = s.id
+       WHERE s.hits >= $4::int
          ${visibility}
-       ORDER BY f.valid_from DESC, f.id DESC
-       LIMIT 200`,
-      [sources, [...AUDIT_ROW_SOURCES], terms.map(t => `%${t.replace(/[\\%_]/g, m => `\\${m}`)}%`)],
+       ORDER BY s.hits DESC, f.valid_from DESC, f.id DESC
+       LIMIT 5`,
+      [sources, [...AUDIT_ROW_SOURCES], terms.map(t => `%${t.replace(/[\\%_]/g, m => `\\${m}`)}%`),
+        Math.max(Math.min(2, terms.length), Math.ceil(terms.length * 0.75))],
     );
-    const need = Math.max(Math.min(2, terms.length), Math.ceil(terms.length * 0.75));
-    return rows
-      .map(r => ({ r, hits: terms.filter(t => r.haystack.includes(t)).length }))
-      .filter(x => x.hits >= need)
-      .sort((a, b) => b.hits - a.hits)
-      .slice(0, 5)
-      .map(({ r: { haystack: _h, ...fact } }) => ({ ...fact, id: Number(fact.id) }));
+    return rows.map(fact => ({ ...fact, id: Number(fact.id) }));
   } catch {
     return [];
   }
