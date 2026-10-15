@@ -23,7 +23,7 @@ import {
   MigrationsRunningError,
   type MigrationOrchestrationLock,
 } from '../core/migration-orchestration-lock.ts';
-import { loadCompletedMigrations, appendCompletedMigration, type CompletedMigrationEntry } from '../core/preferences.ts';
+import { loadCompletedMigrations, appendCompletedMigration, preferencesPaths, type CompletedMigrationEntry } from '../core/preferences.ts';
 import { migrations, compareVersions, type Migration, type OrchestratorOpts } from './migrations/index.ts';
 import { setRunEngineSharing, withRunEngineSession } from './migrations/run-engine.ts';
 import { migrationDeclinedError, readDeclinedMigrations } from './migrations/opt-out.ts';
@@ -321,7 +321,7 @@ function printList(plan: Plan, installed: string, dbProbe: DbProbeOutcome): void
   const needsWork = plan.pending.length + plan.partial.length;
   const setup = plan.pending_fresh_install.length;
   for (const m of plan.declined) console.log(`v${m.version} is declined by config (${m.optOut?.key} is false); turn it back on: gbrain config set ${m.optOut?.key} true`);
-  for (const m of plan.wedged) console.log(`v${m.version} is wedged (${MAX_CONSECUTIVE_PARTIALS}+ consecutive partial runs). Fix the cause in ~/.gbrain/upgrade-errors.jsonl, then: ${shellQuote(forceRetryArgv(m.version))}`);
+  for (const m of plan.wedged) console.log(`v${m.version} is wedged (${MAX_CONSECUTIVE_PARTIALS}+ consecutive partial runs). Read the partial entries in ${preferencesPaths.completedJsonl()} (phases[].detail), fix the cause, then: ${shellQuote(forceRetryArgv(m.version))}`);
   if (needsWork === 0 && setup === 0 && plan.wedged.length === 0) {
     console.log('All migrations up to date.');
     return;
@@ -972,10 +972,10 @@ function failWedged(report: RunReport): number | undefined {
   report.doc.wedged = wedged.map(m => m.version);
   report.failure = opError('migrations_pending',
     `Migration ${versions} is wedged (${MAX_CONSECUTIVE_PARTIALS}+ consecutive partial runs with no completion), so the run did not complete every migration.`,
-    `Read ~/.gbrain/upgrade-errors.jsonl for the last failure, fix its cause, then clear it with \`${shellQuote(forceRetryArgv(wedged[0]!.version))}\` and run \`gbrain apply-migrations --yes\` again. Ask the user first.`,
+    `Read the partial entries in ${preferencesPaths.completedJsonl()} (phases[].detail) for the last failure, fix its cause, then clear it with \`${shellQuote(forceRetryArgv(wedged[0]!.version))}\` and run \`gbrain apply-migrations --yes\` again. Ask the user first.`,
     { reason: 'wedged', fix: { ask_user: true, argv: forceRetryArgv(wedged[0]!.version), consent: [], actor: 'agent', requires_exclusive: true,
       why: `Writes a 'retry' marker so the next run re-attempts v${wedged[0]!.version}; without fixing the cause the run partials again.`,
-      user_message: `gbrain migration ${versions} failed ${MAX_CONSECUTIVE_PARTIALS} or more times in a row. Fix the cause named in ~/.gbrain/upgrade-errors.jsonl, then clear it with ${shellQuote(forceRetryArgv(wedged[0]!.version))} and run gbrain apply-migrations --yes. Clear it now?`,
+      user_message: `gbrain migration ${versions} failed ${MAX_CONSECUTIVE_PARTIALS} or more times in a row. Read the partial entries in ${preferencesPaths.completedJsonl()} (phases[].detail), fix the cause, then clear it with ${shellQuote(forceRetryArgv(wedged[0]!.version))} and run gbrain apply-migrations --yes. Clear it now?`,
       verify: { argv: ['gbrain', COMMAND, '--list', '--json'] } } });
   return 1;
 }
@@ -989,7 +989,7 @@ function reportWedgedMigrations(wedged: readonly Migration[], superseded: readon
   for (const m of wedged) {
     console.error(
       `\nMigration v${m.version} is WEDGED (${MAX_CONSECUTIVE_PARTIALS}+ consecutive partials with no completion). ` +
-      `Check ~/.gbrain/upgrade-errors.jsonl for the last failure reasons, fix the underlying issue, then run:\n` +
+      `Check the partial entries in ${preferencesPaths.completedJsonl()} (phases[].detail) for the last failure reasons, fix the underlying issue, then run:\n` +
       `  gbrain apply-migrations --force-retry ${m.version}\n` +
       `Then run \`gbrain apply-migrations\` again (it asks for any approval the migration needs).`,
     );
