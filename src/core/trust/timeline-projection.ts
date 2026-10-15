@@ -55,6 +55,24 @@ export async function addProjectedTimelineBatch(engine: BrainEngine, rows: Timel
   return inserted;
 }
 
+/**
+ * One page's own timeline rows as one projected batch, so a page costs a fixed
+ * number of round trips whatever its timeline length. A batch the database
+ * refuses (one bad row fails the whole statement) is retried row by row, so the
+ * page's other rows still land. Returns the rows inserted.
+ */
+export async function addProjectedTimelinePage(engine: BrainEngine, rows: TimelineBatchInput[], opts?: BatchOpts): Promise<number> {
+  try {
+    return await addProjectedTimelineBatch(engine, rows, opts);
+  } catch {
+    let inserted = 0;
+    for (const { slug, source_id, date, source, summary, detail } of rows) {
+      try { if (await addProjectedTimelineEntry(engine, slug, { date, source, summary, detail }, { sourceId: source_id ?? 'default' })) inserted++; } catch { /* the refused row */ }
+    }
+    return inserted;
+  }
+}
+
 /** addTimelineEntry for one row of `slug`'s own timeline, stamped with the page's tier. */
 export async function addProjectedTimelineEntry(engine: BrainEngine, slug: string,
   entry: TimelineInput, opts?: { sourceId?: string }): Promise<boolean> {
