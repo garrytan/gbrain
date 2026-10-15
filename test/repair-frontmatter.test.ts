@@ -50,7 +50,6 @@ const folded = (n: number) => `---\ntitle: alice-example post ${n}\nsecond line 
 const UNFIXABLE = '---\ntitle: Broken\n  author: nobody\n tags: [a\n---\nBody.\n';
 const LONG = Array.from({ length: 40 }, (_, i) => `Line ${i} of a long synthetic observation that keeps Git rename detection certain.`).join('\n');
 const long = (title: string) => `---\ntitle: ${title}\n---\n${LONG}\n`;
-const longBroken = `---\ntitle: alice-example first line\nalice-example second line\n---\n${LONG}\n`;
 
 beforeAll(async () => {
   if (backends.includes('pglite')) { const engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); engines.push(engine); }
@@ -306,10 +305,12 @@ test('repair paths are confined: climbing, absolute and symlinked paths are refu
 });
 
 test('a held renamed file: the repair moves the old page with its id instead of creating a second page', () => each(async engine => {
-  const s = await managed(engine, { 'notes/old.md': long('Old') });
+  const s = await managed(engine, { 'notes/old.md': long('Old').replace('title: Old', 'title: Old\nslug: notes/old') });
   await s.sync();
   const page = (await engine.getPage('notes/old', { sourceId: s.id }))!;
-  git(s.root, 'mv', 'notes/old.md', 'notes/new.md'); s.write('notes/new.md', longBroken); commit(s.root, 'rename to broken');
+  // Exact rename, held by the old explicit slug; repair removes that stale slug.
+  git(s.root, 'mv', 'notes/old.md', 'notes/new.md'); commit(s.root, 'rename to slug conflict');
+  expect(git(s.root, 'diff', '--name-status', '-M', 'HEAD~1', 'HEAD')).toMatch(/^R100\t/);
   await s.sync();
   expect((await s.holds())[0]).toMatchObject({ path: 'notes/new.md', meta: { rename_from: { slug: 'notes/old', pageId: page.id } } });
   const preview = await s.run({ includeAmbiguous: true });
@@ -323,10 +324,10 @@ test('a held renamed file: the repair moves the old page with its id instead of 
 }), 180_000);
 
 test('a rename held because the old page changed is re-bound to its current revision only under --include-ambiguous', () => each(async engine => {
-  const s = await managed(engine, { 'notes/x.md': long('X') });
+  const s = await managed(engine, { 'notes/x.md': long('X').replace('title: X', 'title: X\nslug: notes/x') });
   await s.sync();
   const x = (await engine.getPage('notes/x', { sourceId: s.id }))!;
-  git(s.root, 'mv', 'notes/x.md', 'notes/y.md'); s.write('notes/y.md', longBroken); commit(s.root, 'x to y broken');
+  git(s.root, 'mv', 'notes/x.md', 'notes/y.md'); commit(s.root, 'x to y slug conflict');
   await s.sync();
   await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
   await engine.executeRaw('UPDATE pages SET knowledge_revision=gen_random_uuid() WHERE id=$1', [x.id]);

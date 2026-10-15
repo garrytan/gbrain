@@ -159,11 +159,13 @@ test('slug conflicts and over-size files are held, and a slug conflict re-screen
 
 test('a rename onto a broken file keeps the old page through a full sync and moves it with its id once fixed', () => eachEngine(async () => {
   const body = Array.from({ length: 30 }, (_, i) => `Line ${i} of a synthetic note that keeps the rename detectable.`).join('\n');
-  const { id, root } = await source({ 'notes/old.md': `---\ntitle: Old\n---\n${body}\n` });
+  const { id, root } = await source({ 'notes/old.md': `---\ntitle: Old\nslug: notes/old\n---\n${body}\n` });
   await sync(id, root);
   const original = await page(id, 'notes/old');
   git(root, 'mv', 'notes/old.md', 'notes/new.md');
-  write(root, { 'notes/new.md': `---\ntitle: alice-example first line\nalice-example second line\n---\n${body}\n` }, 'rename and break');
+  // Byte-identical rename, held because the old explicit slug no longer matches.
+  write(root, {}, 'rename to slug conflict');
+  expect(git(root, 'diff', '--name-status', '-M', 'HEAD~1', 'HEAD')).toMatch(/^R100\t/);
   const renamed = await sync(id, root);
   expect(renamed.status).toBe('synced');
   expect(await page(id, 'notes/old')).toMatchObject({ id: original.id, source_path: 'notes/old.md', deleted_at: null });
@@ -185,17 +187,18 @@ test('a rename onto a broken file keeps the old page through a full sync and mov
 
 test('a held rename carries its origin across a chained rename, and an edited old page holds as rename_held', async () => eachEngine(async () => {
   const body = Array.from({ length: 30 }, (_, i) => `Line ${i} of a synthetic note that keeps the rename detectable.`).join('\n');
-  const broken = `---\ntitle: alice-example first line\nalice-example second line\n---\n${body}\n`;
-  const { id, root } = await source({ 'notes/a.md': `---\ntitle: A\n---\n${body}\n`, 'notes/x.md': `---\ntitle: X\n---\n${body}\n` });
+  const { id, root } = await source({ 'notes/a.md': `---\ntitle: A\nslug: notes/a\n---\n${body}\n`, 'notes/x.md': `---\ntitle: X\nslug: notes/x\n---\n${body}\n` });
   await sync(id, root);
   const a = await page(id, 'notes/a'), x = await page(id, 'notes/x');
   git(root, 'mv', 'notes/a.md', 'notes/b.md'); git(root, 'mv', 'notes/x.md', 'notes/y.md');
-  write(root, { 'notes/b.md': broken, 'notes/y.md': broken }, 'rename both onto broken files');
+  write(root, {}, 'rename both to slug conflicts');
   await sync(id, root);
   expect((await holds(id)).map(h => h.path).sort()).toEqual(['notes/b.md', 'notes/y.md']);
 
   git(root, 'mv', 'notes/b.md', 'notes/c.md');
-  write(root, { 'notes/c.md': `---\ntitle: C\n---\n${body}\n` }, 'rename the held file again, fixed');
+  write(root, {}, 'rename the held file again byte-for-byte');
+  await sync(id, root);
+  write(root, { 'notes/c.md': `---\ntitle: C\n---\n${body}\n` }, 'fix the held file');
   await sync(id, root);
   expect(await page(id, 'notes/c')).toMatchObject({ id: a.id, source_path: 'notes/c.md', deleted_at: null });
   expect((await holds(id)).map(h => h.path)).toEqual(['notes/y.md']);
@@ -210,11 +213,11 @@ test('a held rename carries its origin across a chained rename, and an edited ol
 
 test('a full sync holds a renamed file whose old page changed instead of importing it as a new page', async () => eachEngine(async () => {
   const body = Array.from({ length: 30 }, (_, i) => `Line ${i} of a synthetic note that keeps the rename detectable.`).join('\n');
-  const { id, root } = await source({ 'notes/x.md': `---\ntitle: X\n---\n${body}\n` });
+  const { id, root } = await source({ 'notes/x.md': `---\ntitle: X\nslug: notes/x\n---\n${body}\n` });
   await sync(id, root);
   const x = await page(id, 'notes/x');
   git(root, 'mv', 'notes/x.md', 'notes/y.md');
-  write(root, { 'notes/y.md': `---\ntitle: alice-example first line\nalice-example second line\n---\n${body}\n` }, 'rename onto a broken file');
+  write(root, {}, 'rename to slug conflict');
   await sync(id, root);
   await engine.executeRaw('UPDATE pages SET knowledge_revision=gen_random_uuid() WHERE id=$1', [x.id]);
   write(root, { 'notes/y.md': `---\ntitle: Y\n---\n${body}\n` }, 'fix y after the old page changed');

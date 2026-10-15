@@ -35,7 +35,6 @@ const FOLDED = '---\ntitle: alice-example first line\nalice-example second line\
 const LONG = Array.from({ length: 40 }, (_, i) => `Line ${i} of a long synthetic observation that keeps Git rename detection certain.`).join('\n');
 /** Same long body, so Git still detects a rename when only the frontmatter changes. */
 const long = (title: string) => `---\ntitle: ${title}\n---\n${LONG}\n`;
-const longBroken = `---\ntitle: alice-example first line\nalice-example second line\n---\n${LONG}\n`;
 const AUTHOR = '---\ntitle: Payments roundup\nauthor: PYMNTS (citing Reuters / Bloomberg) (original: https://x.com/a/status/1)\n---\nA synthetic roundup.\n';
 
 beforeAll(async () => {
@@ -167,10 +166,12 @@ test('a sliced run that has not reached a held file leaves its hold untouched; a
 }), 180_000);
 
 test('renamed to a broken file keeps the old page, a later fix moves it with its id, and a full walk never deletes it meanwhile', () => each(async engine => {
-  const s = await source(engine, { 'notes/old.md': long('Old') });
+  const s = await source(engine, { 'notes/old.md': long('Old').replace('title: Old', 'title: Old\nslug: notes/old') });
   await s.sync();
   const page = (await engine.getPage('notes/old', { sourceId: s.id }))!;
-  git(s.root, 'mv', 'notes/old.md', 'notes/new.md'); s.write('notes/new.md', longBroken); commit(s.root, 'rename to broken');
+  // Exact moves preserve identity; the old explicit slug now refuses the destination.
+  git(s.root, 'mv', 'notes/old.md', 'notes/new.md'); commit(s.root, 'rename to slug conflict');
+  expect(git(s.root, 'diff', '--name-status', '-M', 'HEAD~1', 'HEAD')).toMatch(/^R100\t/);
   const held = await s.sync();
   expect(held.held?.[0]).toMatchObject({ path: 'notes/new.md', stale: false });
   expect((await s.holds())[0]!.meta.rename_from).toMatchObject({ slug: 'notes/old', pageId: page.id });
@@ -186,18 +187,23 @@ test('renamed to a broken file keeps the old page, a later fix moves it with its
 }), 240_000);
 
 test('a chained rename carries the held identity, and a changed old page keeps the rename held as rename_held', () => each(async engine => {
-  const s = await source(engine, { 'notes/a.md': long('A'), 'notes/x.md': long('X') });
+  const s = await source(engine, {
+    'notes/a.md': long('A').replace('title: A', 'title: A\nslug: notes/a'),
+    'notes/x.md': long('X').replace('title: X', 'title: X\nslug: notes/x'),
+  });
   await s.sync();
   const a = (await engine.getPage('notes/a', { sourceId: s.id }))!;
-  git(s.root, 'mv', 'notes/a.md', 'notes/b.md'); s.write('notes/b.md', longBroken); commit(s.root, 'a to b broken');
+  git(s.root, 'mv', 'notes/a.md', 'notes/b.md'); commit(s.root, 'a to b slug conflict');
   await s.sync();
-  git(s.root, 'mv', 'notes/b.md', 'notes/c.md'); s.write('notes/c.md', long('C')); commit(s.root, 'b to c fixed');
+  git(s.root, 'mv', 'notes/b.md', 'notes/c.md'); commit(s.root, 'b to c exact move');
+  await s.sync();
+  s.write('notes/c.md', long('C')); commit(s.root, 'fix c');
   await s.sync();
   expect((await engine.getPage('notes/c', { sourceId: s.id }))?.id).toBe(a.id);
   expect(await s.holds()).toEqual([]);
 
   const x = (await engine.getPage('notes/x', { sourceId: s.id }))!;
-  git(s.root, 'mv', 'notes/x.md', 'notes/y.md'); s.write('notes/y.md', longBroken); commit(s.root, 'x to y broken');
+  git(s.root, 'mv', 'notes/x.md', 'notes/y.md'); commit(s.root, 'x to y slug conflict');
   await s.sync();
   await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
   await engine.executeRaw('UPDATE pages SET knowledge_revision=gen_random_uuid() WHERE id=$1', [x.id]);

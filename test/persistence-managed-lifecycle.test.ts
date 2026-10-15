@@ -194,7 +194,7 @@ test('a renamed page keeps its id, inbound links and old slug; a moved file keep
   }
 }), 180_000);
 
-test('a rename that also edits the file moves the page and applies the new text', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+test('an inexact rename imports the new text independently instead of guessing page identity', async () => withEnv({ GBRAIN_HOME: home }, async () => {
   for (const engine of engines) {
     const f = await fixture(engine, { 'people/dana-example.md': person('Dana Example') + 'First version with plenty of stable text for rename detection.\n' });
     await performManagedSync(engine, { sourceId: f.id, noPull: true });
@@ -202,9 +202,9 @@ test('a rename that also edits the file moves the page and applies the new text'
     git(f.root, 'mv', 'people/dana-example.md', 'people/dana-example-2.md');
     write(f.root, 'people/dana-example-2.md', person('Dana Example') + 'First version with plenty of stable text for rename detection. Plus an edit.\n');
     commit(f.root, 'rename with edit');
-    expect(await performManagedSync(engine, { sourceId: f.id, noPull: true })).toMatchObject({ status: 'synced', renamed: 1 });
+    expect(await performManagedSync(engine, { sourceId: f.id, noPull: true })).toMatchObject({ status: 'synced', renamed: 0, added: 1, deleted: 1 });
     const page = await engine.getPage('people/dana-example-2', { sourceId: f.id });
-    expect(page?.id).toBe(id);
+    expect(page?.id).not.toBe(id);
     expect(page?.compiled_truth).toContain('Plus an edit');
     expect(readFileSync(join(f.root, 'people/dana-example-2.md'), 'utf8')).toContain('Plus an edit');
   }
@@ -324,12 +324,16 @@ test('a managed rename carries fence facts to the new slug once, keeping their i
     const before = await facts(engine, f.id, 'people/gia-example');
     expect(before.map(r => [r.row_num, r.fact, r.expired])).toEqual([[1, 'Lives in Lisbon', false], [2, 'Prefers tea', false]]);
     git(f.root, 'mv', 'people/gia-example.md', 'people/gia-example-2.md');
-    write(f.root, 'people/gia-example-2.md', fenced('An edit that rides along with the rename.\n'));
     commit(f.root, 'rename with facts');
     expect(await performManagedSync(engine, { sourceId: f.id, noPull: true })).toMatchObject({ status: 'synced', renamed: 1 });
     expect(await facts(engine, f.id, 'people/gia-example')).toEqual([]);
     const after = await facts(engine, f.id, 'people/gia-example-2');
     expect(after.map(r => [r.id, r.row_num, r.fact, r.expired])).toEqual(before.map(r => [r.id, r.row_num, r.fact, false]));
+    // A separate subsequent edit retains the identity established by R100.
+    write(f.root, 'people/gia-example-2.md', fenced('An edit after the exact rename.\n'));
+    commit(f.root, 'edit after rename');
+    await performManagedSync(engine, { sourceId: f.id, noPull: true });
+    expect((await facts(engine, f.id, 'people/gia-example-2')).map(r => r.id)).toEqual(before.map(r => r.id));
     const [alias] = await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM slug_aliases WHERE source_id=$1 AND alias_slug='people/gia-example'`, [f.id]);
     expect(alias.n).toBe(1);
   }
