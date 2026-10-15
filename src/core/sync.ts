@@ -227,8 +227,15 @@ export function buildSyncManifest(gitDiffOutput: string): SyncManifest {
         if (action.startsWith('C')) {
           // A copy leaves the source in place — only the destination is new.
           manifest.added.push(newPath);
-        } else {
+        } else if (action === 'R100') {
           manifest.renamed.push({ from: oldPath, to: newPath });
+        } else {
+          // Git similarity pairs are guesses, not page identity. Moving the
+          // old row would attach its facts, aliases and history to a potentially
+          // unrelated page with similar boilerplate (#6729). Only byte-identical
+          // renames carry identity; rewritten pairs use normal delete/add lanes.
+          manifest.deleted.push(oldPath);
+          manifest.added.push(newPath);
         }
       }
     }

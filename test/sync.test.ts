@@ -28,10 +28,12 @@ describe('buildSyncManifest', () => {
     expect(manifest.deleted).toEqual([]);
   });
 
-  test('parses partial rename (R075)', () => {
+  test('partial rename (R075) is a delete and add, not an identity move', () => {
     const output = `R075\tpeople/old.md\tpeople/new.md`;
     const manifest = buildSyncManifest(output);
-    expect(manifest.renamed).toEqual([{ from: 'people/old.md', to: 'people/new.md' }]);
+    expect(manifest.renamed).toEqual([]);
+    expect(manifest.deleted).toEqual(['people/old.md']);
+    expect(manifest.added).toEqual(['people/new.md']);
   });
 
   test('T (typechange) counts as modified — was silently dropped', () => {
@@ -293,9 +295,10 @@ describe('buildSyncManifest edge cases', () => {
       'R095\told/b.md\tnew/b.md',
     ].join('\n');
     const manifest = buildSyncManifest(output);
-    expect(manifest.renamed).toHaveLength(2);
+    expect(manifest.renamed).toHaveLength(1);
     expect(manifest.renamed[0].from).toBe('old/a.md');
-    expect(manifest.renamed[1].from).toBe('old/b.md');
+    expect(manifest.deleted).toEqual(['old/b.md']);
+    expect(manifest.added).toEqual(['new/b.md']);
   });
 
   test('ignores unknown status codes', () => {
