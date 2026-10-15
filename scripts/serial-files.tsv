@@ -225,6 +225,8 @@ test/hybrid-search-lite.serial.test.ts	R1	R1: mutates process.env (OPENAI_API_KE
 test/hybrid-search-single-mode-read.serial.test.ts	R2	R2: mock.module(../src/core/search/mode.ts) replaces modules for every file in the process
 test/hybrid-since-relative.serial.test.ts	R1	R1: mutates process.env (OPENAI_API_KEY)
 test/hybrid-types-cache-skip.serial.test.ts	R2	R2: mock.module(../src/core/embedding.ts) replaces modules for every file in the process
+test/hydradb-cloud-recovery.serial.test.ts	R1	R1: isolated synthetic HydraDB fixtures mutate process.env and global fetch
+test/hydradb-cloud.serial.test.ts	R1	R1: isolated synthetic HydraDB fixtures mutate process.env and global fetch
 test/import-cancellation.serial.test.ts	R2	R2: mock.module(../src/core/postgres-engine.ts) replaces modules for every file in the process
 test/import-configured-root-guard.serial.test.ts	global-state	global-state: spyOn engine.executeRaw
 test/import-connection-budget.serial.test.ts	R2	R2: mock.module(../src/core/postgres-engine.ts) replaces modules for every file in the process

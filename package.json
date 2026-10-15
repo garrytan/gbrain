@@ -194,6 +194,7 @@
     "@aws-sdk/client-s3": "^3.1028.0",
     "@dqbd/tiktoken": "^1.0.22",
     "@electric-sql/pglite": "0.4.3",
+    "@hydradb/sdk": "2.1.7",
     "@jsquash/avif": "^2.1.1",
     "@jsquash/png": "^3.1.1",
     "@modelcontextprotocol/sdk": "1.31.0",
@@ -234,7 +235,7 @@
     "bun": ">=1.4.0"
   },
   "license": "MIT",
-  "version": "0.60.242.0",
+  "version": "0.60.243.0",
   "overrides": {
     "@ai-sdk/provider-utils": "4.0.56",
     "@hono/node-server": "^2.0.5",

@@ -12,9 +12,12 @@ import { readHolders } from './context.ts';
  */
 
 import { hybridSearchCached, stampContentFlags, stampUnverifiedExtractions } from '../search/hybrid.ts';
+import { markdownForHydraRows } from '../hydradb-response.ts';
+import { deliverHydraEvidence, hydraEvidencePlan } from '../search/hydra-evidence.ts';
+import { hydraPrimaryEnabled, usesHydraSearch } from '../search/hydra-primary.ts';
 import { anchorOpResults } from '../search/entity-anchor.ts';
 import { applyQueryArms } from '../search/query-arms.ts';
-import { factRowOutput } from '../search/facts-arm.ts';
+import { appendedRowOutput } from '../search/facts-arm.ts';
 import { resolveSearchDateBounds } from '../search/date-bounds.ts';
 import { loadSearchModeConfig, resolveSearchMode, SOURCE_BOOSTS_KEY } from '../search/mode.ts';
 import { looksConceptShaped, classifyQueryShape } from '../search/query-intent.ts';
@@ -117,14 +120,14 @@ function searchOutput(ctx: OperationContext, p: Record<string, unknown>, results
   // The shape is reported where it can vary: remote callers, or an explicit `fields`.
   const shown = ctx.remote !== false || p.fields !== undefined ? { rows } : {};
   // Stage timings are read last, after the returned rows are assembled (meta only, never content).
-  const emit = (output: { meta: Record<string, unknown> }, returned: SearchResult[]) => {
+  const emit = (output: { meta: Record<string, unknown> }, returned: SearchResult[], context = returned) => {
     recordRecallOutcome(returned);
-    ctx.emitResponseMeta?.('retrieval', { ...output.meta, timings: timings.snapshot() });
+    ctx.emitResponseMeta?.('retrieval', { ...output.meta, ...(meta.backend === 'hydradb' ? { hydradb: { mode: meta.hydradb_mode ?? 'fast', markdown: markdownForHydraRows(context, results, typeof p.token_budget === 'number') } } : {}), timings: timings.snapshot() });
     return returned;
   };
   if (!evidence) {
     const output = redactRetrievalOutput(results, { ...meta, ...shown });
-    return emit(output, projectRows(applySnippetCap(output.results, snippetCap).map(factRowOutput), rows, lean));
+    return emit(output, projectRows(applySnippetCap(output.results, snippetCap).map(appendedRowOutput), rows, lean));
   }
   // Evidence delivery: explicit snippet_chars wins over the delivered blocks;
   // otherwise the blocks are returned whole (their budget already bounds
@@ -133,7 +136,7 @@ function searchOutput(ctx: OperationContext, p: Record<string, unknown>, results
   // An explicit budget's cap holds at this final boundary too (snippet
   // markers and redaction recounted); without one both are no-ops.
   const capped = evidence.explicitSnippet ? capDeliveredSnippets(output.results, snippetCap, output.meta.delivery) : capEvidenceToBudget(output.results, output.meta.delivery);
-  return emit(output, projectRows(capped.map(factRowOutput), rows, lean));
+  return emit(output, projectRows(capped.map(appendedRowOutput), rows, lean), capped);
 }
 
 /** C1: the per-call row-shape escape hatch shared by `search` and `query` (`detail` is query's low/medium/high). */
@@ -180,9 +183,9 @@ async function evidencePlanFor(ctx: OperationContext, p: Record<string, unknown>
  */
 async function withEvidence(ctx: OperationContext, p: Record<string, unknown>, results: SearchResult[], plan: EvidencePlan | null,
   scope: DeliveryScope, meta: HybridSearchMeta | null): Promise<{ rows: SearchResult[]; evidence?: { delivery: DeliveryMeta; explicitSnippet: boolean } }> {
-  const applied = effectivePlan(plan, results);
+  const applied = effectivePlan(usesHydraSearch(meta) ? hydraEvidencePlan(plan) : plan, results);
   if (!applied) return { rows: results };
-  const d = await deliverEvidence(ctx.engine, results, applied, { ...scope, requireSafeChunks: ctx.remote !== false }, { liveHits: meta?.cache?.status !== 'hit' });
+  const d = await (usesHydraSearch(meta) ? deliverHydraEvidence : deliverEvidence)(ctx.engine, results, applied, { ...scope, requireSafeChunks: ctx.remote !== false }, { liveHits: meta?.cache?.status !== 'hit' });
   return { rows: d.results, evidence: { delivery: d.delivery, explicitSnippet: typeof p.snippet_chars === 'number' && Number.isFinite(p.snippet_chars) } };
 }
 
@@ -488,7 +491,7 @@ async function buildRetrievalResponseMeta(
     returned_count: results.length,
     retrieved_count: m?.retrieved_count ?? results.length,
     ...(m ? {
-      vector_enabled: m.vector_enabled,
+      vector_enabled: m.vector_enabled, ...(m.backend ? { backend: m.backend, hydradb_mode: m.hydradb_mode } : {}),
       expansion_applied: m.expansion_applied,
       ...(m.cache ? { cache: m.cache.status } : {}),
       ...(m.token_budget ? { token_budget: m.token_budget } : {}),
@@ -736,7 +739,7 @@ const search: Operation = {
     const keywordOnly = (await setup(() => ctx.engine.getConfig('search.mcp_keyword_only'))) === 'true';
     const readOpts = { excludePrivate, requireSafeChunks: ctx.remote !== false, ...scope };
 
-    if (keywordOnly || paging.match === 'keyword') {
+    if ((keywordOnly && !await hydraPrimaryEnabled(ctx.engine)) || paging.match === 'keyword') {
       if (types) {
         types = (await setup(() => expandEngineTypeFilters(ctx.engine, { types, ...scope }))).types;
         if (types?.length === 0) return [];
@@ -791,13 +794,13 @@ const search: Operation = {
       ...searchOpts, onMeta: (m) => { capturedMeta = m; }, explain: p.explain === true, explainTarget: explainPrep?.trace,
     });
     const declarations = new DeclarationMemo();
-    const fanned = offset === 0
+    const fanned = offset === 0 && !usesHydraSearch(capturedMeta)
       ? await timings.stage('alias_fanout', () => withAliasFanOut(ctx.engine, primary, queryText, { ...scope, excludePrivate },
         { excludePrivate, requireSafeChunks: ctx.remote !== false, ...(types ? { types } : {}), ...scope }, () => declarations.scan(primary, queryText)))
       : { results: primary };
     let results = fanned.results.map(r => ({ ...r }));
     await emitFanoutNotices(ctx, fanned.fanout, scope);
-    results = await timings.stage('anchoring', () => anchorOpResults(ctx.engine, p, queryText, results, { ...scope, excludePrivate, requireSafeChunks: ctx.remote !== false, filtered: !!types, evidencePlan: !!plan }));
+    if (!usesHydraSearch(capturedMeta)) results = await timings.stage('anchoring', () => anchorOpResults(ctx.engine, p, queryText, results, { ...scope, excludePrivate, requireSafeChunks: ctx.remote !== false, filtered: !!types, evidencePlan: !!plan }));
     stampDeepResearchIds(results);
     const latency_ms = Date.now() - startedAt;
     bumpLastRetrievedAt(ctx.engine, results.map((r) => r.page_id));
@@ -1049,10 +1052,10 @@ const query: Operation = {
     });
     const declarations = new DeclarationMemo();
     const primaryRows = results;
-    const fanned = await timings.stage('alias_fanout', () => withAliasFanOut(ctx.engine, primaryRows, queryText, { ...querySourceScope, excludePrivate },
+    const fanned = usesHydraSearch(capturedMeta) ? { results: primaryRows } : await timings.stage('alias_fanout', () => withAliasFanOut(ctx.engine, primaryRows, queryText, { ...querySourceScope, excludePrivate },
       { excludePrivate, requireSafeChunks: ctx.remote !== false, ...(types ? { types } : {}), ...querySourceScope }, () => declarations.scan(primaryRows, queryText)));
     await emitFanoutNotices(ctx, fanned.fanout, querySourceScope);
-    results = await applyQueryArms(ctx.engine, p, queryText, fanned.results, { ...querySourceScope, excludePrivate, requireSafeChunks: ctx.remote !== false, filtered: !!types, evidencePlan: !!plan, evidenceBudget: plan?.budgetTokens, remote: ctx.remote !== false, queryEmbedding, rowCap: () => resolveEffectiveLimit(ctx, p), timer: timings });
+    results = usesHydraSearch(capturedMeta) ? fanned.results : await applyQueryArms(ctx.engine, p, queryText, fanned.results, { ...querySourceScope, excludePrivate, requireSafeChunks: ctx.remote !== false, filtered: !!types, evidencePlan: !!plan, evidenceBudget: plan?.budgetTokens, remote: ctx.remote !== false, queryEmbedding, rowCap: () => resolveEffectiveLimit(ctx, p), timer: timings });
     // #1663 — CRAG confidence gate. Grade what retrieval returned (zero-LLM;
     // reads the stamped honesty signals: evidence, exact_lookup, rerank
     // score), attach grade + query shape to the retrieval meta on EVERY call,
@@ -1070,7 +1073,7 @@ const query: Operation = {
       query_shape: queryShape,
       ...(grade.top_rerank_score !== undefined ? { top_rerank_score: grade.top_rerank_score } : {}),
     };
-    if (grade.level === 'weak') {
+    if (grade.level === 'weak' && !usesHydraSearch(capturedMeta)) {
       const [escalationCfg, thinkCfg] = await Promise.all([
         ctx.engine.getConfig('search.crag_escalation').catch(() => null),
         ctx.engine.getConfig('search.crag_think').catch(() => null),

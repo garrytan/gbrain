@@ -1,3 +1,4 @@
+import { scheduleCloudPush } from '../hydradb-mirror.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import { OperationError } from '../ops/contract.ts';
@@ -124,7 +125,10 @@ export function startPersistenceConsumer(engine: BrainEngine, config: GBrainConf
     return prior.consumer;
   }
   const full = () => new PersistenceConsumer(engine, config, preparePersistedMutation,
-    { drainNotice: claimOwnerKind() === 'serve', keepDbPolicy: KEEP_DB_POLICY_OWNERS.includes(claimOwnerKind()), onSettled: row => { recordSettlement(engine); rememberSettled(engine, row.id); for (const listener of settledWaiters.get(engine)?.get(row.id) ?? []) listener(row); } });
+    { drainNotice: claimOwnerKind() === 'serve', keepDbPolicy: KEEP_DB_POLICY_OWNERS.includes(claimOwnerKind()), onSettled: row => {
+      recordSettlement(engine); rememberSettled(engine, row.id); for (const listener of settledWaiters.get(engine)?.get(row.id) ?? []) listener(row);
+      if (row.state === 'committed' && row.target_kind !== 'skill_bundle') scheduleCloudPush(engine, row);
+    } });
   const kind = claimOwnerKind();
   const service: Service = kind !== 'serve' && RESIDENT_CONSUMER_KINDS.includes(kind) && engine.kind === 'postgres'
     ? { consumer: new WaiterOnlyConsumer(engine, config, full, { kind, hostId: localHostId(), pool: () => enginePoolStats(engine) }), stopping: false }

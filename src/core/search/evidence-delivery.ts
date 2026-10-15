@@ -79,7 +79,7 @@ export interface MatchSpan { chunk_id: number; start: number; end: number }
  * a conversation whose matching span no longer fits the budget keeps its
  * ranked chunks too.
  */
-export type AutoReason = 'conversation_type' | 'conversation_slug' | 'not_conversation' | 'conversation_over_budget' | 'saved_fact';
+export type AutoReason = 'conversation_type' | 'conversation_slug' | 'not_conversation' | 'conversation_over_budget' | 'saved_fact' | 'cloud_passage';
 
 export interface DeliveredEvidence {
   unit: DeliveredUnit;
@@ -1063,8 +1063,8 @@ export async function deliverEvidence(
   const groups: Group[] = [];
   const byPage = new Map<number, Group>();
   hits.forEach((h, rank) => {
-    // A saved-fact row (facts arm) has no page to expand: it is delivered as written, paid for first.
-    if (h.fact_row) { passthrough.push({ rank, hit: h, reason: 'saved_fact' }); return; }
+    // An appended row (facts or cloud arm) has no page to expand: it is delivered as written, paid for first.
+    if (h.result_type) { passthrough.push({ rank, hit: h, reason: h.result_type === 'fact' ? 'saved_fact' : 'cloud_passage' }); return; }
     const signal = auto ? conversationSignal(h) : null;
     if (auto && !signal) { passthrough.push({ rank, hit: h, reason: 'not_conversation' }); return; }
     const id = Number.isFinite(h.page_id) ? h.page_id : null;

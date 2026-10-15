@@ -91,7 +91,7 @@ export type CyclePhase =
   | 'chronicle'
   // Lane D — runs queued facts-absorb jobs on PGLite (no job worker there); bounded per run and per day.
   | 'facts_drain'
-  | 'embed' | 'orphans' | 'purge'
+  | 'embed' | 'orphans' | 'cloud_mirror' | 'purge'
   // v0.39 T12: schema-suggest passive trigger (D3 + D4 plan-eng-review).
   // Wraps runSuggest() — same library the CLI verb + EIIRP call.
   | 'schema-suggest'
@@ -218,6 +218,7 @@ export const ALL_PHASES: CyclePhase[] = [
   // is settled; thin wrapper around runSuggest() library. Cheap (heuristic
   // by default; LLM only when chat provider configured).
   'schema-suggest',
+  'cloud_mirror', // opt-in HydraDB mirror (cycle/cloud-mirror.ts); before purge so soft-deletes reach the cloud
   // v0.26.5: hard-deletes soft-deleted pages and expired archived sources past
   // the 72h recovery window. Runs last so the rest of the cycle sees the
   // recoverable set; the purge then drops what's expired.
@@ -3027,6 +3028,12 @@ async function runCycleUnscoped(
         progress.finish();
       }
       await safeYield(opts.yieldBetweenPhases);
+    }
+
+    if (phases.includes('cloud_mirror')) {
+      checkAborted(cycleSignal);
+      const { result, duration_ms } = await timePhase(async () => (await import('./cycle/cloud-mirror.ts')).runPhaseCloudMirror(engine, { dryRun, signal: cycleSignal }), 'cloud_mirror');
+      phaseResults.push({ ...result, duration_ms }); await safeYield(opts.yieldBetweenPhases);
     }
 
     // ── Phase 9: purge (v0.26.5) ────────────────────────────────

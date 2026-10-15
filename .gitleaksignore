@@ -26,6 +26,10 @@ ee280a34288d697285fd41c35d423e49b61fe54d:CHANGELOG.md:sourcegraph-access-token:1
 # the tree renamed the constant. These history-only fingerprints are not secrets.
 ac6e0868219439a6594d9fce0e016da203c6c4fc:test/content-repair-judgment.test.ts:generic-api-key:21
 ac6e0868219439a6594d9fce0e016da203c6c4fc:test/repair-slug-conflicts.test.ts:generic-api-key:58
+# HydraDB cloud fixtures: intentionally synthetic GitHub-token canaries from the feature's original commit.
+# The current tree assembles them at runtime; these history-only fingerprints are not credentials.
+fe2bb4ce64ab9de4d8081927c6ab98f131f67600:test/hydradb-cloud.serial.test.ts:github-pat:120
+fe2bb4ce64ab9de4d8081927c6ab98f131f67600:test/hydradb-cloud.serial.test.ts:github-pat:154
 
 # Large pages #6722: the synthetic placeholder OPENAI_API_KEY in test/size-state-receipts-6722.test.ts (commit e3ebcc4f) read as
 # generic-api-key; the tree now uses the allowlisted sk-test-fake. This history-only fingerprint is not a secret.

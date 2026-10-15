@@ -1116,8 +1116,8 @@ export interface SearchResult {
   entity_anchored?: 'entity' | 'linked';
   /** Set on a saved-fact row the `search.query_facts_arm` arm added (search/facts-arm.ts); page_id is 0. */
   fact_row?: { id: number; valid_from: string; valid_until: string | null };
-  /** Fact rows only, and what callers see of them: never a page (no slug or id); follow with `follow_up`, read `page_slug` when the entity page exists. */
-  result_type?: 'fact'; fact_id?: string; page_slug?: string; follow_up?: { op: 'recall'; args: Record<string, string> };
+  /** Rows appended after the pages (`fact`: facts-arm.ts, follow `follow_up`; `cloud`: a HydraDB hit for a page this brain does not hold, hydra-primary.ts), never a page (no slug or id); `page_slug` names the page behind one when the caller may read it. */
+  result_type?: 'fact' | 'cloud'; fact_id?: string; page_slug?: string; follow_up?: { op: 'recall'; args: Record<string, string> };
   /** A newer active fact covers the same entity and typed claim slot as a fact taken from this page. */
   superseded_claim?: { fact_id: number; valid_from: string };
   /**
@@ -2131,6 +2131,9 @@ export function affectsRecall(d: { stage?: string; reason?: string } | undefined
  * "keyword-only fallback" from "full hybrid with expansion."
  */
 export interface HybridSearchMeta {
+  /** HydraDB owns retrieval and ranking when this brain opted into cloud primary. */
+  backend?: 'hydradb';
+  hydradb_mode?: 'fast' | 'thinking';
   /** True iff vector search actually ran. False when OPENAI_API_KEY missing or embed failed. */
   vector_enabled: boolean;
   /** System One: slot diagnostics (only when a slot ran visibly) and the reranker model version that answered. */

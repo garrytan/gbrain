@@ -1,6 +1,6 @@
 <h1><picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/brand/gbrain-wordmark-light.svg"><img src="docs/images/brand/gbrain-wordmark.svg" alt="GBrain" height="52"></picture></h1>
 
-**Give the agent you already use a memory you control.** GBrain stores explicit facts with their sources, supports corrections and withdrawal, and makes the same memory available across your agents. Start with keyless memory and keyword retrieval; add semantic search, synthesis, and background enrichment when you need them.
+**Give the agent you already use a memory you control.** GBrain stores sourced facts, supports corrections and withdrawal, and shares memory across your agents. Start keyless; optionally add semantic search, synthesis, enrichment or [HydraDB cloud memory](docs/guides/cloud-memory.md).
 
 > [!TIP]
 > **Need hosted? First time running an agent?** Try **[gbrain.io](https://gbrain.io/?ref=readme)**, hosted GBrain, for the easiest experience: one brain for you and your team, connected to ChatGPT, Claude and Cursor, with nothing to install or keep online. Stuck? Email support@gbrain.io and a person will set it up with you, free.

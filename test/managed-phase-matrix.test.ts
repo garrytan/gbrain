@@ -422,6 +422,9 @@ const MATRIX: Record<CyclePhase, Entry> = {
   'schema-suggest': {
     seed: async ({ engine, sourceId }) => put(engine, sourceId, 'notes/schema-example', page('note', 'Schema', 'A plain note.')),
   },
+  cloud_mirror: {
+    seed: async ({ engine, sourceId }) => put(engine, sourceId, 'notes/cloud-example', page('note', 'Cloud', 'Mirrored only after gbrain cloud connect.')),
+  },
   purge: {
     seed: async ({ engine, sourceId }) => {
       await put(engine, sourceId, 'notes/expired', page('note', 'Expired', 'Gone soon.'));

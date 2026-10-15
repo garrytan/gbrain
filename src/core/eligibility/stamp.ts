@@ -12,6 +12,7 @@ import { admitsTrust, compareTrust, minTrust, storedTrustTier, type TrustTier } 
 import { chunkFenceMarker, FENCE_TRUST_ORIGIN, fenceTrustMarker, lowestFenceTrustMarker } from './fence-overlay.ts';
 import { needsDataEnvelope, parseContested, renderTrustedText, trustFields, type Contested, type TrustFields } from './labels.ts';
 import { activationSuppressedSql, contestedRefSql } from './sql.ts';
+import { pageKey as key } from '../search/read-policy-sql.ts';
 
 const withFlag = (fields: TrustFields, flagged: unknown): TrustFields => (flagged === true ? { ...fields, unconfirmed: true } : fields);
 
@@ -24,7 +25,6 @@ interface PageRef {
 
 type Exec = Pick<BrainEngine, 'executeRaw'>;
 
-const key = (source: string | null | undefined, slug: string) => `${source ?? 'default'}\u0000${slug}`;
 
 /** Trust fields per page id and per (source_id, slug). */
 export async function loadPageTrust(engine: Exec, refs: readonly PageRef[]): Promise<{ byId: Map<number, TrustFields>; byKey: Map<string, TrustFields> }> {

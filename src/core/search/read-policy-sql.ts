@@ -1,3 +1,4 @@
+import type { BrainEngine } from '../engine.ts';
 import type { PageReadScope, PageReadPolicy } from '../types.ts';
 import { privatePagesFilterFragment } from './private-visibility.ts';
 import { quarantineFilterFragment } from '../quarantine.ts';
@@ -32,4 +33,23 @@ export function pageReadFilter(
     `EXISTS (SELECT 1 FROM sources read_source WHERE read_source.id = ${alias}.source_id AND NOT read_source.archived)`,
   );
   return clauses.length ? clauses.join(' AND ') : 'TRUE';
+}
+
+/** The `(source_id, slug)` identity of a page as one map key; an absent source is `default`. */
+export const pageKey = (sourceId: string | null | undefined, slug: string): string => `${sourceId ?? 'default'}\u0000${slug}`;
+
+/**
+ * Live readability of the pages this brain holds among `refs`, keyed by
+ * pageKey. A key with no entry is a page this brain does not hold; a
+ * held page that is deleted, quarantined or outside `scope` maps to false.
+ */
+export async function pageReadability(engine: Pick<BrainEngine, 'executeRaw'>, refs: ReadonlyArray<{ slug: string; source_id: string }>,
+  scope: PageReadScope | undefined): Promise<Map<string, boolean>> {
+  const slugs = [...new Set(refs.map(r => r.slug))];
+  if (!slugs.length) return new Map();
+  const params: unknown[] = [slugs];
+  const filter = pageReadFilter('p', scope, params, true);
+  const rows = await engine.executeRaw<{ slug: string; source_id: string; readable: boolean }>(
+    `SELECT p.slug, p.source_id, (${filter}) AS readable FROM pages p WHERE p.slug = ANY($1::text[])`, params);
+  return new Map(rows.map(r => [pageKey(r.source_id, r.slug), r.readable === true]));
 }

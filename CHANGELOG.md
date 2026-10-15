@@ -10,6 +10,48 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.243.0] - 2026-10-15
+
+**Choose HydraDB for durable cloud memory, and keep local memory as your fallback.**
+
+You can now connect your brain to HydraDB with `gbrain cloud connect`. Fast retrieval is the default; `gbrain cloud mode thinking` selects thinking mode. Agents receive Markdown context using HydraDB’s SDK formatter, with permitted graph and dated evidence. Natural-language queries,
+search and recall use the cloud even when your brain has no embedding-provider key.
+Pages remain available locally, and turning cloud memory off restores local search.
+Existing gstack context queries use the selected backend.
+
+### How to turn it on
+
+Run `gbrain cloud connect` and review what will be shared. Get an API key from the
+HydraDB dashboard, then follow the prompt. For gstack context loading, set
+`GSTACK_BRAIN_TIMEOUT_MS=10000` in your agent's environment.
+
+| Your choice | What happens |
+| --- | --- |
+| Cloud primary on | HydraDB retrieves and ranks natural-language page searches. |
+| Cloud primary off | Local search resumes; pages still sync to HydraDB. |
+| Disconnect | Cloud sync stops; local memory keeps working. |
+
+Private pages and private fact rows stay local. Detected secrets are redacted from
+outgoing text and titles. Structured record reads, explicit keyword enumeration,
+image similarity and symbol walks keep their existing local contracts.
+
+### Itemized changes
+
+- Add opt-in cloud connection, status, indexed backfill, write-through syncing and disconnect commands.
+- Route keyless recall and both hybrid search entry points through the selected cloud backend.
+- Preserve source, type, date, slug and pagination filters without running local relevance ranking.
+- Keep embed-skipped pages local while preserving keyword search, and withhold unsafe or unmatched stored text in chunk-centered reads.
+- Verify per-item ingestion, indexing and deletion outcomes before advancing mirror cursors.
+- Keep page identities distinct across sources and retry interrupted batches.
+- Reconcile archived/restored sources, expand schema type aliases in cloud searches, serialize PostgreSQL uploads across processes, and preserve shared credentials when one brain disconnects.
+- Add an optional staging endpoint and a synthetic live smoke, including gstack CLI context loading.
+
+### To take advantage of v0.60.243.0
+
+Upgrade GBrain, then run `gbrain cloud connect` if you want HydraDB memory.
+Cloud memory remains off until you explicitly connect. See
+[cloud memory](docs/guides/cloud-memory.md) for setup and off switches.
+
 ## [0.60.242.0] - 2026-10-15
 
 **Pages up to 24 MiB are now searchable, and an older brain's skipped large pages come back on upgrade.** Before, any page over 500 KB was stored with `embed_skip` and no chunks, so keyword and vector search never found it. A long chat-log page was the usual victim. The page ceiling is now 24 MiB at every entry point: import, sync, `gbrain put` stdin (was 5 MB) and MCP stdio (was 10 MiB). A page over 1 MiB commits with keyword-searchable chunks and embeds after the write, newest chunks first, under a per-page spend cap of $2 by default (`embed.max_usd_per_page`). `gbrain upgrade` re-indexes the pages an older gbrain skipped for size. That pass makes no model calls and works with embeddings off, and it asks before any embedding spend on pages over 1 MiB.

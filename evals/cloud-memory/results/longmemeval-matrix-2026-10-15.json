@@ -1,0 +1,1149 @@
+{
+  "schema_version": 2,
+  "complete": true,
+  "stage": "complete",
+  "cloud_removed": true,
+  "measured_commit": "cfe16c9b848b345e817e0a1a032d0d12e0afb4ad",
+  "version": "0.60.227.0",
+  "dataset": "LongMemEval_s cleaned",
+  "dataset_sha256": "d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442",
+  "harness_sha256": "cbbee445ce36e381ad4fcddd5961dc3cf807186b1c8b554d7c25cb087fc0c8ef",
+  "started_at": "2026-10-14T18:35:43.124Z",
+  "question_types": {
+    "knowledge-update": 5,
+    "multi-session": 5,
+    "single-session-assistant": 5,
+    "single-session-preference": 5,
+    "single-session-user": 5,
+    "temporal-reasoning": 5
+  },
+  "conditions": [
+    {
+      "id": "full/embeddings/local",
+      "corpus": "full",
+      "embeddings": true,
+      "mode": "local"
+    },
+    {
+      "id": "full/embeddings/fast",
+      "corpus": "full",
+      "embeddings": true,
+      "mode": "fast"
+    },
+    {
+      "id": "full/embeddings/thinking",
+      "corpus": "full",
+      "embeddings": true,
+      "mode": "thinking"
+    },
+    {
+      "id": "full/no-embeddings/local",
+      "corpus": "full",
+      "embeddings": false,
+      "mode": "local"
+    },
+    {
+      "id": "full/no-embeddings/fast",
+      "corpus": "full",
+      "embeddings": false,
+      "mode": "fast"
+    },
+    {
+      "id": "full/no-embeddings/thinking",
+      "corpus": "full",
+      "embeddings": false,
+      "mode": "thinking"
+    },
+    {
+      "id": "recent/embeddings/local",
+      "corpus": "recent",
+      "embeddings": true,
+      "mode": "local"
+    },
+    {
+      "id": "recent/embeddings/fast",
+      "corpus": "recent",
+      "embeddings": true,
+      "mode": "fast"
+    },
+    {
+      "id": "recent/embeddings/thinking",
+      "corpus": "recent",
+      "embeddings": true,
+      "mode": "thinking"
+    },
+    {
+      "id": "recent/no-embeddings/local",
+      "corpus": "recent",
+      "embeddings": false,
+      "mode": "local"
+    },
+    {
+      "id": "recent/no-embeddings/fast",
+      "corpus": "recent",
+      "embeddings": false,
+      "mode": "fast"
+    },
+    {
+      "id": "recent/no-embeddings/thinking",
+      "corpus": "recent",
+      "embeddings": false,
+      "mode": "thinking"
+    }
+  ],
+  "k": 10,
+  "repeats": 3,
+  "local_share": 0.3,
+  "full_pages": 1427,
+  "recent_pages": 443,
+  "embedding_model": "openrouter:openai/text-embedding-3-small",
+  "local_embedding_dimensions": 1536,
+  "coverage": [
+    {
+      "brain": "full/embeddings",
+      "total": 6482,
+      "embedded": 6482
+    },
+    {
+      "brain": "full/no-embeddings",
+      "total": 6482,
+      "embedded": 0
+    },
+    {
+      "brain": "recent/embeddings",
+      "total": 2070,
+      "embedded": 2070
+    },
+    {
+      "brain": "recent/no-embeddings",
+      "total": 2070,
+      "embedded": 0
+    }
+  ],
+  "query_expansion": false,
+  "semantic_cache": false,
+  "autocut": false,
+  "reader_accuracy_measured": false,
+  "hydradb_modes": [
+    "fast",
+    "thinking"
+  ],
+  "fast_timeout_ms": 2500,
+  "thinking_timeout_ms": 15000,
+  "elapsed_seconds": 3788,
+  "mirror": {
+    "upserted": 1427,
+    "removed": 0,
+    "skipped": 0,
+    "concurrency": 4,
+    "method": "production_projection_and_ingestHydra",
+    "batches": 29
+  },
+  "summary": [
+    {
+      "id": "full/embeddings/local",
+      "corpus": "full",
+      "embeddings": true,
+      "mode": "local",
+      "questions": 30,
+      "measurements": 90,
+      "recall_any_at_k": 1,
+      "recall_all_at_k": 1,
+      "gold_session_recall": 1,
+      "p50_ms": 1243,
+      "p95_ms": 1686,
+      "cloud_fallbacks": 0,
+      "cloud_errors": 0,
+      "query_errors": 0,
+      "embedding_requests": 90,
+      "any_hits": 30,
+      "all_hits": 30,
+      "gold_found": 49,
+      "gold_total": 49,
+      "by_type": {
+        "knowledge-update": {
+          "questions": 5,
+          "all_hits": 5,
+          "any_hits": 5
+        },
+        "multi-session": {
+          "questions": 5,
+          "all_hits": 5,
+          "any_hits": 5
+        },
+        "single-session-assistant": {
+          "questions": 5,
+          "all_hits": 5,
+          "any_hits": 5
+        },
+        "single-session-preference": {
+          "questions": 5,
+          "all_hits": 5,
+          "any_hits": 5
+        },
+        "single-session-user": {
+          "questions": 5,
+          "all_hits": 5,
+          "any_hits": 5
+        },
+        "temporal-reasoning": {
+          "questions": 5,
+          "all_hits": 5,
+          "any_hits": 5
+        }
+      }
+    },
+    {
+      "id": "full/embeddings/fast",
+      "corpus": "full",
+      "embeddings": true,
+      "mode": "fast",
+      "questions": 30,
+      "measurements": 90,
+      "recall_any_at_k": 0.9666666666666667,
+      "recall_all_at_k": 0.8333333333333334,
+      "gold_session_recall": 0.8775510204081632,
+      "p50_ms": 831,
+      "p95_ms": 1216,
+      "cloud_fallbacks": 1,
+      "cloud_errors": 0,
+      "query_errors": 0,
+      "embedding_requests": 1,
+      "any_hits": 29,
+      "all_hits": 25,
+      "gold_found": 43,
+      "gold_total": 49,
+      "by_type": {
+        "knowledge-update": {
+          "questions": 5,
+          "all_hits": 5,
+          "any_hits": 5
+        },
+        "multi-session": {
+          "questions": 5,
+          "all_hits": 2,
+          "any_hits": 5
+        },
+        "single-session-assistant": {
+          "questions": 5,
+          "all_hits": 5,
+          "any_hits": 5
+        },
+        "single-session-preference": {
+          "questions": 5,
+          "all_hits": 4,
+          "any_hits": 4
+        },
+        "single-session-user": {
+          "questions": 5,
+          "all_hits": 5,
+          "any_hits": 5
+        },
+        "temporal-reasoning": {
+          "questions": 5,
+          "all_hits": 4,
+          "any_hits": 5
+        }
+      }
+    },
+    {
+      "id": "full/embeddings/thinking",
+      "corpus": "full",
+      "embeddings": true,
+      "mode": "thinking",
+      "questions": 30,
+      "measurements": 90,
+      "recall_any_at_k": 0.8666666666666667,
+      "recall_all_at_k": 0.7666666666666667,
+      "gold_session_recall": 0.8163265306122449,
+      "p50_ms": 2820,
+      "p95_ms": 4634,
+      "cloud_fallbacks": 0,
+      "cloud_errors": 0,
+      "query_errors": 0,
+      "embedding_requests": 0,
+      "any_hits": 26,
+      "all_hits": 23,
+      "gold_found": 40,
+      "gold_total": 49,
+      "by_type": {
+        "knowledge-update": {
+          "questions": 5,
+          "all_hits": 5,
+          "any_hits": 5
+        },
+        "multi-session": {
+          "questions": 5,
+          "all_hits": 2,
+          "any_hits": 5
+        },
+        "single-session-assistant": {
+          "questions": 5,
+          "all_hits": 5,
+          "any_hits": 5
+        },
+        "single-session-preference": {
+          "questions": 5,
+          "all_hits": 2,
+          "any_hits": 2
+        },
+        "single-session-user": {
+          "questions": 5,
+          "all_hits": 5,
+          "any_hits": 5
+        },
+        "temporal-reasoning": {
+          "questions": 5,
+          "all_hits": 4,
+          "any_hits": 4
+        }
+      }
+    },
+    {
+      "id": "full/no-embeddings/local",
+      "corpus": "full",
+      "embeddings": false,
+      "mode": "local",
+      "questions": 30,
+      "measurements": 90,
+      "recall_any_at_k": 0.9333333333333333,
+      "recall_all_at_k": 0.7333333333333333,
+      "gold_session_recall": 0.7755102040816326,
+      "p50_ms": 143,
+      "p95_ms": 513,
+      "cloud_fallbacks": 0,
+      "cloud_errors": 0,
+      "query_errors": 0,
+      "embedding_requests": 0,
+      "any_hits": 28,
+      "all_hits": 22,
+      "gold_found": 38,
+      "gold_total": 49,
+      "by_type": {
+        "knowledge-update": {
+          "questions": 5,
+          "all_hits": 4,
+          "any_hits": 5
+        },
+        "multi-session": {
+          "questions": 5,
+          "all_hits": 2,
+          "any_hits": 4
+        },
+        "single-session-assistant": {
+          "questions": 5,
+          "all_hits": 5,
+          "any_hits": 5
+        },
+        "single-session-preference": {
+          "questions": 5,
+          "all_hits": 4,
+          "any_hits": 4
+        },
+        "single-session-user": {
+          "questions": 5,
+          "all_hits": 5,
+          "any_hits": 5
+        },
+        "temporal-reasoning": {
+          "questions": 5,
+          "all_hits": 2,
+          "any_hits": 5
+        }
+      }
+    },
+    {
+      "id": "full/no-embeddings/fast",
+      "corpus": "full",
+      "embeddings": false,
+      "mode": "fast",
+      "questions": 30,
+      "measurements": 90,
+      "recall_any_at_k": 0.9666666666666667,
+      "recall_all_at_k": 0.8333333333333334,
+      "gold_session_recall": 0.8775510204081632,
+      "p50_ms": 779,
+      "p95_ms": 1010,
+      "cloud_fallbacks": 0,
+      "cloud_errors": 0,
+      "query_errors": 0,
+      "embedding_requests": 0,
+      "any_hits": 29,
+      "all_hits": 25,
+      "gold_found": 43,
+      "gold_total": 49,
+      "by_type": {
+        "knowledge-update": {
+          "questions": 5,
+          "all_hits": 5,
+          "any_hits": 5
+        },
+        "multi-session": {
+          "questions": 5,
+          "all_hits": 2,
+          "any_hits": 5
+        },
+        "single-session-assistant": {
+          "questions": 5,
+          "all_hits": 5,
+          "any_hits": 5
+        },
+        "single-session-preference": {
+          "questions": 5,
+          "all_hits": 4,
+          "any_hits": 4
+        },
+        "single-session-user": {
+          "questions": 5,
+          "all_hits": 5,
+          "any_hits": 5
+        },
+        "temporal-reasoning": {
+          "questions": 5,
+          "all_hits": 4,
+          "any_hits": 5
+        }
+      }
+    },
+    {
+      "id": "full/no-embeddings/thinking",
+      "corpus": "full",
+      "embeddings": false,
+      "mode": "thinking",
+      "questions": 30,
+      "measurements": 90,
+      "recall_any_at_k": 0.9,
+      "recall_all_at_k": 0.8,
+      "gold_session_recall": 0.8367346938775511,
+      "p50_ms": 2998,
+      "p95_ms": 4650,
+      "cloud_fallbacks": 0,
+      "cloud_errors": 0,
+      "query_errors": 0,
+      "embedding_requests": 0,
+      "any_hits": 27,
+      "all_hits": 24,
+      "gold_found": 41,
+      "gold_total": 49,
+      "by_type": {
+        "knowledge-update": {
+          "questions": 5,
+          "all_hits": 5,
+          "any_hits": 5
+        },
+        "multi-session": {
+          "questions": 5,
+          "all_hits": 2,
+          "any_hits": 5
+        },
+        "single-session-assistant": {
+          "questions": 5,
+          "all_hits": 5,
+          "any_hits": 5
+        },
+        "single-session-preference": {
+          "questions": 5,
+          "all_hits": 3,
+          "any_hits": 3
+        },
+        "single-session-user": {
+          "questions": 5,
+          "all_hits": 5,
+          "any_hits": 5
+        },
+        "temporal-reasoning": {
+          "questions": 5,
+          "all_hits": 4,
+          "any_hits": 4
+        }
+      }
+    },
+    {
+      "id": "recent/embeddings/local",
+      "corpus": "recent",
+      "embeddings": true,
+      "mode": "local",
+      "questions": 30,
+      "measurements": 90,
+      "recall_any_at_k": 0.43333333333333335,
+      "recall_all_at_k": 0.23333333333333334,
+      "gold_session_recall": 0.3673469387755102,
+      "p50_ms": 1115,
+      "p95_ms": 1579,
+      "cloud_fallbacks": 0,
+      "cloud_errors": 0,
+      "query_errors": 0,
+      "embedding_requests": 90,
+      "any_hits": 13,
+      "all_hits": 7,
+      "gold_found": 18,
+      "gold_total": 49,
+      "by_type": {
+        "knowledge-update": {
+          "questions": 5,
+          "all_hits": 0,
+          "any_hits": 3
+        },
+        "multi-session": {
+          "questions": 5,
+          "all_hits": 0,
+          "any_hits": 3
+        },
+        "single-session-assistant": {
+          "questions": 5,
+          "all_hits": 1,
+          "any_hits": 1
+        },
+        "single-session-preference": {
+          "questions": 5,
+          "all_hits": 1,
+          "any_hits": 1
+        },
+        "single-session-user": {
+          "questions": 5,
+          "all_hits": 2,
+          "any_hits": 2
+        },
+        "temporal-reasoning": {
+          "questions": 5,
+          "all_hits": 3,
+          "any_hits": 3
+        }
+      }
+    },
+    {
+      "id": "recent/embeddings/fast",
+      "corpus": "recent",
+      "embeddings": true,
+      "mode": "fast",
+      "questions": 30,
+      "measurements": 90,
+      "recall_any_at_k": 0.9666666666666667,
+      "recall_all_at_k": 0.8333333333333334,
+      "gold_session_recall": 0.8775510204081632,
+      "p50_ms": 804,
+      "p95_ms": 1204,
+      "cloud_fallbacks": 0,
+      "cloud_errors": 0,
+      "query_errors": 0,
+      "embedding_requests": 0,
+      "any_hits": 29,
+      "all_hits": 25,
+      "gold_found": 43,
+      "gold_total": 49,
+      "by_type": {
+        "knowledge-update": {
+          "questions": 5,
+          "all_hits": 5,
+          "any_hits": 5
+        },
+        "multi-session": {
+          "questions": 5,
+          "all_hits": 2,
+          "any_hits": 5
+        },
+        "single-session-assistant": {
+          "questions": 5,
+          "all_hits": 5,
+          "any_hits": 5
+        },
+        "single-session-preference": {
+          "questions": 5,
+          "all_hits": 4,
+          "any_hits": 4
+        },
+        "single-session-user": {
+          "questions": 5,
+          "all_hits": 5,
+          "any_hits": 5
+        },
+        "temporal-reasoning": {
+          "questions": 5,
+          "all_hits": 4,
+          "any_hits": 5
+        }
+      }
+    },
+    {
+      "id": "recent/embeddings/thinking",
+      "corpus": "recent",
+      "embeddings": true,
+      "mode": "thinking",
+      "questions": 30,
+      "measurements": 90,
+      "recall_any_at_k": 0.8666666666666667,
+      "recall_all_at_k": 0.7666666666666667,
+      "gold_session_recall": 0.8163265306122449,
+      "p50_ms": 2944,
+      "p95_ms": 5167,
+      "cloud_fallbacks": 0,
+      "cloud_errors": 0,
+      "query_errors": 0,
+      "embedding_requests": 0,
+      "any_hits": 26,
+      "all_hits": 23,
+      "gold_found": 40,
+      "gold_total": 49,
+      "by_type": {
+        "knowledge-update": {
+          "questions": 5,
+          "all_hits": 5,
+          "any_hits": 5
+        },
+        "multi-session": {
+          "questions": 5,
+          "all_hits": 2,
+          "any_hits": 5
+        },
+        "single-session-assistant": {
+          "questions": 5,
+          "all_hits": 5,
+          "any_hits": 5
+        },
+        "single-session-preference": {
+          "questions": 5,
+          "all_hits": 2,
+          "any_hits": 2
+        },
+        "single-session-user": {
+          "questions": 5,
+          "all_hits": 5,
+          "any_hits": 5
+        },
+        "temporal-reasoning": {
+          "questions": 5,
+          "all_hits": 4,
+          "any_hits": 4
+        }
+      }
+    },
+    {
+      "id": "recent/no-embeddings/local",
+      "corpus": "recent",
+      "embeddings": false,
+      "mode": "local",
+      "questions": 30,
+      "measurements": 90,
+      "recall_any_at_k": 0.4,
+      "recall_all_at_k": 0.23333333333333334,
+      "gold_session_recall": 0.30612244897959184,
+      "p50_ms": 128,
+      "p95_ms": 268,
+      "cloud_fallbacks": 0,
+      "cloud_errors": 0,
+      "query_errors": 0,
+      "embedding_requests": 0,
+      "any_hits": 12,
+      "all_hits": 7,
+      "gold_found": 15,
+      "gold_total": 49,
+      "by_type": {
+        "knowledge-update": {
+          "questions": 5,
+          "all_hits": 0,
+          "any_hits": 3
+        },
+        "multi-session": {
+          "questions": 5,
+          "all_hits": 0,
+          "any_hits": 2
+        },
+        "single-session-assistant": {
+          "questions": 5,
+          "all_hits": 1,
+          "any_hits": 1
+        },
+        "single-session-preference": {
+          "questions": 5,
+          "all_hits": 1,
+          "any_hits": 1
+        },
+        "single-session-user": {
+          "questions": 5,
+          "all_hits": 2,
+          "any_hits": 2
+        },
+        "temporal-reasoning": {
+          "questions": 5,
+          "all_hits": 3,
+          "any_hits": 3
+        }
+      }
+    },
+    {
+      "id": "recent/no-embeddings/fast",
+      "corpus": "recent",
+      "embeddings": false,
+      "mode": "fast",
+      "questions": 30,
+      "measurements": 90,
+      "recall_any_at_k": 0.9666666666666667,
+      "recall_all_at_k": 0.8333333333333334,
+      "gold_session_recall": 0.8775510204081632,
+      "p50_ms": 756,
+      "p95_ms": 981,
+      "cloud_fallbacks": 0,
+      "cloud_errors": 0,
+      "query_errors": 0,
+      "embedding_requests": 0,
+      "any_hits": 29,
+      "all_hits": 25,
+      "gold_found": 43,
+      "gold_total": 49,
+      "by_type": {
+        "knowledge-update": {
+          "questions": 5,
+          "all_hits": 5,
+          "any_hits": 5
+        },
+        "multi-session": {
+          "questions": 5,
+          "all_hits": 2,
+          "any_hits": 5
+        },
+        "single-session-assistant": {
+          "questions": 5,
+          "all_hits": 5,
+          "any_hits": 5
+        },
+        "single-session-preference": {
+          "questions": 5,
+          "all_hits": 4,
+          "any_hits": 4
+        },
+        "single-session-user": {
+          "questions": 5,
+          "all_hits": 5,
+          "any_hits": 5
+        },
+        "temporal-reasoning": {
+          "questions": 5,
+          "all_hits": 4,
+          "any_hits": 5
+        }
+      }
+    },
+    {
+      "id": "recent/no-embeddings/thinking",
+      "corpus": "recent",
+      "embeddings": false,
+      "mode": "thinking",
+      "questions": 30,
+      "measurements": 90,
+      "recall_any_at_k": 0.9,
+      "recall_all_at_k": 0.8,
+      "gold_session_recall": 0.8367346938775511,
+      "p50_ms": 2893,
+      "p95_ms": 3983,
+      "cloud_fallbacks": 0,
+      "cloud_errors": 0,
+      "query_errors": 0,
+      "embedding_requests": 0,
+      "any_hits": 27,
+      "all_hits": 24,
+      "gold_found": 41,
+      "gold_total": 49,
+      "by_type": {
+        "knowledge-update": {
+          "questions": 5,
+          "all_hits": 5,
+          "any_hits": 5
+        },
+        "multi-session": {
+          "questions": 5,
+          "all_hits": 2,
+          "any_hits": 5
+        },
+        "single-session-assistant": {
+          "questions": 5,
+          "all_hits": 5,
+          "any_hits": 5
+        },
+        "single-session-preference": {
+          "questions": 5,
+          "all_hits": 3,
+          "any_hits": 3
+        },
+        "single-session-user": {
+          "questions": 5,
+          "all_hits": 5,
+          "any_hits": 5
+        },
+        "temporal-reasoning": {
+          "questions": 5,
+          "all_hits": 4,
+          "any_hits": 4
+        }
+      }
+    }
+  ],
+  "comparisons": [
+    {
+      "kind": "cloud-vs-local",
+      "baseline": "full/embeddings/local",
+      "candidate": "full/embeddings/fast",
+      "metric": "recall_all_at_k",
+      "n": 30,
+      "clusters": 30,
+      "baseline_mean": 1,
+      "candidate_mean": 0.8333333333333334,
+      "delta": -0.16666666666666663,
+      "wins": 0,
+      "losses": 5,
+      "ties": 25,
+      "lower95": -0.3,
+      "upper95": -0.03333333333333333,
+      "p_value": 0.06459354064593541,
+      "holm_p_value": 0.7751224877512248,
+      "benefit_supported": false,
+      "regression_supported": false
+    },
+    {
+      "kind": "cloud-vs-local",
+      "baseline": "full/embeddings/local",
+      "candidate": "full/embeddings/thinking",
+      "metric": "recall_all_at_k",
+      "n": 30,
+      "clusters": 30,
+      "baseline_mean": 1,
+      "candidate_mean": 0.7666666666666667,
+      "delta": -0.23333333333333328,
+      "wins": 0,
+      "losses": 7,
+      "ties": 23,
+      "lower95": -0.4,
+      "upper95": -0.1,
+      "p_value": 0.015298470152984701,
+      "holm_p_value": 0.19888011198880112,
+      "benefit_supported": false,
+      "regression_supported": false
+    },
+    {
+      "kind": "thinking-vs-fast",
+      "baseline": "full/embeddings/fast",
+      "candidate": "full/embeddings/thinking",
+      "metric": "recall_all_at_k",
+      "n": 30,
+      "clusters": 30,
+      "baseline_mean": 0.8333333333333334,
+      "candidate_mean": 0.7666666666666667,
+      "delta": -0.06666666666666665,
+      "wins": 0,
+      "losses": 2,
+      "ties": 28,
+      "lower95": -0.16666666666666666,
+      "upper95": 0,
+      "p_value": 0.49765023497650235,
+      "holm_p_value": 1,
+      "benefit_supported": false,
+      "regression_supported": false
+    },
+    {
+      "kind": "cloud-vs-local",
+      "baseline": "full/no-embeddings/local",
+      "candidate": "full/no-embeddings/fast",
+      "metric": "recall_all_at_k",
+      "n": 30,
+      "clusters": 30,
+      "baseline_mean": 0.7333333333333333,
+      "candidate_mean": 0.8333333333333334,
+      "delta": 0.10000000000000009,
+      "wins": 5,
+      "losses": 2,
+      "ties": 23,
+      "lower95": -0.06666666666666667,
+      "upper95": 0.26666666666666666,
+      "p_value": 0.45935406459354067,
+      "holm_p_value": 1,
+      "benefit_supported": false,
+      "regression_supported": false
+    },
+    {
+      "kind": "cloud-vs-local",
+      "baseline": "full/no-embeddings/local",
+      "candidate": "full/no-embeddings/thinking",
+      "metric": "recall_all_at_k",
+      "n": 30,
+      "clusters": 30,
+      "baseline_mean": 0.7333333333333333,
+      "candidate_mean": 0.8,
+      "delta": 0.06666666666666676,
+      "wins": 4,
+      "losses": 2,
+      "ties": 24,
+      "lower95": -0.1,
+      "upper95": 0.23333333333333334,
+      "p_value": 0.6976302369763023,
+      "holm_p_value": 1,
+      "benefit_supported": false,
+      "regression_supported": false
+    },
+    {
+      "kind": "thinking-vs-fast",
+      "baseline": "full/no-embeddings/fast",
+      "candidate": "full/no-embeddings/thinking",
+      "metric": "recall_all_at_k",
+      "n": 30,
+      "clusters": 30,
+      "baseline_mean": 0.8333333333333334,
+      "candidate_mean": 0.8,
+      "delta": -0.033333333333333326,
+      "wins": 0,
+      "losses": 1,
+      "ties": 29,
+      "lower95": -0.1,
+      "upper95": 0,
+      "p_value": 1,
+      "holm_p_value": 1,
+      "benefit_supported": false,
+      "regression_supported": false
+    },
+    {
+      "kind": "cloud-vs-local",
+      "baseline": "recent/embeddings/local",
+      "candidate": "recent/embeddings/fast",
+      "metric": "recall_all_at_k",
+      "n": 30,
+      "clusters": 30,
+      "baseline_mean": 0.23333333333333334,
+      "candidate_mean": 0.8333333333333334,
+      "delta": 0.6000000000000001,
+      "wins": 19,
+      "losses": 1,
+      "ties": 10,
+      "lower95": 0.4,
+      "upper95": 0.8,
+      "p_value": 9.999000099990002e-05,
+      "holm_p_value": 0.0017998200179982003,
+      "benefit_supported": true,
+      "regression_supported": false
+    },
+    {
+      "kind": "cloud-vs-local",
+      "baseline": "recent/embeddings/local",
+      "candidate": "recent/embeddings/thinking",
+      "metric": "recall_all_at_k",
+      "n": 30,
+      "clusters": 30,
+      "baseline_mean": 0.23333333333333334,
+      "candidate_mean": 0.7666666666666667,
+      "delta": 0.5333333333333334,
+      "wins": 18,
+      "losses": 2,
+      "ties": 10,
+      "lower95": 0.3,
+      "upper95": 0.7333333333333333,
+      "p_value": 0.00039996000399960006,
+      "holm_p_value": 0.005999400059994001,
+      "benefit_supported": true,
+      "regression_supported": false
+    },
+    {
+      "kind": "thinking-vs-fast",
+      "baseline": "recent/embeddings/fast",
+      "candidate": "recent/embeddings/thinking",
+      "metric": "recall_all_at_k",
+      "n": 30,
+      "clusters": 30,
+      "baseline_mean": 0.8333333333333334,
+      "candidate_mean": 0.7666666666666667,
+      "delta": -0.06666666666666665,
+      "wins": 0,
+      "losses": 2,
+      "ties": 28,
+      "lower95": -0.16666666666666666,
+      "upper95": 0,
+      "p_value": 0.49765023497650235,
+      "holm_p_value": 1,
+      "benefit_supported": false,
+      "regression_supported": false
+    },
+    {
+      "kind": "cloud-vs-local",
+      "baseline": "recent/no-embeddings/local",
+      "candidate": "recent/no-embeddings/fast",
+      "metric": "recall_all_at_k",
+      "n": 30,
+      "clusters": 30,
+      "baseline_mean": 0.23333333333333334,
+      "candidate_mean": 0.8333333333333334,
+      "delta": 0.6000000000000001,
+      "wins": 19,
+      "losses": 1,
+      "ties": 10,
+      "lower95": 0.4,
+      "upper95": 0.8,
+      "p_value": 9.999000099990002e-05,
+      "holm_p_value": 0.0017998200179982003,
+      "benefit_supported": true,
+      "regression_supported": false
+    },
+    {
+      "kind": "cloud-vs-local",
+      "baseline": "recent/no-embeddings/local",
+      "candidate": "recent/no-embeddings/thinking",
+      "metric": "recall_all_at_k",
+      "n": 30,
+      "clusters": 30,
+      "baseline_mean": 0.23333333333333334,
+      "candidate_mean": 0.8,
+      "delta": 0.5666666666666667,
+      "wins": 18,
+      "losses": 1,
+      "ties": 11,
+      "lower95": 0.36666666666666664,
+      "upper95": 0.7666666666666667,
+      "p_value": 0.00019998000199980003,
+      "holm_p_value": 0.0031996800319968005,
+      "benefit_supported": true,
+      "regression_supported": false
+    },
+    {
+      "kind": "thinking-vs-fast",
+      "baseline": "recent/no-embeddings/fast",
+      "candidate": "recent/no-embeddings/thinking",
+      "metric": "recall_all_at_k",
+      "n": 30,
+      "clusters": 30,
+      "baseline_mean": 0.8333333333333334,
+      "candidate_mean": 0.8,
+      "delta": -0.033333333333333326,
+      "wins": 0,
+      "losses": 1,
+      "ties": 29,
+      "lower95": -0.1,
+      "upper95": 0,
+      "p_value": 1,
+      "holm_p_value": 1,
+      "benefit_supported": false,
+      "regression_supported": false
+    },
+    {
+      "kind": "embeddings-vs-no-embeddings",
+      "baseline": "full/no-embeddings/local",
+      "candidate": "full/embeddings/local",
+      "metric": "recall_all_at_k",
+      "n": 30,
+      "clusters": 30,
+      "baseline_mean": 0.7333333333333333,
+      "candidate_mean": 1,
+      "delta": 0.2666666666666667,
+      "wins": 8,
+      "losses": 0,
+      "ties": 22,
+      "lower95": 0.13333333333333333,
+      "upper95": 0.43333333333333335,
+      "p_value": 0.007099290070992901,
+      "holm_p_value": 0.09939006099390062,
+      "benefit_supported": false,
+      "regression_supported": false
+    },
+    {
+      "kind": "embeddings-vs-no-embeddings",
+      "baseline": "full/no-embeddings/fast",
+      "candidate": "full/embeddings/fast",
+      "metric": "recall_all_at_k",
+      "n": 30,
+      "clusters": 30,
+      "baseline_mean": 0.8333333333333334,
+      "candidate_mean": 0.8333333333333334,
+      "delta": 0,
+      "wins": 0,
+      "losses": 0,
+      "ties": 30,
+      "lower95": 0,
+      "upper95": 0,
+      "p_value": 1,
+      "holm_p_value": 1,
+      "benefit_supported": false,
+      "regression_supported": false
+    },
+    {
+      "kind": "embeddings-vs-no-embeddings",
+      "baseline": "full/no-embeddings/thinking",
+      "candidate": "full/embeddings/thinking",
+      "metric": "recall_all_at_k",
+      "n": 30,
+      "clusters": 30,
+      "baseline_mean": 0.8,
+      "candidate_mean": 0.7666666666666667,
+      "delta": -0.033333333333333326,
+      "wins": 0,
+      "losses": 1,
+      "ties": 29,
+      "lower95": -0.1,
+      "upper95": 0,
+      "p_value": 1,
+      "holm_p_value": 1,
+      "benefit_supported": false,
+      "regression_supported": false
+    },
+    {
+      "kind": "embeddings-vs-no-embeddings",
+      "baseline": "recent/no-embeddings/local",
+      "candidate": "recent/embeddings/local",
+      "metric": "recall_all_at_k",
+      "n": 30,
+      "clusters": 30,
+      "baseline_mean": 0.23333333333333334,
+      "candidate_mean": 0.23333333333333334,
+      "delta": 0,
+      "wins": 0,
+      "losses": 0,
+      "ties": 30,
+      "lower95": 0,
+      "upper95": 0,
+      "p_value": 1,
+      "holm_p_value": 1,
+      "benefit_supported": false,
+      "regression_supported": false
+    },
+    {
+      "kind": "embeddings-vs-no-embeddings",
+      "baseline": "recent/no-embeddings/fast",
+      "candidate": "recent/embeddings/fast",
+      "metric": "recall_all_at_k",
+      "n": 30,
+      "clusters": 30,
+      "baseline_mean": 0.8333333333333334,
+      "candidate_mean": 0.8333333333333334,
+      "delta": 0,
+      "wins": 0,
+      "losses": 0,
+      "ties": 30,
+      "lower95": 0,
+      "upper95": 0,
+      "p_value": 1,
+      "holm_p_value": 1,
+      "benefit_supported": false,
+      "regression_supported": false
+    },
+    {
+      "kind": "embeddings-vs-no-embeddings",
+      "baseline": "recent/no-embeddings/thinking",
+      "candidate": "recent/embeddings/thinking",
+      "metric": "recall_all_at_k",
+      "n": 30,
+      "clusters": 30,
+      "baseline_mean": 0.8,
+      "candidate_mean": 0.7666666666666667,
+      "delta": -0.033333333333333326,
+      "wins": 0,
+      "losses": 1,
+      "ties": 29,
+      "lower95": -0.1,
+      "upper95": 0,
+      "p_value": 1,
+      "holm_p_value": 1,
+      "benefit_supported": false,
+      "regression_supported": false
+    }
+  ],
+  "selection_sha256": "8cd8a2d38b99552ae6e45b88f42baf80d61f09161e288024d21a2091e1d000af",
+  "selection": {
+    "population": "decision430 (development split excluded)",
+    "seed": 20261014,
+    "per_category": 5,
+    "method": "Python random.Random.sample from sorted ids; sort chosen ids within each sorted category"
+  }
+}

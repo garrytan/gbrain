@@ -1554,8 +1554,8 @@ export async function makeContext(engine: BrainEngine, params: Record<string, un
 let lastRetrievalMeta: Record<string, unknown> | null = null;
 
 export function captureRetrievalMeta(key: string, value: unknown): void {
-  if (key === 'retrieval' && value !== null && typeof value === 'object') {
-    lastRetrievalMeta = value as Record<string, unknown>;
+  if ((key === 'retrieval' || key === 'hydradb') && value !== null && typeof value === 'object') {
+    lastRetrievalMeta = key === 'hydradb' ? { backend: 'hydradb', hydradb: value } : value as Record<string, unknown>;
   }
 }
 
@@ -1609,6 +1609,11 @@ export function formatResult(
   result: unknown,
   params: Record<string, unknown> = {},
 ): string {
+  const hydraDisplay = redactRetrievalOutput([], lastRetrievalMeta).meta?.hydradb as { markdown?: string } | undefined;
+  if (opName === 'recall' && params.json !== true && typeof hydraDisplay?.markdown === 'string') {
+    const facts = (result as { facts?: Array<{ fact: string }> }).facts ?? [];
+    return hydraDisplay.markdown + (facts.length ? '\n\n## Saved facts\n\n' + facts.map(f => `- ${f.fact}`).join('\n') : '') + '\n';
+  }
   // D2: `--json` on the op lane is the result document for every op. Only
   // search/query render it themselves (retrieval redaction + stderr notice);
   // list/stats/health/tags/timeline used to print their human table instead.
@@ -1664,6 +1669,8 @@ export function formatResult(
         if (getCliOptions().explain) for (const r of results) r.score_details ??= require('../core/search/explain-formatter.ts').buildScoreDetails(r);
         return JSON.stringify(answerId ? results.map(r => ({ ...r, answer_id: answerId })) : results, null, 2) + '\n';
       }
+      const hydra = meta?.hydradb as { markdown?: string } | undefined;
+      if (typeof hydra?.markdown === 'string' && !getCliOptions().explain) return hydra.markdown + '\n';
       // T15/FOV-1: an empty result names its cause when the pipeline told us
       // (degradation stages from _meta.retrieval / the local meta capture) —
       // a bare "No results." was indistinguishable from a degraded pipeline.

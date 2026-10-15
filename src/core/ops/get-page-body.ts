@@ -43,6 +43,7 @@ import {
 } from '../page-window/window.ts';
 import { renderTrustedText, type TrustFields } from '../eligibility/labels.ts';
 import type { QuarantinedView } from './get-page-projection.ts';
+import { currentTextProjectionFilter, safeChunksFilter } from '../search/safe-chunks.ts';
 
 export const BODY_MODES = ['auto', 'full', 'none', 'outline', 'window'] as const;
 export type BodyMode = typeof BODY_MODES[number];
@@ -230,12 +231,15 @@ function envelopeText(text: string, quarantined: QuarantinedView | null, trust?:
   return quarantined?.body_enveloped && text ? renderTrustedText(text, { trust_tier: 'external_untrusted', origin: trust?.origin ?? 'quarantined' }) : text;
 }
 
-/** Resolve a chunk-centered window: stored span first, then an unambiguous text match, else the chunk itself. */
+/** Resolve only current safe chunks; chunk-only fallback still requires a match in the read projection. */
 async function aroundChunk(ctx: OperationContext, page: Page, doc: PageDocument, chunkId: number, contextLines: number, maxBytes: number, revision: string):
   Promise<{ window: WindowSlice | null; chunkText: string; anchor: 'stored_span' | 'located' | 'chunk_only'; span?: { byte_start: number; byte_end: number } }> {
   const rows = await ctx.engine.executeRaw<{ chunk_text: string; chunk_source: string; projected_byte_start: unknown; projected_byte_end: unknown }>(
-    `SELECT chunk_text, chunk_source, projected_byte_start, projected_byte_end FROM content_chunks
-      WHERE id = $1 AND page_id = $2 AND COALESCE(modality, 'text') = 'text'`, [chunkId, page.id]);
+    `SELECT cc.chunk_text, cc.chunk_source, cc.projected_byte_start, cc.projected_byte_end FROM content_chunks cc
+      JOIN pages p ON p.id = cc.page_id
+      WHERE cc.id = $1 AND cc.page_id = $2 AND COALESCE(cc.modality, 'text') = 'text'
+        AND p.knowledge_revision = $3::uuid
+        AND ${currentTextProjectionFilter('p')}${ctx.remote !== false ? ` AND ${safeChunksFilter('p')}` : ''}`, [chunkId, page.id, page.knowledge_revision ?? null]);
   const row = rows[0];
   if (!row) {
     throw opError('revision_changed', `Chunk ${chunkId} is not part of page ${page.slug} at its current revision.`,
@@ -258,6 +262,12 @@ async function aroundChunk(ctx: OperationContext, page: Page, doc: PageDocument,
       const span = { start: at, end: at + needle.length };
       return { window: windowAround(doc.bytes, span, contextLines, maxBytes), chunkText: row.chunk_text, anchor: 'located', span: { byte_start: span.start, byte_end: span.end } };
     }
+  }
+  const normalized = row.chunk_text.replace(/\s+/g, '');
+  if (!normalized || !doc.bytes.toString('utf8').replace(/\s+/g, '').includes(normalized)) {
+    throw opError('revision_changed', `Chunk ${chunkId} does not match the current readable page.`,
+      'Search again for a current safe chunk, or read the page outline.',
+      { legacy_error: 'invalid_params', fix: sizeFix(page.slug, page.source_id, 'Read the current revision and outline.') });
   }
   return { window: null, chunkText: row.chunk_text, anchor: 'chunk_only' };
 }

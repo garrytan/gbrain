@@ -47,6 +47,7 @@ export const MANAGED_PHASE_TABLE: Readonly<Record<CyclePhase, ManagedPhaseEntry>
   skillopt: { class: 'no_coordinated_write', reason: 'Writes skill files and proposals outside the brain database.' },
   embed: { class: 'no_coordinated_write', reason: 'Embeddings are a physical projection the canonical writer guard does not cover.' },
   orphans: { class: 'no_coordinated_write', reason: 'Read-only orphan report.' },
+  cloud_mirror: { class: 'no_coordinated_write', reason: 'Reads pages and sends them to HydraDB; its only local writes are the mirror cursor config keys.' },
   'schema-suggest': { class: 'no_coordinated_write', reason: 'Writes schema suggestions outside the canonical tables.' },
   purge: { class: 'writes', reason: 'Expired tombstones are purged one by one through coordinated delete_page purges.' },
 };

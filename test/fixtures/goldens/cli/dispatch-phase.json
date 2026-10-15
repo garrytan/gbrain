@@ -346,6 +346,13 @@
         "thinClient": "none",
         "thinClientRoutedSubcommands": []
       },
+      "cloud": {
+        "hasSwitchCase": true,
+        "phase": "post-connect",
+        "preConnectRules": [],
+        "thinClient": "refuse",
+        "thinClientRoutedSubcommands": []
+      },
       "code-callees": {
         "hasSwitchCase": true,
         "phase": "post-connect",

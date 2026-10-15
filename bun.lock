@@ -14,6 +14,7 @@
         "@aws-sdk/client-s3": "^3.1028.0",
         "@dqbd/tiktoken": "^1.0.22",
         "@electric-sql/pglite": "0.4.3",
+        "@hydradb/sdk": "2.1.7",
         "@jsquash/avif": "^2.1.1",
         "@jsquash/png": "^3.1.1",
         "@modelcontextprotocol/sdk": "1.31.0",
@@ -167,6 +168,8 @@
     "@electric-sql/pglite": ["@electric-sql/pglite@0.4.3", "", {}, "sha512-ichuWTgtd4mOM1G4SpyGJa5trT03lWbMypDV0fUXUCXg5hiHqVAz/bZyV68NqmkLB7WcYmj1RMJVSp8HV/v/ZQ=="],
 
     "@hono/node-server": ["@hono/node-server@2.1.0", "", { "peerDependencies": { "hono": "^4" } }, "sha512-XovyyCCnBzW+zKu+z/zq8hwNs4KOR5rEMAOxo2f40Q5xoOI37IMm6MIg2COOUtUApo0i6850MTBKH2u4QLGIqg=="],
+
+    "@hydradb/sdk": ["@hydradb/sdk@2.1.7", "", { "dependencies": { "form-data": "^4.0.0", "node-fetch": "2.7.0" } }, "sha512-BEL25tgmp/Q7pXTXMO//2NLyG7TB+ikcQfN+0ZBDAkVV/vUuTdXwJkYn6+A4KXgmIoH+dWozmjvgG7G5Y82uOw=="],
 
     "@jsquash/avif": ["@jsquash/avif@2.1.1", "", { "dependencies": { "wasm-feature-detect": "^1.2.11" } }, "sha512-LMRxd0fMgfCLtobDh0/sFYJMMiRJTNYSEEWvRDKXlAeZ08t3gI5V+1thIT0XjXJ+SVG7Zug9B0XPyx0Ti5VRNA=="],
 

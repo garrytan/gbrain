@@ -24,7 +24,7 @@
 
 export type SearchStage =
   | 'setup' | 'lexical' | 'relational' | 'expansion' | 'embed' | 'vector'
-  | 'fuse' | 'post_fusion' | 'rerank' | 'alias_fanout' | 'anchoring' | 'facts_arm' | 'response';
+  | 'fuse' | 'post_fusion' | 'rerank' | 'alias_fanout' | 'anchoring' | 'facts_arm' | 'hydradb' | 'response';
 
 export interface SearchTimingsMeta {
   total_ms: number;

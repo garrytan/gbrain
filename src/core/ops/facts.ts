@@ -29,6 +29,9 @@ import { invalidParam, paramUse } from './op-fix.ts';
 import { assertExplicitSourceLive, federatedSearchScope, parseSourceIdParam, sourceScopeOpts, stampEvidenceSafe } from './context.ts';
 import { markKeywordHits } from '../search/evidence.ts';
 import { hybridSearchCached, stampContentFlags, type HybridSearchOpts } from '../search/hybrid.ts';
+import { markdownForHydraRows } from '../hydradb-response.ts';
+import { deliverHydraEvidence, hydraEvidencePlan } from '../search/hydra-evidence.ts';
+import { hydraPrimarySearch } from '../search/hydra-primary.ts';
 import { dedupResults } from '../search/dedup.ts';
 import { bumpLastRetrievedAt } from '../last-retrieved.ts';
 import { packToBudget, estimateTokens, resultTokens } from '../search/token-budget.ts';
@@ -500,6 +503,7 @@ const recall: Operation = {
 
     if (queryText && question === null && !entityParam && !sessionParam && !since && p.supersessions !== true) ctx.emitNotice?.(recallHintNotice(p, queryText));
     let searchResults: SearchResult[] = [];
+    const cloud: { mode?: 'fast' | 'thinking'; original: SearchResult[] } = { original: [] };
     let searchDegraded: string | undefined;
     let delivery: DeliveryMeta | undefined;
     const evidencePlan = queryText ? await recallEvidencePlan(ctx, p) : null;
@@ -513,24 +517,12 @@ const recall: Operation = {
       const searchScope = { ...federatedSearchScope(ctx, sourceIdParam), ...(eligibility.floor ? { minTrust: eligibility.floor } : {}) };
       // #4352 — recall's page-search arm enforces `visibility: private` for
       // untrusted callers with the excludePrivate resolved above.
-      const keywordOnly = await recallKeywordOnlyReason(ctx);
-      if (keywordOnly) {
-        searchResults = await keylessRecallRows(ctx, queryText, limit, excludePrivate, searchScope, rankCutOpts);
-        searchDegraded = keywordOnly;
-      } else {
-        searchResults = await hybridSearchCached(ctx.engine, queryText, {
-          limit,
-          expansion: false,
-          excludePrivate,
-          requireSafeChunks: ctx.remote !== false,
-          takesHoldersAllowList: readHolders(ctx),
-          ...searchScope,
-          ...rankCutOpts,
-        });
-      }
+      const found = await recallPageRows(ctx, queryText, limit, excludePrivate, searchScope, rankCutOpts);
+      searchResults = found.results; searchDegraded = found.degraded;
+      cloud.mode = found.mode; cloud.original = searchResults;
       bumpLastRetrievedAt(ctx.engine, searchResults.map(r => r.page_id));
-      const applied = recallDeliveryPlan(effectivePlan(evidencePlan, searchResults), p.budget_policy, queryText, budgetTokens, rows);
-      if (applied) ({ results: searchResults, delivery } = await deliverEvidence(ctx.engine, searchResults, applied, { ...searchScope, excludePrivate, requireSafeChunks: ctx.remote !== false }));
+      const applied = recallDeliveryPlan(effectivePlan(cloud.mode ? hydraEvidencePlan(evidencePlan) : evidencePlan, searchResults), p.budget_policy, queryText, budgetTokens, rows);
+      if (applied) ({ results: searchResults, delivery } = await (cloud.mode ? deliverHydraEvidence : deliverEvidence)(ctx.engine, searchResults, applied, { ...searchScope, excludePrivate, requireSafeChunks: ctx.remote !== false }));
       searchResults = await stampPageTrust(ctx.engine, searchResults, eligibility.floor);
     }
 
@@ -571,6 +563,7 @@ const recall: Operation = {
 
     const budgetPacking = recallBudgetPacking(p.budget_policy, queryText, budgetTokens, { rows, packedFacts, searchResults, packedResults }, recallResultCost(delivery));
 
+    if (cloud.mode) ctx.emitResponseMeta?.('hydradb', { mode: cloud.mode, markdown: markdownForHydraRows(packedResults, cloud.original, budgetTokens !== null) });
     const out = {
       facts: await withFactDateHeaders(ctx.engine, await stampRowTrust(ctx.engine, 'facts', packedFacts.map(r => ({ // #5575 A6: + trust_tier, origin, unconfirmed
         id: r.id,
@@ -614,12 +607,12 @@ const recall: Operation = {
       ...(queryText
         ? {
             results: packedResults.map(r => ({
-              slug: r.slug,
+              ...(r.result_type === 'cloud' ? { result_type: r.result_type } : { slug: r.slug }),
               title: r.title,
               chunk: r.chunk_text,
               evidence: r.evidence,
               create_safety: r.create_safety,
-              provenance: r.slug,
+              provenance: r.result_type === 'cloud' ? 'hydradb' : r.slug,
               // #4830: a row without a source takes the scope's single source; a federated read leaves it absent.
               ...((r.source_id ?? scalarSource) ? { source_id: r.source_id ?? scalarSource } : {}),
               ...(r.delivered ? { delivered: r.delivered } : {}),
@@ -1402,6 +1395,19 @@ export function parseTtlParam(raw: unknown): Date | null {
 export const factsOperations: Operation[] = [
   extract_facts, recall, context_pack, delta, forget_fact,
 ];
+
+/** Cloud primary precedes local embedding capability; the original local behavior remains the fallback. */
+async function recallPageRows(ctx: OperationContext, queryText: string, limit: number, excludePrivate: boolean,
+  searchScope: { sourceId?: string; sourceIds?: string[]; minTrust?: import('../trust/tier.ts').TrustTier },
+  rankCutOpts: Pick<HybridSearchOpts, 'pageRankCut'>): Promise<{ results: SearchResult[]; degraded?: string; mode?: 'fast' | 'thinking' }> {
+  const opts = { limit, excludePrivate, requireSafeChunks: ctx.remote !== false, takesHoldersAllowList: readHolders(ctx), ...searchScope, ...rankCutOpts };
+  let mode: 'fast' | 'thinking' | undefined;
+  const cloud = await hydraPrimarySearch(ctx.engine, queryText, { ...opts, onMeta: m => { mode = m.hydradb_mode; } }, limit);
+  if (cloud !== null) return { results: cloud, mode };
+  const keywordOnly = await recallKeywordOnlyReason(ctx);
+  if (keywordOnly) return { results: await keylessRecallRows(ctx, queryText, limit, excludePrivate, searchScope, rankCutOpts), degraded: keywordOnly };
+  return { results: await hybridSearchCached(ctx.engine, queryText, { ...opts, expansion: false, _hydraTried: true }) };
+}
 
 /** Why recall's page-search arm runs keyword-only, or null: the brain opted out (no query text sent), or no provider. */
 async function recallKeywordOnlyReason(ctx: OperationContext): Promise<string | null> {

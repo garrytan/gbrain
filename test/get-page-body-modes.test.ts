@@ -194,6 +194,34 @@ describe('windows', () => {
 });
 
 describe('around_chunk_id', () => {
+  test('remote chunk windows reject legacy provenance even when the text is public', async () => {
+    await put('notes/unsafe-legacy', 'Public text still needs certified chunk provenance.');
+    const [chunk] = await engine.getChunks('notes/unsafe-legacy', { sourceId: 'default' });
+    await engine.executeRaw("UPDATE pages SET chunker_version = 3 WHERE slug = 'notes/unsafe-legacy'");
+    await expectCode(get(ctx(), { slug: 'notes/unsafe-legacy', around_chunk_id: chunk.id }), 'revision_changed');
+    const readable = await get(ctx(), { slug: 'notes/unsafe-legacy', body: 'window', lines: { from: 1, count: 10 } });
+    expect(readable.window.text).toContain('Public text');
+  });
+
+  test('unmatched stored private fragments never become chunk-only fallback text', async () => {
+    await put('notes/unsafe-fragment', 'Only the public overview is readable.');
+    const [chunk] = await engine.getChunks('notes/unsafe-fragment', { sourceId: 'default' });
+    // Legacy fragments can lack all fence markers. Even a forged current seal
+    // cannot make text outside the sanitized document eligible for a window.
+    await engine.executeRaw('UPDATE content_chunks SET chunk_text = $1, projected_byte_start = NULL, projected_byte_end = NULL WHERE id = $2',
+      ['PRIVATE_LEGACY_FRAGMENT_CANARY with no surrounding fence markers', chunk.id]);
+    for (const reader of [ctx(), local()]) {
+      await expectCode(get(reader, { slug: 'notes/unsafe-fragment', around_chunk_id: chunk.id }), 'revision_changed');
+    }
+  });
+
+  test('chunk windows withhold unsealed projections after page edits', async () => {
+    await put('notes/stale-projection', 'A safe chunk from a previously sealed revision.');
+    const [chunk] = await engine.getChunks('notes/stale-projection', { sourceId: 'default' });
+    await engine.executeRaw("UPDATE pages SET text_projection_revision = NULL WHERE slug = 'notes/stale-projection'");
+    await expectCode(get(ctx(), { slug: 'notes/stale-projection', around_chunk_id: chunk.id }), 'revision_changed');
+  });
+
   test('centers on the exact stored span, even on repeated text', async () => {
     const para = 'the same message repeated in this conversation again and again. '.repeat(30);
     await put('logs/repeats', Array.from({ length: 190 }, () => para).join('\n\n'));

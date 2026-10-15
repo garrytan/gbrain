@@ -540,6 +540,8 @@ export async function listRemoteTools(config: GBrainConfig, opts: CallRemoteTool
  * This helper parses + types it for the caller.
  */
 export function unpackToolResult<T = unknown>(res: unknown): T {
+  const structured = (res as { structuredContent?: { result?: unknown } } | undefined)?.structuredContent;
+  if (structured && Object.hasOwn(structured, 'result')) return structured.result as T;
   const content = (res as { content?: unknown[] } | undefined)?.content;
   if (!Array.isArray(content) || content.length === 0) {
     throw new RemoteMcpError('parse', 'Remote tool returned no content');

@@ -25,6 +25,9 @@
       "calibration": [
         "./commands/calibration.ts"
       ],
+      "cloud": [
+        "./commands/cloud.ts"
+      ],
       "code-callees": [
         "./commands/code-callees.ts"
       ],

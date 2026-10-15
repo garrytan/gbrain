@@ -155,6 +155,7 @@ const EXPECTED_PHASES: CyclePhase[] = [
   'embed',
   'orphans',
   'schema-suggest',              // v0.39.0.0 — passive schema-suggest after orphans
+  'cloud_mirror',                // opt-in HydraDB mirror, before purge
   'purge',                       // v0.26.5
 ];
 
