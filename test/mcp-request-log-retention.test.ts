@@ -1,6 +1,5 @@
 import { readClientOpUsage } from '../src/core/mcp-usage.ts';
 import { collectMcpClientFit } from '../src/core/advisor/collect-mcp-client-fit.ts';
-import type { AdvisorContext } from '../src/core/advisor/types.ts';
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { readFileSync } from 'fs';
 import { MIGRATIONS, LATEST_VERSION } from '../src/core/migrate.ts';
@@ -275,7 +274,7 @@ describe('usage windows after request-log retention', () => {
       for (const days of [90, 365]) {
         await expect(readClientOpUsage(engine, { days })).rejects.toThrow('request-log retention removed details');
       }
-      const findings = await collectMcpClientFit.collect({ engine, remote: true, config: {} } as AdvisorContext);
+      const findings = await collectMcpClientFit.collect({ engine, remote: true, config: { engine: 'pglite' }, version: 'test', workspace: null, skillsDir: null, now: new Date() });
       expect(findings).toEqual([]);
       // The retirement marker ages out of the requested window naturally.
       await engine.executeRaw("UPDATE mcp_request_log_purged SET purged_last_used_at = now() - interval '400 days'");
