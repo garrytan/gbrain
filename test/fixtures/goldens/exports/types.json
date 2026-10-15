@@ -7628,7 +7628,7 @@
         "kind": "function",
         "name": "cosineReScore",
         "signature": [
-          "(engine: BrainEngine, results: SearchResult[], queryEmbedding: Float32Array, column?: string, imageSpace?: { queryEmbedding: Float32Array; column: string; }, attribute?: boolean) => Promise<SearchResult[]>"
+          "(engine: BrainEngine, results: SearchResult[], queryEmbedding: Float32Array, column?: string, imageSpace?: { queryEmbedding: Float32Array; column: string; }, attribute?: boolean, prefetched?: Promise<Map<number, Float32Array>>) => Promise<SearchResult[]>"
         ]
       },
       {
@@ -7747,7 +7747,7 @@
         "kind": "function",
         "name": "stampUnverifiedExtractions",
         "signature": [
-          "(engine: BrainEngine, results: SearchResult[], policy?: PageReadPolicy) => Promise<void>"
+          "(engine: BrainEngine, results: SearchResult[], policy?: PageReadPolicy, prefetched?: Promise<Map<number, { unverified: boolean; status: string; }>>) => Promise<void>"
         ]
       },
       {

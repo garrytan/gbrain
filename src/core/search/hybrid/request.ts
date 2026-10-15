@@ -3,7 +3,7 @@
  * Each stage reads the resolved request (HybridRequest, request.ts) and
  * writes its per-request accumulators only as `req.<field>`.
  */
-import { applyGeneratedDemotion } from '../provenance-demotion.ts';
+import { type GeneratedPageRow, applyGeneratedDemotion } from '../provenance-demotion.ts';
 import { normalizeChainSlots } from '../relational-chain.ts';
 import type { BrainEngine } from '../../engine.ts';
 import { perArmPoolLimit } from '../eval-pool-depth.ts';
@@ -329,9 +329,9 @@ export async function resolveHybridRequest(
 
   // Intent identity boosts (exact/mentioned title or slug, mentioned alias),
   // shared by the fused path and both keyword-only paths. Caller re-sorts.
-export async function applyIdentityBoosts(req: HybridRequest, list: SearchResult[]): Promise<void> {
+export async function applyIdentityBoosts(req: HybridRequest, list: SearchResult[], generated?: Promise<GeneratedPageRow[]>): Promise<void> {
   const { engine, query, opts, suggestions, intentWeightingOn, intentWeights, resolvedMode } = req;
-  await applyGeneratedDemotion(engine, list, query, { sourceId: opts?.sourceId, sourceIds: opts?.sourceIds, excludePrivate: opts?.excludePrivate });
+  await applyGeneratedDemotion(engine, list, query, { sourceId: opts?.sourceId, sourceIds: opts?.sourceIds, excludePrivate: opts?.excludePrivate }, generated);
   if (intentWeights.exactMatchBoost === 1.0) {
     // #4694: general and temporal questions still honor a multi-token
     // title that is the query's subject. Not concept intent (Cat 13: a

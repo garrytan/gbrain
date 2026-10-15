@@ -9,6 +9,7 @@ import { type AutocutDecision, applyAutocut } from '../autocut.ts';
 import { type ExactLookupOpts, applyExactLookupHits, applyExactLookupTier } from '../exact-lookup.ts';
 import { type FusionListEntry, type VectorArm, composeFusionLists } from '../fusion-lists.ts';
 import { type HybridRequest, applyIdentityBoosts, emitHybridMeta } from './request.ts';
+import { prefetchFusionReads } from './fusion-prefetch.ts';
 import type { KeywordArmConfidenceDecision } from '../arm-confidence.ts';
 import { type MetadataBoostGateDecision, decideMetadataBoosts, lexicalArmsVoted } from '../metadata-boost-gate.ts';
 import { type PostFusionOpts, RRF_K, cosineReScore, resolveWalkDedupCap, rrfFusionWeighted, runPostFusionStages, stampContentFlags, stampUnverifiedExtractions, textVectorArmNonEmpty } from '../hybrid.ts';
@@ -139,9 +140,17 @@ export async function fuseArms(
     for (const entry of allLists) trace.observe(`arm:${entry.arm ?? 'list'}`, entry.list);
   }
 
+  // #6721: the unverified marks, the cosine re-score's embeddings and the
+  // generated-page rows depend only on the candidate rows, so they are read
+  // together here; each is still applied at its own step below.
+  const candidates = allLists.flatMap((l) => l.list);
+  const rescoreColumn = unifiedDone ? 'embedding_multimodal' : resolvedCol.name;
+  const prefetch = prefetchFusionReads(engine, candidates, opts,
+    queryEmbedding && !(imageQueryEmbedding && !unifiedDone) ? rescoreColumn : null);
+
   // issue #160: stamp unverified auto-extracted stubs across ALL candidate
   // arms BEFORE fusion so the compiled-truth authority boost skips them.
-  await stampUnverifiedExtractions(engine, allLists.flatMap((l) => l.list), opts);
+  await stampUnverifiedExtractions(engine, candidates, opts, prefetch.marks);
 
   const attribute = opts?.explain === true || trace !== undefined;
   let fused = rrfFusionWeighted(allLists, ctBoost, attribute);
@@ -154,9 +163,9 @@ export async function fuseArms(
     // Unified routing embedded the query with the multimodal model, so the
     // rescore must hydrate the multimodal column, not the text column.
     fused = await cosineReScore(
-      engine, fused, queryEmbedding, unifiedDone ? 'embedding_multimodal' : resolvedCol.name,
+      engine, fused, queryEmbedding, rescoreColumn,
       imageQueryEmbedding && !unifiedDone ? { queryEmbedding: imageQueryEmbedding, column: 'embedding_image' } : undefined,
-      attribute,
+      attribute, prefetch.embeddings,
     );
   }
 
@@ -180,7 +189,7 @@ export async function fuseArms(
     });
     // v0.32.x search-lite: intent exact-match boost (entity/event intents).
     // No-op when boost factor is 1.0 (general intent or weighting disabled).
-    await applyIdentityBoosts(req, fused);
+    await applyIdentityBoosts(req, fused, prefetch.generated);
     fused.sort((a, b) => b.score - a.score);
   });
   trace?.observe('fused', fused);

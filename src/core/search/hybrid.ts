@@ -175,7 +175,7 @@ export async function stampContentFlags(engine: BrainEngine, results: SearchResu
 export async function stampUnverifiedExtractions(
   engine: BrainEngine,
   results: SearchResult[],
-  policy?: PageReadPolicy,
+  policy?: PageReadPolicy, prefetched?: Promise<Map<number, { unverified: boolean; status: string }>>,
 ): Promise<void> {
   if (results.length === 0) return;
   try {
@@ -183,7 +183,7 @@ export async function stampUnverifiedExtractions(
       results.map((r) => r.page_id).filter((n): n is number => typeof n === 'number' && Number.isFinite(n)),
     )];
     if (ids.length === 0) return;
-    const marks = await engine.getUnverifiedExtractionPageIds(ids, policy);
+    const marks = await (prefetched ?? engine.getUnverifiedExtractionPageIds(ids, policy));
     if (marks.size === 0) return;
     for (const r of results) {
       const m = marks.get(r.page_id);
@@ -1571,7 +1571,7 @@ export async function cosineReScore(
   queryEmbedding: Float32Array,
   column: string = 'embedding',
   imageSpace?: { queryEmbedding: Float32Array; column: string },
-  attribute = false,
+  attribute = false, prefetched?: Promise<Map<number, Float32Array>>,
 ): Promise<SearchResult[]> {
   // 'both' mode: image-arm rows live in the image space (image column,
   // multimodal query vector); everything else in the text space.
@@ -1592,7 +1592,7 @@ export async function cosineReScore(
     // the same embedding space the HNSW just ranked in. Without this,
     // a Voyage HNSW retrieval would HNSW-rank against Voyage vectors but
     // rescore against OpenAI vectors → NaN or wrong rankings.
-    embeddingMap = chunkIds.length > 0 ? await engine.getEmbeddingsByChunkIds(chunkIds, column) : new Map();
+    embeddingMap = chunkIds.length > 0 ? await (prefetched ?? engine.getEmbeddingsByChunkIds(chunkIds, column)) : new Map();
     if (imageSpace && imageChunkIds.length > 0) {
       imageEmbeddingMap = await engine.getEmbeddingsByChunkIds(imageChunkIds, imageSpace.column);
     }

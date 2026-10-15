@@ -38,14 +38,26 @@ export function recordsCorrection(frontmatter: Record<string, unknown> | null, b
   }
 }
 
+export interface GeneratedPageRow { id: number; frontmatter: Record<string, unknown> | null; compiled_truth: string | null }
+
+/** The generated pages (gbrain-owned marker) among `ids`, with what `recordsCorrection` reads. */
+export function readGeneratedPages(engine: BrainEngine, ids: number[]): Promise<GeneratedPageRow[]> {
+  return engine.executeRaw<GeneratedPageRow>(
+    `SELECT id, frontmatter, compiled_truth FROM pages
+      WHERE id = ANY($1::int[]) AND (frontmatter->>'dream_generated' = 'true' OR type = 'extract_receipt')`, [ids]);
+}
+
+/**
+ * `prefetched` (search/hybrid/fusion-prefetch.ts) is `readGeneratedPages` already
+ * started for a superset of `list`'s pages; rows outside `list` are ignored.
+ */
 export async function applyGeneratedDemotion(engine: BrainEngine, list: SearchResult[], query: string,
-  scope: { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean }): Promise<void> {
+  scope: { sourceId?: string; sourceIds?: string[]; excludePrivate?: boolean }, prefetched?: Promise<GeneratedPageRow[]>): Promise<void> {
   try {
     const ids = [...new Set(list.map(r => r.page_id).filter((id): id is number => typeof id === 'number'))];
     if (!ids.length) return;
-    const generated = await engine.executeRaw<{ id: number; frontmatter: Record<string, unknown> | null; compiled_truth: string | null }>(
-      `SELECT id, frontmatter, compiled_truth FROM pages
-        WHERE id = ANY($1::int[]) AND (frontmatter->>'dream_generated' = 'true' OR type = 'extract_receipt')`, [ids]);
+    const inList = new Set(ids);
+    const generated = (await (prefetched ?? readGeneratedPages(engine, ids))).filter(g => inList.has(Number(g.id)));
     if (!generated.length) return;
     const generatedIds = new Set(generated.map(g => Number(g.id)));
     for (const r of list) if (generatedIds.has(r.page_id)) r.provenance = 'generated';
