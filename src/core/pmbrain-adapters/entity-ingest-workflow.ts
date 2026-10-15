@@ -14,6 +14,8 @@ import {annotateIngestContent} from './ingest-provenance.ts';
 import matter from 'gray-matter';
 import {parseLlmJson} from '../llm-json.ts';
 import {defaultMaxOutputTokens} from '../ai/model-compatibility.ts';
+import { compileCaptureContract,sourceTimelineDates } from './entity-capture-plan.ts';
+import { withCaptureWrite } from './entity-capture-window.ts';
 
 export interface EntityIngestContext {
   slug: string;
@@ -22,6 +24,9 @@ export interface EntityIngestContext {
   chunkBody: string;
   acknowledged?:string[];
   turn_entity_refs?:string[];
+  compact_contract?:boolean;
+  pageId?:number|string;
+  sourceIncarnation?:string;
 }
 interface EntityRef { slug: string; sourceId: string; title: string; type: string; evidence: string; names: string[] }
 interface IngestRelation { from: string; to: string; link_type: string; evidence: string }
@@ -43,6 +48,19 @@ export function readIngestContract(skillsDir=locateIngestSkillsDir()): string {
   return ['ingest/SKILL.md','_brain-filing-rules.md','conventions/quality.md']
     .map(path=>readFileSync(join(skillsDir,path),'utf8')).join('\n\n')
     +'\n\n本执行器的 put_page 已由程序执行旧页读取、增量合并、版本校验和提交后验收。模型只提交本段新增事实与当前状态，不需要为完成读取契约额外 get_page 或重写整页；只有需要理解旧内容时才读取。各实体、时间线和有原文证据的关系尽量在同一轮提交，保留最终 JSON 验收清单。';
+}
+
+export function readEntityCaptureContract(skillsDir=locateIngestSkillsDir()):string{
+  if(!skillsDir)throw new Error('ingest Skill not found');
+  return compileCaptureContract(['ingest/SKILL.md','_brain-filing-rules.md','conventions/quality.md'].map(path=>readFileSync(join(skillsDir,path),'utf8')));
+}
+
+async function checkSourceIdentity(engine:BrainEngine,context:EntityIngestContext,pageId:number):Promise<void>{
+  if(context.pageId!=null&&context.pageId!==pageId)throw new UnrecoverableError('ingest source identity changed');
+  if(context.sourceIncarnation!=null){
+    const [source]=await engine.executeRaw<{incarnation:string}>('SELECT incarnation::text incarnation FROM sources WHERE id=$1 AND NOT archived FOR SHARE',[context.sourceId]);
+    if(source?.incarnation!==context.sourceIncarnation)throw new UnrecoverableError('ingest source incarnation changed');
+  }
 }
 
 export function ingestOriginField(context:Pick<EntityIngestContext,'sourceId'|'body'>): string {
@@ -146,6 +164,7 @@ export async function validateIngestWrite(engine:BrainEngine,context:EntityInges
 }
 
 export function entityIngestTools(tools:ToolDef[],context:EntityIngestContext):ToolDef[]{
+  const dates=sourceTimelineDates(context.chunkBody);
   const canonicalInput=async(raw:unknown,engine:BrainEngine)=>{
     const input=raw&&typeof raw==='object'?raw as Record<string,unknown>:{};
     const slug=String(input.slug??'');
@@ -156,7 +175,10 @@ export function entityIngestTools(tools:ToolDef[],context:EntityIngestContext):T
     }
     return input;
   };
-  return tools.map(tool=>{
+  return tools.filter(tool=>!context.compact_contract||dates.length>0||tool.name.replace(/^brain_/,'')!=='add_timeline_entry').map((originalTool):ToolDef=>{
+    const tool=context.compact_contract&&originalTool.name.replace(/^brain_/,'')==='add_timeline_entry'
+      ? {...originalTool,input_schema:{...originalTool.input_schema,properties:{...(originalTool.input_schema.properties as Record<string,unknown>??{}),date:{type:'string',enum:dates}}}}
+      :originalTool;
     const name=tool.name.replace(/^brain_/,'');
     const unchanged=(raw:unknown)=>{
       const reference=String((raw as Record<string,unknown>)?.slug??'');
@@ -197,6 +219,7 @@ export function entityIngestTools(tools:ToolDef[],context:EntityIngestContext):T
           await tx.executeRaw('SELECT id FROM pages WHERE (slug=$1 AND source_id=$2) OR(slug=$3 AND source_id=$4) OR(slug=$5 AND source_id=$6) ORDER BY id FOR SHARE',[context.slug,context.sourceId,from.slug,from.sourceId,to.slug,to.sourceId]);
           const original=await tx.getPage(context.slug,{sourceId:context.sourceId});
           if(!original||original.deleted_at||original.compiled_truth!==context.body)throw new UnrecoverableError('ingest source changed before relationship write');
+          await checkSourceIdentity(tx,context,original.id);
           return tx.addLinksBatch([managedLink(context,from,to,relation.link_type,relation.evidence)]);
         });
         return {status:'ok',from:`${from.sourceId}:${from.slug}`,to:`${to.sourceId}:${to.slug}`,origin:context.slug,evidence:relation.evidence,ingest_links_created:created};
@@ -230,6 +253,7 @@ export function entityIngestTools(tools:ToolDef[],context:EntityIngestContext):T
         await tx.executeRaw('SELECT id FROM pages WHERE slug=$1 AND source_id=$2 FOR SHARE',[context.slug,context.sourceId]);
         const original=await tx.getPage(context.slug,{sourceId:context.sourceId});
         if(!original||original.deleted_at||original.compiled_truth!==context.body)throw new UnrecoverableError('ingest source changed before entity write');
+        await checkSourceIdentity(tx,context,original.id);
         const [current]=await tx.executeRaw<{revision:string}>('SELECT knowledge_revision::text revision FROM pages WHERE slug=$1 AND source_id=$2 FOR UPDATE',[slug,sourceId]);
         if(name==='put_page'&&(current?.revision??null)!==(observed?.revision??null))throw new UnrecoverableError('ingest revision conflict; read the changed entity before merging');
         const [before]=await tx.executeRaw<{id:number}>('SELECT COALESCE(max(id),0)::int id FROM links');
@@ -239,6 +263,9 @@ export function entityIngestTools(tools:ToolDef[],context:EntityIngestContext):T
         return {...output as object,slug:`${sourceId}:${slug}`,source_id:sourceId,ingest_links_created:after?.n??0,ingest_revision:written?.revision};
       });
     }};
+  }).map(tool=>{
+    if(!['put_page','add_link','add_timeline_entry'].includes(tool.name.replace(/^brain_/,'')))return tool;
+    return {...tool,execute:(raw,ctx)=>withCaptureWrite(ctx.engine,ctx.signal,()=>tool.execute(raw,ctx))};
   });
 }
 
@@ -270,6 +297,7 @@ export async function finalizeEntityIngest(engine:BrainEngine,context:EntityInge
     await tx.executeRaw('SELECT id FROM pages WHERE slug=$1 AND source_id=$2 FOR SHARE',[context.slug,context.sourceId]);
     const source=await tx.getPage(context.slug,{sourceId:context.sourceId});
     if(!source||source.deleted_at||source.compiled_truth!==context.body)throw new UnrecoverableError('ingest source changed; retry current document');
+    await checkSourceIdentity(tx,context,source.id);
     const created=rows.length?await tx.addLinksBatch(rows):0;
     for(const row of rows){
       const stored=await tx.executeRaw(`SELECT l.id FROM links l JOIN pages f ON f.id=l.from_page_id JOIN pages t ON t.id=l.to_page_id
@@ -360,7 +388,8 @@ export async function verifyIngestResult(engine:BrainEngine,data:SubagentHandler
     throw new UnrecoverableError(`ingest_turn_limit: ${turns?.limit??data.max_turns??20} turns exhausted; unfinished chunk is resumable`);
   }
   if(result.stop_reason!=='end_turn')throw new UnrecoverableError(result.stop_reason==='length'?'ingest_output_truncated: output truncated after bounded retry':['timeout','user_stop','service_shutdown','aborted'].includes(result.stop_reason)?`ingest_provider_${result.stop_reason}: ingest incomplete`:`ingest incomplete: ${result.stop_reason}`);
-  const verified=await finalizeEntityIngest(engine,data.ingest_context,result.result,await ingestRequiredWrites(engine,data,jobId));
+  const required=await ingestRequiredWrites(engine,data,jobId);
+  const verified=await withCaptureWrite(engine,undefined,()=>finalizeEntityIngest(engine,data.ingest_context!,result.result,required));
   const rejected=jobId==null?[]:await engine.executeRaw<{from:string;to:string;reason:string}>(`SELECT DISTINCT i->>'from' AS "from",i->>'to' AS "to",o->>'reason' AS reason
     FROM (SELECT CASE WHEN jsonb_typeof(input)='string' THEN (input #>> '{}')::jsonb ELSE input END i,CASE WHEN jsonb_typeof(output)='string' THEN (output #>> '{}')::jsonb ELSE output END o FROM subagent_tool_executions WHERE job_id=$1 AND tool_name='brain_add_link') x WHERE o->>'status'='rejected'`,[jobId]);
   for(const row of rejected)verified.unresolved.push({sourcePage:row.from,sourceId:data.ingest_context.sourceId,target:row.to,field:'ingest_relation',reason:row.reason});

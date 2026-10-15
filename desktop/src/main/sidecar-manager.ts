@@ -412,14 +412,14 @@ export class SidecarManager {
 
   private async stopForResourcePressure(child:ChildProcess,message:string,sample:ResourceSample|null,action:ResourceAction='adjust'):Promise<void>{
     if(this.child!==child||child.exitCode!==null||this.stopping)return;
-    if(!sample)return;
     if(action==='adjust'){
-      const constrained=memoryPressure(sample).level!=='normal';
+      const constrained=!sample||memoryPressure(sample).level!=='normal';
       await this.adminRequest('/admin/api/console/resource-stop',{method:'POST',body:JSON.stringify({action:'adjust',constrained}),signal:AbortSignal.timeout(5000)});
-      const readings=`可用物理内存 ${Math.floor(sample.availableBytes/1024**2)} MB，提交余量 ${sample.commitHeadroomBytes===undefined?'未取得':Math.floor(sample.commitHeadroomBytes/1024**2)+' MB'}，后台占用 ${Math.floor(sample.bytes/1024**2)} MB`;
+      const readings=sample?`可用物理内存 ${Math.floor(sample.availableBytes/1024**2)} MB，提交余量 ${sample.commitHeadroomBytes===undefined?'未取得':Math.floor(sample.commitHeadroomBytes/1024**2)+' MB'}，后台占用 ${Math.floor(sample.bytes/1024**2)} MB`:'资源采样未取得';
       this.options.logger.write('desktop',`${constrained?`资源调节：${message}`:'资源调节：恢复正常后台并发'}（${readings}）`);
       return;
     }
+    if(!sample)return;
     if(action==='drain'){
       const reason=`资源保护：${message}，已停止后台任务，普通服务继续运行。`;
       await this.adminRequest('/admin/api/console/resource-stop',{method:'POST',body:JSON.stringify({message:reason}),signal:AbortSignal.timeout(5000)});

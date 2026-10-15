@@ -40,7 +40,7 @@ test('截断恢复扣除持久用量并预留最终回执，最终回执可使�
  expect(await checkIngestCallBudget(engine,job!.id,data,'',[],[],true,20,true)).toBe(20);
  expect(await checkIngestCallBudget(engine,job!.id,{...data,usage_limits:{...data.usage_limits,output:18}},'',[],[],false,20,true)).toBe(0);
 });
-async function run(replies:(ChatResult|Error)[],direct=false,maxTurns=6,seed?:string,wireModel?:string,ingestContext:EntityIngestContext=context){
+async function run(replies:(ChatResult|Error)[],direct=false,maxTurns=6,seed?:string,wireModel?:string,ingestContext:EntityIngestContext=context,attempt=0){
  const data={prompt:'识别实体，先落库再返回实体回执。',model:wireModel??(direct?'anthropic:claude-sonnet-4-6':'custom-openai:Qwen3.6-35B-A3B'),source_id:'default',max_turns:maxTurns,model_output_limit:64000,ingest_context:ingestContext};
  const [job]=await engine.executeRaw<{id:number}>("INSERT INTO minion_jobs(name,status,data) VALUES('subagent','active',$1::jsonb) RETURNING id",[JSON.stringify(data)]);
  if(seed!==undefined){
@@ -51,10 +51,23 @@ async function run(replies:(ChatResult|Error)[],direct=false,maxTurns=6,seed?:st
  const next=(request:unknown)=>{calls.push(request);const value=replies.shift();if(!value)throw new Error('unexpected extra model call');if(value instanceof Error)throw value;return value;};
  __setChatTransportForTests(wireModel?null:async request=>next(request));
  const client:MessagesClient={async create(request){const value=next(request);return {id:'message-'+calls.length,type:'message',role:'assistant',model:data.model,stop_reason:value.stopReason==='tool_calls'?'tool_use':'end_turn',stop_sequence:null,content:value.blocks.map(block=>block.type==='tool-call'?{type:'tool_use',id:block.toolCallId,name:block.toolName,input:block.input}:{type:'text',text:(block as any).text}),usage:{input_tokens:10,output_tokens:5}} as any;}};
- const ctx={id:job!.id,name:'subagent',data,attempts_made:0,signal:new AbortController().signal,shutdownSignal:new AbortController().signal,updateProgress:async()=>{},updateTokens:async()=>{},log:async()=>{},isActive:async()=>true,readInbox:async()=>[]} as MinionJobContext;
+ const progress:Record<string,unknown>[]=[];
+ const ctx={id:job!.id,name:'subagent',data,attempts_made:attempt,signal:new AbortController().signal,shutdownSignal:new AbortController().signal,updateProgress:async(value:Record<string,unknown>)=>{progress.push(value);},updateTokens:async()=>{},log:async()=>{},isActive:async()=>true,readInbox:async()=>[]} as MinionJobContext;
  const handler=makeSubagentHandler({engine,config:{engine:url?'postgres':'pglite'},toolRegistry:tools,...(direct?{client}:{})});
- return {calls,jobId:job!.id,result:handler(ctx),resume:async()=>{const [stored]=await engine.executeRaw<{data:typeof data|string}>('SELECT data FROM minion_jobs WHERE id=$1',[job!.id]);return handler({...ctx,data:typeof stored!.data==='string'?JSON.parse(stored!.data):stored!.data});}};
+ return {calls,progress,jobId:job!.id,result:handler(ctx),resume:async()=>{const [stored]=await engine.executeRaw<{data:typeof data|string}>('SELECT data FROM minion_jobs WHERE id=$1',[job!.id]);return handler({...ctx,data:typeof stored!.data==='string'?JSON.parse(stored!.data):stored!.data});}};
 }
+
+test('实际工具循环报告模型轮次、等待和重试，证书错误保留原文',async()=>{
+ const success=await run([response('',true),response(receipt)],false,6,undefined,undefined,context,1);
+ await success.result;
+ expect(success.progress.some(value=>String(value.stage).includes('模型第 1 轮')&&String(value.stage).includes('第 2 次尝试'))).toBe(true);
+ expect(success.progress.some(value=>String(value.stage).includes('等待'))).toBe(true);
+ expect(success.progress.at(-1)?.turn).toBe(2);
+ const failed=await run([new Error('unknown certificate verification error')]);
+ await expect(failed.result).rejects.toThrow('unknown certificate verification error');
+ expect(String(failed.progress.at(-1)?.stage)).toContain('请求失败');
+ expect(String(failed.progress.at(-1)?.stage)).toContain('certificate verification');
+});
 
 for(const wire of [false,true])test(`${wire?'Qwen 实际 HTTP':'持久工具'}实体密集小资料按实体数量增加轮数，保存后不重复执行`,async()=>{
  const names=Array.from({length:8},(_,i)=>`评审方法${i}`);

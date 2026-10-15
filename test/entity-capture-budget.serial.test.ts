@@ -5,13 +5,17 @@ import { afterAll, beforeAll, beforeEach, expect, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
-import { runPhaseCaptureEntities,splitEntityCaptureCandidate } from '../src/core/cycle/capture-entities.ts';
+import { runPhaseCaptureEntities,splitEntityCaptureCandidate,entityCaptureIdempotencyKey,selectEntityCaptureCandidates } from '../src/core/cycle/capture-entities.ts';
 import { runByMentionCore } from '../src/commands/extract.ts';
 import type { MinionJobContext } from '../src/core/minions/types.ts';
 import {UnrecoverableError} from '../src/core/minions/types.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { assertSafeE2eDatabaseUrl } from './helpers/db-guard.ts';
-import {finalizeEntityIngest} from '../src/core/pmbrain-adapters/entity-ingest-workflow.ts';
+import {finalizeEntityIngest,readIngestContract} from '../src/core/pmbrain-adapters/entity-ingest-workflow.ts';
+import {annotateIngestContent,activeIngestContent} from '../src/core/pmbrain-adapters/ingest-provenance.ts';
+import {parseMarkdown} from '../src/core/markdown.ts';
+import {entityIngestTools} from '../src/core/pmbrain-adapters/entity-ingest-workflow.ts';
+import type {ToolDef} from '../src/core/minions/types.ts';
 
 process.env.PMBRAIN_HOME = mkdtempSync(join(tmpdir(), 'pmbrain-capture-home-'));
 
@@ -41,6 +45,160 @@ async function note(slug: string, body: string): Promise<void> {
     type: 'note', title: slug, compiled_truth: body, timeline: '', frontmatter: {},
   }, { sourceId: 'vault' });
 }
+
+test('同页前插和局部变更只请求变化分块，不变资料继续时零请求',async()=>{
+  const original=Array.from({length:2400},(_,index)=>`${index}号资料记录。`).join('');
+  await note('notes/incremental',original);
+  const requested:string[]=[];
+  const options={sourceId:'vault',handler:async(ctx:MinionJobContext)=>{
+    requested.push((ctx.data as any).ingest_context.chunkBody);
+    return {ingest_verified:true,stop_reason:'end_turn',tokens:{in:1,out:1}};
+  }};
+  const first=await runPhaseCaptureEntities(engine,options);
+  expect(first.details.chunks_processed).toBeGreaterThan(2);
+  requested.length=0;
+  await runPhaseCaptureEntities(engine,options);
+  expect(requested).toHaveLength(0);
+  await note('notes/incremental','新增开头。'+original.slice(0,1500)+'一条新增事实。'+original.slice(1500));
+  const changed=await runPhaseCaptureEntities(engine,options);
+  expect(requested).toHaveLength(1);
+  expect(changed.details.chunks_processed).toBe(1);
+  expect(changed.details.pages_remaining).toBe(0);
+},60000);
+
+test('复用分块保留有效事实与原文回链，事实被删除后不得继续命中旧回执',async()=>{
+  const slug='notes/incremental-facts';
+  const original=Array.from({length:2400},(_,index)=>`张三负责第${index}号资料记录。`).join('');
+  await note(slug,original);
+  const written:string[]=[];
+  let calls=0;
+  const options={sourceId:'vault',handler:async(ctx:MinionJobContext)=>{
+    calls++;
+    const context=(ctx.data as any).ingest_context;
+    const fact=context.chunkBody.slice(0,70)+` [Source: ${slug}]`;
+    const content=await annotateIngestContent(engine,context,'people/张三',`---\ntitle: 张三\ntype: person\n---\n${fact}`);
+    const parsed=parseMarkdown(content,'people/张三');
+    await engine.putPage('people/张三',parsed,{sourceId:'vault'});
+    written.push(fact);
+    return {result:JSON.stringify({entities:['people/张三'],relations:[]}),ingest_entities:[{slug:'people/张三',sourceId:'vault'}],ingest_verified:true,stop_reason:'end_turn',tokens:{in:1,out:1}};
+  }};
+  await runPhaseCaptureEntities(engine,options);
+  const retained=written.at(-1)!;
+  calls=0;
+  await note(slug,'新加入的开头。'+original);
+  await runPhaseCaptureEntities(engine,options);
+  expect(calls).toBe(1);
+  const page=await engine.getPage('people/张三',{sourceId:'vault'});
+  expect((await activeIngestContent(engine,page!)).compiled_truth).toContain(retained);
+  expect((await engine.executeRaw('SELECT id FROM links WHERE origin_field LIKE $1',[`ingest:vault:%`])).length).toBeGreaterThan(0);
+  await note(slug,original.slice(22500));
+  calls=0;
+  await runPhaseCaptureEntities(engine,options);
+  expect(calls).toBe(0);
+  const shortened=await engine.getPage('people/张三',{sourceId:'vault'});
+  expect((await activeIngestContent(engine,shortened!)).compiled_truth).toContain(retained);
+  expect((await engine.executeRaw('SELECT id FROM links WHERE origin_field LIKE $1',[`ingest:vault:%`])).length).toBeGreaterThan(0);
+  await engine.putPage('people/张三',{type:'person',title:'张三',compiled_truth:shortened!.compiled_truth.replace(retained,''),timeline:shortened!.timeline,frontmatter:shortened!.frontmatter},{sourceId:'vault'});
+  calls=0;
+  await runPhaseCaptureEntities(engine,options);
+  expect(calls).toBeGreaterThan(0);
+},60000);
+
+test('模型回执已验收但关联检查中断时，继续只补关联检查并完成断点',async()=>{
+  const slug='notes/graph-checkpoint';await note(slug,'张三负责这份合成项目的交付和验收，需要保留来源。');
+  let calls=0;
+  const options={sourceId:'vault',handler:async(ctx:MinionJobContext)=>{
+    calls++;const context=(ctx.data as any).ingest_context;
+    const content=await annotateIngestContent(engine,context,'people/张三',`---\ntitle: 张三\ntype: person\n---\n张三负责交付和验收。[Source: ${slug}]`);
+    await engine.putPage('people/张三',parseMarkdown(content,'people/张三'),{sourceId:'vault'});
+    return {result:JSON.stringify({entities:['people/张三'],relations:[]}),ingest_entities:[{slug:'people/张三',sourceId:'vault'}],ingest_verified:true,stop_reason:'end_turn',tokens:{in:1,out:1}};
+  }};
+  await runPhaseCaptureEntities(engine,options);
+  for(const state of [false,null]){
+    await engine.executeRaw("UPDATE minion_jobs SET result=CASE WHEN $1::boolean IS NULL THEN result-'graph_reconciled' ELSE jsonb_set(result,'{graph_reconciled}',$1::text::jsonb) END WHERE status='completed'",[state]);
+    calls=0;const result=await runPhaseCaptureEntities(engine,options);
+    expect(calls).toBe(0);expect(result.details.pages_remaining).toBe(0);
+    const [receipt]=await engine.executeRaw<{done:string}>("SELECT result->>'graph_reconciled' done FROM minion_jobs WHERE status='completed' ORDER BY id DESC LIMIT 1");
+    expect(receipt?.done).toBe('true');
+  }
+},60000);
+
+test('两个分块同时等待模型，同一实体补写单提交且两份事实均保留',async()=>{
+  await note('notes/window-a','张三负责项目甲的验收工作，需要保留完整事实。');
+  await note('notes/window-b','张三负责项目乙的交付工作，需要保留完整事实。');
+  let active=0,peak=0,writing=0,peakWriting=0;
+  let release!:()=>void;const both=new Promise<void>(resolve=>{release=resolve;});
+  const base:ToolDef={name:'brain_put_page',description:'write',input_schema:{type:'object'},idempotent:true,async execute(raw,ctx){
+    writing++;peakWriting=Math.max(peakWriting,writing);
+    try{await Bun.sleep(10);const input=raw as {slug:string;content:string};
+      const parsed=parseMarkdown(input.content,'people/张三');await ctx.engine.putPage('people/张三',parsed,{sourceId:'vault'});return {status:'ok',slug:'people/张三'};
+    }finally{writing--;}
+  }};
+  const result=await runPhaseCaptureEntities(engine,{sourceId:'vault',getConcurrency:()=>2,budget:{costCapCny:null},handler:async ctx=>{
+    active++;peak=Math.max(peak,active);if(active===2)release();
+    await Promise.race([both,Bun.sleep(150)]);active--;
+    const context=(ctx.data as any).ingest_context;
+    const write=entityIngestTools([base],context)[0]!;
+    await write.execute({slug:'people/张三',content:`---\ntitle: 张三\ntype: person\n---\n${context.chunkBody} [Source: ${context.slug}]`},{engine,jobId:ctx.id,remote:true,signal:ctx.signal});
+    return {result:JSON.stringify({entities:['people/张三'],relations:[]}),ingest_entities:[{slug:'people/张三',sourceId:'vault'}],ingest_verified:true,stop_reason:'end_turn',tokens:{in:1,out:1}};
+  }});
+  expect(peak).toBe(2);expect(peakWriting).toBe(1);expect(result.details.peak_active_chunks).toBe(2);
+  const page=await engine.getPage('people/张三',{sourceId:'vault'});
+  expect(page?.compiled_truth).toContain('项目甲');expect(page?.compiled_truth).toContain('项目乙');
+  expect(result.details.pages_remaining).toBe(0);
+},60000);
+
+test('旧版成功凭据可沿用，标题或模型改变时重新识别',async()=>{
+  await note('notes/legacy','这份足够长的原始资料只用于验证旧凭据的兼容性。');
+  let calls=0;
+  const options={sourceId:'vault',handler:async()=>{calls++;return {ingest_verified:true,stop_reason:'end_turn',tokens:{in:1,out:1}};}};
+  await runPhaseCaptureEntities(engine,options);
+  const [page]=(await selectEntityCaptureCandidates(engine,'vault'));
+  await engine.executeRaw("UPDATE minion_jobs SET idempotency_key=$1,data=jsonb_set(data,'{system}',$2::jsonb) WHERE name='subagent'",[entityCaptureIdempotencyKey(page!),JSON.stringify(readIngestContract())]);
+  calls=0;await runPhaseCaptureEntities(engine,options);expect(calls).toBe(0);
+  await engine.putPage('notes/legacy',{type:'note',title:'变更后的标题',compiled_truth:page!.body,frontmatter:{}},{sourceId:'vault'});
+  await runPhaseCaptureEntities(engine,options);expect(calls).toBe(1);
+  calls=0;
+  await runPhaseCaptureEntities(engine,{...options,model:'anthropic:claude-sonnet-4-7'});
+  expect(calls).toBe(1);
+},60000);
+
+test('双路等待时停止会撤销两条请求，不领取第三份并保留消耗',async()=>{
+  for(const name of ['a','b','c'])await note(`notes/cancel-${name}`,`资料 ${name} 参与并发取消验证，正文保持不变。`);
+  const controller=new AbortController();let calls=0,waiting=0;
+  const result=await runPhaseCaptureEntities(engine,{sourceId:'vault',getConcurrency:()=>2,signal:controller.signal,budget:{costCapCny:null},handler:async ctx=>{
+    calls++;await ctx.updateTokens({input:5,output:2});
+    await new Promise<void>((_resolve,reject)=>{
+      ctx.signal.addEventListener('abort',()=>reject(ctx.signal.reason),{once:true});
+      if(++waiting===2)controller.abort(new Error('user_stop'));
+    });
+    throw new Error('unexpected completion');
+  }});
+  expect(calls).toBe(2);expect(result.details.stop_reason).toBe('user_stop');
+  expect(result.details.input_tokens).toBe(10);expect(result.details.output_tokens).toBe(4);
+  expect(result.details.pages_remaining).toBe(3);
+},60000);
+
+test('一路网络失败会撤销另一条等待，保留首个原始错误和两路消耗',async()=>{
+  for(const name of ['a','b','c'])await note(`notes/network-${name}`,`资料 ${name} 参与失败取消验证，正文保持不变。`);
+  let calls=0,waiting=0,aborted=0;
+  let release!:()=>void;const both=new Promise<void>(resolve=>{release=resolve;});
+  const result=await runPhaseCaptureEntities(engine,{sourceId:'vault',getConcurrency:()=>2,budget:{costCapCny:null},handler:async ctx=>{
+    const call=++calls;await ctx.updateTokens({input:5,output:2});
+    if(++waiting===2)release();
+    await both;
+    if(call===1)throw new UnrecoverableError('ingest_provider_network: certificate verify failed');
+    await new Promise<void>((_resolve,reject)=>{
+      const stop=()=>{aborted++;reject(ctx.signal.reason);};
+      if(ctx.signal.aborted)stop();else ctx.signal.addEventListener('abort',stop,{once:true});
+    });
+    throw new Error('unexpected completion');
+  }});
+  expect(calls).toBe(2);expect(aborted).toBe(1);
+  expect(result.details.stop_reason).toBe('network');expect(result.summary).toContain('certificate verify failed');
+  expect(result.details.input_tokens).toBe(10);expect(result.details.output_tokens).toBe(4);
+  expect(result.details.pages_remaining).toBe(3);
+},60000);
 
 function promptOf(ctx: MinionJobContext): string {
   const data = ctx.data as { prompt?: string };

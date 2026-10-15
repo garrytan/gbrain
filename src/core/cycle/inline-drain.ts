@@ -25,6 +25,7 @@ export async function runSubagentsInline(
   handler: MinionHandler = makeSubagentHandler({ engine }),
   lockMs = INLINE_LOCK_MS,
   signal?: AbortSignal,
+  onProgress?:(progress:Record<string,unknown>)=>void,
 ): Promise<void> {
   while (true) {
     throwIfAborted(signal, '[dream] inline drain');
@@ -60,6 +61,7 @@ export async function runSubagentsInline(
       shutdownSignal: shutdown.signal,
       updateProgress: async progress => {
         await queue.updateProgress(job.id, lockToken, progress);
+        if(progress&&typeof progress==='object'&&!Array.isArray(progress))onProgress?.(progress as Record<string,unknown>);
       },
       updateTokens: async tokens => {
         await queue.updateTokens(job.id, lockToken, tokens);

@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test';
 import { SidecarResourceMonitor, resourcePressure, readSidecarResources, parseWindowsResourceSample } from '../src/main/sidecar/resource-monitor.js';
+import { closeWindowsResourceReader } from '../src/main/sidecar/windows-resource-reader.js';
 
 const rawSample={bytes:100*1024**2,availableBytes:12*1024**3,commitLimitBytes:32*1024**3,committedBytes:16*1024**3,startedAt:new Date().toISOString()};
 function parseSample(value:unknown){return parseWindowsResourceSample(JSON.stringify(value));}
@@ -39,22 +40,25 @@ test('缺失或异常的 Windows 计数器不能作为零余量，真实零余�
   expect(resourcePressure(parseSample({...rawSample,availableBytes:0}))).toContain('可用物理内存 0 MB');
 });
 
-test('Windows 采样缺失只记录诊断，下一次真实提交耗尽才停止后台任务并保留普通服务',async()=>{
+test('Windows 采样缺失先收缩窗口，下一次真实提交耗尽才停止后台任务并保留普通服务',async()=>{
   let reads=0;let failures=0;const actions:string[]=[];const messages:string[]=[];
   const monitor=new SidecarResourceMonitor(12345,async(message,_sample,action)=>{actions.push(action);messages.push(message);},{
     intervalMs:10,read:async()=>parseSample(++reads===1?{...rawSample,committedBytes:null}:{...rawSample,committedBytes:rawSample.commitLimitBytes}),
     onError:()=>{failures++;},
   });
   try{monitor.start();await Bun.sleep(80);}finally{monitor.stop();}
-  expect(failures).toBe(1);expect(actions).toEqual(['drain']);
-  expect(messages[0]).toContain('系统提交余量不足 256MB');
-  expect(messages[0]).toContain('可用物理内存 12288 MB');
+  expect(failures).toBe(1);expect(actions).toEqual(['adjust','drain']);
+  expect(messages[1]).toContain('系统提交余量不足 256MB');
+  expect(messages[1]).toContain('可用物理内存 12288 MB');
 });
 
 test('当前 Windows 受控进程的真实采样包含有效物理和提交余量',async()=>{
   if(process.platform!=='win32')return;
-  const sample=await readSidecarResources(process.pid);
+  let sample,second;
+  try{sample=await readSidecarResources(process.pid);second=await readSidecarResources(process.pid);}
+  finally{closeWindowsResourceReader();}
   expect(sample).not.toBeNull();
+  expect(second?.startedAt).toBe(sample?.startedAt);
   expect(sample!.bytes).toBeGreaterThan(0);
   expect(sample!.availableBytes).toBeGreaterThanOrEqual(0);
   expect(sample!.commitHeadroomBytes).toBeGreaterThanOrEqual(0);
@@ -88,19 +92,39 @@ test('监控请求不重叠，停止后迟到采样不能终止进程，只触�
 
 test('采样失败只记录诊断，不终止服务，创建时间改变时不触碰复用的 PID',async()=>{
   let failures=0;let stops=0;
-  const failed=new SidecarResourceMonitor(12345,async()=>{stops++;},{intervalMs:10,read:async()=>{failures++;throw new Error('模拟 WMI 不可用');}});
+  const failed=new SidecarResourceMonitor(12345,async(_message,_sample,action)=>{if(action!=='adjust')stops++;},{intervalMs:10,read:async()=>{failures++;throw new Error('模拟 WMI 不可用');}});
   failed.start();await Bun.sleep(100);failed.stop();expect(failures).toBeGreaterThanOrEqual(3);expect(stops).toBe(0);
   let reads=0;const time=new Date().toISOString();
   const reused=new SidecarResourceMonitor(12345,async()=>{stops++;},{intervalMs:10,read:async()=>({bytes:++reads===1?100:5*1024**3,availableBytes:10*1024**3,startedAt:reads===1?time:new Date(Date.parse(time)+1000).toISOString()})});
   reused.start();await Bun.sleep(100);reused.stop();expect(reads).toBe(2);expect(stops).toBe(0);
 });
 
+test('资源采样未知时仅收缩工作窗口，连续恢复十五秒后才放开',async()=>{
+  const actions:Array<{action:string;known:boolean}>=[];
+  let failing=true,now=0;
+  const monitor=new SidecarResourceMonitor(12345,async(_message,sample,action)=>{actions.push({action,known:sample!==null});},{
+    intervalMs:60000,now:()=>now,read:async()=>{
+      if(failing)throw new Error('sampling timed out');
+      return {bytes:100*1024**2,availableBytes:8*1024**3,totalBytes:32*1024**3,commitHeadroomBytes:16*1024**3};
+    },
+  });
+  try{
+    await (monitor as any).tick();
+    await (monitor as any).tick();
+    expect(actions).toEqual([{action:'adjust',known:false}]);
+    failing=false;await (monitor as any).tick();
+    now=14999;await (monitor as any).tick();expect(actions).toHaveLength(1);
+    now=15000;await (monitor as any).tick();
+    expect(actions).toEqual([{action:'adjust',known:false},{action:'adjust',known:true}]);
+  }finally{monitor.stop();}
+});
+
 test('软压力保持采样并在恢复后正常运行，只有连续真实耗尽 30 秒才紧急退出',async()=>{
   let pressure=true;let recoveryNow=0;const actions:string[]=[];
   const soft=new SidecarResourceMonitor(12345,async(_message,_sample,action)=>{actions.push(action);},{intervalMs:10,now:()=>recoveryNow+=15000,read:async()=>({bytes:pressure?9*1024**3:1*1024**3,totalBytes:32*1024**3,availableBytes:10*1024**3})});
-  soft.start();await Bun.sleep(40);pressure=false;await Bun.sleep(40);soft.stop();
+  await (soft as any).tick();pressure=false;await (soft as any).tick();await (soft as any).tick();soft.stop();
   expect(actions).toEqual(['adjust','adjust']);
   let now=0;actions.length=0;
   const critical=new SidecarResourceMonitor(12345,async(_message,_sample,action)=>{actions.push(action);},{intervalMs:10,now:()=>now+=15000,read:async()=>({bytes:1*1024**3,totalBytes:32*1024**3,availableBytes:100*1024**2})});
-  critical.start();await Bun.sleep(80);critical.stop();expect(actions).toEqual(['drain','emergency']);
+  await (critical as any).tick();await (critical as any).tick();await (critical as any).tick();critical.stop();expect(actions).toEqual(['drain','emergency']);
 });

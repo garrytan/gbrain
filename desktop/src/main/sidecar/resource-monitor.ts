@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { freemem, totalmem } from 'node:os';
 import { memoryPressure } from '../../../../shared/memory-budget.js';
+import { readWindowsResourceSample,closeWindowsResourceReader } from './windows-resource-reader.js';
 
 export interface ResourceSample {bytes:number;availableBytes:number;totalBytes?:number;commitHeadroomBytes?:number;startedAt?:string;}
 export type ResourceAction='adjust'|'drain'|'emergency';
@@ -25,8 +26,7 @@ export async function readSidecarResources(pid:number):Promise<ResourceSample|nu
   try { process.kill(pid, 0); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === 'ESRCH') return null; throw error; }
   if(process.platform==='win32'){
-    const script=`$ErrorActionPreference='Stop'; $root=Get-Process -Id ${pid} -ErrorAction SilentlyContinue; if(!$root){exit 0}; $owned=[System.Collections.Generic.List[object]]::new(); $owned.Add($root); $ids=[System.Collections.Generic.HashSet[int]]::new(); [void]$ids.Add($root.Id); $bytes=[double]0; for($index=0; $index -lt $owned.Count; $index++){if($owned.Count -gt 128){throw 'Controlled process tree exceeds resource limit'}; $parent=$owned[$index]; $bytes += [double]$parent.PrivateMemorySize64; foreach($row in @(Get-CimInstance Win32_Process -Filter ('ParentProcessId='+$parent.Id) -Property ProcessId,CreationDate)){if(!$ids.Contains([int]$row.ProcessId) -and $row.CreationDate -ge $parent.StartTime){$child=Get-Process -Id $row.ProcessId -ErrorAction SilentlyContinue; if($child){[void]$ids.Add($child.Id); $owned.Add($child)}}}}; $memory=Get-CimInstance Win32_PerfRawData_PerfOS_Memory -Property AvailableBytes,CommitLimit,CommittedBytes; @{bytes=$bytes; availableBytes=$memory.AvailableBytes; commitLimitBytes=$memory.CommitLimit; committedBytes=$memory.CommittedBytes; startedAt=$root.StartTime.ToUniversalTime().ToString('o')} | ConvertTo-Json -Compress`;
-    const text=await execute('powershell.exe',['-NoProfile','-NonInteractive','-Command',script]);
+    const text=await readWindowsResourceSample(pid);
     if(!text.trim())return null;
     const sample=parseWindowsResourceSample(text);
     return {...sample,totalBytes:totalmem()};
@@ -49,7 +49,7 @@ export class SidecarResourceMonitor {
   private normalSince:number|null=null;
   constructor(private pid:number,private halt:(message:string,sample:ResourceSample|null,action:ResourceAction)=>Promise<void>,private options:{intervalMs?:number;read?:(pid:number)=>Promise<ResourceSample|null>;onError?:(error:unknown)=>void;now?:()=>number}={}){}
   start(){if(this.timer||this.stopped)return;this.timer=setTimeout(()=>void this.tick(),this.options.intervalMs??2000);this.timer.unref();}
-  stop(){this.stopped=true;if(this.timer)clearTimeout(this.timer);this.timer=null;}
+  stop(){this.stopped=true;if(this.timer)clearTimeout(this.timer);this.timer=null;if(!this.options.read)closeWindowsResourceReader();}
   private async tick(){
     try{
       const sample=await (this.options.read??readSidecarResources)(this.pid);
@@ -77,8 +77,16 @@ export class SidecarResourceMonitor {
         this.level=pressure.level;
       }
     }catch(error){
+      if(this.stopped)return;
       this.options.onError?.(error);
       this.criticalSince=null;
+      this.normalSince=null;
+      if(this.level==='normal'){
+        try{
+          await this.halt('资源采样暂不可用，后台暂按单并发运行',null,'adjust');
+          this.level='constrained';
+        }catch(adjustError){this.options.onError?.(adjustError);}
+      }
     }
     finally{if(!this.stopped){this.timer=null;this.start();}}
   }

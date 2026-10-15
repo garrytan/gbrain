@@ -200,6 +200,7 @@ async function runDreamTask(engine: BrainEngine, input: Extract<ProductTask, { t
     afterSync: input.preset === 'quick' && !input.dryRun ? (sourceId: string, root: string, result: import('../../commands/sync.ts').SyncResult) => rpc('task.gitCommit', [sourceId, root, result]) : undefined,
     dryRun: input.dryRun, sourceId,
     captureEntitySlugs:input.slugs,
+    captureEntitiesConcurrency:()=>constrained?1:2,
     privateQueueOwnerJobId: ownerJobId,
     signal: abort.signal,
     includeOffice: true,

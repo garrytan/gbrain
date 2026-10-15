@@ -883,13 +883,32 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
   const cacheSystem = verdict === 'ok' || verdict === 'degraded:no_parallel';
 
   // Heartbeat bridge.
+  let waitingSince:number|null=null,modelWaitMs=0,currentTurn=0,modelStage='准备模型请求';
+  let progressWrite:Promise<void>=Promise.resolve();
+  const reportModel=()=>{
+    if(!data.ingest_context)return;
+    const waiting=waitingSince==null?0:Math.max(0,Date.now()-waitingSince);
+    const stage=`模型第 ${currentTurn+1} 轮 · 第 ${ctx.attempts_made+1} 次尝试 · ${waitingSince==null?modelStage:`等待 ${Math.floor(waiting/1000)} 秒`}`;
+    progressWrite=progressWrite.then(()=>ctx.updateProgress({stage,model,turn:currentTurn+1,attempt:ctx.attempts_made+1,model_wait_ms:modelWaitMs+waiting}))
+      .catch(error=>{if(!ctx.signal.aborted&&!ctx.shutdownSignal.aborted)console.error('[ingest progress]',error instanceof Error?error.message:String(error));});
+  };
   const heartbeat = (event: string, payload: Record<string, unknown>) => {
     logSubagentHeartbeat({
       job_id: ctx.id,
       event: event as any,
       ...payload,
     } as any);
+    if(typeof payload.turn_idx==='number')currentTurn=payload.turn_idx;
+    if(event==='turn_start'||event==='llm_call_started'){waitingSince=Date.now();modelStage='等待模型';reportModel();}
+    else if(event==='llm_call_completed'||event==='llm_call_failed'){
+      if(waitingSince!=null)modelWaitMs+=Math.max(0,Date.now()-waitingSince);
+      waitingSince=null;
+      modelStage=event==='llm_call_completed'?'执行工具与验收':`请求失败：${String(payload.error??'未知错误').slice(0,180)}`;
+      reportModel();
+    }
   };
+  const modelTimer=data.ingest_context?setInterval(()=>{if(waitingSince!=null)reportModel();},15000):undefined;
+  modelTimer?.unref();
 
   // Run the loop.
   let result: Awaited<ReturnType<typeof gatewayToolLoop>>;
@@ -1023,6 +1042,9 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
       if(kind!=='failure')throw new Error(`ingest_provider_${kind}: ${error instanceof Error?error.message:String(error)}`);
     }
     throw error;
+  }finally{
+    if(modelTimer)clearInterval(modelTimer);
+    await progressWrite;
   }
 
   // A provider can terminate a reasoning-only turn with no text and no tool

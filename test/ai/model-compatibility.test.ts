@@ -21,4 +21,6 @@ test('参数拒绝只识别明确的请求兼容错误，鉴权、限流及服�
   expect(classifyChatError({cause:{statusCode:429}})).toBe('rate_limit');
   expect(classifyChatError({cause:{name:'TimeoutError'}})).toBe('timeout');
   expect(classifyChatError({cause:{code:'ECONNRESET'}})).toBe('network');
+  expect(classifyChatError(new Error('unknown certificate verification error'))).toBe('network');
+  expect(classifyChatError({cause:{code:'UNABLE_TO_VERIFY_LEAF_SIGNATURE'}})).toBe('network');
 });

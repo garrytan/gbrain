@@ -514,6 +514,7 @@ export interface CycleOpts {
   markdownCatchUpMaxHistorical?: number;
   /** Replaces the entity-capture child handler. Production leaves this unset. */
   captureEntitiesHandler?: MinionHandler;
+  captureEntitiesConcurrency?:()=>number;
 }
 
 /** Union sync + synthesis writes without turning "no producer ran" into []. */
@@ -2262,6 +2263,7 @@ export async function runCycle(
           deadlineAtMs: opts.deadlineAtMs ?? null,
           privateQueueOwnerJobId: opts.privateQueueOwnerJobId ?? null,
           handler: opts.captureEntitiesHandler,
+          getConcurrency:opts.captureEntitiesConcurrency,
           onProgress: snapshot => {
             if (snapshot.done > captureReportedDone) progress.tick(snapshot.done - captureReportedDone);
             captureReportedDone = snapshot.done;
