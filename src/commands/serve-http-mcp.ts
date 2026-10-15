@@ -43,6 +43,7 @@ import { getBrainHotMemoryMeta } from '../core/facts/meta-hook.ts';
 import { serializeError } from '../core/errors.ts';
 import { VERSION } from '../version.ts';
 import { executeRawJsonb } from '../core/sql-query.ts';
+import { withRequestConfigSnapshot } from '../core/config-snapshot.ts';
 import { withBearerScopeHint } from './serve-http-oauth.ts';
 import type { ServeHttpContext } from './serve-http.ts';
 
@@ -122,7 +123,12 @@ export function mountMcp(app: Express, ctx: ServeHttpContext): void {
   // read-only; grantScopes still caps each grant to the client row's scope.
   app.post('/mcp', withBearerScopeHint(
     requireBearerAuth({ verifier: resourceVerifier, resourceMetadataUrl }), ['read', 'write'],
-  ), async (req: Request, res: Response) => {
+  ), (req: Request, res: Response) => withRequestConfigSnapshot(engine, () => handleMcpPost(req, res)));
+
+  // #6721: one config snapshot serves every config read of one POST /mcp (the
+  // surface, row-shape and writeback reads below, tools/list and a read op's
+  // dispatch); dispatch reads live for a write op (config-snapshot.ts).
+  async function handleMcpPost(req: Request, res: Response): Promise<void> {
     const startTime = Date.now();
     const authInfo = (req as any).auth as AuthInfo;
 
@@ -167,7 +173,7 @@ export function mountMcp(app: Express, ctx: ServeHttpContext): void {
     const state: McpRequestState = { authInfo, agentName, startTime, mcpOperations, surface, surfaceCeiling, surfaceAllowedOps, resultRows, thinClient };
     const server = createMcpRequestServer(ctx, state, writeback);
     await serveMcpRequest(server, req, res);
-  });
+  }
 }
 
 function createMcpRequestServer(

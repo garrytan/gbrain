@@ -1,4 +1,5 @@
 import { tryAcquirePoolLongHold, PoolCapacityError } from './pool-budget.ts';
+import { noteRequestConfigWrite, requestConfigRows, requestConfigValue } from './config-snapshot.ts';
 import { replaceDerivedLinks, replaceDerivedLinksBatch, type DerivedLinkBatchItem, type DerivedLinkOrigin, type DerivedLinkReplacementOptions } from './derived-links.ts';
 import { mutatePageTag } from './page-state/tags.ts';
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
@@ -2639,6 +2640,8 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async getConfig(key: string): Promise<string | null> {
+    const held = await requestConfigValue(this, key); // #6721: the request's one config snapshot
+    if (held !== undefined) return held;
     // #1603: a transient pooler drop on this read used to throw / fall through
     // to defaults silently — which on remote Postgres surfaces as the wrong
     // search mode/knobs and empty-stdout queries.
@@ -2654,12 +2657,14 @@ export class PostgresEngine implements BrainEngine {
         INSERT INTO config (key, value) VALUES (${key}, ${value})
         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
       `;
+      noteRequestConfigWrite(this, key, value);
     });
   }
 
   async unsetConfig(key: string): Promise<number> {
     return this.connRetry(async () => {
       const result = await this.sql`DELETE FROM config WHERE key = ${key}` as unknown as { count: number };
+      noteRequestConfigWrite(this, key, null);
       return result.count ?? 0;
     });
   }
@@ -2678,6 +2683,8 @@ export class PostgresEngine implements BrainEngine {
   }
 
   async getAllConfig(): Promise<Record<string, string>> {
+    const held = await requestConfigRows(this);
+    if (held) return held;
     return this.connRetry(async () => {
       const rows = await this.sql<{ key: string; value: string }[]>`
         SELECT key, value FROM config

@@ -13,6 +13,7 @@ import { operations, OperationError, enforceBoundClientOpAllowList, opError } fr
 import type { OperationContext, AuthInfo } from '../core/operations.ts';
 import type { OperationMeta } from '../core/ops/contract.ts';
 import { loadConfig } from '../core/config.ts';
+import { withRequestConfigSnapshot, withoutRequestConfigSnapshot } from '../core/config-snapshot.ts';
 import { resolveBrainId } from '../core/brain-resolver.ts';
 import { getCliOptions } from '../core/cli-options.ts';
 import { VERB_NAMES, MEMORY_VERBS_VERSION } from '../core/verbs.ts';
@@ -865,6 +866,20 @@ export async function dispatchToolCall(
   name: string,
   params: Record<string, unknown> | undefined,
   opts: DispatchOpts = {},
+): Promise<ToolResult> {
+  // #6721: a read op answers every config read from one snapshot of the table
+  // (config-snapshot.ts); a write reads config live, so it sees its own writes.
+  const run = () => dispatchResolvedCall(engine, name, params, opts);
+  return operations.find(o => o.name === name)?.mutating === false
+    ? withRequestConfigSnapshot(engine, run)
+    : withoutRequestConfigSnapshot(run);
+}
+
+async function dispatchResolvedCall(
+  engine: BrainEngine,
+  name: string,
+  params: Record<string, unknown> | undefined,
+  opts: DispatchOpts,
 ): Promise<ToolResult> {
   const startedMs = Date.now();
   const isVerb = VERB_NAME_SET.has(name);
