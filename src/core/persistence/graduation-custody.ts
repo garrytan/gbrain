@@ -104,8 +104,9 @@ export function currentProcessIdentity(): Pick<IntentMarker, 'pid' | 'bootId' | 
 export function markerLiveness(marker: IntentMarker): 'alive' | 'dead' | 'unknown' {
   if (marker.pid === process.pid) return isGraduationRunInProcess(marker.runId) ? 'alive' : 'dead';
   const bootId = readBootId(), pidNs = readPidNs();
-  if (marker.bootId && bootId && marker.bootId !== bootId) return 'unknown';
-  if (marker.pidNs && pidNs && marker.pidNs !== pidNs) return 'unknown';
+  // A missing probe cannot verify a recorded process identity on this host.
+  if (marker.bootId && marker.bootId !== bootId) return 'unknown';
+  if (marker.pidNs && marker.pidNs !== pidNs) return 'unknown';
   if (!isProcessAlive(marker.pid)) return 'dead';
   if (marker.processStart) {
     const start = processStartTime(marker.pid);

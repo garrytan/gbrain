@@ -13,7 +13,7 @@
  * that mkdirs over the tombstone, a liveness check fooled by PID reuse.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -41,8 +41,8 @@ function deadPid(): number {
 }
 
 let root: string;
-beforeAll(() => { root = mkdtempSync(join(tmpdir(), 'gbrain-custody-')); });
-afterAll(() => {});
+beforeAll(() => { root = realpathSync(mkdtempSync(join(tmpdir(), 'gbrain-custody-'))); });
+afterAll(() => { rmSync(root, { recursive: true, force: true }); });
 
 describe('intent marker and tombstone files', () => {
   test('the marker is replaced atomically with mode 0600; an unreadable one is never read as "no graduation"', () => {
@@ -74,6 +74,15 @@ describe('intent marker and tombstone files', () => {
 });
 
 describe('inspectGraduationPath and marker liveness', () => {
+  test('a missing boot or namespace probe cannot establish the recorded identity', () => {
+    // Keep module mocks in a child so other lock suites retain the real probes.
+    for (const missing of ['boot', 'namespace']) {
+      const child = Bun.spawnSync([process.execPath, join(import.meta.dir, 'helpers/graduation-probe-child.ts'), missing],
+        { stdout: 'pipe', stderr: 'pipe', timeout: 20_000 });
+      expect(child.exitCode, child.stderr.toString()).toBe(0);
+    }
+  }, 45_000);
+
   test('none, in_progress, interrupted, graduated and split_brain', () => {
     const dir = join(root, 'inspect.pglite');
     mkdirSync(dir);
@@ -88,6 +97,8 @@ describe('inspectGraduationPath and marker liveness', () => {
     writeIntentMarker(dir, marker('run-reused', 'copying', { pid: process.ppid, processStart: '1' }));
     if (processStartTime(process.ppid)) expect(inspectGraduationPath(dir).liveness).toBe('dead');
     writeIntentMarker(dir, marker('run-other-host', 'copying', { pid: process.ppid, bootId: 'another-boot' }));
+    expect(inspectGraduationPath(dir).liveness).toBe('unknown');
+    writeIntentMarker(dir, marker('run-other-namespace', 'copying', { pid: process.ppid, pidNs: 'another-namespace' }));
     expect(inspectGraduationPath(dir).liveness).toBe('unknown');
     writeIntentMarker(dir, marker('run-split', 'tombstoned', { pid: deadPid() }));
     mkdirSync(graduatedPath(dir, 'run-split'));
