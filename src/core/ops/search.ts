@@ -473,22 +473,21 @@ async function buildRetrievalResponseMeta(
     : undefined;
   const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
   const excludeSlugPrefixes = resolveHardExcludes();
-  const safeIndexPending = ctx.remote !== false
-    && await hasUnsealedPagesInScope(ctx, scope, excludePrivate, { types: opts.types, excludeSlugPrefixes });
-  const readiness = await probeProjectionReadiness(ctx.engine, {
-    ...scope,
-    excludePrivate,
-    types: opts.types,
-    excludeSlugPrefixes,
-  });
   const aliases = (opts.declarations ?? new DeclarationMemo()).scan(results as DeclarationRow[], queryText);
-  // Facts saved about the entity the query names come first (newest first, one hop through entities they name).
-  const entityFacts = opts.entity && ctx.emitResponseMeta ? await entitySavedFacts(ctx.engine, opts.entity, { remote: ctx.remote !== false, excludePrivate }) : [];
+  // #6721: these reads depend on nothing but the inputs above, so they run at once: on a pooled Postgres
+  // the wall time is the slowest read's round trips, not their sum. The answer-feedback write still runs last.
+  const [safeIndexPending, readiness, entityFacts, matchedFacts, heldFiles] = await Promise.all([
+    ctx.remote !== false && hasUnsealedPagesInScope(ctx, scope, excludePrivate, { types: opts.types, excludeSlugPrefixes }),
+    probeProjectionReadiness(ctx.engine, { ...scope, excludePrivate, types: opts.types, excludeSlugPrefixes }),
+    // Facts saved about the entity the query names come first (newest first, one hop through entities they name).
+    opts.entity && ctx.emitResponseMeta ? entitySavedFacts(ctx.engine, opts.entity, { remote: ctx.remote !== false, excludePrivate }) : [],
+    matchingSavedFacts(ctx, scope, queryText, aliases),
+    stampHeldHits(ctx.engine, results as SearchResult[], scope, ctx).catch(() => []),
+  ]);
   // A fact the facts arm already returned as a row is not repeated beside the blocks.
   const factRowIds = new Set((results as SearchResult[]).flatMap(r => r.fact_row ? [r.fact_row.id] : []));
-  const savedFacts = [...entityFacts, ...(await matchingSavedFacts(ctx, scope, queryText, aliases)).filter(m => !entityFacts.some(e => e.id === m.id))]
+  const savedFacts = [...entityFacts, ...matchedFacts.filter(m => !entityFacts.some(e => e.id === m.id))]
     .filter(f => !factRowIds.has(f.id));
-  const heldFiles = await stampHeldHits(ctx.engine, results as SearchResult[], scope, ctx).catch(() => []);
   const heldNotice = heldFilesNotice(heldFiles, ctx.remote !== false);
   if (heldNotice) ctx.emitNotice?.(heldNotice);
   const degraded = [...(m?.degraded ?? [])];
