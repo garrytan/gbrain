@@ -396,18 +396,8 @@ async function matchingSavedFacts(ctx: OperationContext, scope: SourceScope, que
   const visibility = `${ctx.remote !== false ? `AND f.visibility = 'world'` : ''} ${excludePrivate ? `AND ${privateProvenanceFilterFragment('f')}` : ''}
          AND ${projectionEligibleSql('facts', 'f', { floor: scope.minTrust })}`;
   try {
-    // Most searches have no saved fact to find: one indexed probe (idx_facts_since) with the
-    // same active-fact and visibility predicates skips the LIKE ANY scan when no fact qualifies.
-    const any = await ctx.engine.executeRaw(
-      `SELECT 1 FROM facts f
-       WHERE f.source_id = ANY($1::text[])
-         AND f.expired_at IS NULL AND (f.valid_until IS NULL OR f.valid_until > now())
-         AND f.source != ALL($2::text[])
-         ${visibility}
-       LIMIT 1`,
-      [sources, [...AUDIT_ROW_SOURCES]],
-    );
-    if (any.length === 0) return [];
+    // One statement, no existence probe ahead of it: idx_facts_match_trgm answers LIKE ANY whether or not
+    // any fact qualifies, so a probe only added a round trip in series (#6721).
     // Text first, visibility on the survivors. `matched` answers LIKE ANY from idx_facts_match_trgm and
     // lowercases each matching fact once; `scored` counts the words each contains (one bound LIKE per
     // word, summed; the SQL text varies with the word count, never with the words). Materializing

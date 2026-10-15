@@ -5,8 +5,9 @@
  *    readiness, saved-fact match and held-file coverage cost one round trip
  *    of wall time, not one each.
  * 2. Fails when: buildRetrievalResponseMeta awaits those reads one after
- *    another again (the saved-fact probe would only start once the
- *    safe-index statement has answered).
+ *    another again (the saved-fact match would only start once the
+ *    safe-index statement has answered), or puts a statement back in front
+ *    of the match.
  * 3. Existing coverage: test/dispatch-response-meta.serial.test.ts and
  *    test/search-other-names.test.ts pin what the meta says, not when its
  *    reads are issued.
@@ -43,15 +44,17 @@ afterAll(async () => {
 });
 
 describe('search response meta', () => {
-  test('the saved-fact probe is issued before the safe-index check has answered', async () => {
+  test('the saved-fact match is issued before the safe-index check has answered, with nothing ahead of it', async () => {
     events.length = 0;
     const r = await dispatchToolCall(engine, 'search', { query: 'widget renewal terms' }, { remote: true, transport: 'http', sourceId: 'default' });
     expect(r.isError).toBeFalsy();
     const safeIndexEnd = events.findIndex(e => e.at === 'end' && e.sql.includes('AND p.chunker_version <'));
-    const factProbeStart = events.findIndex(e => e.at === 'start' && e.sql.startsWith('SELECT 1 FROM facts f WHERE f.source_id = ANY($1::text[])'));
+    const factMatchStart = events.findIndex(e => e.at === 'start' && e.sql.startsWith('WITH matched AS MATERIALIZED ( SELECT f.id,'));
     expect(safeIndexEnd).toBeGreaterThan(-1);
-    expect(factProbeStart).toBeGreaterThan(-1);
-    expect(factProbeStart).toBeLessThan(safeIndexEnd);
+    expect(factMatchStart).toBeGreaterThan(-1);
+    expect(factMatchStart).toBeLessThan(safeIndexEnd);
+    // No existence probe runs in series ahead of the match (#6721): it cost a round trip on every search.
+    expect(events.some(e => e.sql.startsWith('SELECT 1 FROM facts f WHERE f.source_id = ANY($1::text[])'))).toBe(false);
     // Same answer as before: the saved fact is still reported beside the results.
     expect(r.content.slice(1).map(c => c.text ?? '').join('\n')).toContain('Widget-co renewal terms moved to net 45.');
   });
