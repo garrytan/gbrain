@@ -252,7 +252,7 @@ reconcile() {  # <cost> <exit_code>; returns 1 when the ledger append fails
   echo "eval-spend-guard: recorded cost \$${1} (exit $2); ledger now ${AFTER}" >&2
 }
 
-# Stop the command: SIGTERM, then up to KILL_GRACE seconds (10 by default;
+# Stop the command group, including helpers: SIGTERM, then up to KILL_GRACE seconds (10 by default;
 # GBRAIN_EVAL_SPEND_GUARD_KILL_GRACE_SECONDS overrides) before SIGKILL, so a
 # command that ignores SIGTERM cannot keep the guard — and its reservation —
 # hanging forever. Polled in 0.1 s steps; `wait` reaps it either way.
@@ -261,15 +261,15 @@ case "$KILL_GRACE" in ''|*[!0-9]*) KILL_GRACE=10 ;; esac
 CHILD=""
 stop_child() {
   [ -n "$CHILD" ] || return 0
-  kill -TERM "$CHILD" 2>/dev/null
+  kill -TERM -- "-$CHILD" 2>/dev/null
   i=0
-  while [ "$i" -lt "$((KILL_GRACE * 10))" ] && kill -0 "$CHILD" 2>/dev/null; do
+  while [ "$i" -lt "$((KILL_GRACE * 10))" ] && kill -0 -- "-$CHILD" 2>/dev/null; do
     sleep 0.1
     i=$((i + 1))
   done
-  if kill -0 "$CHILD" 2>/dev/null; then
+  if kill -0 -- "-$CHILD" 2>/dev/null; then
     echo "eval-spend-guard: command did not exit within ${KILL_GRACE}s of SIGTERM — sending SIGKILL" >&2
-    kill -KILL "$CHILD" 2>/dev/null
+    kill -KILL -- "-$CHILD" 2>/dev/null
   fi
   wait "$CHILD" 2>/dev/null
 }
@@ -305,10 +305,20 @@ fi
 exec 9>&-   # release the lock (if held) before the command starts
 echo "eval-spend-guard: reserved \$${EST} (run $RUN_ID)" >&2
 
-# Run the command as a job so a trapped signal interrupts `wait` (a foreground
-# child would defer the trap until it exited). `<&0` keeps the child's stdin.
+# Batch commands inherit pipe/file stdin. A background group cannot read a
+# controlling terminal (SIGTTIN); give it EOF instead of leaving a paid run
+# stopped with an open reservation. Interactive commands are not supported.
+if [ -t 0 ]; then
+  echo 'eval-spend-guard: terminal stdin disabled; pipe or redirect input for batch commands' >&2
+  exec </dev/null
+fi
+# Run as a job so a trapped signal interrupts `wait`. `<&0` preserves input.
+# Monitor mode gives this background command its own process group, without
+# requiring an external setsid binary (which macOS does not ship).
+set -m
 "$@" <&0 &
 CHILD=$!
+set +m
 wait "$CHILD"
 CODE=$?
 trap - INT TERM HUP

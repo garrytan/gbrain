@@ -297,8 +297,14 @@ describe('eval-spend-guard.sh', () => {
   });
 
   test('a SIGKILLed guard leaves its reservation counted at the estimate for the next guard', async () => {
-    const g = start(['10', '4', '--', 'sleep', '3']);
+    const pidFile = join(dir, 'paid-command.pid');
+    const g = start(['10', '4', '--', 'sh', '-c', `echo $$ > "${pidFile}"; exec sleep 3`]);
+    let paidPid = 0;
+    try {
     await waitFor(() => runningRows().length === 1, 'the reservation row');
+    await waitFor(() => existsSync(pidFile), 'the command PID');
+    paidPid = Number(readFileSync(pidFile, 'utf8').trim());
+    expect(paidPid).toBeGreaterThan(0);
     g.child.kill('SIGKILL');
     const { signal } = await g.exit;
     expect(signal).toBe('SIGKILL');
@@ -309,15 +315,23 @@ describe('eval-spend-guard.sh', () => {
     const ok = run(['10', '6', '--', 'true']);
     expect(ok.status).toBe(0);
     expect(ok.stderr).toContain('1 in-flight reservation(s) counted at their estimate');
+    } finally {
+      // SIGKILL cannot run the guard's cleanup; this test owns that survivor.
+      if (paidPid) { try { process.kill(-paidPid, 'SIGKILL'); } catch { /* already gone */ } }
+      if (paidPid) { try { process.kill(paidPid, 'SIGKILL'); } catch { /* already gone */ } }
+    }
   });
 
   test('a command that ignores SIGTERM is SIGKILLed after the grace period; the guard still reconciles (exit 143)', async () => {
     // The child traps TERM and would sleep on forever; with the grace knob at
     // 1 s the guard escalates to KILL instead of waiting unbounded.
-    const g = start(['10', '4', '--', 'bash', '-c', 'trap "" TERM; sleep 30'], { GBRAIN_EVAL_SPEND_GUARD_KILL_GRACE_SECONDS: '1' });
+    const pidFile = join(dir, 'resistant-child.pid');
+    const g = start(['10', '4', '--', 'bash', '-c', `trap "" TERM; sleep 30 & kid=$!; echo "$kid" > "${pidFile}"; wait "$kid"`], { GBRAIN_EVAL_SPEND_GUARD_KILL_GRACE_SECONDS: '1' });
     await waitFor(() => g.stderr().includes('reserved $4.000000'), "the 'reserved $' line");
     // Let the child install its trap before we signal.
     await new Promise((r) => setTimeout(r, 300));
+    const kid = Number(readFileSync(pidFile, 'utf8').trim());
+    expect(kid).toBeGreaterThan(0);
     const t0 = Date.now();
     g.child.kill('SIGTERM');
     const { code } = await g.exit;
@@ -331,6 +345,9 @@ describe('eval-spend-guard.sh', () => {
     expect(rows[1].status).toBe('done');
     expect(rows[1].cost_usd).toBe(4);
     expect(rows[1].exit_code).toBe(143);
+    const state = spawnSync('ps', ['-o', 'stat=', '-p', String(kid)], { encoding: 'utf8' }).stdout.trim();
+    try { expect(!state || state.startsWith('Z')).toBe(true); }
+    finally { try { process.kill(kid, 'SIGKILL'); } catch { /* already gone */ } }
   }, 15_000);
 
   test.skipIf(!READ_PERMS_ENFORCED)('an existing but unreadable ledger refuses the launch (exit 3) instead of auditing as $0', () => {
@@ -602,4 +619,13 @@ describe('eval-spend-guard.sh', () => {
     expect(r2.stderr).not.toContain('NEW LEDGER');
     expect(ledgerRows().length).toBe(4);
   });
+});
+
+
+test('a batch command still receives piped stdin', () => {
+  const result = spawnSync('bash', [SCRIPT, '5', '1', '--', 'sh', '-c', 'read value; printf "received:%s" "$value"'], {
+    env: { ...process.env, GBRAIN_EVAL_SPEND_LEDGER: ledger }, input: 'example-input\n', encoding: 'utf8', timeout: 15_000,
+  });
+  expect(result.status).toBe(0);
+  expect(result.stdout).toContain('received:example-input');
 });
