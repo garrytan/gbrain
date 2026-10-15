@@ -1,4 +1,4 @@
-import {readMigrationProgress, runUpgradeRetryGate, startupFailureAllowsRetry} from '../startup/post-upgrade-startup.js';
+import {readSidecarMigrationProgress, runUpgradeRetryGate, startupFailureAllowsRetry} from '../startup/post-upgrade-startup.js';
 import { app, type BrowserWindow } from 'electron';
 import { ensureBootstrapToken, getDatabaseRuntimeConfig, getSetupInfo, markDesktopMigration, needsDesktopMigration } from '../config-manager.js';
 import type { CliRuntime } from '../cli-runner.js';
@@ -115,7 +115,11 @@ export class SidecarController {
         logger,
         onStderr: (_chunk, recent) => {
           if (this.manager !== manager) return;
-          const migrationProgress=readMigrationProgress(recent);
+          const migrationProgress=readSidecarMigrationProgress({
+            phase: this.stateValue?.phase,
+            upgradePending,
+            stderr: recent,
+          });
           if(migrationProgress)this.dependencies.sendStartupProgress(migrationProgress);
           if (recent.includes(GIN_REPAIR_DB_UNUSABLE_MESSAGE)) {
             this.dependencies.sendStartupProgress({
@@ -159,7 +163,7 @@ export class SidecarController {
               title: upgradePending&&getDatabaseRuntimeConfig().engine==='pglite'?'正在打开并升级知识库':'正在等待本地服务健康检查',
               message: waitHint,
             });
-          } else if (state.phase === 'ready' || state.phase === 'failed') {
+          } else if (state.phase === 'ready' || state.phase === 'failed' || state.phase === 'stopped') {
             this.dependencies.hideStartupProgress();
           }
           if (state.phase === 'failed' || state.phase === 'stopped') {
@@ -223,6 +227,7 @@ export class SidecarController {
     await this.dependencies.stopLan();
     const active = this.manager;
     this.manager = null;
+    this.dependencies.hideStartupProgress();
     if (active) await active.stop();
   }
 

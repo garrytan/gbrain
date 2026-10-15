@@ -49,6 +49,15 @@ describe('desktop system orchestration contracts', () => {
     expect(databaseController).toContain('runCliChecked(this.dependencies.runtime(), DESKTOP_MIGRATION_ARGS)');
   });
 
+  test('sidecar 已就绪后不会因为旧迁移日志重新显示数据库升级提示', () => {
+    expect(sidecarController).toContain('readSidecarMigrationProgress');
+    expect(sidecarController).toMatch(/phase:\s*this\.stateValue\?\.phase/);
+    expect(sidecarController).toMatch(/upgradePending,/);
+    expect(sidecarController).toMatch(/state\.phase === 'ready' \|\| state\.phase === 'failed' \|\| state\.phase === 'stopped'/);
+    expect(sidecarController).toMatch(/private async stopNow[\s\S]*?hideStartupProgress\(\)/);
+    expect(sidecarController).not.toMatch(/readMigrationProgress\(recent\)/);
+  });
+
   test('Sidecar 启动失败会把 exit code 和完整 stderr 写入桌面日志', () => {
     expect(sidecar).toContain('healthTimeoutMs');
     expect(sidecar).toContain('logSidecarFailure');
