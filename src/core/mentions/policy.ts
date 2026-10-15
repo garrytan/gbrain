@@ -66,18 +66,22 @@ export function parseNameList(value: unknown): string[] {
 const POLICY_KEYS = ['auto_link', 'mentions.auto_link', 'mentions.entity_types', 'mentions.ignore', 'mentions.exclude_slugs',
   'mentions.alias_deny', 'mentions.multiword_aliases', 'mentions.sibling_merge'] as const;
 
-/** The policy keys in one config read when the engine can run SQL (the write path counts statements), else one read per key. */
-async function readPolicyKeys(engine: Pick<BrainEngine, 'getConfig'> & Partial<Pick<BrainEngine, 'executeRaw' | 'kind'>>): Promise<Array<string | null>> {
-  if (engine.executeRaw && (engine.kind === 'pglite' || engine.kind === 'postgres')) {
+/**
+ * The policy keys through the engine's config API: one `getAllConfig` read (the write path counts
+ * statements), which a request's config snapshot answers with no statement at all (#6721); an engine
+ * without it reads each key.
+ */
+async function readPolicyKeys(engine: Pick<BrainEngine, 'getConfig'> & Partial<Pick<BrainEngine, 'getAllConfig'>>): Promise<Array<string | null>> {
+  if (engine.getAllConfig) {
     try {
-      const rows = await engine.executeRaw<{ key: string; value: string }>('SELECT key, value FROM config WHERE key = ANY($1::text[])', [[...POLICY_KEYS]]);
-      return POLICY_KEYS.map(k => rows.find(r => r.key === k)?.value ?? null);
+      const rows = await engine.getAllConfig();
+      return POLICY_KEYS.map(k => rows[k] ?? null);
     } catch { /* fall back to per-key reads */ }
   }
   return Promise.all(POLICY_KEYS.map(k => engine.getConfig(k)));
 }
 
-export async function readMentionPolicy(engine: Pick<BrainEngine, 'getConfig'> & Partial<Pick<BrainEngine, 'executeRaw' | 'kind'>>): Promise<MentionPolicy> {
+export async function readMentionPolicy(engine: Pick<BrainEngine, 'getConfig'> & Partial<Pick<BrainEngine, 'getAllConfig'>>): Promise<MentionPolicy> {
   const [global, own, types, ignore, excludeSlugs, aliasDeny, multiword, siblings] = await readPolicyKeys(engine);
   const typeAdds: string[] = [];
   const typeRemoves: string[] = [];
