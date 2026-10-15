@@ -43,7 +43,98 @@ beforeEach(async () => {
   await engine.executeRaw('DELETE FROM pages');
 });
 
+describe('title collision precedence', () => {
+  test('each source uses its own schema pack', async () => {
+    await engine.executeRaw("INSERT INTO sources (id, name) VALUES ('reflex-entities', 'Entities') ON CONFLICT DO NOTHING");
+    await engine.setConfig('schema_pack.source.default', 'gbrain-base');
+    await engine.setConfig('schema_pack.source.reflex-entities', 'gbrain-base-v2');
+    try {
+      await seed('crm/container', 'Acme Example', 'Legacy container.');
+      await seed('crm/entity', 'Acme Example', 'Account entity.', 'reflex-entities');
+      await engine.executeRaw("UPDATE pages SET type = 'crm'");
+      const block = await resolveEntitiesToPointers(engine, 'default', extractCandidates('about Acme Example'), {
+        sourceIds: ['default', 'reflex-entities'],
+      });
+      expect(block!.pointers.map(p => [p.source_id, p.slug])).toEqual([['reflex-entities', 'crm/entity']]);
+    } finally {
+      await engine.setConfig('schema_pack.source.default', '');
+      await engine.setConfig('schema_pack.source.reflex-entities', '');
+    }
+  });
+
+  test('an exact slug beats inferred entity shape for the same title', async () => {
+    await seed('alice-example', 'Alice Example', 'Explicit page.');
+    await engine.executeRaw("UPDATE pages SET type = 'note'");
+    await seed('people/alice-example', 'Alice Example', 'Entity.');
+    const block = await resolveEntitiesToPointers(engine, 'default', extractCandidates('about Alice Example'), {});
+    expect(block!.pointers.map(p => p.slug)).toEqual(['alice-example']);
+  });
+
+  test('equal title preferences have a stable winner', async () => {
+    await seed('people/z-alice', 'Alice Example', 'First inserted.');
+    await seed('people/a-alice', 'Alice Example', 'Second inserted.');
+    const block = await resolveEntitiesToPointers(engine, 'default', extractCandidates('about Alice Example'), {});
+    expect(block!.pointers.map(p => p.slug)).toEqual(['people/a-alice']);
+  });
+});
+
 describe('resolveEntitiesToPointers', () => {
+  for (const entityFirst of [false, true]) {
+    test(`same-title meeting cannot displace an entity (entity inserted first: ${entityFirst})`, async () => {
+      const rows = [
+        ['meetings/alice-session', 'conversation'],
+        ['people/alice-example', 'person'],
+      ];
+      if (entityFirst) rows.reverse();
+      for (const [slug, type] of rows) {
+        await seed(slug, 'Alice Example', `${type} synopsis.`);
+        await engine.executeRaw('UPDATE pages SET type = $1 WHERE slug = $2', [type, slug]);
+      }
+      const candidates = extractCandidates('about Alice Example');
+      const block = await resolveEntitiesToPointers(engine, 'default', candidates, { maxPointers: 1 });
+      expect(block!.pointers.map(p => p.slug)).toEqual(['people/alice-example']);
+      const uncapped = await resolveEntitiesToPointers(engine, 'default', candidates, { maxPointers: 10 });
+      expect(uncapped!.pointers.map(p => p.slug)).toEqual(['people/alice-example']);
+    });
+  }
+
+  test('federated title collision uses linkable types and preserves scalar scope', async () => {
+    await engine.executeRaw("INSERT INTO sources (id, name) VALUES ('reflex-entities', 'Entities') ON CONFLICT DO NOTHING");
+    await seed('meetings/alice-session', 'Alice Example', 'Transcript.');
+    await engine.executeRaw("UPDATE pages SET type = 'conversation'");
+    await seed('properties/alice-place', 'Alice Example', 'Property synopsis.', 'reflex-entities');
+    await engine.executeRaw("UPDATE pages SET type = 'property' WHERE source_id = 'reflex-entities'");
+    await engine.setConfig('mentions.entity_types', '+property');
+    try {
+      const candidates = extractCandidates('about Alice Example');
+      const block = await resolveEntitiesToPointers(engine, 'default', candidates, { sourceIds: ['default', 'reflex-entities'] });
+      expect(block!.pointers.map(p => [p.source_id, p.slug])).toEqual([['reflex-entities', 'properties/alice-place']]);
+      const scoped = await resolveEntitiesToPointers(engine, 'default', candidates, {});
+      expect(scoped!.pointers.map(p => p.slug)).toEqual(['meetings/alice-session']);
+    } finally {
+      await engine.setConfig('mentions.entity_types', '');
+    }
+  });
+
+  test('private entity does not suppress a public same-title fallback', async () => {
+    await seed('meetings/alice-session', 'Alice Example', 'Public transcript.');
+    await engine.executeRaw("UPDATE pages SET type = 'conversation'");
+    await seed('people/alice-example', 'Alice Example', 'Private entity.');
+    await engine.executeRaw("UPDATE pages SET frontmatter = '{\"visibility\":\"private\"}'::jsonb WHERE slug = 'people/alice-example'");
+    const block = await resolveEntitiesToPointers(engine, 'default', extractCandidates('about Alice Example'), {});
+    expect(block!.pointers.map(p => p.slug)).toEqual(['meetings/alice-session']);
+  });
+
+  test('explicit alias retains precedence over a same-title entity', async () => {
+    await seed('meetings/alice-session', 'Archived Session', 'Transcript.');
+    await engine.executeRaw("UPDATE pages SET type = 'conversation'");
+    await engine.setPageAliases('meetings/alice-session', 'default', ['alice example']);
+    await seed('people/alice-example', 'Alice Example', 'Entity.');
+    const block = await resolveEntitiesToPointers(engine, 'default', extractCandidates('about Alice Example'), { maxPointers: 1 });
+    expect(block!.pointers[0].slug).toBe('meetings/alice-session');
+    expect(block!.pointers[0].arm).toBe('alias');
+  });
+
   test('namespaced slug resolves from a bare title (the recall fix, D6)', async () => {
     await seed('people/alice-example', 'Alice Example', 'Alice is an early founder.');
     const candidates = extractCandidates('what do you think about Alice Example?');

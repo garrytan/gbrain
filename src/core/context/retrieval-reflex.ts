@@ -42,6 +42,7 @@ import { redactFindings } from '../secret-scan.ts';
 import { privatePagesFilterFragment } from '../search/private-visibility.ts';
 import type { EntityCandidate } from './entity-salience.ts';
 import { reflexPointerRationale } from './reflex-rationale.ts';
+import { preferEntityTitleMatches } from './title-matches.ts';
 import { logVolunteerEventsFireAndForget, volunteerEventRowsFrom } from './volunteer-events.ts';
 import { boundedProjectedPrefix } from '../page-window/document.ts';
 import { boundedPrefixSql, boundedRawPrefix, overlaidBoundedRows } from '../page-window/bounded-lead.ts';
@@ -562,7 +563,7 @@ export async function resolveEntitiesToPointers(
   const trust = await gatePointerCandidates(engine, resolved, opts); // #5575 gate; then pointers by confidence, suppression + cap
   const suppression = opts.suppression ?? 'slug-and-title';
   const pointers: ReflexPointer[] = [];
-  for (const { slug, source_id, arm, matchedNorm } of resolved) {
+  for (const { slug, source_id, arm, matchedNorm } of await preferEntityTitleMatches(engine, resolved, rowByKey, trust, slugToNorm)) {
     const row = rowByKey.get(keyOf(source_id, slug));
     if (!row || !trust.has(pageKey({ source_id, slug }))) continue;
     // Suppression: already present in PRIOR context. The current turn is

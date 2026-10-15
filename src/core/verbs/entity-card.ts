@@ -30,6 +30,7 @@ import { loadPageTrust } from '../eligibility/stamp.ts';
 import { loadRelationshipNotes, relationshipNoteKey } from '../link-relationship-notes.ts';
 import { normalizeAlias } from '../search/alias-normalize.ts';
 import { slugify } from '../entities/resolve.ts';
+import { exactMatchPreference } from '../entities/exact-match-preference.ts';
 import { safeSynopsis } from '../context/retrieval-reflex.ts';
 import { stampEvidence, markKeywordHits } from '../search/evidence.ts';
 import type { Link, SearchResult } from '../types.ts';
@@ -398,11 +399,6 @@ export async function buildEntityCard(
     card,
     ...(runnersUp.length ? { suggestions: runnersUp } : {}),
   };
-}
-
-function exactMatchPreference(row: CardPageRow, exactSlugs: string[], entityTypes: ReadonlySet<string>): number {
-  if (exactSlugs.includes(row.slug)) return 0;
-  return entityTypes.has(row.type ?? '') ? 1 : 2;
 }
 
 /**
