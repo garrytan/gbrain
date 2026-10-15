@@ -22,6 +22,7 @@ import { join, resolve, basename, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { tmpdir } from 'os';
 import { randomBytes } from 'crypto';
+import { registerCleanup } from '../core/process-cleanup.ts';
 import { logFriction, frictionDir, frictionFile } from '../core/friction.ts';
 import { loadScenario, listScenarios, readBrief, type ScenarioConfig } from '../core/claw-test/scenarios.ts';
 import { parseProgressEvents, verifyExpectedPhases } from '../core/claw-test/progress-tail.ts';
@@ -799,7 +800,18 @@ function invokeGbrain(
 ): Promise<PhaseOutcome> {
   return new Promise((resolvePromise) => {
     const start = Date.now();
-    const child = spawn(bin, argv, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], shell: false });
+    const child = spawn(bin, argv, {
+      cwd, env, stdio: ['ignore', 'pipe', 'pipe'], shell: false,
+      // A timed-out CLI phase owns its helpers too, including pipe holders.
+      detached: process.platform !== 'win32',
+    });
+    const killTree = (signal: NodeJS.Signals) => {
+      if (process.platform !== 'win32' && child.pid) {
+        try { process.kill(-child.pid, signal); return; } catch { /* group gone */ }
+      }
+      try { child.kill(signal); } catch { /* already gone */ }
+    };
+    const releaseCleanup = registerCleanup('claw phase process group', async () => { killTree('SIGKILL'); });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     child.stdout?.on('data', (b: Buffer) => stdout.push(b));
@@ -809,15 +821,26 @@ function invokeGbrain(
     // must not wedge the harness/CI job forever: SIGTERM at the phase cap,
     // SIGKILL if it lingers.
     let timedOut = false;
+    let cancelled = false;
     let killTimer: ReturnType<typeof setTimeout> | null = null;
     const wallClockTimer = setTimeout(() => {
       timedOut = true;
-      try { child.kill('SIGTERM'); } catch { /* already gone */ }
+      killTree('SIGTERM');
       killTimer = setTimeout(() => {
-        try { child.kill('SIGKILL'); } catch { /* already gone */ }
+        killTree('SIGKILL');
       }, 10_000);
     }, SUBPROCESS_TIMEOUT_MS);
+    const onPhaseSignal = () => {
+      killTree(cancelled ? 'SIGKILL' : 'SIGTERM');
+      cancelled = true;
+      if (!killTimer) killTimer = setTimeout(() => killTree('SIGKILL'), 10_000);
+    };
+    process.on('SIGINT', onPhaseSignal);
+    process.on('SIGTERM', onPhaseSignal);
     const clearTimers = () => {
+      releaseCleanup();
+      process.off('SIGINT', onPhaseSignal);
+      process.off('SIGTERM', onPhaseSignal);
       clearTimeout(wallClockTimer);
       if (killTimer) clearTimeout(killTimer);
     };
@@ -827,6 +850,9 @@ function invokeGbrain(
       if (settled) return;
       settled = true;
       clearTimers();
+      // The leader may exit before a TERM-resistant grandchild. Never cancel
+      // escalation while leaving that owned process group alive.
+      if (timedOut || cancelled) killTree('SIGKILL');
       let stderrText = Buffer.concat(stderr).toString('utf-8');
       if (timedOut) stderrText += `\nharness: killed after ${SUBPROCESS_TIMEOUT_MS}ms phase timeout`;
       const stdoutText = Buffer.concat(stdout).toString('utf-8');
