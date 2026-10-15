@@ -10,6 +10,18 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.250.0] - 2026-10-15
+
+**Keep the same lock when a writer moves.** Moving a writer while changing the brain home now keeps the existing external lock identity. An already reserved successor lock still takes precedence. This prevents the move from silently creating a different coordination lock.
+
+### Itemized changes
+
+- The change applies to ordinary writer transfers; an existing successor reservation remains authoritative.
+
+### To take advantage of v0.60.250.0
+
+Run `gbrain upgrade`. No additional setup is required.
+
 ## [0.60.244.0] - 2026-10-15
 
 **More timing tests now measure the work instead of how busy the CI machine is, and the write-gate check at the 24 MiB page limit is back to a fair bound (tests only, no behavior change).** On #6738's CI, `write-gate-perf`'s 5 MB adversarial p95 read 1585 ms against its 1500 ms bound. The cause wasn't load. #6733 raised the page import limit (`MAX_FILE_SIZE`) to 24 MiB, and the check sized its test text by that constant, so it had been timing about 5x the bytes against bounds calibrated for 5 MB, with no change to the write-gate code (adversarial p95: 151 ms at ee922300, 777 ms at 44eb0493). The 5 MB check now uses 5 MB of text again, and a new linearity check covers the real 24 MiB limit. Ten awaited-PGLite timing asserts now measure the test thread's CPU time. Two size-ratio checks now alternate their sizes so a slow spell on a shared machine can't skew them. All bounds and correctness asserts are unchanged.

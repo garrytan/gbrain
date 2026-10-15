@@ -350,7 +350,10 @@ export async function acceptWriterTransfer(engine: BrainEngine, sourceId: string
   if (opts.selfTransfer && root !== binding.local_path) throw opError('source_changed', 'Self-transfer must target the recorded canonical path.',
     `A self-transfer of source ${sourceId} only repairs its recorded checkout, so nothing was accepted. Pass --path ${binding.local_path ?? 'with the recorded canonical path from writer status'} instead.`,
     { fix: writerStatusFix(sourceId) });
-  const coordination = opts.selfTransfer ? binding.coordination_path : readPhysicalRootReservation(root)?.coordinationPath ?? join(persistenceHome(), 'locks', `${binding.worktree_id}.lock`);
+  // A successor reservation wins; without one, keep the host's recorded lock even if its brain home moved.
+  const recorded = binding.coordination_path;
+  const reusable = recorded && isAbsolute(recorded) && canonicalFilesystemPath(recorded) === recorded && !containsPath(root, recorded) ? recorded : null;
+  const coordination = opts.selfTransfer ? recorded : readPhysicalRootReservation(root)?.coordinationPath ?? reusable ?? join(persistenceHome(), 'locks', `${binding.worktree_id}.lock`);
   if (!coordination) throw opError('recovery_required', 'The recorded coordination path is missing.',
     `Source ${sourceId}'s host binding has no coordination lock path, so no transfer was accepted. Inspect writer status and show it to the user; repairing the binding is a deliberate topology change (docs/architecture/topologies.md).`,
     { fix: writerStatusFix(sourceId) });

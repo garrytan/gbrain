@@ -297,6 +297,7 @@ test/persistence-skill-bundles.serial.test.ts	R1	R1: mutates process.env (GBRAIN
 test/persistence-sync-company.serial.test.ts	global-state	global-state: spyOn globalThis.fetch
 test/persistence-sync-failures.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll; patches process stdout/stderr/console
 test/persistence-sync-options.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll; process-wide test seams __setPackLocatorForTests; spyOn globalThis.setInterval
+test/persistence-transfer-lock.serial.test.ts	R1	Mutates GBRAIN_HOME to verify stable transfer coordination.
 test/pglite-engine-disconnect.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll; R4: PGLiteEngine without an afterAll disconnect
 test/pglite-in-memory-create-retry.serial.test.ts	R2	R2: mock.module(@electric-sql/pglite) replaces modules for every file in the process
 test/pglite-reconnect.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll; R4: PGLiteEngine without an afterAll disconnect
