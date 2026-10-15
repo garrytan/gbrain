@@ -27,6 +27,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { buildServeHttpApp } from '../src/commands/serve-http.ts';
 import { VERB_NAMES } from '../src/core/verbs.ts';
 import { mintLegacyToken } from '../src/core/token-mint.ts';
+import { purgeStaleMcpRequestLog } from '../src/core/mcp-request-log-retention.ts';
 import { TEST_PKCE_CHALLENGE, TEST_PKCE_VERIFIER } from './helpers/oauth.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -108,6 +109,29 @@ function mcpPost(app: RunningApp, token: string, method: string, params?: unknow
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, ...(params ? { params } : {}) }),
   });
 }
+
+test('admin agent metrics retain lifetime usage after request log retention', async () => {
+  const app = await startApp();
+  const cookie = await ownerCookie(app);
+  const { clientId } = await registerClient(app, cookie, { scopes: 'read', grantTypes: ['client_credentials'] });
+  const legacyName = 'retention-example';
+  await mintLegacyToken(engine, { name: legacyName, takesHolders: ['world'], scopes: ['read'] });
+  for (const identity of [clientId, legacyName]) {
+    await engine.executeRaw(`INSERT INTO mcp_request_log (token_name, operation, status, created_at)
+      VALUES ($1, 'search', 'success', now() - interval '40 days'), ($1, 'search', 'success', now())`, [identity]);
+  }
+  const read = async () => {
+    const res = await fetch(`${app.base}/admin/api/agents`, { headers: { Cookie: cookie } });
+    expect(res.status).toBe(200);
+    return (await res.json() as Array<Record<string, unknown>>).filter(row => row.id === clientId || row.name === legacyName);
+  };
+  const before = await read();
+  expect(before).toHaveLength(2);
+  expect(before.every(row => row.total_requests === 2 && row.requests_today === 1)).toBe(true);
+  expect(before.find(row => row.id === clientId)?.last_used_at).toBeTruthy();
+  await purgeStaleMcpRequestLog(engine);
+  expect(await read()).toEqual(before);
+});
 
 async function mcpResult(app: RunningApp, token: string, method: string, params?: unknown): Promise<any> {
   const res = await mcpPost(app, token, method, params);

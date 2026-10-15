@@ -1,3 +1,4 @@
+import { mcpRequestLifetimeUsage } from '../core/mcp-request-log-retention.ts';
 /**
  * Owner administration for `gbrain serve --http`: the cookie-session guard
  * (`requireAdmin`), password login, the /admin/api/* dashboard endpoints and
@@ -257,8 +258,6 @@ function mountAdminOverviewApi(app: Express, ctx: ServeHttpContext): void {
           c.grant_types, c.scope, c.source_id, c.federated_read,
           c.created_at, c.token_ttl,
           CASE WHEN c.deleted_at IS NOT NULL THEN 'revoked' ELSE 'active' END as status,
-          (SELECT max(created_at) FROM mcp_request_log WHERE token_name = c.client_id) as last_used_at,
-          (SELECT count(*)::int FROM mcp_request_log WHERE token_name = c.client_id) as total_requests,
           (SELECT count(*)::int FROM mcp_request_log WHERE token_name = c.client_id AND created_at > now() - interval '24 hours') as requests_today
         FROM oauth_clients c ORDER BY c.created_at DESC
       `;
@@ -269,14 +268,15 @@ function mountAdminOverviewApi(app: Express, ctx: ServeHttpContext): void {
           a.created_at, null as token_ttl,
           CASE WHEN a.revoked_at IS NOT NULL THEN 'revoked' ELSE 'active' END as status,
           a.last_used_at,
-          (SELECT count(*)::int FROM mcp_request_log WHERE token_name = a.name) as total_requests,
           (SELECT count(*)::int FROM mcp_request_log WHERE token_name = a.name AND created_at > now() - interval '24 hours') as requests_today
         FROM access_tokens a ORDER BY a.created_at DESC
       `;
+      const usage = await mcpRequestLifetimeUsage(engine, [...oauthClients.map(c => String(c.id)), ...legacyKeys.map(k => String(k.name))]);
       res.json([
-        ...oauthClients,
+        ...oauthClients.map(c => ({ ...c, ...(usage.get(String(c.id)) ?? { total_requests: 0, last_used_at: null }) })),
         ...legacyKeys.map(({ scopes, ...key }) => ({
           ...key,
+          total_requests: usage.get(String(key.name))?.total_requests ?? 0,
           // The SAME normalizer the verify path uses — the dashboard must
           // never display a grant the serve doesn't enforce (NULL =
           // grandfathered full access; damaged/deny rows show empty).

@@ -117,12 +117,19 @@ export async function readClientOpUsage(
   if (!Number.isInteger(days) || days < 1 || days > 3650) {
     throw new Error(`readClientOpUsage: days must be an integer in [1, 3650]; got ${String(opts.days)}`);
   }
+  const [retention] = await engine.executeRaw<{ present: boolean }>(
+    "SELECT to_regclass('mcp_request_log_purged') IS NOT NULL AS present");
+  const retiredWindow = retention?.present
+    ? `UNION ALL SELECT NULL::text, NULL::text, 0::int, NULL::timestamptz
+         FROM mcp_request_log_purged
+        WHERE purged_last_used_at > now() - ($1::int * interval '1 day')`
+    : '';
   // Windowed on created_at (rides idx_mcp_log_time_agent). The day count is
   // bound as a parameter and multiplied into a unit interval — portable
   // across Postgres and PGLite, no string-splicing into the SQL.
   const rows = await engine.executeRaw<{
     token_name: string | null;
-    operation: string;
+    operation: string | null;
     n: number | string;
     last_seen: unknown;
   }>(
@@ -131,13 +138,18 @@ export async function readClientOpUsage(
       WHERE created_at > now() - ($1::int * interval '1 day')
         AND token_name IS NOT NULL
         AND status IN ('success', 'success_with_warnings', 'accepted_pending')
-      GROUP BY token_name, operation`,
+      GROUP BY token_name, operation
+      ${retiredWindow}`,
     [days],
   );
 
+  if (rows.some(row => row.operation === null)) {
+    throw new Error(`MCP usage for ${days} days is unavailable: request-log retention removed details in this window. Choose a shorter window; lifetime client totals remain available.`);
+  }
+
   const byClient = new Map<string, { ops: Map<string, number>; total: number; lastSeen: string }>();
   for (const row of rows) {
-    if (!row.token_name) continue;
+    if (!row.token_name || row.operation === null) continue;
     const op = normalizeLoggedOperation(row.operation);
     if (op === null) continue;
     const n = typeof row.n === 'number' ? row.n : parseInt(String(row.n), 10) || 0;

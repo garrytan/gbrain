@@ -721,6 +721,13 @@ CREATE TABLE IF NOT EXISTS mcp_request_log (
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Lifetime totals retired from the bounded detailed request log.
+CREATE TABLE IF NOT EXISTS mcp_request_log_purged (
+  token_name TEXT PRIMARY KEY,
+  purged_requests BIGINT NOT NULL DEFAULT 0,
+  purged_last_used_at TIMESTAMPTZ
+);
+
 -- ============================================================
 -- OAuth 2.1: clients, tokens, authorization codes
 -- ============================================================
@@ -1790,7 +1797,7 @@ BEGIN
     FOREACH target IN ARRAY ARRAY[
       'pages','content_chunks','links','wanted_links','tags','raw_data','timeline_entries',
       'page_versions','ingest_log','config','files','minion_jobs','sources','file_migration_ledger',
-      'access_tokens','mcp_request_log','minion_inbox','minion_attachments','subagent_messages',
+      'access_tokens','mcp_request_log','mcp_request_log_purged','minion_inbox','minion_attachments','subagent_messages',
       'subagent_tool_executions','subagent_rate_leases','gbrain_cycle_locks','dream_verdicts',
       'eval_candidates','eval_capture_failures','eval_takes_quality_runs','eval_contradictions_cache',
       'eval_contradictions_runs','calibration_profiles','take_proposals','take_grade_cache',

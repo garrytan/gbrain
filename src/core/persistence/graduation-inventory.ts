@@ -76,6 +76,7 @@ export const GRADUATION_INVENTORY: Inventory = {
     carry('link_transitions', 'user_data', 'Dated start/end evidence for relationships, including manual add_link dates that exist nowhere else.'),
     carry('loop_suppressions', 'user_data', 'Open-loop mutes the user chose.'),
     carry('mcp_request_log', 'operational', 'MCP request log.'),
+    carry('mcp_request_log_purged', 'operational', 'Lifetime metrics for retired MCP request logs.'),
     carry('mcp_spend_log', 'operational', 'MCP spend log.'),
     carry('mcp_spend_reservations', 'operational', 'Pending and unresolved MCP charges; admission counts them and late settlement needs them.'),
     carry('mention_gazetteer_entries', 'operational', 'Entity mention index: the linkable names the last mention pass used per source; a name change rescans only affected pages.'),

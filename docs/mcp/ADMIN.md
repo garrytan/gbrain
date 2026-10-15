@@ -598,7 +598,34 @@ not revoke server access.
 Jobs accepted before token invalidation continue under their existing grant
 checks. Revocation or deletion denies those jobs at their next
 authority check; external work already admitted may complete. All three actions
-retain request history, audit records, spending reservations, and settlement.
+retain audit records, spending reservations, and settlement. They do not
+themselves erase detailed request logs; those logs follow the maintenance
+retention policy below.
+
+## Request log retention
+
+Routine maintenance keeps detailed MCP request logs for 30 days by default
+once migration 248 is applied. Pruning preserves each agent's lifetime request
+count and last-use time, so the Agents dashboard totals survive removal of old
+details. Recent 24-hour activity metrics continue to use retained details. Usage reports
+refuse a requested window containing pruned details instead of returning partial
+counts; the advisor skips recommendations that require that incomplete window.
+Increasing retention cannot restore details already pruned.
+
+Set `cycle.purge.mcp_request_log_retention_days` on the brain host to change
+that window, for example:
+
+```bash
+gbrain config set cycle.purge.mcp_request_log_retention_days 90
+```
+
+Positive values are rounded down to whole days with a minimum of one day;
+unset, invalid or nonpositive values use the 30-day default. A purge processes
+at most 400,000 old rows per cycle and continues the backlog in later cycles.
+If the lifetime-counter table is unavailable, it skips deletion.
+
+**Say to your agent:** *"Keep detailed MCP request logs for 90 days and explain
+which usage totals remain after old details are pruned."*
 
 ## Recover a failed step
 

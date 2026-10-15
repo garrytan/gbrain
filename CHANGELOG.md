@@ -10,6 +10,18 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.253.0] - 2026-10-15
+
+**Keep request logs bounded without losing lifetime totals.** Routine maintenance now removes old request details while preserving each agent’s lifetime request count and last-use time. The default retention is 30 days. Recent 24-hour activity metrics remain accurate, and a failed counter update rolls back its matching deletion. Longer usage reports refuse windows containing pruned details.
+
+### Itemized changes
+
+- Set cycle.purge.mcp_request_log_retention_days to change retention; the minimum is one whole day. Migration 248 adds the durable counters. Purges skip until that table exists and process at most 400,000 rows per cycle.
+
+### To take advantage of v0.60.253.0
+
+Run `gbrain upgrade`. Retention starts during routine maintenance after migration 248 is applied.
+
 ## [0.60.244.0] - 2026-10-15
 
 **More timing tests now measure the work instead of how busy the CI machine is, and the write-gate check at the 24 MiB page limit is back to a fair bound (tests only, no behavior change).** On #6738's CI, `write-gate-perf`'s 5 MB adversarial p95 read 1585 ms against its 1500 ms bound. The cause wasn't load. #6733 raised the page import limit (`MAX_FILE_SIZE`) to 24 MiB, and the check sized its test text by that constant, so it had been timing about 5x the bytes against bounds calibrated for 5 MB, with no change to the write-gate code (adversarial p95: 151 ms at ee922300, 777 ms at 44eb0493). The 5 MB check now uses 5 MB of text again, and a new linearity check covers the real 24 MiB limit. Ten awaited-PGLite timing asserts now measure the test thread's CPU time. Two size-ratio checks now alternate their sizes so a slow spell on a shared machine can't skew them. All bounds and correctness asserts are unchanged.

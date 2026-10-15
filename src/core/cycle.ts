@@ -1782,6 +1782,8 @@ async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<Phas
     } catch {
       // Non-fatal.
     }
+    let purgedMcpRequestLog = 0;
+    try { purgedMcpRequestLog = await (await import('./mcp-request-log-retention.ts')).purgeStaleMcpRequestLog(engine); } catch { /* pre-retention binary */ }
     // System One: decision receipts past decide.receipts.retention_days (reported only when rows were pruned).
     let purgedDecisionReceipts = 0;
     try { purgedDecisionReceipts = await (await import('./ai/decide/store.ts')).pruneReceiptsForCycle(engine); } catch { /* pre-v179 brain */ }
@@ -1798,7 +1800,7 @@ async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<Phas
         `${purgedClones.count} orphan clone temp dir(s), ${purgedCheckpoints} stale op_checkpoint(s), ` +
         `${purgedBrainstormCheckpoints} stale brainstorm checkpoint(s), ` +
         `${purgedBatchRetryAuditFiles} stale batch-retry audit file(s), ` +
-        `and ${purgedVolunteerEvents} stale volunteer event(s)`,
+        `${purgedVolunteerEvents} stale volunteer event(s), ${purgedMcpRequestLog} stale MCP request(s)`,
       details: {
         purged_sources_count: purgedSources.length,
         purged_sources_blocked: purgeResult.blocked,
@@ -1811,6 +1813,7 @@ async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<Phas
         purged_brainstorm_checkpoints_count: purgedBrainstormCheckpoints,
         purged_batch_retry_audit_files_count: purgedBatchRetryAuditFiles,
         purged_volunteer_events_count: purgedVolunteerEvents,
+        purged_mcp_request_log_count: purgedMcpRequestLog,
         ...(purgedDecisionReceipts > 0 ? { purged_decision_receipts_count: purgedDecisionReceipts } : {}),
         ...(purgedFeedback.events + purgedFeedback.weights > 0 ? { purged_retrieval_feedback_events_count: purgedFeedback.events, purged_retrieval_weights_count: purgedFeedback.weights } : {}),
       },

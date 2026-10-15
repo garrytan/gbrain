@@ -212,6 +212,7 @@ test/longmemeval-embed-cache.test.ts	EmbeddingCache — canonical hash	4	readFil
 test/loops-extract-wiring.test.ts	jobs.ts wiring	2	source-surface-helper
 test/loops-extract-wiring.test.ts	relational edge vocabulary	2	readFileSync,source-surface-helper
 test/mcp-registration.test.ts	every stdio registration path builds from REGISTRATION_SURFACE	4	readFileSync
+test/mcp-request-log-retention.test.ts	dream cycle purge-phase wiring (structural pin)	1	readFileSync
 test/meeting-ingestion-attendance-template.test.ts	(file-level)	3	readFileSync
 test/migrate-stdout-clean.test.ts	migration output stays off stdout	2	source-surface-helper
 test/migrate.test.ts	PR #356 + #363 — session timeouts applied via startup parameters	1	readFileSync,source-surface-helper

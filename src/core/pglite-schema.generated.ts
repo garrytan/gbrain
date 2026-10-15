@@ -339,6 +339,12 @@ CREATE TABLE IF NOT EXISTS mcp_request_log (
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS mcp_request_log_purged (
+  token_name TEXT PRIMARY KEY,
+  purged_requests BIGINT NOT NULL DEFAULT 0,
+  purged_last_used_at TIMESTAMPTZ
+);
+
 CREATE TABLE IF NOT EXISTS oauth_clients (
   client_id               TEXT PRIMARY KEY,
   client_secret_hash      TEXT,

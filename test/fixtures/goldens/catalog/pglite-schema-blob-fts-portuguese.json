@@ -96,6 +96,7 @@
       "loop_suppressions.loop_suppressions_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
       "loop_suppressions.loop_suppressions_uniq": "u UNIQUE (source_id, kind, value)",
       "mcp_request_log.mcp_request_log_pkey": "p PRIMARY KEY (id)",
+      "mcp_request_log_purged.mcp_request_log_purged_pkey": "p PRIMARY KEY (token_name)",
       "migration_impact_log.migration_impact_log_job_id_fkey": "f FOREIGN KEY (job_id) REFERENCES minion_jobs(id) ON DELETE SET NULL",
       "migration_impact_log.migration_impact_log_pkey": "p PRIMARY KEY (id)",
       "minion_attachments.chk_attachment_size": "c CHECK ((size_bytes >= 0))",
@@ -453,6 +454,9 @@
       "mcp_request_log": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
+      "mcp_request_log_purged": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
       "migration_impact_log": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
@@ -803,6 +807,7 @@
       "loop_suppressions_pkey": "CREATE UNIQUE INDEX loop_suppressions_pkey ON public.loop_suppressions USING btree (id)",
       "loop_suppressions_uniq": "CREATE UNIQUE INDEX loop_suppressions_uniq ON public.loop_suppressions USING btree (source_id, kind, value)",
       "mcp_request_log_pkey": "CREATE UNIQUE INDEX mcp_request_log_pkey ON public.mcp_request_log USING btree (id)",
+      "mcp_request_log_purged_pkey": "CREATE UNIQUE INDEX mcp_request_log_purged_pkey ON public.mcp_request_log_purged USING btree (token_name)",
       "migration_impact_log_attribution_idx": "CREATE INDEX migration_impact_log_attribution_idx ON public.migration_impact_log USING btree (job_id, source_id) WHERE (job_id IS NOT NULL)",
       "migration_impact_log_pkey": "CREATE UNIQUE INDEX migration_impact_log_pkey ON public.migration_impact_log USING btree (id)",
       "migration_impact_log_remediation_idx": "CREATE INDEX migration_impact_log_remediation_idx ON public.migration_impact_log USING btree (remediation_id, applied_at DESC)",
@@ -1625,6 +1630,14 @@
           "7 params jsonb/jsonb NULL",
           "8 error_message text/text NULL",
           "9 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+        ],
+        "flags": "relkind=r rls=false force_rls=false"
+      },
+      "mcp_request_log_purged": {
+        "columns": [
+          "1 token_name text/text NOT NULL",
+          "2 purged_requests bigint/int8 NOT NULL DEFAULT 0",
+          "3 purged_last_used_at timestamp with time zone/timestamptz NULL"
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },
