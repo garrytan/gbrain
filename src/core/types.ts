@@ -532,6 +532,8 @@ export interface SalienceOpts extends PageReadPolicy {
 }
 
 export interface SalienceResult {
+  /** Latest user-facing retrieval; null for a page never retrieved. */
+  last_retrieved_at?: Date | null;
   slug: string;
   source_id: string;
   title: string;

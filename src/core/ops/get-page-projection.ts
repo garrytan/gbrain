@@ -51,6 +51,8 @@ function enveloped(text: string, fields: TrustFields | undefined): string {
 }
 
 export interface GetPageProjectionOpts {
+  /** Retrieval telemetry, separate from the canonical page and revision. */
+  last_retrieved_at?: Date | null;
   revision: string;
   tags: string[];
   /** include_content: add the canonical serialized `content` field. */
@@ -88,6 +90,7 @@ export function projectGetPage(page: Page, o: GetPageProjectionOpts) {
     : wrap ? { ...page, compiled_truth: enveloped(page.compiled_truth, o.trust), timeline: enveloped(page.timeline, o.trust) } : page;
   const content = () => wrap ? enveloped(serializePageToMarkdown(page, tags), o.trust) : serializePageToMarkdown(visibleBody, tags);
   const extras = {
+    ...(o.last_retrieved_at !== undefined ? { last_retrieved_at: o.last_retrieved_at } : {}),
     ...(quarantined ? { quarantined } : {}),
     ...(o.timeline_entries !== undefined ? { timeline_entries: o.timeline_entries } : {}),
     ...(o.file_held !== undefined ? { file_held: o.file_held } : {}),

@@ -152,6 +152,7 @@ export async function getRecentSalience(exec: LegacyUnscopedRead, opts: Salience
     const readCondition = trustedSql(`AND ${pageReadFilter('p', { excludePrivate: opts.excludePrivate }, [], true)}`);
     const rows = (await exec.run(sqlFragment`
       SELECT p.slug, p.source_id, p.title, p.type, p.updated_at, ${trustedSql(emotionalSql)} AS emotional_weight,
+             GREATEST(p.last_retrieved_at, MAX(r.last_retrieved_at)) AS last_retrieved_at,
              COUNT(DISTINCT t.id) AS take_count,
              COALESCE(AVG(t.weight), 0) AS take_avg_weight,
              (${trustedSql(emotionalSql)} * 5)
@@ -160,6 +161,7 @@ export async function getRecentSalience(exec: LegacyUnscopedRead, opts: Salience
                AS score
         FROM pages p
         LEFT JOIN takes t ON t.page_id = p.id AND t.active = TRUE ${holderCondition}
+        LEFT JOIN page_retrievals r ON r.page_id = p.id
        WHERE ${trustedSql(touchedSql)} >= ${boundaryIso}::timestamptz
          ${prefixCondition}
          ${excludeBriefings}
@@ -174,6 +176,7 @@ export async function getRecentSalience(exec: LegacyUnscopedRead, opts: Salience
       title: String(r.title ?? ''),
       type: r.type as SalienceResult['type'],
       updated_at: r.updated_at as Date,
+      last_retrieved_at: r.last_retrieved_at == null ? null : new Date(r.last_retrieved_at as string | Date),
       emotional_weight: Number(r.emotional_weight ?? 0),
       take_count: Number(r.take_count ?? 0),
       take_avg_weight: Number(r.take_avg_weight ?? 0),

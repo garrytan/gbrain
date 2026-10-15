@@ -26,7 +26,7 @@ import { isAutoLinkEnabled } from '../link-extraction.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { getContentFlag } from '../quarantine.ts';
 import { fileHeldField, readHeldPages } from '../persistence/held-reads.ts';
-import { bumpLastRetrievedAt } from '../last-retrieved.ts';
+import { bumpLastRetrievedAt, readLastRetrievedAt } from '../last-retrieved.ts';
 import { resolveExcludePrivatePages, isPrivatePage, findPrivateOnlySlugs } from '../search/private-visibility.ts';
 import { LIST_PAGES_DESCRIPTION, CAPTURE_DESCRIPTION } from '../operations-descriptions.ts';
 import { listPagesPagination, listingTruncatedNotice } from './list-pages-pagination.ts';
@@ -186,6 +186,8 @@ const get_page: Operation = {
     // (sync, migrations, dream cycle) bypass this op handler so the signal
     // stays clean. Throttled to ~1 write / 5 min per page via the SQL clause
     // inside bumpLastRetrievedAt (D2).
+    // Return the previous read, before this request schedules its own write-back.
+    const last_retrieved_at = (await readLastRetrievedAt(ctx.engine, [page.id])).get(page.id) ?? null;
     bumpLastRetrievedAt(ctx.engine, [page.id]);
 
     // #2200: tags come from the concrete page's source: federated `sourceOpts` has no
@@ -224,12 +226,12 @@ const get_page: Operation = {
       || (bodyRequest.mode === 'auto' && bodyBytes(visibleBody) <= await inlineBodyBytes(ctx));
     if (!whole) {
       const partial = await readPartialBody(ctx, { page, visibleBody, revision: snapshot!.revision, tags, quarantined, trust: readable.trust,
-        extras: { ...(quarantined ? { quarantined } : {}), ...(timelineEntries ? { timeline_entries: timelineEntries } : {}), ...fileHeld,
+        extras: { last_retrieved_at, ...(quarantined ? { quarantined } : {}), ...(timelineEntries ? { timeline_entries: timelineEntries } : {}), ...fileHeld,
           ...(resolved_slug ? { resolved_slug } : {}), ...(content_flag ? { content_flag } : {}) } }, bodyRequest);
       return lineGrammar ? { ...partial, line_grammar: lineGrammar } : partial;
     }
     const projected = projectGetPage(visibleBody, {
-      revision: snapshot!.revision, tags, includeContent, contentOnly, resolved_slug, content_flag, quarantined, trust: readable.trust,
+      revision: snapshot!.revision, tags, includeContent, contentOnly, last_retrieved_at, resolved_slug, content_flag, quarantined, trust: readable.trust,
       ...(timelineEntries ? { timeline_entries: timelineEntries } : {}),
       ...fileHeld,
     });
@@ -634,6 +636,7 @@ const list_pages: Operation = {
     ctx.emitResponseMeta?.('pagination', pagination);
     const truncatedNotice = isLocal ? null : listingTruncatedNotice(pagination, p);
     if (truncatedNotice) ctx.emitNotice?.(truncatedNotice);
+    const retrieved = await readLastRetrievedAt(ctx.engine, pages.map(pg => pg.id));
     return pages.map(pg => ({
       slug: pg.slug,
       source_id: pg.source_id,
@@ -641,6 +644,7 @@ const list_pages: Operation = {
       title: pg.title,
       updated_at: pg.updated_at,
       updated_at_iso: pg.updated_at_iso,
+      last_retrieved_at: retrieved.get(pg.id) ?? null,
       ...(pg.deleted_at ? { deleted_at: pg.deleted_at } : {}),
     }));
   },

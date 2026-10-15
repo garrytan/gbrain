@@ -192,7 +192,7 @@ describe('content_only round trip across sources', () => {
   test('lean keys are pinned and include source_id', async () => {
     await putPage.handler(localCtx('work'), { slug: 'companies/keys-example', content: PAGE('Keys.') });
     const page = await lean('companies/keys-example', 'work');
-    expect(Object.keys(page).sort()).toEqual(['content', 'revision', 'slug', 'source_id', 'tags', 'title', 'type']);
+    expect(Object.keys(page).sort()).toEqual(['content', 'last_retrieved_at', 'revision', 'slug', 'source_id', 'tags', 'title', 'type']);
     expect(page.source_id).toBe('work');
   }, 30_000);
 

@@ -1365,6 +1365,7 @@
         "kind": "interface",
         "members": [
           "emotional_weight: number",
+          "last_retrieved_at?: Date | null | undefined",
           "score: number",
           "slug: string",
           "source_id: string",
@@ -9015,6 +9016,7 @@
         "kind": "interface",
         "members": [
           "emotional_weight: number",
+          "last_retrieved_at?: Date | null | undefined",
           "score: number",
           "slug: string",
           "source_id: string",

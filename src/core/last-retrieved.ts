@@ -220,3 +220,13 @@ export function bumpLastRetrievedAt(engine: BrainEngine, pageIds: number[]): voi
   })();
   trackLastRetrievedWrite(promise);
 }
+
+/** Read telemetry only for pages the caller has already authorized. Keep it out of canonical snapshots/revisions. */
+export async function readLastRetrievedAt(engine: Pick<BrainEngine, 'executeRaw'>, pageIds: number[]): Promise<Map<number, Date | null>> {
+  if (!pageIds.length) return new Map();
+  const rows = await engine.executeRaw<{ id: number; last_retrieved_at: Date | string | null }>(
+    `SELECT p.id, GREATEST(p.last_retrieved_at, r.last_retrieved_at) AS last_retrieved_at
+       FROM pages p LEFT JOIN page_retrievals r ON r.page_id = p.id
+      WHERE p.id = ANY($1::int[])`, [pageIds]);
+  return new Map(rows.map(row => [Number(row.id), row.last_retrieved_at == null ? null : new Date(row.last_retrieved_at)]));
+}
