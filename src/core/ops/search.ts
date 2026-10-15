@@ -371,6 +371,9 @@ async function emitFanoutNotices(ctx: OperationContext, fanout: FanoutMeta | und
 
 export interface SavedFactMatch { id: number; fact: string; entity_slug: string | null; kind: string; valid_from: string; source: string }
 
+/** The text a saved fact is matched on; idx_facts_match_trgm (migration v246) indexes this exact expression (#6721). */
+export const SAVED_FACT_HAYSTACK_SQL = `lower(f.fact || ' ' || COALESCE(f.entity_slug, ''))`;
+
 /**
  * Facts saved with `remember` live in the facts table, not in page chunks, so
  * page search never returns them (gbrain-evals Cat 40: agents saved a
@@ -403,12 +406,12 @@ async function matchingSavedFacts(ctx: OperationContext, scope: SourceScope, que
     if (any.length === 0) return [];
     const rows = await ctx.engine.executeRaw<SavedFactMatch & { haystack: string }>(
       `SELECT f.id, f.fact, f.entity_slug, f.kind, f.valid_from::text AS valid_from, f.source,
-         lower(f.fact || ' ' || COALESCE(f.entity_slug, '')) AS haystack
+         ${SAVED_FACT_HAYSTACK_SQL} AS haystack
        FROM facts f
        WHERE f.source_id = ANY($1::text[])
          AND f.expired_at IS NULL AND (f.valid_until IS NULL OR f.valid_until > now())
          AND f.source != ALL($2::text[])
-         AND lower(f.fact || ' ' || COALESCE(f.entity_slug, '')) LIKE ANY($3::text[])
+         AND ${SAVED_FACT_HAYSTACK_SQL} LIKE ANY($3::text[])
          ${visibility}
        ORDER BY f.valid_from DESC, f.id DESC
        LIMIT 200`,

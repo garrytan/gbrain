@@ -1000,6 +1000,7 @@
       "idx_facts_extract_conversation_session": "CREATE INDEX idx_facts_extract_conversation_session ON public.facts USING btree (source_id, source_session) WHERE (source ~~ 'cli:extract-conversation-facts%'::text)",
       "idx_facts_fence_key": "CREATE UNIQUE INDEX idx_facts_fence_key ON public.facts USING btree (source_id, source_markdown_slug, row_num) WHERE (row_num IS NOT NULL)",
       "idx_facts_fts": "CREATE INDEX idx_facts_fts ON public.facts USING gin (to_tsvector('portuguese'::regconfig, ((fact || ' '::text) || replace(COALESCE(entity_slug, ''::text), '-'::text, ' '::text)))) WHERE (expired_at IS NULL)",
+      "idx_facts_match_trgm": "CREATE INDEX idx_facts_match_trgm ON public.facts USING gin (lower(((fact || ' '::text) || COALESCE(entity_slug, ''::text))) gin_trgm_ops)",
       "idx_facts_ontology_stint_dedup": "CREATE UNIQUE INDEX idx_facts_ontology_stint_dedup ON public.facts USING btree (source_id, entity_slug, dimension, value_hash, source_markdown_slug, valid_from) WHERE (dimension IS NOT NULL)",
       "idx_facts_session": "CREATE INDEX idx_facts_session ON public.facts USING btree (source_id, source_session, created_at DESC) WHERE (expired_at IS NULL)",
       "idx_facts_since": "CREATE INDEX idx_facts_since ON public.facts USING btree (source_id, created_at DESC) WHERE (expired_at IS NULL)",
