@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { configureGateway, resetGateway, __setChatTransportForTests, chat, toolLoop, type ChatResult } from '../src/core/ai/gateway';
@@ -33,12 +33,17 @@ test('a main bot conversation creates a persistent specialist with rules and a s
 });
 test('a specialist reads a granted source file and delivers a real file with a citation', async () => {
   const f = fixture(); const directory = join(f.root, 'materials'); mkdirSync(directory); const path = join(directory, 'week.md'); writeFileSync(path, '2026-10-14 完成需求评审，下周计划上线。');
+  const sourceDir = join(f.root, 'knowledge'); mkdirSync(sourceDir);
+  f.context.engine.executeRaw = (async (sql: string) => sql.includes('local_path') ? [{ id: 'default', local_path: sourceDir }] : [{ id: 'default' }]) as typeof f.context.engine.executeRaw;
   const agent = f.agents.create({ name: '周报助手', skills: ['weekly-report'], readDirectories: [directory] }); let requests = 0;
-  __setChatTransportForTests(async options => { requests++; expect(options.system).toContain('计划不能写成已完成'); return requests === 1 ? call('local_read', { path }) : requests === 2 ? call('artifact_save', { title: '周报', content: '# 已完成\n完成需求评审 [1]\n# 下周计划\n计划上线 [1]' }) : answer('周报文件已保存。'); });
+  __setChatTransportForTests(async options => { requests++; expect(options.system).toContain('计划不能写成已完成'); expect(options.system).toContain('优先主数据源路径'); return requests === 1 ? call('local_read', { path }) : requests === 2 ? call('artifact_save', { title: '周报', content: '# 已完成\n完成需求评审 [1]\n# 下周计划\n计划上线 [1]' }) : answer('周报文件已保存。'); });
   const conversation = f.service.create({ assistantId: agent.id, knowledge: false }); f.service.send(conversation.id, { text: '读取资料，写周报并保存 Word' }); await f.service.settled(conversation.id);
   const reply = f.service.get(conversation.id).messages.at(-1)!;
-  expect(reply.status).toBe('complete'); expect(reply.artifacts).toHaveLength(1); expect(f.agents.artifacts()[0]?.citations[0]?.slug).toBe(path);
+  expect(reply.status).toBe('complete'); expect(reply.artifacts).toHaveLength(1);
+  expect(reply.artifacts?.[0]?.publishedPath).toBe(join(sourceDir, '周报.docx'));
+  expect(f.agents.artifacts()[0]?.citations[0]?.slug).toBe(path);
   expect(readFileSync(path, 'utf8')).toBe('2026-10-14 完成需求评审，下周计划上线。');
+  expect(existsSync(join(sourceDir, '周报.docx'))).toBe(true);
 });
 test('conversational adjustments update the same assistant and preserve its existing workflow and scope', async () => {
   const f = fixture(); const agent = f.agents.create({ name: '周报助手', skills: ['weekly-report'], workflow: '按事实日期读取资料', sourceIds: ['default'] }); let requests = 0;

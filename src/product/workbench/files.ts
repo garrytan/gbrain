@@ -1,7 +1,9 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
-import { basename, extname, join, relative, isAbsolute, sep } from 'node:path';
+import { basename, extname, join, relative, isAbsolute, resolve, sep } from 'node:path';
 import JSZip from 'jszip';
+import type { BrainEngine } from '../../core/engine';
+import { resolveMainSourceId } from '../../core/source-resolver';
 import type { WorkbenchAgent, WorkbenchArtifact } from '../../../shared/workbench-agents';
 import type { WorkbenchCitation } from '../../../shared/workbench';
 import type { WorkbenchAgentStore } from './agents';
@@ -71,4 +73,48 @@ export async function saveWorkbenchArtifact(store: WorkbenchAgentStore, input: {
   else if (!readFileSync(path).equals(bytes)) throw new Error('成果文件已改变，保留人工内容');
   const artifact: WorkbenchArtifact = { id, agentId: agent.id, conversationId, messageId, title, content, citations: structuredClone(citations), path, format, createdAt: new Date().toISOString(), hash };
   store.recordArtifact(artifact); return artifact;
+}
+export function artifactFilename(title: string, format: WorkbenchArtifact['format']) {
+  const stem = title.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').replace(/\s+/g, ' ').trim().slice(0, 80) || '成果';
+  return `${stem}.${format === 'docx' ? 'docx' : 'md'}`;
+}
+export async function resolveAgentDeliveryDirectory(engine: BrainEngine, agent: WorkbenchAgent) {
+  let mainId: string | null = null;
+  try { mainId = await resolveMainSourceId(engine); } catch { mainId = null; }
+  const requested = agent.sourceIds.map(id => id === 'default' && mainId ? mainId : id);
+  const ordered = mainId && requested.includes(mainId) ? [mainId, ...requested.filter(id => id !== mainId)] : requested;
+  for (const id of ordered) {
+    const rows = await engine.executeRaw<{ id: string; local_path: string | null }>('SELECT id, local_path FROM sources WHERE id=$1 AND archived=false', [id]);
+    const directory = typeof rows[0]?.local_path === 'string' ? rows[0].local_path.trim() : '';
+    if (!directory) continue;
+    const resolved = resolve(directory);
+    if (!existsSync(resolved) || !statSync(resolved).isDirectory()) continue;
+    return { sourceId: rows[0]!.id, directory: resolved };
+  }
+  return null;
+}
+export type ArtifactPublishResult = { ok: true; path: string; sourceId: string } | { ok: false; reason: string };
+export async function publishArtifactToSource(engine: BrainEngine, agent: WorkbenchAgent, artifact: WorkbenchArtifact): Promise<ArtifactPublishResult> {
+  if (artifact.publishedPath && existsSync(artifact.publishedPath) && readFileSync(artifact.publishedPath).equals(readFileSync(artifact.path))) {
+    return { ok: true, path: artifact.publishedPath, sourceId: agent.sourceIds[0] ?? 'default' };
+  }
+  const target = await resolveAgentDeliveryDirectory(engine, agent);
+  if (!target) return { ok: false, reason: '知识来源没有绑定可用的本地目录' };
+  const bytes = readFileSync(artifact.path);
+  const filename = artifactFilename(artifact.title, artifact.format);
+  let destination = join(target.directory, filename);
+  if (existsSync(destination)) {
+    if (readFileSync(destination).equals(bytes)) return { ok: true, path: destination, sourceId: target.sourceId };
+    const ext = extname(filename);
+    const stem = filename.slice(0, filename.length - ext.length);
+    let index = 2;
+    while (existsSync(destination) && index < 100) {
+      destination = join(target.directory, `${stem} (${index})${ext}`);
+      if (existsSync(destination) && readFileSync(destination).equals(bytes)) return { ok: true, path: destination, sourceId: target.sourceId };
+      index += 1;
+    }
+  }
+  if (existsSync(destination)) return { ok: false, reason: '目标目录已有同名文件，无法写入' };
+  writeFileSync(destination, bytes, { mode: 0o600, flag: 'wx' });
+  return { ok: true, path: destination, sourceId: target.sourceId };
 }

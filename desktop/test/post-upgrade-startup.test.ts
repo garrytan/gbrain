@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   readMigrationProgress,
+  readSidecarMigrationProgress,
   parseSuccessfulBackupJsonFromError,
   postUpgradeRetryDelayMs,
   resolveSidecarHealthTimeoutMs,
@@ -107,4 +108,61 @@ test('migration progress stays on database upgrade until the schema-ready marker
  expect(readMigrationProgress(log+'[migrate] page revision backfill: 100/3142 row(s) done, through page id 117')?.message).toContain('100 / 3142');
  expect(readMigrationProgress(log+'[migrate] page revision backfill: 3142/3142 row(s) done\n[migrate] schema ready version=134')?.stage).toBe('health');
  expect(readMigrationProgress('normal output')).toBeNull();
+});
+
+test('sidecar ready 后再扫到旧 schema ready 日志，不会重新显示数据库升级提示', () => {
+  const startupLog = [
+    '[serve] opening database',
+    'Schema version 134 → 135',
+    '[migrate] page revision backfill: 3142/3142 row(s) done',
+    '[migrate] schema ready version=135',
+    'PMBrain HTTP listening on 127.0.0.1:3131',
+  ].join('\n');
+  const afterStop = `${startupLog}\n[task] AI 深度整理 · 已停止 · 新增关联 2112`;
+
+  expect(readSidecarMigrationProgress({
+    phase: 'starting',
+    upgradePending: true,
+    stderr: startupLog,
+  })?.title).toBe('数据库升级完成，正在检查本地服务');
+
+  expect(readSidecarMigrationProgress({
+    phase: 'starting',
+    upgradePending: true,
+    stderr: '[serve] opening database\nSchema version 134 → 135\n',
+  })?.title).toBe('正在升级知识库');
+
+  expect(readSidecarMigrationProgress({
+    phase: 'ready',
+    upgradePending: true,
+    stderr: afterStop,
+  })).toBeNull();
+  expect(readSidecarMigrationProgress({
+    phase: 'ready',
+    upgradePending: false,
+    stderr: afterStop,
+  })).toBeNull();
+  expect(readSidecarMigrationProgress({
+    phase: 'starting',
+    upgradePending: false,
+    stderr: afterStop,
+  })).toBeNull();
+  expect(readSidecarMigrationProgress({
+    phase: 'stopped',
+    upgradePending: true,
+    stderr: afterStop,
+  })).toBeNull();
+  expect(readSidecarMigrationProgress({
+    phase: 'failed',
+    upgradePending: true,
+    stderr: afterStop,
+  })).toBeNull();
+
+  const revived = readSidecarMigrationProgress({
+    phase: 'ready',
+    upgradePending: true,
+    stderr: afterStop,
+  });
+  expect(revived?.title ?? '').not.toContain('数据库升级完成');
+  expect(revived?.title ?? '').not.toContain('正在升级知识库');
 });

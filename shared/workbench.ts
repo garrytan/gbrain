@@ -76,7 +76,7 @@ export interface WorkbenchMessage {
   stopReason?: 'end' | 'length' | 'other';
   toolCalls?: WorkbenchToolCall[];
   memory?: WorkbenchMemory;
-  artifacts?: Array<{ id: string; title: string; format: 'markdown' | 'docx' }>;
+  artifacts?: Array<{ id: string; title: string; format: 'markdown' | 'docx'; publishedPath?: string }>;
 }
 export interface WorkbenchConversation {
   id: string;

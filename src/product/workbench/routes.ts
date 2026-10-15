@@ -216,7 +216,7 @@ export function registerWorkbenchRoutes(app: express.Express, requireAdmin: Requ
   const hooks=memory?{capture:async(...args:Parameters<typeof memory.capture>)=>{if(options.databaseAvailable?.()===false)throw new Error('知识库正在准备，记忆提炼暂缓');return memory.capture(...args);},settled:memory.settled}:undefined;
   const service = new WorkbenchService(store, currentModels, options.answer ?? knowledgeWorkbenchAnswer(engine, undefined, options.productTasks?{tasks:options.productTasks,store}:undefined, agents), options.summarize ?? summarizeConversation, undefined, hooks);
   const coordinator = typeof options.productTasks?.attachWorkbenchAssistant === 'function'
-    ? new WorkbenchAgentCoordinator(agentStore, service, options.productTasks)
+    ? new WorkbenchAgentCoordinator(agentStore, service, options.productTasks, engine)
     : undefined;
   if (coordinator) { agents.submit = (id, prompt, key) => coordinator.submit(id, prompt, key); coordinator.start(); }
   const base = '/admin/api/workbench';

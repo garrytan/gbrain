@@ -26,7 +26,10 @@ function schedule(input: unknown): WorkbenchSchedule | undefined {
 function normalizeProfile(input: Record<string, unknown>, previous?: WorkbenchAgent): WorkbenchAgent {
   const sourceIds = input.sourceIds === undefined ? previous?.sourceIds ?? [String(input.memorySourceId ?? 'default')] : input.sourceIds;
   if (!Array.isArray(sourceIds) || !sourceIds.length || sourceIds.length > 30 || sourceIds.some(id => typeof id !== 'string' || !isValidSourceId(id))) throw new Error('请选择有效的知识来源');
-  const base = normalizeAssistant({ ...defaultAssistant(), ...previous, ...input, memorySourceId: sourceIds[0] });
+  const name = String(input.name ?? previous?.name ?? defaultAssistant().name);
+  const rawEmoji = Object.hasOwn(input, 'emoji') ? input.emoji : previous?.emoji;
+  const emoji = typeof rawEmoji === 'string' && rawEmoji.trim() ? rawEmoji.trim() : ([...name][0] || '助');
+  const base = normalizeAssistant({ ...defaultAssistant(), ...previous, ...input, name, emoji, memorySourceId: sourceIds[0] });
   const skills = input.skills ?? previous?.skills ?? [];
   if (!Array.isArray(skills) || skills.length > 12 || skills.some(name => typeof name !== 'string' || !name || name.replace(/^library__/, '').length > 128 || /[/\\]|\.\.|\0/.test(name))) throw new Error('技能名称无效');
   const workflow = String(input.workflow ?? previous?.workflow ?? '');
@@ -85,7 +88,10 @@ export class WorkbenchAgentStore {
   }
   recordArtifact(artifact: WorkbenchArtifact) {
     const state = this.read();
-    if (!state.artifacts.some(row => row.id === artifact.id)) { state.artifacts.unshift(artifact); this.write(state); }
+    const index = state.artifacts.findIndex(row => row.id === artifact.id);
+    if (index >= 0) state.artifacts[index] = artifact;
+    else state.artifacts.unshift(artifact);
+    this.write(state);
   }
   scheduled(id: string) { return this.read().schedules[id]; }
   recordSchedule(id: string, value: AgentState['schedules'][string]) { const state = this.read(); state.schedules[id] = value; this.write(state); }

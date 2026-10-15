@@ -58,6 +58,8 @@
 .wb-suggestions button { font-size: 12px; padding: 12px 14px; }
 .wb-message { display: flex; gap: 14px; margin: 10px 0 32px; }
 .wb-avatar { display: grid; place-items: center; width: 31px; height: 31px; flex-shrink: 0; border: 1px solid var(--product-line); background: var(--product-panel); border-radius: 9px; }
+.wb-message[data-kind="main"] .wb-avatar { background: #3d8f93; color: #fff; border-color: transparent; }
+.wb-message[data-kind="specialist"] .wb-avatar { background: #4c7dff; color: #fff; border-color: transparent; }
 .wb-message-body { min-width: 0; flex: 1; }
 .wb-message-body > header { display: flex; gap: 12px; align-items: center; margin: 4px 0 12px; }
 .wb-message-body > header span { color: var(--product-muted); font-size: 11px; overflow-wrap: anywhere; }
@@ -138,8 +140,8 @@ html[data-theme="dark"] .knowledge-workbench button.wb-cite:hover, html[data-the
 .wb-tool-output p { margin: 4px 0; }
 .wb-agent-list { display: grid; gap: 4px; max-height: 180px; overflow: auto; margin: 8px 0; }
 .wb-agent-list button { display: flex; align-items: center; gap: 8px; text-align: left; padding: 8px 10px; border-radius: 6px; }
-.wb-agent-list button.selected { background: var(--ui-raised, #f1f3f5); }
-.wb-agent-list button small { margin-left: auto; color: var(--product-muted, var(--muted)); }
+.wb-agent-list button.selected { background: var(--ui-raised, #f1f3f5); box-shadow: inset 3px 0 0 #4c7dff; }
+.wb-agent-list button small { color: var(--product-muted, var(--muted)); }
 .wb-weekdays { display: flex; flex-wrap: wrap; gap: 12px; margin: 10px 0; }
 .wb-assistant-form .wb-check small { display: block; color: var(--product-muted, var(--muted)); font-size: 11px; }
 .wb-deliverables { display: flex; gap: 10px; flex-wrap: wrap; margin: 12px 0; }
@@ -154,15 +156,23 @@ html[data-theme="dark"] .knowledge-workbench button.wb-cite:hover, html[data-the
 .wb-sidebar-heading b { font-size: 13px; }
 .wb-sidebar-heading button { border: 0; padding: 6px; }
 .wb-agent-avatar { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 7px; background: var(--product-panel); flex: none; }
+.wb-agent-list button[data-kind="main"] .wb-agent-avatar { background: #3d8f93; color: #fff; }
+.wb-agent-list button[data-kind="specialist"] .wb-agent-avatar { background: #4c7dff; color: #fff; }
+.wb-agent-meta { min-width: 0; flex: 1; display: grid; }
+.wb-agent-meta b { display: block; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wb-agent-meta small { display: block; margin-top: 2px; font-size: 10px; }
+.wb-agent-list button.selected .wb-agent-meta small { color: #4c7dff; font-weight: 600; }
 .wb-agent-list { max-height: 230px; margin: 0; flex: none; }
 .wb-agent-list button { border: 0; }
-.wb-agent-list button > span:nth-child(2) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wb-history-label { color: var(--product-muted); padding: 6px 8px 0; }
 .wb-sidebar-links { display: grid; gap: 3px; padding-top: 10px; border-top: 1px solid var(--product-line); }
 .wb-sidebar-links button { justify-content: flex-start; border: 0; }
 .wb-assistant-chip { display: flex; align-items: center; flex: 1; font-weight: 600; min-width: 0; }
+.wb-assistant-chip[data-kind="specialist"] > span:first-child { background: #4c7dff; }
+.wb-assistant-identity { min-width: 0; display: grid; }
+.wb-assistant-identity small { display: block; font-size: 11px; font-weight: 500; color: var(--product-muted); margin-top: 1px; }
 .product-app .wb-toolbar { flex-wrap: wrap; flex-shrink: 0; }
-.product-app .wb-assistant-chip { flex-basis: 130px; }
+.product-app .wb-assistant-chip { flex-basis: 190px; }
 .product-app .wb-assistant-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wb-agent-summary { font-size: 12px !important; }
 .knowledge-workbench button.wb-adjust-link { border: 0; color: var(--product-muted); margin-top: 16px; font-size: 12px; }
@@ -177,7 +187,7 @@ html[data-theme="dark"] .knowledge-workbench button.wb-cite:hover, html[data-the
 .wb-artifact-card button { border: 0; }
 .wb-artifact-open { flex: 1; justify-content: flex-start !important; text-align: left; }
 .wb-artifact-open span { display: grid; gap: 6px; }
-.wb-artifact-open small { color: var(--product-muted); font-size: 11px; }
+.wb-artifact-open small { color: var(--product-muted); font-size: 11px; overflow-wrap: anywhere; }
 .wb-artifact-preview { width: min(840px, 90vw); height: min(780px, 86vh); display: flex; flex-direction: column; background: var(--product-panel); border: 1px solid var(--product-line); border-radius: 14px; padding: 20px; }
 .wb-artifact-preview header, .wb-artifact-preview footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .wb-artifact-preview header > div { display: flex; align-items: center; gap: 10px; }

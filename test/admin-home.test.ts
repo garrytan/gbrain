@@ -99,6 +99,23 @@ describe('首页按有没有知识库区分，并接上现有能力', () => {
     expect(read('admin/src/workbench/Workbench.tsx')).toContain('pmbrain:open-conversation');
   });
 
+  test('知识助手能看出当前是谁在写，成果卡片显示知识库路径', () => {
+    const workbench = read('admin/src/workbench/Workbench.tsx');
+    const message = read('admin/src/workbench/Message.tsx');
+    const css = read('admin/src/workbench/workbench.css');
+    expect(workbench).toContain('agentAvatar');
+    expect(workbench).toContain('正在使用');
+    expect(workbench).toContain('{agentRoleLabel(wb.assistantId)} · 当前对话');
+    expect(workbench).toContain('向${assistant.name}发送');
+    expect(workbench).toContain('{assistant.name} · {wb.knowledge ? \'结合知识库回答\' : \'普通对话\'}');
+    expect(message).toContain('已保存到 ${item.publishedPath}');
+    expect(message).toContain("assistantRole === '主助手' ? 'main' : 'specialist'");
+    expect(css).toContain('button[data-kind="specialist"] .wb-agent-avatar');
+    expect(css).toContain('.wb-assistant-chip[data-kind="specialist"]');
+    expect(css).toContain('.wb-message[data-kind="specialist"] .wb-avatar');
+    expect(read('admin/src/workbench/AgentSettings.tsx')).toContain('周报等成果会写入所选知识来源的本地目录，优先主数据源路径');
+  });
+
   test('菜单默认展开且保留手动折叠，两个 MCP 页对调，对话模型记住上次选择，停止按钮是蓝色', () => {
     const app = read('admin/src/product/ProductApp.tsx');
     const workbench = read('admin/src/workbench/useWorkbench.ts');

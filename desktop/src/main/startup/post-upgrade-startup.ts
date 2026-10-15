@@ -153,3 +153,12 @@ export function readMigrationProgress(stderr:string):{visible:true;stage:'migrat
   if(stderr.includes('Schema version '))return {visible:true,stage:'migration',title:'正在升级知识库',message:'升级正在本地执行，完成后会继续启动服务。'};
   return null;
 }
+
+export function readSidecarMigrationProgress(opts: {
+  phase: 'starting' | 'ready' | 'stopped' | 'failed' | undefined;
+  upgradePending: boolean;
+  stderr: string;
+}): ReturnType<typeof readMigrationProgress> {
+  if (opts.phase !== 'starting' || !opts.upgradePending) return null;
+  return readMigrationProgress(opts.stderr);
+}
