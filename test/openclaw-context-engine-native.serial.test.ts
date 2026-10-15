@@ -77,6 +77,7 @@ describe.skipIf(!host)('pinned OpenClaw native context-engine startup', () => {
         await engine.executeRaw("INSERT INTO pages (slug, source_id, type, title, compiled_truth, timeline) VALUES ('people/alice-example', $1, 'person', 'Alice Example', $2, '')", [source, synopsis]);
       }
       await engine.executeRaw("INSERT INTO pages (slug, source_id, type, title, compiled_truth, timeline) VALUES ('people/earlier-example', 'main-source', 'person', 'Earlier Example', 'Historical entity only.', '')");
+      await engine.executeRaw("INSERT INTO pages (slug, source_id, type, title, compiled_truth, timeline) VALUES ('meetings/alice-session', 'main-source', 'conversation', 'Alice Example', 'same-title-transcript-canary', '')");
       mkdirSync(join(dir, '.gbrain'), { recursive: true });
       writeFileSync(join(dir, '.gbrain', 'config.json'), JSON.stringify({
         engine: 'postgres', database_url: fixtureUrl.toString(),
@@ -135,6 +136,7 @@ describe.skipIf(!host)('pinned OpenClaw native context-engine startup', () => {
         const messages = JSON.stringify(request.messages);
         expect(messages).toContain('people/alice-example');
         expect(messages).toContain('main-source-saved-page-canary');
+        expect(messages).not.toContain('same-title-transcript-canary');
         expect(messages).not.toContain('other-source-saved-page-canary');
         expect(messages).not.toContain('people/earlier-example');
         expect(messages.split('Tell me about Alice Example.')).toHaveLength(2);

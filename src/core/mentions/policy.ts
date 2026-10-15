@@ -19,7 +19,6 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
-import { loadActivePackForEngine } from '../schema-pack/engine-resolution.ts';
 
 export const ALWAYS_LINKABLE_TYPES = ['person', 'company', 'organization', 'entity'] as const;
 const EXCLUDED_LINKABLE_ALIASES: ReadonlySet<string> = new Set(['product']);
@@ -129,6 +128,8 @@ export function typeAliasPairs(pack: PackTypes | null): { stored: string[]; cano
 /** The active pack for a source; null when none resolves. `strict` rethrows a resolution failure instead. */
 export async function loadSourcePack(engine: Pick<BrainEngine, 'getConfig'>, sourceId: string, opts: { strict?: boolean } = {}): Promise<PackTypes | null> {
   try {
+    // Native Node hosts can use policy/type fallbacks without loading Bun's bundled YAML assets.
+    const { loadActivePackForEngine } = await import('../schema-pack/engine-resolution.ts');
     return (await loadActivePackForEngine(engine, { remote: false, sourceId })).manifest;
   } catch (error) {
     if (opts.strict) throw error;
