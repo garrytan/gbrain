@@ -114,8 +114,8 @@ describe('vector index walk statement', () => {
     expect(ann).not.toContain(MD5);
     expect(ann).toContain(`LIMIT $${stmt.innerLimitIdx + 1}::int * 2`);
     const candidates = walk.slice(walk.indexOf('hnsw_candidates AS ('), walk.indexOf('scored AS ('));
-    expect(candidates).toContain('JOIN content_chunks cc ON cc.id = ann.id');
-    expect(candidates).toContain('JOIN pages p ON p.id = cc.page_id');
+    expect(candidates).toContain('CROSS JOIN LATERAL (SELECT * FROM content_chunks c WHERE c.id = ann.id OFFSET 0) cc');
+    expect(candidates).toContain('CROSS JOIN LATERAL (SELECT * FROM pages pg WHERE pg.id = cc.page_id OFFSET 0) p');
     expect(candidates).toContain('AND p.slug != ALL($2::text[])');
     expect(candidates).toContain('AND p.source_id = ANY($4::text[])');
     expect(candidates).toContain(`COALESCE(p.frontmatter->>'visibility'`);

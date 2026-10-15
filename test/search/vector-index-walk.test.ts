@@ -16,7 +16,7 @@
 import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import * as vectorPool from '../../src/core/search/vector-pool.ts';
-import { buildVectorSearchStatement, INDEX_WALK_MIN_SCOPE_SHARE, PAGE_SOURCE_STATS_SQL, sourceScope, sourceScopeShare, type PageSourceStats } from '../../src/core/search/vector-statement.ts';
+import { buildVectorSearchStatement, INDEX_WALK_MIN_SCOPE_SHARE, INDEX_WALK_SETTINGS, PAGE_SOURCE_STATS_SQL, sourceScope, sourceScopeShare, type PageSourceStats } from '../../src/core/search/vector-statement.ts';
 import type { SearchOpts } from '../../src/core/types.ts';
 
 const MODEL = 'test:vector-index-walk';
@@ -118,6 +118,39 @@ describe('vector index walk (PGLite)', () => {
       }
     });
   }
+
+  type PlanNode = { 'Node Type': string; 'Index Name'?: string; 'Relation Name'?: string; 'Join Filter'?: string; 'Actual Loops'?: number; Plans?: PlanNode[] };
+  const planNodes = (node: PlanNode): PlanNode[] => [node, ...(node.Plans ?? []).flatMap(planNodes)];
+
+  test('the walk probes chunks and pages by key per ANN row: no scope-wide join is materialized under the ANN loop (#6728)', async () => {
+    // A narrow page scope with a large overfetch is what drew the planner to
+    // materialize the scope's chunk-page join and rescan it once per ANN row
+    // (on a real brain the materialized join spilled past work_mem: ~1 GB of
+    // temp reads per search).
+    for (const sourceIds of [['side'], ['tiny', 'side']]) {
+      const opts: SearchOpts = { embeddingColumn: column, excludePrivate: true, sourceIds };
+      const stmt = buildVectorSearchStatement({ dialect: 'pglite', embedding: vec(11), limit: 20, offset: 0, opts, scope: { share: 0.05 } });
+      expect(stmt.indexWalkSql).toBeDefined();
+      for (const [key, value] of Object.entries(INDEX_WALK_SETTINGS)) await engine.executeRaw(`SET ${key} = ${value}`);
+      let plan: PlanNode;
+      try {
+        const [row] = await engine.executeRaw<{ 'QUERY PLAN': Array<{ Plan: PlanNode }> }>(`EXPLAIN (ANALYZE, FORMAT JSON) ${stmt.indexWalkSql!}`, [...stmt.params]);
+        plan = row['QUERY PLAN'][0].Plan;
+      } finally {
+        for (const key of Object.keys(INDEX_WALK_SETTINGS)) await engine.executeRaw(`RESET ${key}`);
+      }
+      const nodes = planNodes(plan);
+      expect(nodes.filter(node => node['Node Type'] === 'Materialize')).toEqual([]);
+      expect(nodes.filter(node => node['Join Filter']?.includes('ann.id'))).toEqual([]);
+      const annRows = nodes.find(node => node['Index Name'] === 'idx_chunks_embedding')!;
+      expect(annRows).toBeDefined();
+      for (const index of ['content_chunks_pkey', 'pages_pkey']) {
+        const probe = nodes.find(node => node['Index Name'] === index && node['Actual Loops']! > 1);
+        expect(probe).toBeDefined();
+      }
+      expect(nodes.some(node => node['Index Name'] === 'idx_chunks_page')).toBe(false);
+    }
+  });
 
   test('the walk keeps every page filter: no hidden, deleted, archived or out-of-scope page reaches results', async () => {
     const hits = await engine.searchVector(vec(42), { limit: 50, embeddingColumn: column, excludePrivate: true, sourceIds: ['default', 'side'] });

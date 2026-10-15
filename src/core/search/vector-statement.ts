@@ -372,8 +372,13 @@ export function buildVectorSearchStatement(input: VectorSearchStatementInput): V
           ${hashCurrent} AS hash_current,
           1 - ann.distance AS raw_score
         FROM ann
-        JOIN content_chunks cc ON cc.id = ann.id
-        JOIN pages p ON p.id = cc.page_id
+        -- Key probes behind OFFSET 0 fences: one chunk and one page lookup per
+        -- ANN row, so the plan is bounded by the window whatever the scope
+        -- size or page-filter estimate. A plain join let the planner
+        -- materialize the whole scope's chunk-page join under the ANN loop
+        -- and rescan it per row, spilling past work_mem on large scopes (#6728).
+        CROSS JOIN LATERAL (SELECT * FROM content_chunks c WHERE c.id = ann.id OFFSET 0) cc
+        CROSS JOIN LATERAL (SELECT * FROM pages pg WHERE pg.id = cc.page_id OFFSET 0) p
         CROSS JOIN LATERAL (SELECT src.archived FROM sources src WHERE src.id = p.source_id OFFSET 0) s
         WHERE true
           ${pageFilters.join('\n          ')}
