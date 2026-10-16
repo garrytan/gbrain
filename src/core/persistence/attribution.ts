@@ -1,6 +1,6 @@
 import { currentVerifiedLocalWriter, existingLocalHostId, readLocalWriter } from './identity.ts';
 import type { Principal, SqlEngine, WriteRequest } from './model.ts';
-import type { BrainEngine } from '../engine.ts';
+import type { BrainEngine, TransactionOptions } from '../engine.ts';
 import { withWriteAttribution } from './context.ts';
 import type { WriteTrust } from '../trust/tier.ts';
 import { requestChannelTrust } from '../trust/channel.ts';
@@ -68,8 +68,10 @@ const installationRegistration = new WeakMap<SqlEngine, Promise<string>>();
  * One unmanaged legacy transaction (direct import, extract_facts, extract-takes,
  * stale-atom retirement) whose rows carry the maintenance principal. A managed
  * brain's guard still refuses these writes: this sets no coordinator capability.
+ * `opts.signal` cancels it, as for `engine.transaction`.
  */
-export async function maintenanceTransaction<T>(engine: BrainEngine, fn: (tx: BrainEngine) => Promise<T>, trust?: WriteTrust): Promise<T> {
+export async function maintenanceTransaction<T>(engine: BrainEngine, fn: (tx: BrainEngine) => Promise<T>, trust?: WriteTrust,
+  opts?: TransactionOptions): Promise<T> {
   const attribution = await maintenanceAttribution(engine);
-  return engine.transaction(tx => withWriteAttribution(tx, trust ? { ...attribution, trust } : attribution, () => fn(tx)));
+  return engine.transaction(tx => withWriteAttribution(tx, trust ? { ...attribution, trust } : attribution, () => fn(tx)), opts);
 }

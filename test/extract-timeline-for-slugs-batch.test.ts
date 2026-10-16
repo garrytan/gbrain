@@ -5,10 +5,12 @@
  * Protects: the cost of a page is a fixed number of database calls whatever
  * its timeline length; the rows written, their dedup and the trust gate match
  * the per-row path; one row the database refuses does not cost the page its
- * other rows; `created` counts rows inserted, not rows attempted.
+ * other rows; `created` counts rows inserted, not rows attempted; a cancelled
+ * write (aborted signal) unwinds without running the row-by-row fallback.
  * Fails when: the hook goes back to one projected write per timeline row (a
  * 900-row page then re-sends its whole timeline as ~9,000 statements on every
- * sync), or a failed batch drops the page's rows.
+ * sync), a failed batch drops the page's rows, or an abort is treated as a row
+ * failure and the fallback writes the page during shutdown.
  * Why new: existing hook tests assert which pages were processed and that rows
  * exist, never the call count per page or the batch-failure path.
  * Seam: none; the counts come from spies on the engine's own methods.
@@ -22,7 +24,8 @@ import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { enableTrustProtections } from './helpers/trust-protections.ts';
 import { extractTimelineForSlugs } from '../src/commands/extract.ts';
 import { extractTimelineFromContent } from '../src/core/timeline-extract.ts';
-import { addProjectedTimelineEntry } from '../src/core/trust/timeline-projection.ts';
+import { addProjectedTimelineEntry, addProjectedTimelinePage } from '../src/core/trust/timeline-projection.ts';
+import { RetryAbortError } from '../src/core/retry.ts';
 import { maintenanceTransaction } from '../src/core/persistence/attribution.ts';
 import type { TrustTier } from '../src/core/trust/tier.ts';
 
@@ -178,5 +181,55 @@ describe('extractTimelineForSlugs writes a page in one batch', () => {
     }
     expect((await rowsOf('notes/flaky')).every(r => r.trust_tier === 'operator_curated')).toBe(true);
     expect(await rowsOf('notes/flaky')).toHaveLength(4);
+  });
+});
+
+describe('addProjectedTimelinePage honors its abort signal', () => {
+  const rowsFor = (slug: string, n: number) => Array.from({ length: n }, (_, i) =>
+    ({ slug, source_id: 'default', date: day(i), source: 'meeting', summary: `Milestone ${i} of the example hub`, detail: '' }));
+
+  test('an already-aborted signal rethrows and runs no row fallback', async () => {
+    await page('notes/aborted', 'operator_curated', []);
+    const ac = new AbortController();
+    ac.abort('shutdown');
+    const perRow = spyOn(engine, 'addTimelineEntry');
+    try {
+      await expect(addProjectedTimelinePage(engine, rowsFor('notes/aborted', 4), { signal: ac.signal })).rejects.toBeInstanceOf(Error);
+      expect(perRow.mock.calls.length).toBe(0);
+    } finally {
+      perRow.mockRestore();
+    }
+    expect(await rowsOf('notes/aborted')).toHaveLength(0);
+  });
+
+  test('an abort during the batch retry rethrows RetryAbortError and runs no row fallback', async () => {
+    await page('notes/aborted', 'operator_curated', []);
+    const ac = new AbortController();
+    const batch = spyOn(engine, 'addTimelineEntriesBatch').mockImplementationOnce(async () => { ac.abort('shutdown'); throw new RetryAbortError(); });
+    const perRow = spyOn(engine, 'addTimelineEntry');
+    try {
+      await expect(addProjectedTimelinePage(engine, rowsFor('notes/aborted', 4), { signal: ac.signal })).rejects.toBeInstanceOf(RetryAbortError);
+      expect(batch.mock.calls.length).toBe(1);
+      expect(perRow.mock.calls.length).toBe(0);
+    } finally {
+      batch.mockRestore();
+      perRow.mockRestore();
+    }
+    expect(await rowsOf('notes/aborted')).toHaveLength(0);
+  });
+
+  test('an abort during the row fallback stops it at the next row', async () => {
+    await page('notes/aborted', 'operator_curated', []);
+    const ac = new AbortController();
+    const batch = spyOn(engine, 'addTimelineEntriesBatch').mockRejectedValueOnce(new Error('Simulated batch failure.'));
+    const perRow = spyOn(engine, 'addTimelineEntry').mockImplementationOnce(async () => { ac.abort('shutdown'); throw new Error('Simulated row failure.'); });
+    try {
+      await expect(addProjectedTimelinePage(engine, rowsFor('notes/aborted', 4), { signal: ac.signal })).rejects.toThrow('Simulated row failure.');
+      expect(perRow.mock.calls.length).toBe(1);
+    } finally {
+      batch.mockRestore();
+      perRow.mockRestore();
+    }
+    expect(await rowsOf('notes/aborted')).toHaveLength(0);
   });
 });
