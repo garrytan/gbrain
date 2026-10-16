@@ -67,6 +67,18 @@ describe('buildQualifiedName — Ruby (Garry is a Rubyist)', () => {
     ).toBe('Admin::UsersController#find_all');
   });
 
+  test('singleton method (def self.m) uses . so it never shares an identity with #m', () => {
+    expect(
+      buildQualifiedName({
+        language: 'ruby',
+        symbolName: 'call',
+        symbolType: 'function',
+        parentSymbolPath: ['Admin', 'InviteUser'],
+        singleton: true,
+      }),
+    ).toBe('Admin::InviteUser.call');
+  });
+
   test('top-level module method has no :: prefix', () => {
     expect(
       buildQualifiedName({

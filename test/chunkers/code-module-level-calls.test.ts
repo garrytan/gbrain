@@ -107,10 +107,11 @@ describe('#5001 top-level call statements become __module__ chunks and keep thei
     expect(attributed.find(e => e.to === 'helper')?.from).toBe('thing_spec::__module__');
     expect(attributed.find(e => e.to === 'require')?.from).toBe('thing_spec::__module__');
     expect(chunks.find(c => c.metadata.symbolName === 'helper')?.metadata.symbolType).toBe('function');
-    // A Ruby `module` definition is `symbolType: 'module'` too; it keeps its own name and qualified identity.
+    // A Ruby `module` definition is `symbolType: 'module'` too; it keeps its own name and qualified identity
+    // (`def self.run` is the singleton `Billing.run`).
     const { chunks: named } = await chunkCodeTextFull('module Billing\n  def self.run\n    helper(1)\n  end\nend\n', 'lib/billing.rb');
     expect(named.map(c => [c.metadata.symbolType, c.metadata.symbolName, c.metadata.symbolNameQualified])).toEqual([
-      ['module', 'Billing', 'Billing'], ['function', 'run', 'Billing#run'],
+      ['module', 'Billing', 'Billing'], ['function', 'run', 'Billing.run'],
     ]);
     expect(moduleChunks(named)).toHaveLength(0);
   });
@@ -166,9 +167,10 @@ export function shutdown() { return app.close(); }
 });
 
 describe('#5001 the five languages whose inventory grows re-chunk on their own, like the Lua grammar swap', () => {
-  test('CHUNKER_VERSION is unchanged; typescript, tsx, javascript, python and ruby carry revision 1', () => {
+  test('CHUNKER_VERSION is unchanged; typescript, tsx, javascript and python carry revision 1, ruby 2 (call-edge names)', () => {
     expect(CHUNKER_VERSION).toBe(8);
-    for (const language of ['typescript', 'tsx', 'javascript', 'python', 'ruby'] as const) expect(GRAMMAR_REVISIONS[language]).toBe(1);
+    for (const language of ['typescript', 'tsx', 'javascript', 'python'] as const) expect(GRAMMAR_REVISIONS[language]).toBe(1);
+    expect(GRAMMAR_REVISIONS.ruby).toBe(2);
     expect(grammarOnlyDrift('8;lua=1', chunkerStamp())).toEqual(new Set(['typescript', 'tsx', 'javascript', 'python', 'ruby']));
   });
 });

@@ -52,9 +52,11 @@ export function mapCodeEdges(edges: ExtractedEdge[], content: string,
     const index = locate(edge.callSiteByteOffset);
     const from = index === null ? undefined : ranges[index];
     if (!from?.id || !from.symbol_name_qualified) continue;
+    const metadata = { ...(edge.memberCall ? { member_call: true } : {}), ...(edge.rubyNesting ? { ruby_nesting: edge.rubyNesting } : {}),
+      ...(edge.rubyWritten ? { ruby_written: edge.rubyWritten } : {}) };
     out.push({ from_chunk_id: from.id, to_chunk_id: null, from_symbol_qualified: from.symbol_name_qualified,
       to_symbol_qualified: edge.toSymbol, edge_type: edge.edgeType, source_id: sourceId,
-      ...(edge.memberCall ? { edge_metadata: { member_call: true } } : {}) });
+      ...(Object.keys(metadata).length > 0 ? { edge_metadata: metadata } : {}) });
   }
   return out;
 }

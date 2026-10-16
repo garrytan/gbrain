@@ -74,6 +74,8 @@ export function buildQualifiedName(input: {
   symbolName: string | null;
   symbolType: string;
   parentSymbolPath: string[];
+  /** Ruby `def self.m`: a singleton method, qualified with `staticDelim`. */
+  singleton?: boolean;
 }): string | null {
   if (!input.symbolName) return null;
   const cfg = LANG_CONFIG[input.language];
@@ -91,13 +93,13 @@ export function buildQualifiedName(input: {
   const parents = input.parentSymbolPath.join(cfg.segmentDelim);
 
   if (cfg.distinguishInstanceMethods && input.symbolType === 'function') {
-    // Ruby: instance method — Class#method. We can't tell `def self.m` from
-    // `def m` at chunk level without inspecting the node type; the chunker
-    // normalizes both to 'function', so we default to instance-method form
-    // and accept that edge-identity for Ruby singletons will collide with
-    // instance methods of the same name in the same class. In practice
-    // this is rare and the parentSymbolPath disambiguates most cases.
-    return `${parents}${cfg.methodDelim ?? '#'}${input.symbolName}`;
+    // Ruby: `def m` is an instance method (Class#method) and `def self.m` a
+    // singleton method (Class.method). The chunker normalizes both node types
+    // to 'function' and passes `singleton` from the node, so the two never
+    // share an edge identity (`def self.call` + `def call` is the
+    // service-object idiom).
+    const delim = input.singleton ? (cfg.staticDelim ?? '.') : (cfg.methodDelim ?? '#');
+    return `${parents}${delim}${input.symbolName}`;
   }
 
   return `${parents}${cfg.segmentDelim}${input.symbolName}`;

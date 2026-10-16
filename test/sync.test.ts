@@ -193,6 +193,11 @@ describe('isCodeFilePath', () => {
     expect(isCodeFilePath('modules/network/variables.hcl')).toBe(true);
   });
 
+  test('Rake task files are Ruby code', () => {
+    expect(isCodeFilePath('lib/tasks/db.rake')).toBe(true);
+    expect(isCodeFilePath('lib/tasks/rakefile.raked')).toBe(false);
+  });
+
   test('extensions are case-insensitive', () => {
     expect(isCodeFilePath('INFRA/MAIN.TF')).toBe(true);
     expect(isCodeFilePath('Modules/Net/Vars.HCL')).toBe(true);

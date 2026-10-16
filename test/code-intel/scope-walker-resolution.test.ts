@@ -157,8 +157,9 @@ c.run()
 });
 
 describe('W1: unsupported-language fallback', () => {
-  test('Ruby/Go/Rust/Java stay at bare-token emit (no W1 resolution)', () => {
-    // Per D18: only JS/TS/TSX + Python get W1 receiver resolution.
+  test('Go/Rust/Java stay at bare-token emit (no W1 resolution)', () => {
+    // Per D18: only JS/TS/TSX + Python get W1 receiver resolution; Ruby has
+    // its own walker (test/ruby-call-edges.test.ts).
     // Other languages should pass through with bare tokens; this test
     // doesn't crash and the existing extractor invariants hold.
     expect(WALK_DEPTH_CAP).toBeGreaterThan(0); // sanity

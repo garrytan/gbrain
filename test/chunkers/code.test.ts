@@ -20,7 +20,7 @@ describe('detectCodeLanguage', () => {
     const cases: Record<string, string> = {
       'foo.ts': 'typescript', 'foo.tsx': 'tsx', 'foo.mts': 'typescript', 'foo.cts': 'typescript',
       'foo.js': 'javascript', 'foo.jsx': 'javascript', 'foo.mjs': 'javascript', 'foo.cjs': 'javascript',
-      'foo.py': 'python', 'foo.rb': 'ruby', 'foo.go': 'go',
+      'foo.py': 'python', 'foo.rb': 'ruby', 'lib/tasks/gbrain.rake': 'ruby', 'foo.go': 'go',
       'foo.rs': 'rust', 'foo.java': 'java', 'foo.cs': 'c_sharp',
       'foo.cpp': 'cpp', 'foo.cc': 'cpp', 'foo.hpp': 'cpp',
       'foo.c': 'c', 'foo.h': 'c',

@@ -96,7 +96,22 @@ describe('W3: sinks classifier', () => {
     expect(classifySink('totallyMadeUpSymbol', 'typescript')).toBe('unknown');
   });
   test('unsupported language returns unknown', () => {
-    expect(classifySink('fetch', 'ruby')).toBe('unknown');
+    expect(classifySink('fetch', 'go')).toBe('unknown');
+  });
+  test('Ruby: each kind by the edge names Ruby calls carry', () => {
+    expect(['Net::HTTP.get', 'Net::HTTP#request', 'Faraday', 'HTTParty.post'].map((s) => classifySink(s, 'ruby')))
+      .toEqual(['http_call', 'http_call', 'http_call', 'http_call']);
+    expect(['Order.find_by_sql', 'exec_query', 'select_all'].map((s) => classifySink(s, 'ruby')))
+      .toEqual(['db_call', 'db_call', 'db_call']);
+    expect(['File.write', 'File', 'FileUtils.rm_rf', 'Pathname#write'].map((s) => classifySink(s, 'ruby')))
+      .toEqual(['file_io', 'file_io', 'file_io', 'file_io']);
+    expect(['`', 'system', 'Open3.capture3', 'Process.spawn'].map((s) => classifySink(s, 'ruby')))
+      .toEqual(['process_exec', 'process_exec', 'process_exec', 'process_exec']);
+  });
+  test('Ruby: lookalikes and pure path helpers are not sinks', () => {
+    // `execute` / `exec` through an untyped receiver are LLM adapters and PG connections as often as SQL or shell.
+    expect(['File.join', 'File.basename', 'Order.where', 'execute', 'Adapter.execute', 'exec', 'fetch'].map((s) => classifySink(s, 'ruby')))
+      .toEqual(['unknown', 'unknown', 'unknown', 'unknown', 'unknown', 'unknown', 'unknown']);
   });
 });
 

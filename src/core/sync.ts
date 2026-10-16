@@ -68,7 +68,7 @@ const CODE_EXTENSIONS = new Set<string>([
   '.ts', '.tsx', '.mts', '.cts',
   '.js', '.jsx', '.mjs', '.cjs',
   '.py',
-  '.rb',
+  '.rb', '.rake',
   '.go',
   '.rs',
   '.java',

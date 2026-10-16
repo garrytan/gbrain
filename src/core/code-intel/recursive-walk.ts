@@ -67,7 +67,12 @@ export type WalkResult =
   | { result: 'ambiguous'; candidates: { symbol_qualified: string; lang?: string; file?: string; lines?: string }[] }
   | { result: 'unsupported_language'; supported: readonly string[] };
 
-const SUPPORTED_LANGS = ['typescript', 'tsx', 'javascript', 'python'] as const;
+/**
+ * Languages whose call edges are qualified the same way as their chunk
+ * identities, so a hop's callee name keys the next hop. Ruby joined when its
+ * edges started carrying `A::B#m` / `A::B.m` (edge-extractor.ts RubyScope).
+ */
+const SUPPORTED_LANGS = ['typescript', 'tsx', 'javascript', 'python', 'ruby'] as const;
 
 function clampConfidence(depth: number): number {
   const c = 1.0 / (1 + 0.3 * depth);

@@ -9,15 +9,17 @@
 import type { SinkKind, SinkPatterns } from './ts.ts';
 import { TS_SINKS } from './ts.ts';
 import { PY_SINKS } from './py.ts';
+import { RB_SINKS } from './rb.ts';
 
 export type { SinkKind, SinkPatterns };
-export { TS_SINKS, PY_SINKS };
+export { TS_SINKS, PY_SINKS, RB_SINKS };
 
 const LANG_SINKS: Record<string, SinkPatterns> = {
   typescript: TS_SINKS,
   tsx: TS_SINKS,
   javascript: TS_SINKS,
   python: PY_SINKS,
+  ruby: RB_SINKS,
 };
 
 const compiledCache = new Map<string, RegExp>();
