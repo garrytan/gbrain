@@ -1,6 +1,7 @@
 import type { BrainEngine, LinkBatchInput } from './engine.ts';
 import { assertPageRevision, PageRevisionConflictError, RevisionBackfillPendingError, type PageSnapshot } from './page-state/types.ts';
 import { pipelined } from './page-state/transactions.ts';
+import { PageSourceMissingError } from './page-state/guards.ts';
 import { executeRawJsonb } from './sql-query.ts';
 import { pageSnapshotKey } from './page-snapshot-batch.ts';
 import { sanitizeForJsonb } from './batch-rows.ts';
@@ -73,14 +74,18 @@ export function isConcurrentLinkWriteConflict(error: unknown): boolean {
     || (error instanceof PageRevisionConflictError && !(error instanceof RevisionBackfillPendingError));
 }
 
-/** A deferring caller's outcome for one origin: written, left stale by a settings change, or by a concurrent write. */
-export type DeferredDerivedLinkOutcome = { created: number; removed: number } | 'settings_changed' | 'concurrent_write';
+/** A deferring caller's outcome: written, or left stale by settings, a concurrent write or a missing source. */
+export type DeferredDerivedLinkOutcome = { created: number; removed: number } | 'settings_changed' | 'concurrent_write' | 'unknown_source';
 
 /** replaceDerivedLinksUnlessSettingsChanged for a run that defers (and counts) pages a concurrent writer moved. */
 export async function replaceDerivedLinksDeferringConflicts(engine: Pick<BrainEngine, 'replaceDerivedLinks'>,
   ...args: Parameters<BrainEngine['replaceDerivedLinks']>): Promise<DeferredDerivedLinkOutcome> {
   try { return await replaceDerivedLinksUnlessSettingsChanged(engine, ...args) ?? 'settings_changed'; }
-  catch (error) { if (isConcurrentLinkWriteConflict(error)) return 'concurrent_write'; throw error; }
+  catch (error) {
+    if (error instanceof PageSourceMissingError) return 'unknown_source';
+    if (isConcurrentLinkWriteConflict(error)) return 'concurrent_write';
+    throw error;
+  }
 }
 
 /** The operator line for pages a settings change left stale mid-run. */
@@ -90,6 +95,10 @@ export const settingsChangedSkipLine = (n: number) =>
 /** The operator line for pages a concurrent write left stale mid-run. */
 export const concurrentWriteSkipLine = (n: number) =>
   `Skipped ${n} page(s) another writer changed during this run (the page or a link target); their links and watermark were kept, so they stay stale. Run \`gbrain extract --stale\` to finish them.`;
+
+/** Missing origin or endpoint sources need operator diagnosis, not automatic recreation. */
+export const unknownSourceSkipLine = (n: number) =>
+  `Skipped ${n} page(s) because an origin or link target source no longer exists; their prior links and extraction watermarks were preserved. Source recovery requires operator review; no source was recreated.`;
 
 export async function applyAttendanceDelta(tx: Pick<BrainEngine, 'executeRaw' | 'addLinksBatch'>,
   origin: { id: string; slug: string; source_id: string; type: string }, remove: string[], additions: LinkBatchInput[]) {
@@ -203,7 +212,7 @@ export async function replaceDerivedLinksBatch(
  * Publish through replaceDerivedLinksBatch; when that transaction fails,
  * replay the origins one by one so every outcome is the unbatched one:
  * `settings_changed` for a settings-changed skip, `concurrent_write` for an
- * origin a concurrent writer moved (#6272), and any other failing origin's
+ * origin a concurrent writer moved (#6272), `unknown_source` for a missing source, and any other failing origin's
  * error thrown (after `onError`) with the origins before it committed.
  */
 export async function replaceDerivedLinksBatchOrReplay(engine: Pick<BrainEngine, 'replaceDerivedLinks' | 'replaceDerivedLinksBatch'>,
