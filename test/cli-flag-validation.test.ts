@@ -66,6 +66,9 @@ describe('#2185 sweep — every command rejects a nonsense flag', () => {
 });
 
 describe('#2185 acceptance — real usage stays legal', () => {
+  test('preview-bound refresh flag reaches the sources dispatcher', () => {
+    expect(validateCommandFlags('sources',['refresh','fixture','--case-recovery-preview','preview.json','--dry-run'])).toBeNull();
+  });
   test('op flags from the contract are accepted, including values starting with --', () => {
     const search = operationsByName.search;
     expect(findUnknownOpFlag(search, ['needle', '--limit', '5'])).toBeNull();

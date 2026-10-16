@@ -38,13 +38,14 @@ import { startPersistenceConsumer } from './service.ts';
 import { lockTopologyPrincipal, lockTopologyRows, topologyPrincipal, withTopologyLocks } from './topology-locks.ts';
 import { ACTIVE_REFRESH_STATES_SQL, CHECKOUT_EFFECT_KINDS_SQL, type WorktreeRefreshState } from './worktree-refresh-schema.ts';
 import { gitChildEnv } from '../git-env.ts';
+import { validateCasePreview, applyCaseRecovery, reconcileCaseRecovery, reconcileCaseIntent, type CaseRecoveryPreview } from './worktree-case-recovery.ts';
 
 export interface WorktreeRefreshRow {
   id: string; worktree_id: string; source_ids: string[]; principal_id: string; owner_epoch: string | number;
   topology_generation: string | number; state: WorktreeRefreshState; old_head: string; target_head: string; upstream_ref: string;
   preserved_uncommitted: string[]; outcome: Record<string, unknown>; created_at: string | Date; updated_at: string | Date; completed_at: string | Date | null;
 }
-export type RefreshBoundary = 'drained' | 'fenced' | 'merged';
+export type RefreshBoundary = 'drained' | 'fenced' | 'merged' | 'case-index-locked' | 'case-prepared' | 'case-index-replaced';
 export interface RefreshHooks { boundary?: (point: RefreshBoundary, row: WorktreeRefreshRow) => Promise<void> | void }
 export interface RefreshOptions {
   dryRun?: boolean; resume?: boolean; abandon?: boolean;
@@ -53,6 +54,8 @@ export interface RefreshOptions {
   /** Flag value; falls back to GBRAIN_REFRESH_FETCH_TIMEOUT_MS, then `sources.refresh_fetch_timeout_ms`, then 120 s. */
   fetchTimeoutMs?: number;
   hooks?: RefreshHooks;
+  /** Explicit, owner/commit/index-bound offline-reviewed preview. Never inferred from dirt. */
+  caseRecovery?: CaseRecoveryPreview;
 }
 export interface RefreshMemberSync { source_id: string; status: string; last_commit: string | null }
 export interface RefreshSyncBlocked { source_id: string; code: string; message: string; resume: string }
@@ -182,11 +185,11 @@ async function markRecoveryRequired(engine: BrainEngine, row: WorktreeRefreshRow
 
 interface Plan {
   binding: WorktreeBinding; root: string; members: string[]; upstreamRef: string; oldHead: string; targetHead: string;
-  overlap: string[]; preserved: string[]; incoming: number;
+  overlap: string[]; preserved: string[]; incoming: number; caseRecovery?: CaseRecoveryPreview;
 }
 
 /** Steps 1.3/1: refusals before any database state; fetch moves only remote-tracking refs. */
-async function precheck(engine: BrainEngine, git: Git, sourceId: string, fetchTimeoutMs: number): Promise<Plan> {
+async function precheck(engine: BrainEngine, git: Git, sourceId: string, fetchTimeoutMs: number, caseRecovery?: CaseRecoveryPreview): Promise<Plan> {
   if (!await managedPersistenceEnabled(engine)) throw refusal('refresh_not_managed',
     'This brain is not managed, so gbrain sync pulls the checkout itself; there is no worktree fence to coordinate.', `gbrain sync --source ${sourceId}`);
   const binding = await getWorktreeBinding(engine, sourceId);
@@ -241,8 +244,10 @@ async function precheck(engine: BrainEngine, git: Git, sourceId: string, fetchTi
     `The checkout HEAD ${oldHead} is not an ancestor of ${upstreamRef} (${targetHead}); a fast-forward is impossible and nothing changed.`,
     `Reconcile the histories and push from a non-managed clone, then retry gbrain sources refresh ${sourceId}; or replace the checkout with gbrain sources reclone ${sourceId} (ask the user first).`);
   const dirt = await dirtyOverlap(git, root, oldHead, targetHead);
-  if (dirt.overlap.length) throw dirtyRefusal(sourceId, dirt.overlap);
-  return { binding, root, members, upstreamRef, oldHead, targetHead, ...dirt };
+  if (caseRecovery && dirt.preserved.length) throw refusal('refresh_dirty','Case recovery requires no unrelated uncommitted paths; nothing moved.',`Preserve and resolve those paths before creating a fresh case preview for ${sourceId}.`);
+  if (caseRecovery) validateCasePreview(root, binding, oldHead, targetHead, caseRecovery, dirt.overlap);
+  else if (dirt.overlap.length) throw dirtyRefusal(sourceId, dirt.overlap);
+  return { binding, root, members, upstreamRef, oldHead, targetHead, ...dirt, ...(caseRecovery ? {caseRecovery}: {}) };
 }
 function dirtyRefusal(sourceId: string, overlap: string[], refreshId?: string): OperationError {
   const named = overlap.slice(0, 20).join(', ') + (overlap.length > 20 ? ` and ${overlap.length - 20} more` : '');
@@ -369,7 +374,7 @@ export async function refreshWorktree(engine: BrainEngine, sourceId: string, opt
   const fetchTimeoutMs = await configuredMs(engine, opts.fetchTimeoutMs, 'GBRAIN_REFRESH_FETCH_TIMEOUT_MS', 'sources.refresh_fetch_timeout_ms', 120_000, 2 ** 31 - 1);
   const waitDrainMs = await configuredMs(engine, opts.waitDrainMs, 'GBRAIN_REFRESH_DRAIN_WAIT_MS', 'sources.refresh_drain_wait_ms', 60_000);
   return withGit(async git => {
-    const plan = await precheck(engine, git, sourceId, fetchTimeoutMs);
+    const plan = await precheck(engine, git, sourceId, fetchTimeoutMs, opts.caseRecovery);
     const base = { refresh_id: null, worktree_id: plan.binding.worktree_id, source_ids: plan.members, old_head: plan.oldHead,
       target_head: plan.targetHead, upstream_ref: plan.upstreamRef, preserved_uncommitted: plan.preserved, incoming_files: plan.incoming };
     if (opts.dryRun) return { ...base, status: 'dry_run', synced: [],
@@ -469,16 +474,35 @@ async function fenceAndMerge(engine: BrainEngine, git: Git, sourceId: string, pl
           `The checkout HEAD moved from ${row.old_head} to ${head} after the precheck (an external commit or checkout); nothing was merged.`, `Retry gbrain sources refresh ${sourceId}`));
       }
       const dirt = await dirtyOverlap(git, plan.root, row.old_head, row.target_head);
-      if (dirt.overlap.length) await abort(engine, current, ['fenced'], dirtyRefusal(sourceId, dirt.overlap));
+      if (plan.caseRecovery) {
+        if(dirt.preserved.length) throw refusal('refresh_dirty','Unrelated dirt appeared during case recovery; no index transition started.',`Preserve it and resume the unchanged refresh for ${sourceId}.`,row.id);
+        // The same owner locks still protect this binding. A moved remote
+        // invalidates the reviewed preview even though the merge SHA is fixed.
+        const binding = await getWorktreeBinding(engine, sourceId);
+        if (!binding) throw refusal('refresh_source_changed', 'Case-recovery binding disappeared.', `Inspect writer status ${sourceId}`, row.id);
+        await engine.transaction(async tx => {
+          await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
+          if(!await transition(tx,current,['fenced'],'fenced',{case_recovery_intent:plan.caseRecovery})) throw refusal('refresh_source_changed','Case intent changed.',`Inspect writer status ${sourceId}`,row.id);
+        });
+        await applyCaseRecovery(plan.root, current, binding, plan.caseRecovery, dirt.overlap, async receipt => {
+          await engine.transaction(async tx => {
+            await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
+            if (!await transition(tx, current, ['fenced'], 'fenced', {case_recovery: receipt})) throw refusal('refresh_source_changed', 'Case recovery receipt changed.', `Inspect writer status ${sourceId}`, row.id);
+          });
+        }, async stage => { await hooks?.boundary?.(stage === 'locked' ? 'case-index-locked' : stage === 'prepared' ? 'case-prepared' : 'case-index-replaced', await readRefresh(engine, row.id)); });
+      } else if (dirt.overlap.length) await abort(engine, current, ['fenced'], dirtyRefusal(sourceId, dirt.overlap));
+      if (plan.caseRecovery && await revParse(git,plan.root,'@{upstream}') !== row.target_head) throw await markRecoveryRequired(engine,await readRefresh(engine,row.id),await headOf(git,plan.root),plan.root);
       const merge = await git(['-C', plan.root, 'merge', '--ff-only', '--no-edit', '--quiet', row.target_head], 120_000);
       const after = await headOf(git, plan.root);
       if (merge.code !== 0 || after !== row.target_head) {
+        if (plan.caseRecovery) throw await markRecoveryRequired(engine, await readRefresh(engine, row.id), after, plan.root);
         if (after === row.old_head) await abort(engine, current, ['fenced'], refusal('refresh_dirty',
           `git merge --ff-only refused (${merge.stderr.trim().split('\n')[0] || `exit ${merge.code}`}); HEAD is unchanged at ${row.old_head}.`,
           `Commit or discard the paths git names (check gbrain sources writer status ${sourceId} --json for pending git effects), then retry gbrain sources refresh ${sourceId}.`));
         throw await markRecoveryRequired(engine, current, after, plan.root);
       }
       await hooks?.boundary?.('merged', current);
+      if (plan.caseRecovery) reconcileCaseRecovery(plan.root,await readRefresh(engine,row.id),after);
       await bookkeeping(engine, current);
       return readRefresh(engine, row.id);
     }, undefined, 30_000);
@@ -505,7 +529,16 @@ async function hostRoot(engine: BrainEngine, worktreeId: string, hostId = localH
  */
 async function recoverOne(engine: BrainEngine, git: Git, row: WorktreeRefreshRow, root: string): Promise<WorktreeRefreshRow> {
   const head = await headOf(git, root);
-  if (row.state === 'draining') {
+  if (row.outcome.case_recovery && ['fenced','merged','recovery_required'].includes(row.state)) {
+    const binding = await getWorktreeBinding(engine, row.source_ids[0]);
+    if (!binding || String(binding.owner_epoch)!==String(row.owner_epoch) || String(binding.topology_generation)!==String(row.topology_generation)) throw refusal('refresh_source_changed','Recovery owner changed.',`Inspect writer status ${row.source_ids[0]}`,row.id);
+    const actual = reconcileCaseRecovery(root, row, head);
+    if (actual === 'target') await bookkeeping(engine, row);
+    else await engine.transaction(tx => transition(tx,row,['fenced','merged','recovery_required'],'aborted',{case_recovery_result:'original_index_restored'}));
+  } else if (row.outcome.case_recovery_intent && ['fenced','merged','recovery_required'].includes(row.state)) {
+    reconcileCaseIntent(root,row,head);
+    await engine.transaction(tx=>transition(tx,row,['fenced','merged','recovery_required'],'aborted',{case_recovery_result:'untouched_before_preparation'}));
+  } else if (row.state === 'draining') {
     await engine.transaction(tx => transition(tx, row, ['draining'], 'aborted', { refusal: { code: 'refresh_interrupted', cause: 'The refreshing process stopped while draining; no merge was started.' } }));
   } else if (row.state === 'fenced' && head === row.old_head) {
     await engine.transaction(tx => transition(tx, row, ['fenced'], 'aborted', { refusal: { code: 'refresh_interrupted', cause: 'The refreshing process stopped before merging; HEAD is unchanged.' } }));
@@ -567,6 +600,7 @@ async function resumeOrAbandon(engine: BrainEngine, sourceId: string, opts: Refr
       const head = await headOf(git, root);
       if (opts.abandon) {
         const row = await readRefresh(engine, active.id);
+        if (row.outcome.case_recovery || row.outcome.case_recovery_intent) throw refusal('refresh_in_progress','Case recovery must reconcile its actual index before lifting the fence.',`gbrain sources refresh ${sourceId} --resume`,row.id);
         if (row.state === 'syncing') throw refusal('refresh_in_progress', 'The checkout already holds the upstream commit; abandoning now would leave files ahead of the database.',
           `gbrain sources refresh ${sourceId} --resume`, row.id);
         if (row.state !== 'draining' && head !== row.old_head) {

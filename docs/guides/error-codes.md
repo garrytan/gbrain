@@ -2878,6 +2878,16 @@ More: [docs/guides/write-refusals.md#refresh_not_managed](../../docs/guides/writ
 
 More: [docs/guides/write-refusals.md#refresh_not_owner](../../docs/guides/write-refusals.md#refresh_not_owner)
 
+### refresh_recovery_required
+
+<a id="refresh_recovery_required"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The interrupted refresh or preview-bound case recovery needs host inspection; writes remain fenced. | Unknown HEAD, index or backup state cannot be adopted safely, and a stale preview cannot authorize a repair. | Preserve the checkout, index lock and recovery backups. Inspect writer status and resume only with verified state; never discard the index to bypass this refusal. | host_admin | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/write-refusals.md#refresh_recovery_required](../../docs/guides/write-refusals.md#refresh_recovery_required)
+
 ### refresh_source_changed
 
 <a id="refresh_source_changed"></a>

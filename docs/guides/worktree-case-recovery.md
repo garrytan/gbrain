@@ -1,0 +1,19 @@
+# Preview-bound case-alias recovery (candidate)
+
+This candidate adds an explicit `sources refresh --case-recovery-preview <file>` route. It is not part of a published release. Normal refresh retains its `refresh_dirty` refusal. An operator must inspect and preserve the original file/index/history, resolve the upstream tree in an ordinary producer clone, and review a preview before using this route on the registered owner.
+
+The preview is a JSON object with exactly `version: 1`, `worktreeId`, `ownerEpoch`, `topologyGeneration`, `oldHead`, `targetHead`, `indexSha256`, `keep`, `remove`, and `materializedSha256`. The bounded candidate supports at most 2048 old/target paths and 512 unique old blobs, with a 120-second total preparation budget and a separate 120-second reconciliation budget. Unrelated uncommitted paths must be resolved first; ordinary refresh still preserves them. Epochs are decimal strings, commits are full object IDs, and SHA-256 values describe raw bytes. `keep` and `remove` name a single ASCII case alias. This conservative candidate refuses non-ASCII target paths rather than claiming Unicode filesystem qualification.
+
+Use `--dry-run --case-recovery-preview <file>` for validation; it may fetch upstream through the usual refresh precheck. The apply form takes the normal refresh lock, drains all worktree members, takes topology/owner locks, persists a recovery intent, obtains Git's index lock, fsyncs the original index/old blobs/physical file and the backup directory chain, and commits a prepared receipt before replacing only the alias index entries. It then uses the existing fixed-SHA fast-forward and managed sync. It does not reset, reclone, delete history, deduplicate records, change `core.ignoreCase`, or waive unknown dirt.
+
+On a case-insensitive filesystem the two spellings must resolve to the same native file identity. Distinct native hardlink entries are also checked by device/inode; their old name remains in the transition index so the ordinary fast-forward removes the extra directory entry. Separate copied files are refused.
+
+An append-only prefix is accepted only byte-for-byte. Every unrelated old object must remain in the target by exact blob and mode, or an existing JSONL file must retain its exact byte prefix. Target prefix collisions, moved upstream, owner changes, staged changes, symlinks and unknown files/index states refuse.
+
+Interrupted operations use the existing `--resume` route. With the old HEAD and a recognized transitioned index, it restores the exact backed-up index before lifting the fence. With the target HEAD, it validates the target index, file bytes, platform-representable modes and permitted dirt (Windows checks the read-only attribute through the existing durable-file helper; the exact executable mode remains checked in the Git index), then finishes bookkeeping; it never restores the old index over the target. A remaining `index.lock`, an unrecognized index/HEAD or a damaged backup preserves the fence for owner inspection. This candidate deliberately does not delete an ambiguous Git lock. `--abandon` cannot bypass case recovery.
+
+Backups remain under the owner's `persistence/case-recovery/<refresh-id>` directory for inspection; they are not automatically garbage-collected by this candidate. The exact home is resolved by `persistenceHome()`.
+
+This route does not prevent future conflicting producer writes. Producers need a shared project identity check and cooperative writer exclusion, and outgoing trees need case-prefix validation after merges. Multi-host deployment and a fresh backup/restore check remain separate operator acceptance steps.
+
+Live PGLite owner delegation explicitly refuses preview-bound recovery in this candidate; it never drops the preview or stops the owner. Direct registered-owner CLI execution is the supported candidate path.

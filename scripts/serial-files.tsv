@@ -423,3 +423,4 @@ test/writeback-review-fixes.serial.test.ts	global-state	global-state: process-wi
 test/resolve-ipc-rebind.serial.test.ts	global-state	global-state: binds real Unix sockets and spawns a child serve that is SIGKILLed; withEnv scopes GBRAIN_HOME
 test/backup-preflight-6649.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine inside the restore-drill and fixture-brain steps (each disconnected in finally); creates symlinked homes and 8 GiB sparse files
 test/windows-ipc-long-path-6573.serial.test.ts	R1	R1: mutates process.env (USERPROFILE) to place the per-user run dir under a non-ASCII profile path; native windows-latest only
+test/persistence-worktree-case-recovery.serial.test.ts	global-state	global-state: R3: shared PGLiteEngine plus per-test disk engines for real SIGKILL restart; withEnv scopes GBRAIN_HOME

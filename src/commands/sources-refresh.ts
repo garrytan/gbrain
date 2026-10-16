@@ -8,13 +8,15 @@
  * Every outcome, refusals included, is printed on stdout (one JSON object with
  * --json) with the next command filled in; exit 1 means it did not finish.
  */
+import { lstatSync, readFileSync } from 'node:fs';
+import { parseCaseRecoveryPreview } from '../core/persistence/worktree-case-recovery.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { OperationError } from '../core/ops/contract.ts';
 import { cliRenderContext, toAgentError } from '../core/agent-output.ts';
 import { refreshWorktree, type RefreshOptions, type WorktreeRefreshResult } from '../core/persistence/worktree-refresh.ts';
 
-const USAGE = 'Usage: gbrain sources refresh <source-id> [--dry-run] [--wait-drain <seconds>] [--fetch-timeout-ms <ms>] [--resume | --abandon] [--json]';
+const USAGE = 'Usage: gbrain sources refresh <source-id> [--dry-run] [--wait-drain <seconds>] [--fetch-timeout-ms <ms>] [--resume | --abandon] [--case-recovery-preview <file>] [--json]';
 
 function numberFlag(args: string[], flag: string): number | undefined {
   const index = args.indexOf(flag);
@@ -28,7 +30,7 @@ function numberFlag(args: string[], flag: string): number | undefined {
 }
 
 export function parseRefreshArgs(args: string[]): { sourceId: string; json: boolean; options: RefreshOptions } {
-  const valued = new Set(['--wait-drain', '--fetch-timeout-ms']);
+  const valued = new Set(['--wait-drain', '--fetch-timeout-ms', '--case-recovery-preview']);
   const known = new Set(['--dry-run', '--resume', '--abandon', '--json', ...valued]);
   const positional: string[] = [];
   for (let i = 0; i < args.length; i++) {
@@ -42,8 +44,22 @@ export function parseRefreshArgs(args: string[]): { sourceId: string; json: bool
   }
   if (positional.length !== 1) throw new OperationError('invalid_params', 'sources refresh needs exactly one source id.', USAGE);
   if (args.includes('--resume') && args.includes('--abandon')) throw new OperationError('invalid_params', '--resume and --abandon are exclusive.', USAGE);
+  const caseFlag=args.indexOf('--case-recovery-preview');
+  let caseRecovery;
+  if(caseFlag>=0) {
+    const file=args[caseFlag+1];
+    if(!file||file.startsWith('--')||args.includes('--resume')||args.includes('--abandon')||args.indexOf('--case-recovery-preview',caseFlag+1)>=0) throw new OperationError('invalid_params','Case recovery needs one preview file and cannot be combined with resume or abandon.',USAGE);
+    try {
+      const stat=lstatSync(file);if(!stat.isFile()||stat.size>65536) throw new Error('preview must be a regular file no larger than 64 KiB');
+      caseRecovery=parseCaseRecoveryPreview(JSON.parse(readFileSync(file,'utf8')));
+    } catch(error) {
+      if(error instanceof OperationError) throw error;
+      throw new OperationError('invalid_params',`Cannot read case recovery preview: ${(error as Error).message}`,USAGE);
+    }
+  }
   const waitDrain = numberFlag(args, '--wait-drain');
   return { sourceId: positional[0], json: args.includes('--json'), options: {
+    ...(caseRecovery ? {caseRecovery}: {}),
     dryRun: args.includes('--dry-run'), resume: args.includes('--resume'), abandon: args.includes('--abandon'),
     ...(waitDrain !== undefined ? { waitDrainMs: Math.round(waitDrain * 1000) } : {}),
     ...(args.includes('--fetch-timeout-ms') ? { fetchTimeoutMs: numberFlag(args, '--fetch-timeout-ms') } : {}),

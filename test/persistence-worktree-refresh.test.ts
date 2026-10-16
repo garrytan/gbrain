@@ -18,7 +18,7 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -167,7 +167,7 @@ test('3e. a checkout that is not a Git checkout is refresh_no_upstream naming th
   renameSync(join(f.root, '.git'), join(f.dir, 'moved.git'));
   try {
     const error = await refusedWith(refreshWorktree(f.engine, f.alpha), 'refresh_no_upstream');
-    expect(error.message).toContain(`The checkout ${f.root} is not a Git checkout`);
+    expect(error.message).toContain(`The checkout ${realpathSync(f.root)} is not a Git checkout`);
     expect(error.suggestion).toContain('Nothing to refresh');
     expect(await f.refreshRows()).toEqual([]);
   } finally { renameSync(join(f.dir, 'moved.git'), join(f.root, '.git')); }

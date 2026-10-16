@@ -22,6 +22,7 @@ export async function maybeDelegateSourcesRefresh(hostConfig: GBrainConfig | nul
   const json = args.includes('--json');
   try {
     const { sourceId, options } = parseRefreshArgs(args);
+    if(options.caseRecovery) throw new OperationError('invalid_params','Preview-bound case recovery is not supported through a live PGLite owner; no preview was discarded and nothing was fetched or merged.', 'Keep the owner running and preserve the checkout. Use a build with delegated case-recovery support; do not reset, stop, or bypass the owner to continue.');
     const delegated = await maybeDelegateLocalAdministration('writer_refresh', {
       source_id: sourceId, dry_run: options.dryRun === true, resume: options.resume === true, abandon: options.abandon === true,
       ...(options.waitDrainMs !== undefined ? { wait_drain_ms: options.waitDrainMs } : {}),
