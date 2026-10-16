@@ -38,7 +38,7 @@ import type { BrainEngine } from '../../engine.ts';
 import type { GBrainConfig } from '../../config.ts';
 import { loadConfig } from '../../config.ts';
 import { buildBrainTools, filterAllowedTools } from '../tools/brain-allowlist.ts';
-import { entityIngestTools, verifyIngestResult, validateIngestCompletion, checkIngestCallBudget, ingestFinalPrompt,finalizeBeforeIngestBudget,ingestAbortKind } from '../../pmbrain-adapters/entity-ingest-workflow.ts';
+import { entityIngestTools, verifyIngestResult, validateIngestCompletion, checkIngestCallBudget, ingestFinalPrompt,finalizeBeforeIngestBudget,ingestAbortKind,captureToolCompletion } from '../../pmbrain-adapters/entity-ingest-workflow.ts';
 import {
   acquireLease,
   releaseLease,
@@ -798,12 +798,19 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
     toolHandlers.set(t.name, {
       idempotent: t.idempotent === true,
       readOnly: !!data.ingest_context && ['brain_search', 'brain_get_page'].includes(t.name),
-      async execute(input: unknown, signal: AbortSignal): Promise<unknown> {
+      async execute(input: unknown, signal: AbortSignal, toolContext): Promise<unknown> {
         return await t.execute(input, {
           engine,
           jobId: ctx.id,
           remote: true,
           signal,
+          toolUseId: toolContext?.gbrainToolUseId,
+          persistCommit: data.ingest_context && toolContext?.gbrainToolUseId ? async (tx, output) => {
+            signal.throwIfAborted();
+            const rows = await tx.executeRaw(`UPDATE subagent_tool_executions SET status='complete',output=$1::jsonb,ended_at=now()
+              WHERE job_id=$2 AND gbrain_tool_use_id::text=$3 AND status='pending' RETURNING id`, [JSON.stringify(output), ctx.id, toolContext.gbrainToolUseId]);
+            if (!rows.length) throw new Error('摄入工具提交回执已失效');
+          } : undefined,
         });
       },
     });
@@ -933,6 +940,7 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
     prepareFinalMessages:data.ingest_context?async()=>[{role:'user',content:await ingestFinalPrompt(engine,ctx.id,data)}]:undefined,
     shouldFinalize:data.ingest_context?messages=>finalizeBeforeIngestBudget(engine,ctx.id,data,systemPrompt,messages,chatTools):undefined,
     validateCompletion:data.ingest_context?(text,canContinue)=>validateIngestCompletion(engine,data,text,ctx.id,canContinue):undefined,
+    completionFromTools: data.ingest_context?.compact_contract ? captureToolCompletion : undefined,
     beforeModelCall: async ({messages,finalTurn,maxTokens})=>{await checkIngestCallBudget(engine,ctx.id,data,systemPrompt,messages,finalTurn?[]:chatTools,!!finalTurn,maxTokens);},
     reportLengthStop: !!data.ingest_context,
     abortSignal: AbortSignal.any([ctx.signal,ctx.shutdownSignal]),
@@ -1074,6 +1082,7 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
 
   return {
     result: result.finalText,
+    length_retries: result.messages.some(message => Array.isArray(message.content) && message.content.some(block => block.type === 'text' && block.lengthRetry)) ? 1 : 0,
     turns_count: result.totalTurns,
     stop_reason: stopReason,
     tokens: {

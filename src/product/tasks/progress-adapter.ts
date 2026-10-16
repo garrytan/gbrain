@@ -86,7 +86,7 @@ export class TaskProgressAdapter {
   }
 
   event(event: { phase: string; file?: string; event?: string; done?: number; total?: number; ts?: string;
-    elapsed_ms?: number; remaining?: number; active?: number; unit?: string; stage?: string }): void {
+    elapsed_ms?: number; remaining?: number; active?: number; unit?: string; stage?: string; totalKnown?: boolean; failed?: number }): void {
     const raw = event.phase.replace(/^cycle\./, '').replace(/^import\./, '');
     if (raw === 'files') {
       if(this.view.name==='快速维护' && this.currentPhase==='sync'){
@@ -111,6 +111,11 @@ export class TaskProgressAdapter {
     const timestamp = event.ts && Number.isFinite(Date.parse(event.ts)) ? event.ts : new Date().toISOString();
     const prior = this.view.phaseProgress;
     const same = prior?.id === phase;
+    const progressed = !same || (typeof event.done === 'number' && (prior?.completed == null || event.done > prior.completed)) || (event.unit != null && event.unit !== prior?.unit);
+    this.view.heartbeatAt = timestamp;
+    if (progressed) this.view.lastProgressAt = timestamp;
+    if (typeof event.failed === 'number') this.view.failedUnits = Math.max(0, event.failed);
+    else if (!same) this.view.failedUnits = 0;
     if (this.resumedPhase?.id !== phase) this.resumedPhase = undefined;
     const phaseProgress = same ? prior : { id: phase, startedAt: timestamp, elapsedMs: 0,
       completed: null, total: null, remaining: null, active: null, unit: event.unit ?? '项' };
@@ -129,10 +134,12 @@ export class TaskProgressAdapter {
     if (typeof event.active === 'number') phaseProgress.active = event.active;
     if (event.event === 'finish') phaseProgress.active = 0;
     if (event.unit) phaseProgress.unit = event.unit;
+    if (event.totalKnown === false) { phaseProgress.total = null; phaseProgress.remaining = null; this.view.phasePercent = null; }
     this.view.phaseProgress = phaseProgress;
     if (!same) { this.view.processed = null; this.view.total = null; }
     if (typeof event.done === 'number') this.view.processed = event.done;
     if (typeof event.total === 'number') this.view.total = event.total;
+    if (event.totalKnown === false) this.view.total = null;
     if (event.file && phase === 'process' && event.file !== this.currentFile) {
       for (const item of this.view.steps) if (item.id !== 'collect') item.status = 'pending';
       this.currentPhase = '';
@@ -152,7 +159,7 @@ export class TaskProgressAdapter {
       if (step.phases.every(item => this.completed.has(item))) step.status = 'completed';
     } else step.status = 'running';
     this.view.stage = event.stage ? `${step.label} · ${event.stage}` : step.label;
-    if (typeof event.total === 'number' && event.total > 0 && typeof event.done === 'number') {
+    if (event.totalKnown !== false && typeof event.total === 'number' && event.total > 0 && typeof event.done === 'number') {
       this.view.phasePercent = Math.min(100, Math.floor(event.done / event.total * 100));
     }
     this.view.completedSteps = this.view.steps.filter(item => item.status === 'completed').length;

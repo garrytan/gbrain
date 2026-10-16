@@ -2641,7 +2641,7 @@ function rejectedChatOptions(model:string):Set<'reasoning'|'schema'|'tools'>{
 
 async function lengthRecoveryLimit(opts:ChatOpts,current:number,finalTurn?:boolean):Promise<number>{
   const model=opts.model??getChatModel();
-  let limit=Math.min(current*2,chatOutputLimit(model,opts.modelOutputLimit)??current);
+  let limit=Math.min(current*2,chatOutputLimit(model,opts.modelOutputLimit)??current*2);
   const context=resolveRecipe(model).recipe.touchpoints.chat?.max_context_tokens;
   if(context)limit=Math.min(limit,context-Math.max(estimateChatInputTokens(opts),Buffer.byteLength((opts.system??'')+JSON.stringify(opts.messages)+JSON.stringify(opts.tools??[]),'utf8')));
   const tracker=__budgetStore.getStore();
@@ -3117,7 +3117,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
 export interface ToolHandler {
   idempotent?: boolean;
   readOnly?: boolean;
-  execute(input: unknown, signal: AbortSignal, context?: { toolCallId: string }): Promise<unknown>;
+  execute(input: unknown, signal: AbortSignal, context?: { toolCallId: string; gbrainToolUseId?: string }): Promise<unknown>;
 }
 
 /**
@@ -3178,6 +3178,7 @@ export interface ToolLoopOpts {
   prepareFinalMessages?: () => Promise<ChatMessage[]>;
   shouldFinalize?: (messages:readonly ChatMessage[]) => Promise<boolean>;
   validateCompletion?: (text:string,canContinue:boolean) => Promise<string|null>;
+  completionFromTools?: (blocks: readonly ChatBlock[]) => Promise<string | null>;
   /** Per-turn max output tokens. Default 4096. */
   maxTokens?: number;
   disableReasoning?: boolean;
@@ -3275,6 +3276,12 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
   let stopReason: ToolLoopStopReason = 'end';
   let retry:{messages:ChatMessage[];maxTokens:number;finalTurn:boolean}|undefined;
   const replayLast=messages.at(-1);
+  if (replayLast?.role === 'user' && Array.isArray(replayLast.content) && opts.completionFromTools && !opts.abortSignal?.aborted) {
+    const completion = await opts.completionFromTools(replayLast.content);
+    if (completion !== null && !(await opts.validateCompletion?.(completion, turnIdx < maxTurns))) {
+      return { finalText: completion, totalTurns: completedTurns, totalUsage, stopReason: 'end', messages };
+    }
+  }
   const replayTruncation=replayLast?.role==='assistant'&&Array.isArray(replayLast.content)?replayLast.content.find(block=>block.type==='text'&&block.truncated):undefined;
   if(replayTruncation?.type==='text'&&opts.retryLength){
     for(let index=messages.length-1;index>=0;index--){const message=messages[index]!;if(message.role==='assistant'&&Array.isArray(message.content)&&message.content.some(block=>block.type==='text'&&block.truncated))messages.splice(index,1);}
@@ -3495,7 +3502,7 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
       // Step 3: execute (side effect).
       opts.onHeartbeat?.('tool_called', { turn_idx: turnIdx, tool_name: call.toolName });
       try {
-        const output = await handler.execute(call.input, opts.abortSignal ?? new AbortController().signal, { toolCallId: call.toolCallId });
+        const output = await handler.execute(call.input, opts.abortSignal ?? new AbortController().signal, { toolCallId: call.toolCallId, gbrainToolUseId });
         // Step 4: settle complete.
         await opts.onToolCallComplete?.(gbrainToolUseId, output);
         toolResultBlocks.push({
@@ -3535,6 +3542,15 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
     const userMessageIdx = messageIdx++;
     await opts.onToolResultTurn?.(turnIdx, userMessageIdx, toolResultBlocks);
     messages.push({ role: 'user', content: toolResultBlocks });
+
+    if (opts.completionFromTools) {
+      const completion = await opts.completionFromTools(toolResultBlocks);
+      if (completion !== null && !(await opts.validateCompletion?.(completion, turnIdx + 1 < maxTurns))) {
+        finalText = completion;
+        stopReason = 'end';
+        break;
+      }
+    }
 
     turnIdx++;
   }

@@ -1,4 +1,5 @@
 import type { BrainEngine } from '../../core/engine.ts';
+import { databaseRequestContext } from '../database/request-context.ts';
 
 export function withSqlCancellation(engine:BrainEngine,signal:AbortSignal):BrainEngine {
   if(engine.kind!=='postgres')return engine;
@@ -6,10 +7,18 @@ export function withSqlCancellation(engine:BrainEngine,signal:AbortSignal):Brain
   const track=(pending:any)=>{
     if(typeof pending?.cancel!=='function')return pending;
     const cancel=()=>{try{void Promise.resolve(pending.cancel()).catch(()=>{});}catch{}};
-    const start=()=>{if(signal.aborted)cancel();else signal.addEventListener('abort',cancel,{once:true});};
+    const context=databaseRequestContext();
+    let timer:ReturnType<typeof setTimeout>|undefined;
+    let started=false;
+    const start=()=>{
+      if(started)return;started=true;
+      if(signal.aborted)cancel();else signal.addEventListener('abort',cancel,{once:true});
+      if(context){timer=setTimeout(()=>{cancel();context.onTimeout(new Error(`数据库请求超时：Postgres SQL，${context.timeoutMs??60000} 毫秒内未完成`));},context.timeoutMs??60000);timer.unref();}
+    };
+    const finish=()=>{clearTimeout(timer);signal.removeEventListener('abort',cancel);};
     return new Proxy(pending,{get(target,key){
       if(['then','catch','finally'].includes(String(key)))return (...args:unknown[])=>{
-        start();return target[key](...args).finally(()=>signal.removeEventListener('abort',cancel));
+        start();return target[key](...args).finally(finish);
       };
       const value=Reflect.get(target,key,target);return typeof value==='function'?value.bind(target):value;
     }});

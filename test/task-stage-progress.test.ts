@@ -49,3 +49,20 @@ test('finished model children do not mark relationship reconciliation as finishe
   expect(adapter.view.steps[0].status).toBe('running');
   expect(adapter.view.phaseProgress?.remaining).toBe(0);
 });
+
+test('流式规划总量未知时不编造百分比，心跳和实际推进时间分别记录', () => {
+  const adapter = new TaskProgressAdapter('dream_full');
+  adapter.plan(['capture_entities']);
+  adapter.event({ phase: 'cycle.capture_entities', event: 'tick', done: 2, total: 32, totalKnown: false, active: 1, failed: 1, ts: '2026-10-15T00:00:01.000Z' });
+  expect(adapter.view.phaseProgress?.total).toBeNull();
+  expect(adapter.view.phasePercent).toBeNull();
+  expect(adapter.view.failedUnits).toBe(1);
+  expect(adapter.view.lastProgressAt).toBe('2026-10-15T00:00:01.000Z');
+  adapter.event({ phase: 'cycle.capture_entities', event: 'tick', done: 2, total: 32, totalKnown: false, active: 1, ts: '2026-10-15T00:00:16.000Z' });
+  expect(adapter.view.heartbeatAt).toBe('2026-10-15T00:00:16.000Z');
+  expect(adapter.view.lastProgressAt).toBe('2026-10-15T00:00:01.000Z');
+  adapter.event({ phase: 'cycle.capture_entities', event: 'tick', done: 3, total: 40, totalKnown: true, active: 1, ts: '2026-10-15T00:00:17.000Z' });
+  expect(adapter.view.phasePercent).toBe(7);
+  expect(adapter.view.lastProgressAt).toBe('2026-10-15T00:00:17.000Z');
+  expect(TaskProductProgressSchema.parse(adapter.view).failedUnits).toBe(1);
+});

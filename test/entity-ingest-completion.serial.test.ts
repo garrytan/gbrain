@@ -1,3 +1,4 @@
+import { expectRejection } from './helpers/await-rejection.ts';
 import {afterAll,afterEach,beforeAll,beforeEach,expect,test} from 'bun:test';
 import {mkdtempSync} from 'node:fs';
 import {tmpdir} from 'node:os';
@@ -11,7 +12,8 @@ import type {MinionJobContext,ToolDef} from '../src/core/minions/types.ts';
 import {parseMarkdown} from '../src/core/markdown.ts';
 import {assertSafeE2eDatabaseUrl} from './helpers/db-guard.ts';
 import {resetPgliteState} from './helpers/reset-pglite.ts';
-import {checkIngestCallBudget,type EntityIngestContext} from '../src/core/pmbrain-adapters/entity-ingest-workflow.ts';
+import {checkIngestCallBudget,entityIngestTools,type EntityIngestContext} from '../src/core/pmbrain-adapters/entity-ingest-workflow.ts';
+import { randomUUID } from 'node:crypto';
 
 const previous=process.env.PMBRAIN_HOME;
 process.env.PMBRAIN_HOME=mkdtempSync(join(tmpdir(),'pmbrain-ingest-completion-'));
@@ -64,9 +66,93 @@ test('实际工具循环报告模型轮次、等待和重试，证书错误保�
  expect(success.progress.some(value=>String(value.stage).includes('等待'))).toBe(true);
  expect(success.progress.at(-1)?.turn).toBe(2);
  const failed=await run([new Error('unknown certificate verification error')]);
- await expect(failed.result).rejects.toThrow('unknown certificate verification error');
+ const failure=await failed.result.then(()=>null,error=>error);
+ expect(failure).toBeInstanceOf(Error);
+ expect(failure.message).toContain('unknown certificate verification error');
  expect(String(failed.progress.at(-1)?.stage)).toContain('请求失败');
  expect(String(failed.progress.at(-1)?.stage)).toContain('certificate verification');
+});
+
+test('同轮批量写入后确定性完成，只调用模型一次，回执与工具提交可恢复', async () => {
+  const first = response('', true);
+  first.blocks.push({ type: 'tool-call', toolCallId: 'finish-batch', toolName: 'brain_complete_ingest', input: JSON.parse(receipt) });
+  const execution = await run([first], false, 6, undefined, undefined, { ...context, compact_contract: true });
+  const result = await execution.result;
+  expect(execution.calls).toHaveLength(1);
+  expect(result.ingest_verified).toBe(true);
+  expect(result.ingest_entities).toEqual([expect.objectContaining({ slug, sourceId: 'default' })]);
+  const stored = await engine.executeRaw<{ status: string }>("SELECT status FROM subagent_tool_executions WHERE job_id=$1 AND tool_name='brain_put_page'", [execution.jobId]);
+  expect(stored[0]?.status).toBe('complete');
+  const resumed = await execution.resume();
+  expect(resumed.ingest_verified).toBe(true);
+  expect(execution.calls).toHaveLength(1);
+});
+
+test('批量完成不能遗漏同轮已经提交的实体，失败回执不会当成功结束', async () => {
+  const first = response('', true);
+  first.blocks.push({ type: 'tool-call', toolCallId: 'wrong-finish', toolName: 'brain_complete_ingest', input: { entities: [], relations: [], no_entities: true } });
+  const execution = await run([first, response(receipt)], false, 6, undefined, undefined, { ...context, compact_contract: true });
+  expect((await execution.result).ingest_verified).toBe(true);
+  expect(execution.calls).toHaveLength(2);
+  const [failed] = await engine.executeRaw<{ error: string }>("SELECT error FROM subagent_tool_executions WHERE job_id=$1 AND tool_name='brain_complete_ingest' AND status='failed'", [execution.jobId]);
+  expect(failed?.error).toContain('omits written entity');
+});
+
+test('批量提取使用同一个持久工具调用提交事实增量，成功后不再追加模型轮次', async () => {
+  const first=response();
+  first.text='';first.stopReason='tool_calls';
+  first.blocks=[{type:'tool-call',toolCallId:'batch-capture',toolName:'brain_capture_entities',input:{entities:[{slug,content}],relations:[]}}];
+  const execution=await run([first],false,6,undefined,undefined,{...context,compact_contract:true,batch_capture:true});
+  const result=await execution.result;
+  expect(result.ingest_verified).toBe(true);
+  expect(execution.calls).toHaveLength(1);
+  const [stored]=await engine.executeRaw<{status:string;output:{completed:Record<string,unknown>}}>("SELECT status,output FROM subagent_tool_executions WHERE job_id=$1 AND tool_name='brain_capture_entities'",[execution.jobId]);
+  expect(stored?.status).toBe('complete');
+  expect(Object.keys((typeof stored!.output==='string'?JSON.parse(stored!.output):stored!.output).completed)).toEqual(['0']);
+  expect((await execution.resume()).ingest_verified).toBe(true);
+  expect(execution.calls).toHaveLength(1);
+});
+
+test('批量第二项中断后从同一凭据继续，第一项事实不会重复写入', async () => {
+  const body=context.body+'风险清单用于持续记录已识别的交付风险和处理安排。';
+  await engine.putPage(context.slug,{type:'note',title:'原始记录',compiled_truth:body,frontmatter:{}});
+  const [source]=await engine.executeRaw<{id:number;incarnation:string}>('SELECT p.id,s.incarnation::text incarnation FROM pages p JOIN sources s ON s.id=p.source_id WHERE p.slug=$1 AND p.source_id=$2',[context.slug,'default']);
+  const ingest={...context,body,chunkBody:body,pageId:source!.id,sourceIncarnation:source!.incarnation,compact_contract:true,batch_capture:true};
+  let firstWrites=0,secondWrites=0;
+  const base={...tools[0]!,async execute(raw:unknown,ctx:Parameters<ToolDef['execute']>[1]){
+    if(String((raw as any).slug).endsWith(slug))firstWrites++;
+    else if(++secondWrites===1)throw new Error('simulated interruption at second entity');
+    return tools[0]!.execute(raw,ctx);
+  }};
+  const tool=entityIngestTools([base],ingest).find(tool=>tool.name==='brain_capture_entities')!;
+  const [job]=await engine.executeRaw<{id:number}>("INSERT INTO minion_jobs(name,status,data) VALUES('subagent','active','{}'::jsonb) RETURNING id");
+  const toolUseId=randomUUID();
+  const input={entities:[{slug,content},{slug:'concepts/risk-list',content:'---\ntitle: 风险清单\ntype: concept\n---\n风险清单记录交付风险与处理安排。[Source: notes/meeting]'}],relations:[]};
+  await engine.executeRaw(`INSERT INTO subagent_tool_executions(job_id,message_idx,tool_use_id,tool_name,input,status,schema_version,ordinal,gbrain_tool_use_id)
+    VALUES($1,1,'batch','brain_capture_entities',$2::jsonb,'pending',2,0,$3::uuid)`,[job!.id,JSON.stringify(input),toolUseId]);
+  const ctx={engine,jobId:job!.id,toolUseId,remote:true as const,signal:new AbortController().signal};
+  await expectRejection(tool.execute(input,ctx), 'simulated interruption');
+  const [partial]=await engine.executeRaw<{output:{completed:Record<string,unknown>}}>('SELECT output FROM subagent_tool_executions WHERE gbrain_tool_use_id=$1::uuid',[toolUseId]);
+  expect(Object.keys((typeof partial!.output==='string'?JSON.parse(partial!.output):partial!.output).completed)).toEqual(['0']);
+  const result=await tool.execute(input,ctx) as {status:string;receipt:string};
+  expect(result.status).toBe('ready');
+  expect(firstWrites).toBe(1);expect(secondWrites).toBe(2);
+  expect(JSON.parse(result.receipt).entities).toContain(`default:${slug}`);
+  expect(JSON.parse(result.receipt).entities).toContain('default:concepts/risk-list');
+});
+
+test('批量声明仍有实体时不能提前完成，下一批保留先前实体和证据关系',async()=>{
+ const evidence='团队采用三纪早会体系和风险清单检查交付风险，同时使用验收清单核对结果。';
+ const body=context.body+evidence;
+ await engine.putPage(context.slug,{type:'note',title:'原始记录',compiled_truth:body,frontmatter:{}});
+ const first=response();first.text='';first.stopReason='tool_calls';
+ first.blocks=[{type:'tool-call',toolCallId:'partial-batch',toolName:'brain_capture_entities',input:{entities:[{slug,content},{slug:'concepts/risk-list',content:'---\ntitle: 风险清单\ntype: concept\n---\n团队采用风险清单检查交付风险。[Source: notes/meeting]'}],relations:[{from:slug,to:'concepts/risk-list',link_type:'mentions',evidence}],has_more:true}}];
+ const second=response();second.text='';second.stopReason='tool_calls';
+ second.blocks=[{type:'tool-call',toolCallId:'final-batch',toolName:'brain_capture_entities',input:{entities:[{slug:'concepts/acceptance-list',content:'---\ntitle: 验收清单\ntype: concept\n---\n团队使用验收清单核对结果。[Source: notes/meeting]'}],relations:[]}}];
+ const execution=await run([first,second],false,6,undefined,undefined,{...context,body,chunkBody:body,compact_contract:true,batch_capture:true});
+ const result=await execution.result;expect(execution.calls).toHaveLength(2);expect(result.ingest_verified).toBe(true);
+ expect(result.ingest_entities).toHaveLength(3);
+ expect(await engine.executeRaw("SELECT l.id FROM links l JOIN pages f ON f.id=l.from_page_id JOIN pages t ON t.id=l.to_page_id WHERE f.slug=$1 AND t.slug='concepts/risk-list' AND l.link_type='mentions'",[slug])).toHaveLength(1);
 });
 
 for(const wire of [false,true])test(`${wire?'Qwen 实际 HTTP':'持久工具'}实体密集小资料按实体数量增加轮数，保存后不重复执行`,async()=>{

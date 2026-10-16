@@ -3,6 +3,7 @@ import { recordCreatedTaskLinks, type LinkAudit } from './pmbrain-adapters/task-
 import { readMentionPolicy } from './mentions/policy.ts';
 import { writePageAliases } from './mentions/pass.ts';
 import { composablePostgresTransaction } from './page-state/transactions.ts';
+import {closePostgresPool} from './postgres-lifecycle.ts';
 import { readRelationalFanout, readTakes } from './search/read-enrichment.ts';
 import { currentMemoryTakeSql, memoryPageIsCurrent, memoryPageFilterForSchema } from './pmbrain-adapters/memory-projections.ts';
 import postgres from 'postgres';
@@ -232,7 +233,7 @@ export class PostgresEngine implements BrainEngine {
       this.connectionManager = null;
     }
     if (this._sql) {
-      await this._sql.end();
+      await closePostgresPool(this._sql);
       this._sql = null;
       // After this point, _connectionStyle stays 'instance' so a second
       // disconnect() is a no-op rather than falling through and clearing

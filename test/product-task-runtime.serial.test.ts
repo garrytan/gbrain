@@ -1,3 +1,4 @@
+import { expectRejection } from './helpers/await-rejection.ts';
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -13,6 +14,7 @@ import { PRODUCT_TASK_QUEUE } from '../src/product/tasks/runtime.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
 import { assertSafeE2eDatabaseUrl } from './helpers/db-guard.ts';
+import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { configPath } from '../src/core/config.ts';
 import { purgeExpiredSources } from '../src/core/destructive-guard.ts';
 import { purgeStaleCheckpoints } from '../src/core/op-checkpoint.ts';
@@ -79,6 +81,7 @@ beforeAll(async () => {
   engine = taskDatabaseUrl ? new PostgresEngine() : new WorkerPgliteEngine() as unknown as BrainEngine;
   await engine.connect(taskDatabaseUrl ? { database_url: taskDatabaseUrl } : {});
   await engine.initSchema();
+  if(taskDatabaseUrl){await resetPgliteState(engine as any);await engine.setConfig('version','135');await engine.setConfig('pmbrain.schema.version','135');}
   initializeSourceGit(root);
   writeFileSync(join(root, 'initial.txt'), '任务验收初始版本');
   commitSourceGit(root, 'isolated task fixture');
@@ -502,7 +505,7 @@ describe('软件后台任务共用 owner 数据库', () => {
     expect(initial.status).toBe('failed');
     writeFileSync(join(directory, 'bad.md'), '# 修复后的内容\n\n现在这份资料也可以被处理。');
     const retry = await runtime.retry(accepted.id);
-    expect(retry?.id).not.toBe(accepted.id);
+    expect(retry?.id).toBe(accepted.id);
     const resumed = await finished(retry!.id);
     expect(resumed.status).toBe('completed');
     expect(resumed.result).toMatchObject({ resumedFiles: 1, imported: 1 });
@@ -584,4 +587,77 @@ describe('软件后台任务共用 owner 数据库', () => {
     await closed;
     expect(await engine.executeRaw('SELECT 1 AS available')).toEqual([{ available: 1 }]);
   });
+  test.skipIf(!taskDatabaseUrl)('Postgres 正在执行的长 SQL 原生取消并回滚，其他连接仍可查询', async () => {
+    const queue = new MinionQueue(engine);
+    const job = await queue.add('native-sql-cancel', {}, { queue: 'native-sql-cancel' });
+    await engine.executeRaw("UPDATE minion_jobs SET status='active',lock_token='native-cancel',lock_until=now()+interval '1 hour' WHERE id=$1", [job.id]);
+    const host = new TaskEngineHost(engine, job.id, 'native-cancel', async () => {});
+    const scope = await host.dispatch({ type:'rpc',id:1,method:'transaction.open',args:[] }) as number;
+    await host.dispatch({ type:'rpc',id:2,method:'setConfig',args:['native.cancel.rollback','must rollback'],scope });
+    const running = host.dispatch({ type:'rpc',id:3,method:'executeRaw',args:['SELECT pg_sleep(60)'],scope });
+    void running.catch(() => {});
+    const deadline = Date.now()+5000;
+    for (;;) {
+      const [row] = await engine.executeRaw<{ active:boolean }>("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE query='SELECT pg_sleep(60)' AND state='active') active");
+      if (row?.active) break;
+      if (Date.now()>deadline) throw new Error('long SQL did not enter PostgreSQL');
+      await Bun.sleep(20);
+    }
+    const started = performance.now();
+    host.cancel();
+    await expectRejection(running);
+    await host.close();
+    expect(performance.now()-started).toBeLessThan(3000);
+    expect(await engine.getConfig('native.cancel.rollback')).toBeNull();
+    expect(await engine.executeRaw('SELECT 1 AS available')).toEqual([{available:1}]);
+    await queue.cancelJob(job.id);
+  },10000);
+  test.skipIf(!taskDatabaseUrl)('Postgres 等待其他连接的锁时可停止，不能提交等待中的事务', async () => {
+    const queue=new MinionQueue(engine);
+    const job=await queue.add('native-lock-cancel',{}, {queue:'native-lock-cancel'});
+    await engine.executeRaw("UPDATE minion_jobs SET status='active',lock_token='lock-cancel',lock_until=now()+interval '1 hour' WHERE id=$1",[job.id]);
+    const host=new TaskEngineHost(engine,job.id,'lock-cancel',async()=>{});
+    let release!:()=>void,ready!:()=>void;
+    const gate=new Promise<void>(resolve=>{release=resolve;}),opened=new Promise<void>(resolve=>{ready=resolve;});
+    const holder=engine.transaction(async tx=>{await tx.executeRaw('SELECT pg_advisory_xact_lock(1476001)');ready();await gate;});
+    try{
+      await opened;
+      const scope=await host.dispatch({type:'rpc',id:1,method:'transaction.open',args:[]}) as number;
+      await host.dispatch({type:'rpc',id:2,method:'setConfig',args:['lock.cancel.rollback','uncommitted'],scope});
+      const pending=host.dispatch({type:'rpc',id:3,method:'executeRaw',args:['SELECT pg_advisory_xact_lock(1476001)'],scope});
+      const settled=pending.then(()=>null,error=>error);
+      for(let attempt=0;;attempt++){
+        const [row]=await engine.executeRaw<{waiting:boolean}>("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE query='SELECT pg_advisory_xact_lock(1476001)' AND wait_event_type='Lock') waiting");
+        if(row?.waiting)break;
+        if(attempt>100)throw new Error('Postgres fixture did not wait for its advisory lock');
+        await Bun.sleep(20);
+      }
+      const start=performance.now();host.cancel();expect(await settled).toBeInstanceOf(Error);await host.close();
+      expect(performance.now()-start).toBeLessThan(3000);
+      expect(await engine.getConfig('lock.cancel.rollback')).toBeNull();
+    }finally{host.cancel();release();await holder;await host.close();await queue.cancelJob(job.id);}
+  },15000);
+  test.skipIf(!taskDatabaseUrl)('Postgres 在途连接断开后保留原生失败并回滚，不会把写入当完成',async()=>{
+    const queue=new MinionQueue(engine);
+    const job=await queue.add('native-disconnect',{}, {queue:'native-disconnect'});
+    await engine.executeRaw("UPDATE minion_jobs SET status='active',lock_token='disconnect',lock_until=now()+interval '1 hour' WHERE id=$1",[job.id]);
+    const host=new TaskEngineHost(engine,job.id,'disconnect',async()=>{});
+    try{
+      const scope=await host.dispatch({type:'rpc',id:1,method:'transaction.open',args:[]}) as number;
+      const rows=await host.dispatch({type:'rpc',id:2,method:'executeRaw',args:['SELECT pg_backend_pid() pid'],scope}) as Array<{pid:number}>;
+      await host.dispatch({type:'rpc',id:3,method:'setConfig',args:['disconnect.rollback','uncommitted'],scope});
+      const pending=host.dispatch({type:'rpc',id:4,method:'executeRaw',args:['SELECT pg_sleep(60)'],scope});
+      const settled=pending.then(()=>null,error=>error);
+      for(let attempt=0;;attempt++){
+        const [row]=await engine.executeRaw<{active:boolean}>("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE pid=$1 AND query='SELECT pg_sleep(60)' AND state='active') active",[rows[0]!.pid]);
+        if(row?.active)break;
+        if(attempt>100)throw new Error('Postgres fixture did not enter its long query');
+        await Bun.sleep(20);
+      }
+      await engine.executeRaw('SELECT pg_terminate_backend($1)',[rows[0]!.pid]);
+      expect(await settled).toBeInstanceOf(Error);await host.close();
+      expect(await engine.getConfig('disconnect.rollback')).toBeNull();
+      expect(await engine.executeRaw('SELECT 1 AS available')).toEqual([{available:1}]);
+    }finally{host.cancel();await host.close();await queue.cancelJob(job.id);}
+  },15000);
 });

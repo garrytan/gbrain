@@ -20,6 +20,7 @@ import { locateIngestSkillsDir, readIngestContract,readEntityCaptureContract, pr
 import { captureScopeKey,captureChunkKey,planCaptureBodies,sourceTimelineDates } from '../pmbrain-adapters/entity-capture-plan.ts';
 import { captureReceiptProof,reuseCaptureReceipt,type CaptureReceipt } from '../pmbrain-adapters/entity-capture-receipts.ts';
 import { runCaptureWindow,CaptureAdmission,withCaptureWrite } from '../pmbrain-adapters/entity-capture-window.ts';
+import { pendingCaptureCandidates, publishCaptureManifest } from '../pmbrain-adapters/entity-capture-manifest.ts';
 import {
   ENTITY_CAPTURE_CANDIDATE_LIMIT,
   type CaptureEntityBrief,
@@ -48,6 +49,8 @@ export const ENTITY_CAPTURE_TOOLS = [
   'put_page',
   'add_timeline_entry',
   'add_link',
+  'complete_ingest',
+  'capture_entities',
 ] as const;
 export const ENTITY_CAPTURE_SLUG_PREFIXES = [
   'people/*',
@@ -67,6 +70,8 @@ export interface EntityCaptureCandidate {
   body: string;
   bodyHash?:string;
   bodyBytes?:number;
+  revision?:string;
+  policySignature?:string;
 }
 
 export interface EntityCaptureChunk extends EntityCaptureCandidate {
@@ -76,9 +81,11 @@ export interface EntityCaptureChunk extends EntityCaptureCandidate {
 }
 
 export interface CaptureEntitiesOpts {
+  window?:{maxChunks:number;maxDurationMs:number};
+  batchCapture?: boolean;
   getConcurrency?:()=>number;
   onProgress?: (progress: { done: number; total: number; remaining: number; active: number; unit: string;
-    file?: string; stage?: string; elapsed_ms: number }) => void;
+    file?: string; stage?: string; elapsed_ms: number; totalKnown?: boolean; failed?:number }) => void;
   sourceId?: string;
   dryRun?: boolean;
   signal?: AbortSignal;
@@ -155,7 +162,7 @@ ${acknowledged.length?acknowledged.map(entity=>`${entity.sourceId}:${entity.slug
 
 put_page 只提交本段全部新增事实和需要更新的当前状态，程序读取旧页并合并保留旧事实、时间线、手工内容和隐私设置，无需把已有实体整页读回再重写。只有需要理解旧内容时才 get_page。一次提交本段关于同一实体的全部事实，避免拆成多次补写。当前状态只保留一节。content 必须以完整 YAML frontmatter 开头，包含 title 和 type；Markdown 的 # 标题不能设置页面身份。title 使用本段原文名称，复用现有准确 slug，禁止将拼音 slug 当标题。类型是 person、company、organization、project、concept；未知类型不建页。项目和概念只有原文明确信息才建，不作普通关键词互连。
 人物 people/、单位 companies/、项目 projects/、概念 concepts/。已有实体标题不在本段逐字出现时，在 YAML aliases 中记录本段明确使用的名称并保留原身份，禁止臆测别名。原始资料本身就是可用的 brain context，包含明确职责、项目或事件时可满足有意义内容要求；不需外部补充。正文每条事实带 [Source: ${page.slug}]。使用 [[${page.sourceId}:${page.slug}]] 回链资料，禁止猜测或缩写路径。同一明确日期事件传播到每个实际参与实体；add_timeline_entry 的 source 必须包含 ${page.slug}，date 必须为原文明确给出的 YYYY-MM-DD；只有月份或阶段范围的事实留在正文，不得编造某月 1 日。
-第一轮只调用一次 search，query 用逗号分隔本段所有候选名称，一次查重。第二轮批量提交各实体新增事实，同一轮中可独立提交有明确证据的 add_link 和 add_timeline_entry；程序按依赖顺序执行并统一读回验收。禁止反复搜索、resolve_slugs 或整库 list_pages。新实体内容来自本段资料，不要求额外读取其他原始文档；已有实体复用准确身份，只提交新事实。只有增加明确新事实才 put_page。add_link 的 from/to 使用准确 slug，context 必须逐字引用本段同时包含两端名称的原文；不得凭共现编造任职、拥有或投资关系，普通引用使用 mentions。
+已有候选和本段足够确认实体身份时，直接在同一轮批量调用各实体 put_page、必要的 add_link/add_timeline_entry，最后调用 complete_ingest 提交完整验收清单。只有身份确有歧义或缺少查重结果时才调用一次 search，query 用逗号分隔全部待确认名称。程序按依赖顺序执行并统一读回验收，成功后直接结束，不再调用模型总结。禁止反复搜索、resolve_slugs 或整库 list_pages。新实体内容来自本段资料，不要求额外读取其他原始文档；已有实体复用准确身份，只提交新事实。只有增加明确新事实才 put_page。add_link 的 from/to 使用准确 slug，context 必须逐字引用本段同时包含两端名称的原文；不得凭共现编造任职、拥有或投资关系，普通引用使用 mentions。
 优先完成资料的主题项目、牵头单位和明确职责关系，再处理有明确身份、职责或事件的人物；只有姓名的名单不单独建实体。一次批量完成查重，不要逐个姓名分轮搜索。本分块初始允许 ${Math.min(8,maxTurns)} 轮，按不同实体数量放宽，最多 ${maxTurns} 轮，包括最后的验收回执；不要重复操作已完成的实体。
 写入完成后返回唯一 JSON 验收清单（不写额外总结）。页面和关系由程序统一读回验收，不再要求模型反复查询图谱：
 {"entities":["people/姓名","companies/单位","projects/项目"],"relations":[{"from":"companies/单位","to":"projects/项目","link_type":"mentions","evidence":"本段逐字原文，包含两端名称"}]}
@@ -214,7 +221,7 @@ async function acknowledgedIngestEntities(engine:BrainEngine,page:EntityCaptureC
 export async function selectEntityCaptureCandidates(
   engine: BrainEngine,
   sourceId?: string,
-  options:{metadataOnly?:boolean;slugs?:string[]}={},
+  options:{metadataOnly?:boolean;slugs?:string[];afterPageId?:number;limit?:number}={},
 ): Promise<EntityCaptureCandidate[]> {
   const rows = await engine.executeRaw<{
     slug: string;
@@ -223,13 +230,16 @@ export async function selectEntityCaptureCandidates(
     compiled_truth: string | null;
     page_id: number;
     body_bytes:number;
+    revision:string;
   }>(
-    `SELECT slug, source_id, title, ${options.metadataOnly?"''::text AS compiled_truth":'compiled_truth'},pages.id AS page_id,octet_length(compiled_truth) AS body_bytes
+    `SELECT slug, source_id, title, ${options.metadataOnly?"''::text AS compiled_truth":'compiled_truth'},pages.id AS page_id,octet_length(compiled_truth) AS body_bytes,knowledge_revision::text revision
        FROM pages
       WHERE deleted_at IS NULL
         AND COALESCE(pages.chunker_version,0)>=0
         AND ($1::text IS NULL OR source_id = $1)
         AND ($3::text[] IS NULL OR slug=ANY($3::text[]))
+        AND ($4::int IS NULL OR pages.id>$4)
+        AND source_id IN (SELECT id FROM sources WHERE NOT archived)
         AND COALESCE(type, '') NOT IN ('person', 'company', 'organization', 'entity', 'concept', 'project')
         AND slug NOT LIKE 'people/%'
         AND slug NOT LIKE 'companies/%'
@@ -238,8 +248,8 @@ export async function selectEntityCaptureCandidates(
         AND slug NOT LIKE 'wiki/agents/%'
         AND COALESCE(frontmatter->>'dream_generated', '') <> 'true'
         AND char_length(trim(COALESCE(compiled_truth, ''))) >= $2
-      ORDER BY pages.updated_at DESC, source_id, slug`,
-    [sourceId ?? null, MIN_BODY_CHARS,options.slugs??null],
+      ORDER BY ${options.limit ? 'pages.id' : 'pages.updated_at DESC, source_id, slug'} LIMIT $5`,
+    [sourceId ?? null, MIN_BODY_CHARS,options.slugs??null,options.afterPageId??null,options.limit??null],
   );
   let sourceRows:Array<{id:string;incarnation:string}>=[];
   try{sourceRows=await engine.executeRaw('SELECT id,incarnation::text AS incarnation FROM sources');}
@@ -252,6 +262,7 @@ export async function selectEntityCaptureCandidates(
     title: row.title?.trim() || row.slug,
     body: row.compiled_truth ?? '',
     bodyBytes:row.body_bytes,
+    revision:row.revision,
   }));
 }
 
@@ -445,22 +456,23 @@ async function countCaptureLinkGaps(
   );
   let unlinkedMentions=0;const linked=new Set<string>();
   const normalize=(value:string)=>value.replace(/[\s"'“”‘’]/gu,'');
-  const named:Array<{slug:string;sourceId:string;names:string[]}>=[];
-  for(const entity of entities){
-    const page=await engine.getPage(entity.slug,{sourceId:entity.sourceId});if(!page)continue;
-    const names=[page.title,...(Array.isArray(page.frontmatter.aliases)?page.frontmatter.aliases.filter((x):x is string=>typeof x==='string'):[])];
-    named.push({...entity,names});
-  }
+  const rows=await engine.executeRaw<{slug:string;source_id:string;title:string;aliases:unknown}>(`SELECT slug,source_id,title,frontmatter->'aliases' aliases
+    FROM pages WHERE deleted_at IS NULL AND source_id||':'||slug=ANY($1::text[])`,[entities.map(entity=>`${entity.sourceId}:${entity.slug}`)]);
+  const named=rows.map(page=>({slug:page.slug,sourceId:page.source_id,names:[page.title,...(Array.isArray(page.aliases)?page.aliases.filter((x):x is string=>typeof x==='string'):[])]}));
+  const edges=await engine.executeRaw<{from_slug:string;from_source:string;to_slug:string;to_source:string}>(`SELECT f.slug from_slug,f.source_id from_source,t.slug to_slug,t.source_id to_source
+    FROM links l JOIN pages f ON f.id=l.from_page_id JOIN pages t ON t.id=l.to_page_id WHERE f.deleted_at IS NULL AND t.deleted_at IS NULL
+    AND ((f.source_id||':'||f.slug=ANY($1::text[]) AND t.source_id||':'||t.slug=ANY($2::text[]))
+      OR(t.source_id||':'||t.slug=ANY($1::text[]) AND f.source_id||':'||f.slug=ANY($2::text[])))`,
+    [sources.map(source=>`${source.sourceId}:${source.slug}`),entities.map(entity=>`${entity.sourceId}:${entity.slug}`)]);
+  const pair=(a:string,b:string)=>JSON.stringify([a,b].sort());
+  const present=new Set(edges.map(edge=>pair(`${edge.from_source}:${edge.from_slug}`,`${edge.to_source}:${edge.to_slug}`)));
   for(const source of sources){
     const body=source.body||(await engine.getPage(source.slug,{sourceId:source.sourceId}))?.compiled_truth||'';
     const normalized=normalize(body);
     for(const entity of named){
       if(entity.sourceId!==source.sourceId&&entity.sourceId!=='default')continue;
       if(!entity.names.some(name=>name.trim().length>=2&&normalized.includes(normalize(name))))continue;
-      const rows=await engine.executeRaw(`SELECT 1 FROM links l JOIN pages f ON f.id=l.from_page_id JOIN pages t ON t.id=l.to_page_id
-        WHERE f.deleted_at IS NULL AND t.deleted_at IS NULL AND ((f.slug=$1 AND f.source_id=$2 AND t.slug=$3 AND t.source_id=$4)
-          OR(f.slug=$3 AND f.source_id=$4 AND t.slug=$1 AND t.source_id=$2)) LIMIT 1`,[source.slug,source.sourceId,entity.slug,entity.sourceId]);
-      if(rows.length)linked.add(`${entity.sourceId}:${entity.slug}`);else unlinkedMentions++;
+      if(present.has(pair(`${source.sourceId}:${source.slug}`,`${entity.sourceId}:${entity.slug}`)))linked.add(`${entity.sourceId}:${entity.slug}`);else unlinkedMentions++;
     }
   }
   return {
@@ -475,7 +487,16 @@ export async function runPhaseCaptureEntities(
 ): Promise<PhaseResult> {
   const captureStartedAt = Date.now();
   throwIfAborted(opts.signal, '[dream] capture entities');
-  const selected = await selectEntityCaptureCandidates(engine, opts.sourceId,{metadataOnly:true,slugs:opts.slugs});
+  const selected: EntityCaptureCandidate[] = [];
+  let afterPageId = 0;
+  for (;;) {
+    throwIfAborted(opts.signal, '[dream] capture candidate planning');
+    const batch = await selectEntityCaptureCandidates(engine, opts.sourceId, { metadataOnly: true, slugs: opts.slugs, afterPageId, limit: 100 });
+    selected.push(...batch);
+    if (batch.length < 100) break;
+    afterPageId = Number(batch.at(-1)!.pageId);
+    await opts.yieldDuringPhase?.();
+  }
   const candidates = opts.slugs ? selected.filter(page=>opts.slugs!.includes(page.slug)) : selected;
   if (candidates.length === 0) {
     opts.onProgress?.({done:0,total:0,remaining:0,active:0,unit:'分块',elapsed_ms:Date.now()-captureStartedAt});
@@ -562,6 +583,26 @@ export async function runPhaseCaptureEntities(
     execution_mode: executionMode,
     fallback_used: false,
   };
+  const systemContract=readEntityCaptureContract(skillsDir);
+  const manifestOptions={model:chosen.model,contract:systemContract};
+  const {loadExtractionPack}=await import('../link-extraction.ts');
+  const grammar=await lineGrammarOptions(engine);
+  const policies=new Map<string,string>();
+  for(const sourceId of new Set(candidates.map(page=>page.sourceId)))policies.set(sourceId,createHash('sha256').update(JSON.stringify([await loadExtractionPack(engine,sourceId),grammar])).digest('hex'));
+  for(const page of candidates)page.policySignature=policies.get(page.sourceId);
+  const cachedWarnings:unknown[]=[];
+  let cachedChunks=0;
+  const pendingCandidates=await pendingCaptureCandidates(engine,candidates,{...manifestOptions,onCached:(_page,manifest)=>{cachedWarnings.push(...(manifest.unresolved??[]));cachedChunks+=manifest.chunks;}});
+  const skippedCandidates=candidates.length-pendingCandidates.length;
+  if (!pendingCandidates.length) {
+    opts.onProgress?.({done:candidates.length,total:candidates.length,remaining:0,active:0,unit:'份资料',stage:'未变化资料已跳过',elapsed_ms:Date.now()-captureStartedAt});
+    return phaseResult(cachedWarnings.length?'warn':'ok','资料与实体处理清单未变化，无需读取正文或调用模型',{
+      ...modelDetails,pages_seen:candidates.length,pages_cached:skippedCandidates,pages_submitted:0,pages_processed:0,pages_remaining:0,
+      chunks_submitted:0,chunks_processed:0,input_tokens:0,output_tokens:0,entities_written:0,relations_created:0,written_slugs:[],source_slugs:[],skill:'ingest',
+      unresolved_references:cachedWarnings,
+    });
+  }
+  candidates.splice(0,candidates.length,...pendingCandidates);
   const prunedCounts={created:0};
   const relationsRemoved=await pruneEntityIngestLinks(engine,opts.sourceId,prunedCounts);
   const { runMentionPass } = await import('../mentions/pass.ts');
@@ -569,7 +610,7 @@ export async function runPhaseCaptureEntities(
   if(initialMentions.state==='failed')throw new Error(initialMentions.error);
   const initialRepair=await repairCaptureRelations(engine,opts,initialMentions.processedSlugs);
   const budgetOpt = opts.budget;
-  const batchSize = Math.max(1, opts.batchSize ?? ENTITY_CAPTURE_PAGE_BUDGET);
+  const batchSize = Math.max(1, Math.min(32, opts.batchSize ?? ENTITY_CAPTURE_PAGE_BUDGET));
   const costCapCny = budgetOpt && 'costCapCny' in budgetOpt
     ? budgetOpt.costCapCny ?? null
     : readEntityCaptureCostCap(await engine.getConfig('dream.entity_capture.cost_cap_cny'));
@@ -591,16 +632,18 @@ export async function runPhaseCaptureEntities(
   const declaredOutputLimit=await engine.getConfig('dream.entity_capture.model_max_output_tokens');
   const modelOutputLimit=declaredOutputLimit?readTokenCap(declaredOutputLimit,defaultMaxOutputTokens(chosen.model)):undefined;
   const nonce = Date.now();
-  const systemContract=readEntityCaptureContract(skillsDir);
   const legacyContract=readIngestContract(skillsDir);
-  let totalCaptureChunks = 0;
+  let totalCaptureChunks = cachedChunks;
   const cachedEntities=new Map<string,{slug:string;sourceId:string}>();
   const cachedSources=new Map<string,EntityCaptureCandidate>();
   let cachedLinks=0,cachedRepairNeeded=false;
   const cachedJobIds=new Set<number>();
-  const pendingPages: Array<{ page: EntityCaptureCandidate; scopeKey:string; bodyHash:string; bytes:number; totalChunks:number; chunks:Array<{start:number;length:number;index:number;force:boolean}> }> = [];
+  const manifestPages=new Map<string,{page:EntityCaptureCandidate;entities:Map<string,{slug:string;sourceId:string}>;proofs:NonNullable<CaptureReceipt['capture_proof']>;chunks:number;complete:boolean;eligible:boolean;unresolved:unknown[]}>();
+  const manifestId=(page:EntityCaptureCandidate)=>JSON.stringify([page.sourceId,page.slug]);
+  type PendingPage={ page: EntityCaptureCandidate; scopeKey:string; bodyHash:string; bytes:number; totalChunks:number; chunks:Array<{start:number;length:number;index:number;force:boolean}> };
+  let pendingPageCount=0;
   let candidatesPlanned=0;
-  for (const reference of candidates) {
+  const planPage=async(reference:EntityCaptureCandidate):Promise<PendingPage|undefined>=>{
     throwIfAborted(opts.signal,'[dream] capture planning');
     if((reference.bodyBytes??0)*3>32*1024**2)throw new Error('资源保护：实体识别资料超过活动输入上限，原文和任务已保留');
     const original=await engine.getPage(reference.slug,{sourceId:reference.sourceId});
@@ -613,6 +656,8 @@ export async function runPhaseCaptureEntities(
       AND position(data->'ingest_context'->>'chunkBody' in $2)>0
       ORDER BY body,id DESC LIMIT $3`,[`${scopeKey}:%`,page.body,Math.ceil(page.body.length/(ENTITY_CAPTURE_CHUNK_CHARS-ENTITY_CAPTURE_CHUNK_OVERLAP))*4+4,`${scopeKey}:0`,`${scopeKey}:g`]);
     const pendingChunks:Array<{start:number;length:number;index:number;force:boolean}>=[];
+    const manifest={page:reference,entities:new Map<string,{slug:string;sourceId:string}>(),proofs:[] as NonNullable<CaptureReceipt['capture_proof']>,chunks:0,complete:false,eligible:true,unresolved:[] as unknown[]};
+    manifestPages.set(manifestId(reference),manifest);
     let chunkIndex=0;
     for (const fragment of planCaptureBodies(page.body,receipts.map(row=>row.body))) {
       totalCaptureChunks++;
@@ -621,51 +666,29 @@ export async function runPhaseCaptureEntities(
         const receipt=receipts.find(row=>row.body===fragment.body)!;
         const reused=await reuseCaptureReceipt(engine,{slug:page.slug,sourceId:page.sourceId,pageId:page.pageId,sourceIncarnation:page.sourceIncarnation,body:page.body,chunkBody:fragment.body},receipt.receipt);
         if(reused){
+          for(const entity of reused.entities)manifest.entities.set(`${entity.sourceId}:${entity.slug}`,entity);
+          manifest.proofs.push(...(receipt.receipt.capture_proof??[]));
+          manifest.unresolved.push(...(reused.unresolved??[]));unresolvedReferences.push(...(reused.unresolved??[]));
           for(const entity of reused.entities)cachedEntities.set(`${entity.sourceId}:${entity.slug}`,entity);
           cachedSources.set(`${page.sourceId}:${page.slug}`,{...reference,bodyHash:createHash('sha256').update(page.body).digest('hex')});cachedLinks+=reused.links;
+          for(const entity of reused.entities)recognizedEntities.set(`${entity.sourceId}:${entity.slug}`,entity);
+          sourceRefs.set(`${page.sourceId}:${page.slug}`,{...reference,bodyHash:createHash('sha256').update(page.body).digest('hex')});
+          previouslyCompleted++;
           cachedJobIds.add(receipt.id);
           cachedRepairNeeded ||= reused.rebound||reused.links>0||receipt.receipt.graph_reconciled!==true;
           continue;
         }
       }
       const key=entityCaptureIdempotencyKey(page,index,fragment.body);
-      if(!fragment.reused&&await hasCompletedCaptureJob(engine,key,chosen.model,legacyContract,page.title))continue;
+      if(!fragment.reused&&await hasCompletedCaptureJob(engine,key,chosen.model,legacyContract,page.title)){manifest.eligible=false;previouslyCompleted++;continue;}
       pendingChunks.push({start:fragment.start,length:fragment.body.length,index,force:fragment.reused});
     }
-    if(pendingChunks.length>0)pendingPages.push({page:reference,scopeKey,bodyHash:createHash('sha256').update(page.body).digest('hex'),bytes:Buffer.byteLength(page.body,'utf8')*3+Buffer.byteLength(systemContract,'utf8')+maxDocumentOutput*8,totalChunks:chunkIndex,chunks:pendingChunks});
+    manifest.chunks=chunkIndex;manifest.complete=pendingChunks.length===0;
     candidatesPlanned++;
     opts.onProgress?.({done:candidatesPlanned,total:candidates.length,remaining:candidates.length-candidatesPlanned,active:0,unit:'份资料',file:reference.slug,stage:'检查分块凭据',elapsed_ms:Date.now()-captureStartedAt});
     await opts.yieldDuringPhase?.();
-  }
-  if(cachedRepairNeeded){
-    const repaired=await repairCaptureRelations(engine,opts,[...cachedEntities.values(),...cachedSources.values()]);
-    cachedLinks+=repaired.ner+repaired.extracted;
-    await engine.executeRaw("UPDATE minion_jobs SET result=jsonb_set(result,'{graph_reconciled}','true'::jsonb) WHERE id=ANY($1::int[]) AND status='completed'",[[...cachedJobIds]]);
-  }
-  if (pendingPages.length === 0) {
-    opts.onProgress?.({done:totalCaptureChunks,total:totalCaptureChunks,remaining:0,active:0,unit:'分块',elapsed_ms:Date.now()-captureStartedAt});
-    return phaseResult('ok', '这些资料已经按 ingest 识别过实体', {
-      ...modelDetails,
-      pages_seen: candidates.length,
-      pages_submitted: 0,
-      pages_processed: 0,
-      chunks_submitted: 0,
-      chunks_processed: 0,
-      pages_remaining: 0,
-      pages_failed: 0,
-      input_tokens: 0,
-      output_tokens: 0,
-      cost_cny: ollama ? 0 : null,
-      cost_cap_cny: costCapCny,
-      entities_written: 0,
-      relations_created:cachedLinks,
-      written_slugs: [],
-      source_slugs: [],
-      skill: 'ingest',
-      skills_dir: skillsDir,
-      ollama,
-    });
-  }
+    if(pendingChunks.length>0)return {page:reference,scopeKey,bodyHash:createHash('sha256').update(page.body).digest('hex'),bytes:Buffer.byteLength(page.body,'utf8')*3+Buffer.byteLength(systemContract,'utf8')+maxDocumentOutput*8,totalChunks:chunkIndex,chunks:pendingChunks};
+  };
 
   const queue = new MinionQueue(engine);
   const childQueueName = `dream-inline-${Date.now()}-${randomUUID().slice(0, 8)}`;
@@ -687,22 +710,22 @@ export async function runPhaseCaptureEntities(
   let chunksSubmitted = 0;
   let chunksProcessed = 0;
   let activeChunks=0,peakChunks=0;
-  const previouslyCompleted = totalCaptureChunks - pendingPages.reduce((sum, item) => sum + item.chunks.length, 0);
+  let failedChunks = 0;
+  let previouslyCompleted = cachedChunks;
   const reportProgress = (active = activeChunks, file?: string, stage?: string) => opts.onProgress?.({
     done: previouslyCompleted + chunksProcessed, total: totalCaptureChunks,
     remaining: Math.max(0, totalCaptureChunks - previouslyCompleted - chunksProcessed), active,
-    unit: '分块', file, stage, elapsed_ms: Date.now() - captureStartedAt,
+    unit: '分块', file, stage, elapsed_ms: Date.now() - captureStartedAt,totalKnown:candidatesPlanned===candidates.length,failed:failedChunks,
   });
   reportProgress();
-  let directLinks = cachedLinks;
+  let directLinks = 0;
   const recognizedEntities=new Map<string,{slug:string;sourceId:string}>(cachedEntities);
-  const unresolvedReferences:unknown[]=[];
+  const unresolvedReferences:unknown[]=[...cachedWarnings];
   let inputTokens = 0;
   let outputTokens = 0;
   let usageMissing = false;
   let knownCost = ollama ? 0 : 0;
   let sawPricedUsage = ollama;
-  let failedChunks = 0;
   let mentionLinks = initialMentions.created+prunedCounts.created;
   let extractLinks = initialRepair.extracted;
   let nerLinks = initialRepair.ner;
@@ -711,10 +734,12 @@ export async function runPhaseCaptureEntities(
   let modelError = '';
   let failureStop = false;
   let fatalFailure=false;
+  let windowDeferred=false,windowStartedAt=0,windowAdmissions=0;
   const pageFailures:Array<{slug:string;sourceId:string;reason:string;stage:string;kind:CaptureStopReason;input_tokens:number;output_tokens:number;input_limit:number;output_limit:number;model_output_limit:number|null;turn_timeout_ms:number;job_timeout_ms:number}>=[];
   let failureReason: CaptureStopReason = 'failure';
   let budgetStop: 'cost' | null = null;
   const failedPageSlugs = new Set<string>();
+  const windowReached=()=>!failureStop&&opts.window!=null&&windowStartedAt>0&&(windowAdmissions>=Math.max(1,opts.window.maxChunks)||Date.now()-windowStartedAt>=Math.max(1,opts.window.maxDurationMs));
   const verifiedChildIds:number[]=[];
   const rememberRelationError = (error: unknown) => {
     if (opts.signal?.aborted) throw error;
@@ -723,7 +748,7 @@ export async function runPhaseCaptureEntities(
     const message = error instanceof Error ? error.message : String(error);
     relationError = relationError ? `${relationError}；${message}` : message;
   };
-  const alignWrittenGraph = async (extra: string[]) => {
+  const alignWrittenGraph = async (extra: string[], selectedSources?:Set<string>) => {
     const refs=new Map([...createdEntityRefs,...recognizedEntities]);
     for(const reference of extra){const colon=reference.indexOf(':'),sourceId=colon<0?opts.sourceId??'default':reference.slice(0,colon),slug=colon<0?reference:reference.slice(colon+1);refs.set(`${sourceId}:${slug}`,{slug,sourceId});}
     if (refs.size === 0 || opts.signal?.aborted) return;
@@ -734,6 +759,7 @@ export async function runPhaseCaptureEntities(
         let sources:Array<{slug:string;body:string}>=[],bytes=0;
         const flush=async()=>{await alignCapturedEntityGraph(engine,{sourceId,entitySlugs,sources});sources=[];bytes=0;};
         for(const source of sourceRefs.values()){
+          if(selectedSources&&!selectedSources.has(manifestId(source)))continue;
           if(source.sourceId!==sourceId&&sourceId!=='default')continue;
           const page=await engine.getPage(source.slug,{sourceId:source.sourceId});
           if(!page||page.id!==source.pageId||source.bodyHash&&createHash('sha256').update(page.compiled_truth??'').digest('hex')!==source.bodyHash)throw new Error('实体关联原始资料已改变');
@@ -754,12 +780,21 @@ export async function runPhaseCaptureEntities(
   });
   try {
     let cursor = 0;
-    while (cursor < pendingPages.length) {
+    while (cursor < candidates.length) {
       throwIfAborted(opts.signal, '[dream] capture entities');
+      if(stopState()){budgetStop='cost';break;}
       const beforeIndex = await loadCaptureEntityIndex(engine, opts.sourceId);
-      const batchEnd = Math.min(pendingPages.length, cursor + batchSize);
-      const batch=pendingPages.slice(cursor,batchEnd);
+      const batchEnd = Math.min(candidates.length, cursor + batchSize);
+      const references=candidates.slice(cursor,batchEnd);
+      const batch:PendingPage[]=[];
+      for(const reference of references){const planned=await planPage(reference);if(planned){batch.push(planned);pendingPageCount++;}}
       cursor=batchEnd;
+      if(cachedRepairNeeded){
+        const repaired=await repairCaptureRelations(engine,opts,[...cachedEntities.values(),...cachedSources.values()]);
+        cachedLinks+=repaired.ner+repaired.extracted;
+        await engine.executeRaw("UPDATE minion_jobs SET result=jsonb_set(result,'{graph_reconciled}','true'::jsonb) WHERE id=ANY($1::int[]) AND status='completed'",[[...cachedJobIds]]);
+        cachedRepairNeeded=false;cachedJobIds.clear();
+      }
       try{await runCaptureWindow(batch,async(item,slot)=>{
         const pageQueueName=`${childQueueName}-${slot}`;
         throwIfAborted(opts.signal, '[dream] capture entities');
@@ -776,9 +811,12 @@ export async function runPhaseCaptureEntities(
         let completedForPage = 0;
         const entityIndex = await loadCaptureEntityIndex(engine, opts.sourceId);
         for (const planned of item.chunks) {
-          if(fatalFailure||budgetStop)break;
+          if(fatalFailure||budgetStop||windowDeferred)break;
+          if(windowReached()){windowDeferred=true;break;}
           const release=await admission.acquire(executionSignal);
           try{
+          if(windowReached()){windowDeferred=true;break;}
+          if(opts.window){windowAdmissions++;windowStartedAt ||=Date.now();}
           const chunk:EntityCaptureChunk={...activePage,chunkIndex:planned.index,chunkCount:item.totalChunks,chunkBody:activePage.body.slice(planned.start,planned.start+planned.length)};
           throwIfAborted(opts.signal, '[dream] capture entities');
           const chunkStop = stopState();
@@ -792,6 +830,7 @@ export async function runPhaseCaptureEntities(
           const baseKey = captureChunkKey(item.scopeKey,chunk.chunkBody);
           const idempotencyKey = planned.force?`${baseKey}:retry:${nonce}`:await retryableKey(engine, baseKey, nonce);
           const acknowledged=await acknowledgedIngestEntities(engine,chunk,entityIndex);
+          const batchCapture=opts.batchCapture??opts.handler==null;
           const data: SubagentHandlerData = {
             prompt: buildEntityCapturePrompt(chunk, related,acknowledged,maxDocumentTurns),
             model: chosen.model,
@@ -799,15 +838,16 @@ export async function runPhaseCaptureEntities(
             turn_timeout_ms:turnTimeoutMs,
             model_output_limit:modelOutputLimit,
             no_self_fix: true,
-            system: systemContract,
-            ingest_context: {slug:chunk.slug,sourceId:chunk.sourceId,body:chunk.body,chunkBody:chunk.chunkBody,pageId:chunk.pageId,sourceIncarnation:chunk.sourceIncarnation,compact_contract:true,acknowledged:acknowledged.map(entity=>`${entity.sourceId}:${entity.slug}`),turn_entity_refs:[...new Set([...related,...acknowledged].map(entity=>`${entity.sourceId}:${entity.slug}`))]},
+            system: batchCapture?`${systemContract}\n本次按批量事实增量执行：候选目录已由程序提供，只有实际歧义才 search。优先一次调用 capture_entities 提交本段全部实体及证据关系；每批最多32个实体，仍有实体时 has_more:true 并继续分批，不得遗漏。全部准备好后由程序验收，不再逐个 put_page 或调用模型写总结。有明确日期的时间线使用保留的时间线工具，最后 complete_ingest。`:systemContract,
+            ingest_context: {slug:chunk.slug,sourceId:chunk.sourceId,body:chunk.body,chunkBody:chunk.chunkBody,pageId:chunk.pageId,sourceIncarnation:chunk.sourceIncarnation,compact_contract:true,batch_capture:batchCapture,acknowledged:acknowledged.map(entity=>`${entity.sourceId}:${entity.slug}`),turn_entity_refs:[...new Set([...related,...acknowledged].map(entity=>`${entity.sourceId}:${entity.slug}`))]},
             usage_limits: {
               input: maxDocumentInput,
               output: maxDocumentOutput,
               cost_cny: ollama || costCapCny==null ? null : Math.max(0,costCapCny-knownCost),
               input_price: inputPrice,output_price:outputPrice,
             },
-            allowed_tools: ENTITY_CAPTURE_TOOLS.filter(name=>name!=='add_timeline_entry'||sourceTimelineDates(chunk.chunkBody).length>0),
+            allowed_tools: ENTITY_CAPTURE_TOOLS.filter(name=>(name!=='add_timeline_entry'||sourceTimelineDates(chunk.chunkBody).length>0)
+              &&(batchCapture?!['put_page','add_link'].includes(name):name!=='capture_entities')),
             allowed_slug_prefixes: [...ENTITY_CAPTURE_SLUG_PREFIXES],
             source_id: chunk.sourceId,
             skills_dir: skillsDir,
@@ -918,7 +958,11 @@ export async function runPhaseCaptureEntities(
             break;
           }
           const proof=await withCaptureWrite(engine,executionSignal,()=>captureReceiptProof(engine,data.ingest_context!,result?.ingest_entities??[]));
-          await engine.executeRaw("UPDATE minion_jobs SET result=result||jsonb_build_object('capture_proof',$2::jsonb) WHERE id=$1 AND status='completed'",[job.id,JSON.stringify(proof)]);
+          const manifest=manifestPages.get(manifestId(item.page))!;
+          manifest.unresolved.push(...(result?.ingest_unresolved??[]));
+          for(const entity of result?.ingest_entities??[])manifest.entities.set(`${entity.sourceId}:${entity.slug}`,entity);
+          manifest.proofs.push(...proof);
+          await engine.executeRaw("UPDATE minion_jobs SET result=result||jsonb_build_object('capture_proof',$2::text::jsonb) WHERE id=$1 AND status='completed'",[job.id,JSON.stringify(proof)]);
           completedForPage += 1;
           verifiedChildIds.push(child.id);
           chunksProcessed += 1;
@@ -926,8 +970,8 @@ export async function runPhaseCaptureEntities(
           }finally{release();}
         }
         if (submittedForPage > 0) pagesSubmitted += 1;
-        if (!budgetStop && completedForPage === item.chunks.length) pagesProcessed += 1;
-      },{signal:opts.signal,shouldStop:()=>!!budgetStop||fatalFailure,sizeOf:item=>item.bytes,
+        if (!budgetStop && completedForPage === item.chunks.length) {pagesProcessed += 1;manifestPages.get(manifestId(item.page))!.complete=true;}
+      },{signal:opts.signal,shouldStop:()=>!!budgetStop||fatalFailure||windowDeferred,sizeOf:item=>item.bytes,
         getConcurrency});}catch(error){
         if(!opts.signal?.aborted&&!phaseAbort.signal.aborted)throw error;
         activeChunks=0;failureStop=true;fatalFailure=true;
@@ -953,10 +997,10 @@ export async function runPhaseCaptureEntities(
         }
       }
       reportProgress(0, undefined, '核对知识关联');
-      await alignWrittenGraph([]);
+      await alignWrittenGraph([],new Set(references.map(manifestId)));
        if(!opts.signal?.aborted)await opts.yieldDuringPhase?.();
        if(opts.signal?.aborted){failureStop=true;fatalFailure=true;failureReason=ingestAbortKind(opts.signal);}
-      if (budgetStop || fatalFailure) break;
+      if (budgetStop || fatalFailure || windowDeferred) break;
     }
 
     const written = executedChildIds.length === 0
@@ -969,7 +1013,9 @@ export async function runPhaseCaptureEntities(
             AND status = 'complete' AND COALESCE(output->>'status',(output #>> '{}')::jsonb->>'status','') NOT IN ('merge_required','unchanged')`,
         [executedChildIds],
       );
-    const writtenSlugs = written.map(row => row.slug).filter(slug => typeof slug === 'string' && slug.length > 0).sort();
+    const batchOutputs=executedChildIds.length?await engine.executeRaw<{output:unknown}>("SELECT output FROM subagent_tool_executions WHERE job_id=ANY($1::int[]) AND tool_name='brain_capture_entities' AND output IS NOT NULL",[executedChildIds]):[];
+    const batchWrites=batchOutputs.flatMap(row=>Object.values(((typeof row.output==='string'?JSON.parse(row.output):row.output) as {completed?:Record<string,{output:Record<string,unknown>}>}).completed??{}).map(step=>step.output));
+    const writtenSlugs = [...new Set([...written.map(row=>row.slug),...batchWrites.filter(output=>output.status!=='unchanged').map(output=>String(output.slug))])].filter(slug => typeof slug === 'string' && slug.length > 0).sort();
     reportProgress(0, undefined, '核对知识关联');
     await alignWrittenGraph(writtenSlugs);
     if(verifiedChildIds.length&&!opts.signal?.aborted){
@@ -979,28 +1025,30 @@ export async function runPhaseCaptureEntities(
         for(const slug of repaired.slugs)relationSlugs.add(slug);
       }catch(error){rememberRelationError(error);}
     }
-    await engine.executeRaw("UPDATE minion_jobs SET result=jsonb_set(result,'{graph_reconciled}',$2::jsonb) WHERE id=ANY($1::int[])",[verifiedChildIds,JSON.stringify(!relationError)]);
+    await engine.executeRaw("UPDATE minion_jobs SET result=jsonb_set(result,'{graph_reconciled}',$2::text::jsonb) WHERE id=ANY($1::int[])",[verifiedChildIds,JSON.stringify(!relationError)]);
     if(relationError)pagesProcessed=0;
     const failedPages = failedPageSlugs.size;
-    const pagesRemaining = pendingPages.length - pagesProcessed;
+    const pagesRemaining = candidates.length-candidatesPlanned+pendingPageCount-pagesProcessed;
     const entitiesCreated = createdEntityRefs.size;
     const [toolLinks]=executedChildIds.length ? await engine.executeRaw<{n:number}>(`SELECT COALESCE(sum((o->>'ingest_links_created')::int),0)::int n FROM
       (SELECT CASE WHEN jsonb_typeof(output)='string' THEN (output #>> '{}')::jsonb ELSE output END o FROM subagent_tool_executions WHERE job_id=ANY($1::int[]) AND status='complete'
         AND tool_name IN ('brain_put_page','brain_add_timeline_entry','brain_add_link')) x WHERE o ? 'ingest_links_created'`,[executedChildIds]) : [{n:0}];
-    const relationsCreated = mentionLinks + nerLinks + extractLinks + directLinks + (toolLinks?.n??0);
+    const batchLinks=batchWrites.reduce((sum,output)=>sum+Number(output.ingest_links_created??0),0);
+    const relationsCreated = cachedLinks + mentionLinks + nerLinks + extractLinks + directLinks + (toolLinks?.n??0)+batchLinks;
     const recognized = [...new Map([...createdEntityRefs,...recognizedEntities].map(([,value])=>[`${value.sourceId}:${value.slug}`,value])).values()];
     const gaps = opts.dryRun
       ? { isolated: 0, unlinkedMentions: 0,linked:0 }
       : await countCaptureLinkGaps(engine, recognized,[...sourceRefs.values()]);
     const linkedEntities = gaps.linked;
     const costCny = ollama ? 0 : (sawPricedUsage ? Number(knownCost.toFixed(6)) : null);
-    const stopReason = (relationError?'relation_failure':budgetStop??(failureStop?failureReason:'completed')) as CaptureStopReason;
+    const stopReason = (relationError?'relation_failure':budgetStop??(failureStop?failureReason:windowDeferred&&pagesRemaining>0?'window':'completed')) as CaptureStopReason;
     const cleanStatus: PhaseResult['status'] = failureStop
       ? (writtenSlugs.length > 0 || pagesProcessed > 0 ? 'warn' : 'fail')
       : pagesRemaining>0 ? 'warn' : 'ok';
     const status: PhaseResult['status'] = cleanStatus === 'ok' && (gaps.isolated > 0 || gaps.unlinkedMentions > 0 || unresolvedReferences.length>0)
       ? 'warn'
       : cleanStatus;
+    if(!relationError&&gaps.isolated===0&&gaps.unlinkedMentions===0&&!opts.signal?.aborted)for(const manifest of manifestPages.values())if(manifest.eligible&&manifest.complete)await publishCaptureManifest(engine,manifest.page,[...manifest.entities.values()],manifest.chunks,{...manifestOptions,proofs:manifest.proofs,unresolved:manifest.unresolved});
     const reportLine = captureReportLine({
       model: chosen.model,
       pagesProcessed,
@@ -1024,6 +1072,7 @@ export async function runPhaseCaptureEntities(
     return phaseResult(status, summary, {
       ...modelDetails,
       pages_seen: candidates.length,
+      pages_cached:skippedCandidates,
       pages_submitted: pagesSubmitted,
       pages_processed: pagesProcessed,
       chunks_submitted: chunksSubmitted,
@@ -1040,12 +1089,13 @@ export async function runPhaseCaptureEntities(
       cost_cap_cny: costCapCny,
       budget_stop: budgetStop,
       stop_reason: stopReason,
+      window_deferred:stopReason==='window',
       report_line: reportLine,
       ollama,
       entities_written: entitiesCreated,
       relations_created: relationsCreated,
       relations_removed: relationsRemoved,
-      direct_links_created: directLinks+(toolLinks?.n??0),
+      direct_links_created: directLinks+(toolLinks?.n??0)+batchLinks,
       unresolved_references: unresolvedReferences,
       document_max_turns:maxDocumentTurns,
       document_max_input_tokens:maxDocumentInput,

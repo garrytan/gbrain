@@ -23,7 +23,7 @@ export async function captureReceiptProof(engine:BrainEngine,context:EntityInges
   return proofs;
 }
 
-export async function reuseCaptureReceipt(engine:BrainEngine,context:EntityIngestContext,receipt:CaptureReceipt):Promise<{entities:EntityReference[];links:number;rebound:boolean}|null>{
+export async function reuseCaptureReceipt(engine:BrainEngine,context:EntityIngestContext,receipt:CaptureReceipt):Promise<{entities:EntityReference[];links:number;rebound:boolean;unresolved?:unknown[]}|null>{
   if(!Array.isArray(receipt.capture_proof))return null;
   try{
     return await engine.transaction(async tx=>{
@@ -52,7 +52,7 @@ export async function reuseCaptureReceipt(engine:BrainEngine,context:EntityInges
       }
       if(typeof receipt.result!=='string')return {entities:receipt.ingest_entities??[],links:0,rebound};
       const result=await finalizeEntityIngest(tx,context,receipt.result);
-      return {entities:result.entities,links:result.linksCreated,rebound};
+      return {entities:result.entities,links:result.linksCreated,rebound,unresolved:result.unresolved};
     });
   }catch(error){if(error instanceof UnrecoverableError)return null;throw error;}
 }

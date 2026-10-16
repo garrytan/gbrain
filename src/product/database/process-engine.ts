@@ -4,8 +4,11 @@ import type { BrainEngine, ReservedConnection } from '../../core/engine.ts';
 import type { EngineConfig } from '../../core/types.ts';
 import { DatabaseAlreadyOwnedError, PgliteOpenError, PgliteProbeError, PgliteLockMetadataError, PglitePermissionError } from '../../core/pglite-errors.ts';
 import { databasePriority } from './priority.ts';
+import { databaseRequestContext } from './request-context.ts';
+import { withDeadline } from '../deadline.ts';
+import { createHash } from 'node:crypto';
 
-type Reply = { id: number; value?: unknown; error?: { name: string; message: string; properties: Record<string, unknown> } };
+type Reply = { id: number; event?: 'started'; value?: unknown; error?: { name: string; message: string; properties: Record<string, unknown> } };
 type Owner = { send: (value: unknown) => void; kill: () => void; exited: Promise<unknown> };
 
 function transferable(value: unknown): unknown {
@@ -23,13 +26,14 @@ export class WorkerPgliteEngine {
   private config?: EngineConfig;
   private recovering: Promise<void> | null = null;
   private failure: Error | null = null;
-  private pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
+  private pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void; dispose: () => void;
+    observation: { id:number;taskId?:number;method:string;scope?:number;generation:number;enqueuedAt:number;startedAt?:number;sqlFingerprint?:string } }>();
 
   constructor() { return this.proxy(); }
 
   private proxy(scope?: number, generation?: number): this {
     return new Proxy(this, { has: (target, property) => ['transaction', 'withReservedConnection', 'getPage', 'db'].includes(String(property)) || Reflect.has(target, property), get: (target, property) => {
-      if (['kind', 'connect', 'disconnect', 'interruptAndRecover'].includes(String(property))) {
+      if (['kind', 'connect', 'disconnect', 'interruptAndRecover', 'inspectRequests'].includes(String(property))) {
         const value = Reflect.get(target, property);
         return typeof value === 'function' ? value.bind(target) : value;
       }
@@ -47,18 +51,41 @@ export class WorkerPgliteEngine {
     if (generation !== undefined && generation !== this.generation) return Promise.reject(new Error('数据库执行已中断，旧事务已关闭'));
     if (!lifecycle && this.recovering) return Promise.reject(new Error('数据库正在停止并恢复，请等待恢复完成'));
     if (!this.owner) return Promise.reject(this.failure ?? new Error('PGLite not connected. Call connect() first.'));
+    const context = databaseRequestContext();
+    const rollback = method === '@scope.close' && args[0] === false;
+    if (!rollback && context?.signal.aborted) return Promise.reject(context.signal.reason ?? new Error('任务已停止'));
     const id = ++this.sequence;
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-      try { this.owner!.send({ id, method, args: args.map(transferable), scope, priority: databasePriority() }); }
-      catch (error) { this.pending.delete(id); reject(error); }
+      const owner = this.owner!;
+      const cancel = () => { try { owner.send({ type: 'cancel', id }); } catch {} };
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const dispose = () => { clearTimeout(timer); context?.signal.removeEventListener('abort', cancel); };
+      const observation={id,taskId:context?.taskId,method,scope,generation:this.generation,enqueuedAt:Date.now(),
+        sqlFingerprint:method==='executeRaw'||method==='@db.query'?createHash('sha256').update(String(args[0])).digest('hex'):undefined};
+      this.pending.set(id, { resolve, reject, dispose, observation });
+      try {
+        owner.send({ id, method, args: args.map(transferable), scope, priority: databasePriority(),
+          taskId: context?.taskId, token: context?.token, generation: this.generation, enqueuedAt: Date.now() });
+        if (context && !rollback) {
+          context.signal.addEventListener('abort', cancel, { once: true });
+          if (context.signal.aborted) cancel();
+          timer = setTimeout(() => {
+            cancel();
+            console.error('[database request timeout]',JSON.stringify(this.inspectRequests().find(request=>request.id===id)));
+            context.onTimeout(new Error(`数据库请求超时：${method}，${context.timeoutMs ?? 60000} 毫秒内未完成`));
+          }, context.timeoutMs ?? 60000);
+          timer.unref();
+        }
+      } catch (error) { this.pending.delete(id); dispose(); reject(error); }
     });
   }
 
   private async scoped(method: string, fn: (engine: BrainEngine | ReservedConnection) => Promise<unknown>, parent?: number, generation = this.generation): Promise<unknown> {
     const scope = await this.rpc(`@${method}.open`, [], parent, generation) as number;
     try {
+      databaseRequestContext()?.signal.throwIfAborted();
       const value = await fn(this.proxy(scope, generation) as unknown as BrainEngine);
+      databaseRequestContext()?.signal.throwIfAborted();
       await this.rpc('@scope.close', [true], scope, generation);
       return value;
     } catch (error) {
@@ -68,13 +95,15 @@ export class WorkerPgliteEngine {
   }
 
   private rejectPending(error: Error): void {
-    for (const request of this.pending.values()) request.reject(error);
+    for (const request of this.pending.values()) { request.dispose(); request.reject(error); }
     this.pending.clear();
   }
 
   private accept(reply: Reply): void {
     const request = this.pending.get(reply.id);
+    if(reply.event==='started'){if(request)request.observation.startedAt=Date.now();return;}
     this.pending.delete(reply.id);
+    request?.dispose();
     if (!reply.error) { request?.resolve(reply.value); return; }
     const { name, message, properties } = reply.error;
     const error = name === 'DatabaseAlreadyOwnedError' ? new DatabaseAlreadyOwnedError({ ...properties, message } as ConstructorParameters<typeof DatabaseAlreadyOwnedError>[0])
@@ -86,6 +115,8 @@ export class WorkerPgliteEngine {
     Object.assign(error, properties, { name });
     request?.reject(error);
   }
+
+  inspectRequests() { return [...this.pending.values()].map(request=>({...request.observation})); }
 
   private spawnOwner(recovery = false): void {
     const compiled = /\/(?:~BUN|\$bunfs)\//.test(decodeURIComponent(import.meta.url));
@@ -130,22 +161,22 @@ export class WorkerPgliteEngine {
       this.owner = null;
       ++this.generation;
       this.rejectPending(new Error('数据库执行已中断，未提交事务已取消'));
-      if (owner) { owner.kill(); await owner.exited; }
+      if (owner) { owner.kill(); await withDeadline(owner.exited, 5000, '数据库执行进程未在 5 秒内退出'); }
       this.spawnOwner(true);
-      let timer:ReturnType<typeof setTimeout>|undefined;
       try {
-        await Promise.race([this.rpc('connect', [config], undefined, undefined, true),new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(new Error('原生打开数据库未在 30 秒内完成')),30000);})]);
-        await this.rpc('executeRaw', ['SELECT 1'], undefined, undefined, true);
+        await withDeadline((async () => {
+          await this.rpc('connect', [config], undefined, undefined, true);
+          await this.rpc('executeRaw', ['SELECT 1'], undefined, undefined, true);
+        })(), 30000, '原生打开和检查数据库未在 30 秒内完成');
       }
       catch (error) {
         const failed = this.owner as Owner|null;
         this.owner = null;
-        if (failed) { failed.kill(); await failed.exited; }
+        if (failed) { failed.kill(); await withDeadline(failed.exited, 5000, '数据库执行进程未在 5 秒内退出'); }
         this.failure = new Error(`数据库恢复失败：${error instanceof Error ? error.message : String(error)}`);
         this.rejectPending(this.failure);
         throw this.failure;
       }
-      finally {clearTimeout(timer);}
     })().finally(() => { this.recovering = null; });
     return this.recovering;
   }
@@ -162,7 +193,7 @@ export class WorkerPgliteEngine {
       ++this.generation;
       this.rejectPending(new Error('数据库连接已关闭'));
       owner.kill();
-      await owner.exited;
+      await withDeadline(owner.exited, 5000, '数据库执行进程未在 5 秒内退出');
     }
   }
 }

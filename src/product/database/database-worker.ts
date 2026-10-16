@@ -7,7 +7,7 @@ import { loadConfig } from '../../core/config.ts';
 import { withPgliteSavepoints } from './savepoints.ts';
 import { leaseRenewal } from './lease-renewal.ts';
 
-function respond(payload: { id: number; value?: unknown; error?: { name: string; message: string; properties: Record<string, unknown> } }): void {
+function respond(payload: { id: number; event?: 'started'; value?: unknown; error?: { name: string; message: string; properties: Record<string, unknown> } }): void {
   try { if (parentPort) parentPort.postMessage(payload); else process.send!(payload); }
   catch (error) { console.error('[database] 回复数据库调用失败:', error instanceof Error ? error.message : error); }
 }
@@ -88,6 +88,9 @@ async function perform(message: { method: string; args: any[]; scope?: number })
 
 type Request = { id: number; method: string; args: any[]; scope?: number; priority?: number };
 const waiting: Request[] = [];
+const cancelled = new Set<number>();
+const queued = new Set<number>();
+const active = new Set<number>();
 let busy = false;
 let chain: Promise<void> = Promise.resolve();
 
@@ -109,6 +112,10 @@ async function waitForConnection(): Promise<void> {
 
 async function reply(message: Request): Promise<void> {
   try {
+    queued.delete(message.id);
+    if (cancelled.delete(message.id)) throw new Error('任务已停止，数据库请求尚未执行');
+    active.add(message.id);
+    respond({id:message.id,event:'started'});
     const delivered = isLockRenewal(message) && message.scope !== undefined && !scopes.has(message.scope)
       ? { ...message, scope: undefined }
       : message;
@@ -131,11 +138,13 @@ async function reply(message: Request): Promise<void> {
     if (replay) await replay();
     await new Promise((resolve) => setTimeout(resolve, 0));
     respond({ id: message.id, error: failure });
+    active.delete(message.id);
     return;
   }
   const replay = replayAfterReply;
   replayAfterReply = undefined;
   if (replay) await replay();
+  active.delete(message.id);
 }
 
 function drain(): void {
@@ -149,7 +158,19 @@ function drain(): void {
   void reply(message).finally(() => { busy = false; setImmediate(drain); });
 }
 
-const receive = (message: Request) => {
+const receive = (message: Request | { type: 'cancel'; id: number }) => {
+  if ('type' in message) {
+    if (!active.has(message.id)) {
+      const index = waiting.findIndex(request => request.id === message.id);
+      if (index >= 0) {
+        waiting.splice(index, 1);
+        queued.delete(message.id);
+        respond({ id: message.id, error: { name: 'AbortError', message: '任务已停止，数据库请求尚未执行', properties: {} } });
+      } else if (queued.has(message.id)) cancelled.add(message.id);
+    }
+    return;
+  }
+  queued.add(message.id);
   if (message.scope !== undefined) { enqueue(() => reply(message)); return; }
   if (isLockRenewal(message) && openRootScope !== undefined && scopes.has(openRootScope)) {
     renewalsWhileOpen.set(leaseRenewal(message.method, message.args)!.key, message.args);

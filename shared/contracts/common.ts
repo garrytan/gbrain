@@ -2,6 +2,10 @@ import { z } from 'zod';
 
 export const RunStatusSchema = z.enum(['queued', 'running', 'completed', 'failed', 'cancelled']);
 export const TaskProductProgressSchema = z.object({
+  heartbeatAt: z.string().optional(),
+  lastProgressAt: z.string().optional(),
+  failedUnits: z.number().int().nonnegative().optional(),
+  activity: z.object({ kind: z.enum(['database','model','processing','recovery']), since: z.string(), operation: z.string().optional() }).optional(),
   phaseProgress: z.object({ id:z.string(), startedAt:z.string().nullable(), elapsedMs:z.number().nonnegative(),
     completed:z.number().nonnegative().nullable(),total:z.number().nonnegative().nullable(),remaining:z.number().nonnegative().nullable(),
     active:z.number().nonnegative().nullable(),unit:z.string() }).optional(),

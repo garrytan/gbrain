@@ -16,6 +16,8 @@ import {parseLlmJson} from '../llm-json.ts';
 import {defaultMaxOutputTokens} from '../ai/model-compatibility.ts';
 import { compileCaptureContract,sourceTimelineDates } from './entity-capture-plan.ts';
 import { withCaptureWrite } from './entity-capture-window.ts';
+import type { ChatBlock } from '../ai/gateway.ts';
+import { captureBatchTool } from './entity-capture-batch.ts';
 
 export interface EntityIngestContext {
   slug: string;
@@ -25,6 +27,7 @@ export interface EntityIngestContext {
   acknowledged?:string[];
   turn_entity_refs?:string[];
   compact_contract?:boolean;
+  batch_capture?:boolean;
   pageId?:number|string;
   sourceIncarnation?:string;
 }
@@ -175,7 +178,7 @@ export function entityIngestTools(tools:ToolDef[],context:EntityIngestContext):T
     }
     return input;
   };
-  return tools.filter(tool=>!context.compact_contract||dates.length>0||tool.name.replace(/^brain_/,'')!=='add_timeline_entry').map((originalTool):ToolDef=>{
+  const wrapped = tools.filter(tool=>!context.compact_contract||dates.length>0||tool.name.replace(/^brain_/,'')!=='add_timeline_entry').map((originalTool):ToolDef=>{
     const tool=context.compact_contract&&originalTool.name.replace(/^brain_/,'')==='add_timeline_entry'
       ? {...originalTool,input_schema:{...originalTool.input_schema,properties:{...(originalTool.input_schema.properties as Record<string,unknown>??{}),date:{type:'string',enum:dates}}}}
       :originalTool;
@@ -215,14 +218,16 @@ export function entityIngestTools(tools:ToolDef[],context:EntityIngestContext):T
         const to=await resolveEntity(ctx.engine,context,String(input.to??''));
         const relation={from:String(input.from),to:String(input.to),link_type:String(input.link_type??'mentions'),evidence:String(input.context??'')};
         await relationEvidence(ctx.engine,context,relation,from,to);
-        const created=await ctx.engine.transaction(async tx=>{
+        return await ctx.engine.transaction(async tx=>{
           await tx.executeRaw('SELECT id FROM pages WHERE (slug=$1 AND source_id=$2) OR(slug=$3 AND source_id=$4) OR(slug=$5 AND source_id=$6) ORDER BY id FOR SHARE',[context.slug,context.sourceId,from.slug,from.sourceId,to.slug,to.sourceId]);
           const original=await tx.getPage(context.slug,{sourceId:context.sourceId});
           if(!original||original.deleted_at||original.compiled_truth!==context.body)throw new UnrecoverableError('ingest source changed before relationship write');
           await checkSourceIdentity(tx,context,original.id);
-          return tx.addLinksBatch([managedLink(context,from,to,relation.link_type,relation.evidence)]);
+          const created=await tx.addLinksBatch([managedLink(context,from,to,relation.link_type,relation.evidence)]);
+          const output={status:'ok',from:`${from.sourceId}:${from.slug}`,to:`${to.sourceId}:${to.slug}`,origin:context.slug,evidence:relation.evidence,ingest_links_created:created};
+          await ctx.persistCommit?.(tx,output);
+          return output;
         });
-        return {status:'ok',from:`${from.sourceId}:${from.slug}`,to:`${to.sourceId}:${to.slug}`,origin:context.slug,evidence:relation.evidence,ingest_links_created:created};
         }catch(error){
           const reason=error instanceof Error?error.message:String(error);
           if(reason.includes('source boundary')||!(error instanceof UnrecoverableError))throw error;
@@ -260,13 +265,58 @@ export function entityIngestTools(tools:ToolDef[],context:EntityIngestContext):T
         const output=await tool.execute(writeInput,{...ctx,engine:tx,preparedPageImport:prepared});
         const [after]=await tx.executeRaw<{n:number}>('SELECT count(*)::int n FROM links WHERE id>$1',[before?.id??0]);
         const [written]=await tx.executeRaw<{revision:string}>('SELECT knowledge_revision::text revision FROM pages WHERE slug=$1 AND source_id=$2',[slug,sourceId]);
-        return {...output as object,slug:`${sourceId}:${slug}`,source_id:sourceId,ingest_links_created:after?.n??0,ingest_revision:written?.revision};
+        const committed = {...output as object,slug:`${sourceId}:${slug}`,source_id:sourceId,ingest_links_created:after?.n??0,ingest_revision:written?.revision};
+        await ctx.persistCommit?.(tx, committed);
+        return committed;
       });
     }};
-  }).map(tool=>{
+  }).map((tool):ToolDef=>{
     if(!['put_page','add_link','add_timeline_entry'].includes(tool.name.replace(/^brain_/,'')))return tool;
     return {...tool,execute:(raw,ctx)=>withCaptureWrite(ctx.engine,ctx.signal,()=>tool.execute(raw,ctx))};
   });
+  if (!context.compact_contract) return wrapped;
+  const registry:ToolDef[]=[...wrapped, {
+    name: 'brain_complete_ingest',
+    description: '本段全部实体和关系准备完成时提交验收清单。可放在同轮所有 put_page、add_link 和时间线工具之后；程序串行写入并验证清单，成功后直接结束，无需再调用模型总结。遗漏已写入实体或证据不符会失败。',
+    input_schema: { type: 'object', additionalProperties: false, properties: {
+      entities: { type: 'array', maxItems: 64, items: { type: 'string' } },
+      relations: { type: 'array', maxItems: 128, items: { type: 'object', properties: { from: { type: 'string' }, to: { type: 'string' }, link_type: { type: 'string' }, evidence: { type: 'string' } }, required: ['from', 'to', 'link_type', 'evidence'] } },
+      no_entities: { type: 'boolean' },
+    }, required: ['entities', 'relations'] },
+    idempotent: true,
+    async execute(raw, ctx) {
+      ctx.signal?.throwIfAborted();
+      const text = JSON.stringify(raw);
+      const required = await ingestRequiredWrites(ctx.engine, { ingest_context: context }, ctx.jobId);
+      await checkReceiptTargets(ctx.engine, context, text, required);
+      return { status: 'ready', receipt: text };
+    },
+  }];
+  if(!context.batch_capture)return registry;
+  const put=wrapped.find(tool=>tool.name==='brain_put_page');
+  if(!put)throw new Error('批量实体提取缺少共享写入工具');
+  return [...registry.filter(tool=>!['brain_put_page','brain_add_link'].includes(tool.name)),captureBatchTool(put,context,{
+    required:(engine,jobId)=>ingestRequiredWrites(engine,{ingest_context:context},jobId),
+    validate:(engine,text,required)=>checkReceiptTargets(engine,context,text,required),
+  })];
+}
+
+export async function captureToolCompletion(blocks: readonly ChatBlock[]): Promise<string | null> {
+  if (blocks.some(block => block.type === 'tool-result' && block.isError)) return null;
+  const last = blocks.at(-1);
+  if (last?.type !== 'tool-result' || !['brain_complete_ingest','brain_capture_entities'].includes(last.toolName) || !last.output || typeof last.output !== 'object') return null;
+  const result = last.output as { status?: string; receipt?: unknown };
+  return result.status === 'ready' && typeof result.receipt === 'string' ? result.receipt : null;
+}
+
+async function checkReceiptTargets(engine: BrainEngine, context: EntityIngestContext, text: string, required: string[]): Promise<void> {
+  const receipt = parseReceipt(text);
+  const entities = await Promise.all([...new Set(receipt.entities)].map(reference => resolveEntity(engine, context, reference)));
+  const identities = new Set(entities.map(entity => `${entity.sourceId}:${entity.slug}`));
+  for (const reference of required) {
+    const qualified = reference.includes(':') ? reference : `${context.sourceId}:${reference}`;
+    if (!identities.has(qualified)) throw new UnrecoverableError(`ingest receipt omits written entity: ${reference}`);
+  }
 }
 
 export async function finalizeEntityIngest(engine:BrainEngine,context:EntityIngestContext,text:string,requiredWrites:string[]=[]){
@@ -345,27 +395,27 @@ export async function pruneEntityIngestLinks(engine:BrainEngine,sourceId?:string
   return removed;
 }
 
-async function ingestRequiredWrites(engine:BrainEngine,data:SubagentHandlerData,jobId?:number):Promise<string[]>{
+async function ingestRequiredWrites(engine:BrainEngine,data:Pick<SubagentHandlerData,'ingest_context'>,jobId?:number):Promise<string[]>{
   const pending=jobId==null?[]:await engine.executeRaw<{slug:string}>(`SELECT i->>'slug' slug FROM
     (SELECT DISTINCT ON(COALESCE(output->>'slug',(output #>> '{}')::jsonb->>'slug',input->>'slug',(input #>> '{}')::jsonb->>'slug')) CASE WHEN jsonb_typeof(input)='string' THEN (input #>> '{}')::jsonb ELSE input END i,
       CASE WHEN jsonb_typeof(output)='string' THEN (output #>> '{}')::jsonb ELSE output END o FROM subagent_tool_executions
       WHERE job_id=$1 AND tool_name='brain_put_page' AND status='complete' ORDER BY COALESCE(output->>'slug',(output #>> '{}')::jsonb->>'slug',input->>'slug',(input #>> '{}')::jsonb->>'slug'),id DESC) x WHERE o->>'status'='merge_required'`,[jobId]);
   if(pending.length)throw new UnrecoverableError(`ingest pending entity merge: ${pending.map(row=>row.slug).join(', ')}`);
   const written=jobId==null?[]:await engine.executeRaw<{slug:string}>("SELECT DISTINCT COALESCE(output->>'slug',(output #>> '{}')::jsonb->>'slug',input->>'slug',(input #>> '{}')::jsonb->>'slug') AS slug FROM subagent_tool_executions WHERE job_id=$1 AND tool_name='brain_put_page' AND status='complete' AND COALESCE(output->>'status',(output #>> '{}')::jsonb->>'status','') NOT IN ('merge_required','unchanged')",[jobId]);
-  return [...written.map(row=>row.slug),...(data.ingest_context?.acknowledged??[])];
+  const batches=jobId==null?[]:await engine.executeRaw<{output:unknown}>("SELECT output FROM subagent_tool_executions WHERE job_id=$1 AND tool_name='brain_capture_entities' AND output IS NOT NULL",[jobId]);
+  const batchWritten=batches.flatMap(row=>{
+    const output=(typeof row.output==='string'?JSON.parse(row.output):row.output) as {completed?:Record<string,{output?:{slug?:string}}>};
+    return Object.values(output.completed??{}).flatMap(step=>typeof step.output?.slug==='string'?[step.output.slug]:[]);
+  });
+  return [...written.map(row=>row.slug),...batchWritten,...(data.ingest_context?.acknowledged??[])];
 }
 
 export async function validateIngestCompletion(engine:BrainEngine,data:SubagentHandlerData,text:string,jobId:number,canContinue:boolean):Promise<string|null>{
   if(!data.ingest_context)return null;
   const context=data.ingest_context;
   try{
-    const required=await ingestRequiredWrites(engine,data,jobId),receipt=parseReceipt(text);
-    const entities=await Promise.all([...new Set(receipt.entities)].map(reference=>resolveEntity(engine,context,reference)));
-    const identities=new Set(entities.map(entity=>`${entity.sourceId}:${entity.slug}`));
-    for(const reference of required){
-      const qualified=reference.includes(':')?reference:`${context.sourceId}:${reference}`;
-      if(!identities.has(qualified))throw new UnrecoverableError(`ingest receipt omits written entity: ${reference}`);
-    }
+    const required=await ingestRequiredWrites(engine,data,jobId);
+    await checkReceiptTargets(engine,context,text,required);
     return null;
   }catch(error){
     if(!(error instanceof UnrecoverableError)||error.message.includes('source boundary'))throw error;
@@ -387,7 +437,7 @@ export async function verifyIngestResult(engine:BrainEngine,data:SubagentHandler
     const turns=jobId==null?null:await ingestTurnAllowance(engine,jobId,data);
     throw new UnrecoverableError(`ingest_turn_limit: ${turns?.limit??data.max_turns??20} turns exhausted; unfinished chunk is resumable`);
   }
-  if(result.stop_reason!=='end_turn')throw new UnrecoverableError(result.stop_reason==='length'?'ingest_output_truncated: output truncated after bounded retry':['timeout','user_stop','service_shutdown','aborted'].includes(result.stop_reason)?`ingest_provider_${result.stop_reason}: ingest incomplete`:`ingest incomplete: ${result.stop_reason}`);
+  if(result.stop_reason!=='end_turn')throw new UnrecoverableError(result.stop_reason==='length'?`ingest_output_truncated: output truncated${result.length_retries?' after one bounded retry':' without an available bounded retry'}`:['timeout','user_stop','service_shutdown','aborted'].includes(result.stop_reason)?`ingest_provider_${result.stop_reason}: ingest incomplete`:`ingest incomplete: ${result.stop_reason}`);
   const required=await ingestRequiredWrites(engine,data,jobId);
   const verified=await withCaptureWrite(engine,undefined,()=>finalizeEntityIngest(engine,data.ingest_context!,result.result,required));
   const rejected=jobId==null?[]:await engine.executeRaw<{from:string;to:string;reason:string}>(`SELECT DISTINCT i->>'from' AS "from",i->>'to' AS "to",o->>'reason' AS reason
@@ -397,8 +447,10 @@ export async function verifyIngestResult(engine:BrainEngine,data:SubagentHandler
 }
 
 export async function ingestFinalPrompt(engine:BrainEngine,jobId:number,data:SubagentHandlerData):Promise<string>{
-  const writes=await engine.executeRaw<{tool_name:string;input:Record<string,unknown>;output:unknown}>(`SELECT tool_name,CASE WHEN jsonb_typeof(input)='string' THEN (input #>> '{}')::jsonb ELSE input END input,CASE WHEN jsonb_typeof(output)='string' THEN (output #>> '{}')::jsonb ELSE output END output FROM subagent_tool_executions WHERE job_id=$1 AND status='complete' AND tool_name IN ('brain_put_page','brain_add_link','brain_add_timeline_entry') ORDER BY id`,[jobId]);
-  const persisted=writes.map(row=>row.tool_name==='brain_add_link'?{tool:row.tool_name,...row.output as object}:{tool:row.tool_name,slug:row.input.slug,status:(row.output as any)?.status==='merge_required'?'merge_required':'persisted'});
+  const writes=await engine.executeRaw<{tool_name:string;input:Record<string,unknown>;output:unknown}>(`SELECT tool_name,CASE WHEN jsonb_typeof(input)='string' THEN (input #>> '{}')::jsonb ELSE input END input,CASE WHEN jsonb_typeof(output)='string' THEN (output #>> '{}')::jsonb ELSE output END output FROM subagent_tool_executions WHERE job_id=$1 AND output IS NOT NULL AND tool_name IN ('brain_put_page','brain_add_link','brain_add_timeline_entry','brain_capture_entities') ORDER BY id`,[jobId]);
+  const persisted=writes.flatMap(row=>row.tool_name==='brain_capture_entities'
+    ? Object.values((row.output as {completed?:Record<string,{output:{slug:string}}>}).completed??{}).map(step=>({tool:'brain_put_page',slug:step.output.slug,status:'persisted'}))
+    :[row.tool_name==='brain_add_link'?{tool:row.tool_name,...row.output as object}:{tool:row.tool_name,slug:row.input.slug,status:(row.output as any)?.status==='merge_required'?'merge_required':'persisted'}]);
   const [feedback]=await engine.executeRaw<{content_blocks:unknown}>("SELECT content_blocks FROM subagent_messages WHERE job_id=$1 AND role='user' AND content_blocks::text LIKE '%Ingest result verification failed:%' ORDER BY message_idx DESC LIMIT 1",[jobId]);
   return `${data.prompt}\n\nDurable write ledger (all successful writes must appear in entities; rejected relations must not be reported as valid):\n${JSON.stringify(persisted)}${feedback?`\nLast verification feedback: ${JSON.stringify(feedback.content_blocks)}`:''}\nReturn the requested JSON receipt now. No tools or further writes are available. Do not invent unwritten targets.`;
 }
@@ -414,7 +466,7 @@ export function ingestAbortKind(signal:AbortSignal):'timeout'|'service_shutdown'
 export async function checkIngestCallBudget(engine:BrainEngine,jobId:number,data:SubagentHandlerData,system:string,messages:unknown,tools:unknown,compact=false,maxTokens=Math.min(defaultMaxOutputTokens(data.model),data.model_output_limit??Infinity,data.usage_limits?.output??Infinity),recovery=false):Promise<number>{
   if(!data.usage_limits)return maxTokens;
   const repeated=await engine.executeRaw(`SELECT tool_name FROM subagent_tool_executions WHERE job_id=$1 AND status='failed'
-    AND tool_name IN ('brain_put_page','brain_add_link','brain_add_timeline_entry') GROUP BY tool_name,input HAVING count(*)>=2 LIMIT 1`,[jobId]);
+    AND tool_name IN ('brain_put_page','brain_add_link','brain_add_timeline_entry','brain_capture_entities') GROUP BY tool_name,input HAVING count(*)>=2 LIMIT 1`,[jobId]);
   if(repeated.length)throw new UnrecoverableError(`ingest repeated failed write: ${repeated[0]!.tool_name}; stop and correct the recorded failure`);
   const limits=data.usage_limits;
   const [used]=await engine.executeRaw<{input:number;output:number}>(`SELECT COALESCE(sum(tokens_in),0)::int input,COALESCE(sum(tokens_out),0)::int output FROM subagent_messages WHERE job_id=$1`,[jobId]);

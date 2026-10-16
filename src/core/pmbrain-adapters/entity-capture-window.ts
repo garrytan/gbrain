@@ -1,6 +1,10 @@
 const MAX_WINDOW_BYTES=32*1024**2;
 const writers=new WeakMap<object,Promise<void>>();
 
+export class EntityCaptureWindowDeferred extends Error {
+  constructor(){super('entity_capture_window_deferred');this.name='EntityCaptureWindowDeferred';}
+}
+
 export class CaptureAdmission {
   private active=0;
   private waiting:Array<{run:()=>void;reject:(reason:unknown)=>void;signal?:AbortSignal;abort:()=>void}>=[];

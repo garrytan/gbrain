@@ -41,4 +41,11 @@ describe('整理按本轮成果展示',()=>{
     expect(taskHasRemaining(run)).toBe(true);expect(taskRoundSummary(run).completed).toContain('同步资料 58 份');
     expect(taskRoundSummary(run).remaining).toContain('同步失败 1 份');expect(taskRoundSummary(run).remaining).toContain('待同步 1 份');
   });
+  test('实体阶段展示当前阶段进度，不沿用已完成阶段推算的23%',()=>{
+    const run=sample();run.status='running';run.product!.percent=23;run.product!.phasePercent=12;
+    run.product!.phaseProgress={id:'capture_entities',startedAt:null,elapsedMs:0,completed:349,total:2735,remaining:2386,active:2,unit:'分块'};
+    expect(taskPercent(run)).toBe(12);
+    run.product!.phasePercent=null;
+    expect(taskPercent(run)).toBeNull();
+  });
 });

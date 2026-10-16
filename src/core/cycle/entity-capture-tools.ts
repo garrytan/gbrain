@@ -28,7 +28,7 @@ export function boundedEntityCaptureTools(tools: ToolDef[]): ToolDef[] {
     if (!['search', 'query', 'list_pages'].includes(name)) return tool;
     return {
       ...tool,
-      description: `${tool.description} Entity discovery returns bounded identity summaries; use get_page before updating an existing page and list_pages offset to inspect more candidates.`,
+      description: `${tool.description} Entity discovery returns bounded identity summaries. Reuse exact identities; get_page is needed only to understand existing facts, not for submitting a fact delta.`,
       async execute(input, ctx) {
         const params = input && typeof input === 'object' ? input as Record<string, unknown> : {};
         return captureDiscoveryOutput(name, await tool.execute(captureDiscoveryInput(name, params), ctx));

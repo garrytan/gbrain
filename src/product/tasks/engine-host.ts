@@ -10,6 +10,7 @@ import { withSqlCancellation } from './sql-cancellation.ts';
 import { TaskResourceGuard, assertImportFileSize } from './resource-guard.ts';
 import { leaseRenewal } from '../database/lease-renewal.ts';
 import { recordSyncedGitFile } from './synced-git.ts';
+import { withDeadline } from '../deadline.ts';
 
 type RpcMessage = Extract<TaskWorkerMessage, { type: 'rpc' }>;
 type Scope = {
@@ -57,6 +58,7 @@ export class TaskEngineHost {
 
   private async fence(tx: BrainEngine): Promise<void> {
     if (this.closed) throw new Error('任务执行已停止');
+    if (tx.kind === 'postgres') await tx.executeRaw("SET LOCAL lock_timeout = '5s'");
     const rows = await tx.executeRaw<{ id: number }>(
       `UPDATE minion_jobs AS current
        SET lock_until = now() + ($3::double precision * interval '1 millisecond'), updated_at = now()
@@ -207,7 +209,8 @@ export class TaskEngineHost {
       };
       const base = engine as BrainEngine;
       const done = transactional ? base.transaction(run) : base.withReservedConnection(run);
-      void done.catch(readyReject);
+      const clear=()=>{this.scopes.delete(id);this.receipts.delete(id);this.checkedPages.delete(id);};
+      void done.then(clear,error=>{clear();readyReject(error);});
       await ready;
       return id;
     }
@@ -256,7 +259,15 @@ export class TaskEngineHost {
       const deletedPages = method === 'softDeletePages' ? await target.executeRaw<{ slug: string; source_path: string }>(
         'SELECT slug,source_path FROM pages WHERE slug=ANY($1::text[]) AND source_id=$2 AND source_path IS NOT NULL',
         [args[0], (args[1] as { sourceId: string }).sourceId]) : [];
-      const result = await fn.apply(target, callArgs);
+      let result: unknown;
+      try { result = await fn.apply(target, callArgs); }
+      catch(error){
+        const code=String((error as {code?:string})?.code??'');
+        if(scopeId!==undefined&&this.cleanupOwner.kind==='postgres'&&/^(?:08\w{3}|57P0[123]|CONNECTION_(?:CLOSED|ENDED|DESTROYED)|ECONNRESET|EPIPE)$/.test(code)){
+          this.scopes.delete(scopeId);this.receipts.delete(scopeId);this.checkedPages.delete(scopeId);
+        }
+        throw error;
+      }
       if (method === 'softDeletePages') {
         const deleted = new Set(result as string[]);
         for (const page of deletedPages) if (deleted.has(page.slug)) await recordSyncedGitFile(target, this.auditJobId,
@@ -294,6 +305,10 @@ export class TaskEngineHost {
 
   async close(): Promise<void> {
     this.closed = true;
+    return withDeadline(this.drain(), 30000, '任务收尾未完成：数据库请求或事务在 30 秒内未结束');
+  }
+
+  private async drain(): Promise<void> {
     await Promise.allSettled([...this.pending]);
     for (const scope of this.scopes.values()) scope.finish(false);
     await Promise.allSettled([...this.scopes.values()].map(scope => scope.done));

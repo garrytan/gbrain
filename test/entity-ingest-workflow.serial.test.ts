@@ -1,3 +1,4 @@
+import { expectRejection } from './helpers/await-rejection.ts';
 import { afterAll, beforeAll, beforeEach, expect, test } from 'bun:test';
 import { mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
@@ -56,7 +57,7 @@ test('项目和概念只按模型明确识别的原文证据入链，完成前�
 test('原文引号和空白不会拒绝真实项目名称，名称字符不符仍拒绝',async()=>{
   const quoted={...context,body:'省商务厅启动“川商出海”应用场景。',chunkBody:'省商务厅启动“川商出海”应用场景。'};
   await validateIngestWrite(engine,quoted,'put_page',{slug:'projects/川商出海',content:'---\ntitle: 川商出海应用场景\ntype: project\n---\n项目。[Source: 申报.xlsx]'});
-  await expect(validateIngestWrite(engine,quoted,'put_page',{slug:'projects/海',content:'---\ntitle: 川企出海应用场景\ntype: project\n---\n项目。[Source: 申报.xlsx]'})).rejects.toThrow('evidence');
+  await expectRejection(validateIngestWrite(engine,quoted,'put_page',{slug:'projects/海',content:'---\ntitle: 川企出海应用场景\ntype: project\n---\n项目。[Source: 申报.xlsx]'}), 'evidence');
 });
 
 test('更新没有重复 frontmatter 时继承实体身份，不能把英文 slug 当中文标题重建',async()=>{
@@ -79,7 +80,7 @@ test('更新保留老别名、标签和隐私边界，不能覆盖原始资料�
   await engine.addTag('projects/川商出海','已核实',{sourceId:'vault'});
   const updated=parseMarkdown(await annotateIngestContent(engine,context,'projects/川商出海','---\ntitle: 川商出海\ntype: project\nprivate: false\naliases: [川商项目]\n---\n补充事实。[Source: 申报.xlsx]'),'projects/川商出海');
   expect(updated.frontmatter.aliases).toEqual(['出海项目','川商项目']);expect(updated.frontmatter.private).toBe(true);expect(updated.tags).toContain('已核实');
-  await expect(validateIngestWrite(engine,context,'put_page',{slug:context.slug,content:'---\ntitle: 川商出海\ntype: project\n---\n假更新。[Source: 申报.xlsx]'})).rejects.toThrow('original document');
+  await expectRejection(validateIngestWrite(engine,context,'put_page',{slug:context.slug,content:'---\ntitle: 川商出海\ntype: project\n---\n假更新。[Source: 申报.xlsx]'}), 'original document');
 });
 
 test('导入请求合并确切资料并能在重启后入队，旧无范围请求保留且不会隐式整库扫描',async()=>{
@@ -97,15 +98,15 @@ test('导入请求合并确切资料并能在重启后入队，旧无范围请�
 });
 
 test('假实体、无原文证据和错目标不能落库，也不能把缺少结果的子任务当作完成',async()=>{
-  await expect(finalizeEntityIngest(engine,context,'整理完成')).rejects.toThrow('receipt');
-  await expect(finalizeEntityIngest(engine,context,'{"entities":[],"relations":[],"no_entities":true}',['projects/川商出海'])).rejects.toThrow('omits');
-  await expect(finalizeEntityIngest(engine,context,JSON.stringify({...receipt,entities:['projects/不存在']}))).rejects.toThrow();
-  await expect(validateIngestWrite(engine,context,'put_page',{slug:'people/虚构人物',content:'---\ntitle: 虚构人物\ntype: person\n---\n[Source: 申报.xlsx]'})).rejects.toThrow('evidence');
+  await expectRejection(finalizeEntityIngest(engine,context,'整理完成'), 'receipt');
+  await expectRejection(finalizeEntityIngest(engine,context,'{"entities":[],"relations":[],"no_entities":true}',['projects/川商出海']), 'omits');
+  await expectRejection(finalizeEntityIngest(engine,context,JSON.stringify({...receipt,entities:['projects/不存在']})));
+  await expectRejection(validateIngestWrite(engine,context,'put_page',{slug:'people/虚构人物',content:'---\ntitle: 虚构人物\ntype: person\n---\n[Source: 申报.xlsx]'}), 'evidence');
   expect(await engine.executeRaw('SELECT id FROM links')).toHaveLength(0);
 });
 
 test('新实体缺少 YAML 身份明确报错，显式更新尊重中文标题和类型并保留旧名',async()=>{
-  await expect(validateIngestWrite(engine,context,'put_page',{slug:'people/zhang-san',content:'# 张三\n[Source: 申报.xlsx]'})).rejects.toThrow('YAML frontmatter title and type');
+  await expectRejection(validateIngestWrite(engine,context,'put_page',{slug:'people/zhang-san',content:'# 张三\n[Source: 申报.xlsx]'}), 'YAML frontmatter title and type');
   const updated=parseMarkdown(await annotateIngestContent(engine,context,'projects/川商出海','---\ntitle: 川商出海项目\ntype: project\n---\n新增事实。[Source: 申报.xlsx]'),'projects/川商出海');
   expect(updated.title).toBe('川商出海项目');expect(updated.type).toBe('project');expect(updated.frontmatter.aliases).toContain('川商出海');
 });
@@ -119,7 +120,7 @@ test('同一未变化分块的实体重试不会重读或重写，仍须列入�
   expect(await wrapped[0]!.execute({slug:'projects/川商出海'},ctx)).toMatchObject({status:'unchanged'});
   expect(await wrapped[1]!.execute({slug:'vault:projects/川商出海',content:'不能写入'},ctx)).toMatchObject({status:'unchanged',ingest_links_created:0});
   expect(calls).toBe(0);
-  await expect(finalizeEntityIngest(engine,acknowledged,JSON.stringify({entities:['companies/四川省商务厅'],relations:[]}),acknowledged.acknowledged)).rejects.toThrow('omits');
+  await expectRejection(finalizeEntityIngest(engine,acknowledged,JSON.stringify({entities:['companies/四川省商务厅'],relations:[]}),acknowledged.acknowledged), 'omits');
 });
 
 test('批量查重逐个名称返回实体身份，近似名称提示核对而不自动合并或创建重复页',async()=>{
@@ -127,7 +128,7 @@ test('批量查重逐个名称返回实体身份，近似名称提示核对而�
   const [search]=entityIngestTools([base],context);
   const found=await search!.execute({query:'商务厅,川商出海,广交会'},{engine,jobId:1} as ToolCtx) as Array<{slug:string}>;
   expect(found.map(row=>row.slug)).toContain('vault:companies/四川省商务厅');expect(found.map(row=>row.slug)).toContain('vault:projects/川商出海');
-  await expect(validateIngestWrite(engine,context,'put_page',{slug:'projects/new-name',content:'---\ntitle: 川商出海项目\ntype: project\n---\n新事实。[Source: 申报.xlsx]'})).rejects.toThrow('verify existing entity');
+  await expectRejection(validateIngestWrite(engine,context,'put_page',{slug:'projects/new-name',content:'---\ntitle: 川商出海项目\ntype: project\n---\n新事实。[Source: 申报.xlsx]'}), 'verify existing entity');
   expect(await engine.getPage('projects/new-name',{sourceId:'vault'})).toBeNull();
 });
 
@@ -163,7 +164,7 @@ test('无证据的候选关系单独记录原因，不能阻止有效来源关�
 
 test('Source 优先当前再 default，不能借同名实体写到另一个 Source',async()=>{
   await page('people/张三','person','张三','其他来源资料。','other');
-  await expect(finalizeEntityIngest(engine,context,JSON.stringify({entities:['other:people/张三'],relations:[]}))).rejects.toThrow('source');
+  await expectRejection(finalizeEntityIngest(engine,context,JSON.stringify({entities:['other:people/张三'],relations:[]})), 'source');
   await page('people/张三','person','张三','共享人物。','default');
   const result=await finalizeEntityIngest(engine,context,JSON.stringify({entities:['people/张三'],relations:[]}));
   expect(result.entities[0]?.sourceId).toBe('default');
