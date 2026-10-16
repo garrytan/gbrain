@@ -5,8 +5,9 @@ import { classifyTurn, compactRule, taskNeedsSkill } from './turn-policy';
 const followUp = /^(?:继续|继续做|继续写|接着做|接着写|接着|执行吧|开始吧|就按这个|按这个做|做吧|写吧|可以|好|好的|行|嗯|执行)$/;
 const agreementOnly = /^(?:可以|好|好的|行|嗯|执行)$/;
 const continuationCue = /继续|接着|就按这个|按这个|按刚才|还是按|执行吧|开始吧/;
-const leavesCurrentTaskCue = /(?:不要|别再|不用|不再|停止)(?:再)?(?:继续|接着)|改做|换成|换做|另做|另外做/;
-const replacementCue = /改做|换成|换做|另做|另外做/;
+const leavesCurrentTaskCue = /(?:不要|别再|不用|不再|停止)(?:再)?(?:继续|接着)|改做|换做|另做|另外做/;
+const replacementCue = /改做|换做|另做|另外做/;
+const parameterCue = /(?:输出|格式|篇幅|措辞|版式|字数|标题).{0,8}换成|换成(?:成|为)?(?:Markdown|markdown|MD|表格|纯文字|docx|Word)/i;
 
 function normalizedWork(text: string): string {
   return text.replace(/\s+/g, '').replace(/[。！!？?，,]/g, '');
@@ -28,6 +29,17 @@ export function carriesCurrentMethod(text: string): boolean {
 export function advanceTask(input: { task?: WorkbenchTask; notes?: string[]; text: string; recentUserTexts: string[]; agent: { workflow?: string; skills?: string[] }; now: string; id: () => string }): { task?: WorkbenchTask; inherited: boolean; opened: boolean } {
   const text = input.text.trim();
   const normalized = normalizedWork(text);
+  const canReplace = !!input.task && replacementCue.test(normalized) && !!(input.agent.workflow || input.agent.skills?.length);
+  if (canReplace && input.task) {
+    const goal = compactRule(text);
+    if (input.task.goal === goal) return { task: { ...input.task, updatedAt: input.now }, inherited: true, opened: false };
+    return { task: { id: input.id(), goal, constraints: [], updatedAt: input.now }, inherited: false, opened: true };
+  }
+  if (input.task && parameterCue.test(normalized)) {
+    const note = compactRule(text);
+    const constraints = [...new Set([...input.task.constraints, note])].slice(-8);
+    return { task: { ...input.task, constraints, updatedAt: input.now }, inherited: true, opened: false };
+  }
   if (input.task && carriesCurrentMethod(text)) return { task: { ...input.task, updatedAt: input.now }, inherited: true, opened: false };
   if (continuesActiveTask(text)) {
     if (agreementOnly.test(normalized)) return { inherited: false, opened: false };
@@ -35,8 +47,7 @@ export function advanceTask(input: { task?: WorkbenchTask; notes?: string[]; tex
     if (!goal) return { inherited: false, opened: false };
     return { task: { id: input.id(), goal: compactRule(goal), constraints: [...(input.notes ?? [])], updatedAt: input.now }, inherited: true, opened: false };
   }
-  const canReplace = !!input.task && replacementCue.test(normalized) && !!(input.agent.workflow || input.agent.skills?.length);
-  if (classifyTurn(text) === 'chat' && (taskNeedsSkill(input.agent, text) || canReplace)) {
+  if (classifyTurn(text) === 'chat' && taskNeedsSkill(input.agent, text)) {
     const goal = compactRule(text);
     if (input.task?.goal === goal) return { task: { ...input.task, updatedAt: input.now }, inherited: true, opened: false };
     return { task: { id: input.id(), goal, constraints: [], updatedAt: input.now }, inherited: false, opened: true };

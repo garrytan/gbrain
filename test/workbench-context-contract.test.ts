@@ -113,6 +113,77 @@ test('接着把剩下的做完仍沿用这件任务的做法；不要继续并�
   expect(methods.at(-1)).toBe(false);
 });
 
+test('改输出格式仍写原来的周报；这次改做报销会换任务并只留下这次的要求；重新生成续做回答仍带做法', async () => {
+  let turn: { taskMethod?: boolean; system: string } | undefined;
+  const runner = knowledgeWorkbenchAnswer({} as never, {
+    search: async () => ({ results: [] }) as never,
+    answer: async (options: { system?: string }) => {
+      if (turn) turn.system = options.system ?? '';
+      return { text: '收到', model: 'mock', stopReason: 'end' as const, blocks: [], providerId: 'mock', usage: { input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cache_creation_tokens: 0 } };
+    },
+  } as never, undefined, { engine: {}, config: () => ({}) } as never);
+  const serviceFor = (dir: string) => {
+    const store = new WorkbenchStore(dir);
+    const service = new WorkbenchService(store, () => [{ id: 'mock', name: 'Mock', contextWindow: 32000 }], async input => {
+      turn = { taskMethod: input.taskMethod, system: '' };
+      return runner(input);
+    });
+    const agent = new WorkbenchAgentStore(store).create({ name: '周报助手', workflow: '先查资料再写周报', skills: ['weekly-report'], systemPrompt: '你是周报助手' });
+    const conversation = service.create({ assistantId: agent.id, knowledge: false });
+    const send = async (text: string) => { service.send(conversation.id, { text }); await service.settled(conversation.id); };
+    return { service, conversation, send };
+  };
+  const format = serviceFor(root());
+  await format.send('生成本周周报');
+  await format.send('这次不要写下周计划');
+  const weekly = format.service.get(format.conversation.id).task;
+  const earlierSource = weekly?.sources?.[0]?.messageId;
+  await format.send('把输出换成 Markdown，接着写');
+  const formatted = format.service.get(format.conversation.id);
+  const formatPrompt = turn;
+  expect(formatted.task?.id).toBe(weekly?.id);
+  expect(formatted.task?.goal).toContain('生成本周周报');
+  expect(formatted.task?.constraints).toContain('这次不要写下周计划');
+  expect(formatted.task?.constraints).toContain('把输出换成 Markdown，接着写');
+  expect(formatted.task?.sources?.some(item => item.messageId === earlierSource)).toBe(true);
+  expect(formatPrompt?.taskMethod).toBe(true);
+  expect(formatPrompt?.system).toContain('目标：生成本周周报');
+  expect(formatPrompt?.system).toContain('这次不要写下周计划');
+  expect(formatPrompt?.system).toContain('<workflow>');
+  expect(formatPrompt?.system).toContain('<skill name="weekly-report">');
+
+  const switched = serviceFor(root());
+  await switched.send('生成本周周报');
+  await switched.send('这次不要写下周计划');
+  const previous = switched.service.get(switched.conversation.id).task;
+  await switched.send('这次改做报销，按费用类别整理');
+  const expense = switched.service.get(switched.conversation.id);
+  const switchPrompt = turn;
+  expect(expense.task?.id).not.toBe(previous?.id);
+  expect(expense.task?.goal).toContain('报销');
+  expect(expense.task?.constraints).toEqual(['这次改做报销，按费用类别整理']);
+  expect(expense.taskNotes).toEqual(['这次改做报销，按费用类别整理']);
+  expect(switchPrompt?.system).not.toContain('目标：生成本周周报');
+  expect(switchPrompt?.system).not.toContain('这次不要写下周计划');
+  expect(switchPrompt?.system).toContain('按费用类别整理');
+
+  const retry = serviceFor(root());
+  await retry.send('生成本周周报');
+  await retry.send('接着把剩下的做完');
+  const follow = turn;
+  expect(retry.service.get(retry.conversation.id).taskNotes).toBeUndefined();
+  expect(follow?.taskMethod).toBe(true);
+  expect(follow?.system).toContain('<workflow>');
+  expect(follow?.system).toContain('<skill name="weekly-report">');
+  retry.service.send(retry.conversation.id, { retry: true });
+  await retry.service.settled(retry.conversation.id);
+  const again = turn;
+  expect(again?.taskMethod).toBe(true);
+  expect(again?.system).toContain('<workflow>');
+  expect(again?.system).toContain('<skill name="weekly-report">');
+  expect(retry.service.get(retry.conversation.id).messages.at(-1)?.status).toBe('complete');
+});
+
 test('相反的规则用新的替代旧的，撤销后恢复，重新打开仍然一致', async () => {
   const replaced = learnTurn({ name: '周报助手', standingRules: ['风险要写完整', '标题不要日期'], recentUserTexts: [], text: '风险不要写那么多' });
   expect(replaced.rules).toEqual(['标题不要日期', '风险不要写那么多']);

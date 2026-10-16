@@ -238,6 +238,7 @@ export class WorkbenchService {
     let carriedReplaced: string[] | undefined;
     let carriedPlaybookNotice: string | undefined;
     let carriedPlaybook: string | undefined;
+    let retryMethod: boolean | undefined;
     if (input.editMessageId) {
       const index = conversation.messages.findIndex(message => message.id === input.editMessageId);
       const target = conversation.messages[index];
@@ -272,6 +273,7 @@ export class WorkbenchService {
       carriedReplaced = previousReply.replacedRules;
       carriedPlaybookNotice = previousReply.playbookNotice;
       carriedPlaybook = previousReply.savedPlaybook;
+      if (typeof previousReply.contextManifest?.task?.inherited === 'boolean') retryMethod = previousReply.contextManifest.task.inherited;
       settledTools = previousReply.toolCalls?.filter(call => call.status === 'complete');
       conversation.revisions ??= [];
       const baseMessageId = conversation.messages.at(-2)?.id;
@@ -494,7 +496,7 @@ export class WorkbenchService {
           contextWindow, contextThreshold: assistant.context.threshold,
           ...(this.summarize ? { contextSummarizer: { model: compressionModel, contextWindow: this.models().find(item => item.id === compressionModel)?.contextWindow, summarize: this.summarize } } : {}),
           sourceId: conversation.sourceId, conversationId: conversation.id,
-          messages: this.modelMessages(conversation.id, recent), ...(summary ? { summary } : {}), ...(conversation.taskNotes?.length ? { taskNotes: conversation.taskNotes } : {}), ...(conversation.task ? { task: conversation.task } : {}), taskMethod: taskInherited, ...(conversation.knowledge?{priorCitations}:{}), ...(visuals.kept.length ? { visualAttachments: visuals.kept.map(({ name, mime, image }) => ({ name, mime, image })) } : {}), ...(settledTools?.length ? { settledTools } : {}), model, knowledge: conversation.knowledge,
+          messages: this.modelMessages(conversation.id, recent), ...(summary ? { summary } : {}), ...(conversation.taskNotes?.length ? { taskNotes: conversation.taskNotes } : {}), ...(conversation.task ? { task: conversation.task } : {}), ...(input.retry ? (retryMethod === undefined ? {} : { taskMethod: retryMethod }) : { taskMethod: taskInherited }), ...(conversation.knowledge?{priorCitations}:{}), ...(visuals.kept.length ? { visualAttachments: visuals.kept.map(({ name, mime, image }) => ({ name, mime, image })) } : {}), ...(settledTools?.length ? { settledTools } : {}), model, knowledge: conversation.knowledge,
           ...(assistant.systemPrompt.trim() ? { systemPrompt: assistant.systemPrompt } : {}),
           ...(assistant.temperature !== null ? { temperature: assistant.temperature } : {}),
           signal: session.signal,
