@@ -196,7 +196,7 @@ export async function runWorkbenchTools(input: WorkbenchAnswerInput & {
     if (result.stopReason === 'max_turns') throw new Error('知识工具已达到本轮调用上限，请继续提问。');
     stopReason = result.stopReason === 'end' ? 'end' : 'other'; break;
   }
-  for (const name of ['assistant_create', 'assistant_update', 'artifact_save', 'task_submit']) {
+  for (const name of ['assistant_create', 'assistant_update', 'artifact_save', 'artifact_revise', 'task_submit']) {
     const last = [...calls.values()].filter(call => call.name === name).at(-1);
     if (last?.status === 'error') throw new Error(last.error ?? '助手操作未完成');
   }

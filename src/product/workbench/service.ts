@@ -556,7 +556,8 @@ export class WorkbenchService {
           reply.knowledge = knowledge;
           if (result.stopReason) reply.stopReason = result.stopReason;
           reply.status = 'complete';
-          reply.artifacts = evidenceGap ? [] : new WorkbenchAgentStore(this.store).artifacts().filter(item => item.conversationId === id && item.messageId === reply.id).map(({ id: artifactId, title, format, publishedPath }) => ({ id: artifactId, title, format, publishedPath }));
+          const created = new WorkbenchAgentStore(this.store).artifacts().filter(item => item.conversationId === id && item.messageId === reply.id);
+          reply.artifacts = evidenceGap ? [] : created.map(({ id: artifactId, title, format, publishedPath, revision }) => ({ id: artifactId, title, format, publishedPath, ...(revision && revision > 1 ? { revision } : {}) }));
           if (conversation.task) {
             if (evidenceGap) conversation.task = { ...conversation.task, openItems: [...new Set([...(conversation.task.openItems ?? []), '本期材料还没齐'])].slice(-8) };
             else if (citations.length && conversation.task.openItems?.includes('本期材料还没齐')) {
@@ -566,8 +567,11 @@ export class WorkbenchService {
               else delete next.openItems;
               conversation.task = next;
             }
+            const revisions = created.filter(item => item.parentId);
+            const newest = [...(revisions.length ? revisions : created)].sort((a, b) => (b.revision ?? 1) - (a.revision ?? 1) || b.createdAt.localeCompare(a.createdAt))[0];
+            const pointed = !evidenceGap && newest && (revisions.length || !conversation.task.currentArtifactId) ? newest.id : undefined;
             const delivered = (reply.artifacts ?? []).map(item => item.publishedPath || item.title).filter((item): item is string => Boolean(item));
-            if (delivered.length) conversation.task = { ...conversation.task, deliveries: [...new Set([...(conversation.task.deliveries ?? []), ...delivered])].slice(-8) };
+            if (pointed || delivered.length) conversation.task = { ...conversation.task, ...(pointed ? { currentArtifactId: pointed } : {}), ...(delivered.length ? { deliveries: [...new Set([...(conversation.task.deliveries ?? []), ...delivered])].slice(-8) } : {}) };
           }
         }
       } catch (error) { if (opened && this.owns(id, generation) && !abort.signal.aborted) { const failure = contextFailure(error); reply.status = 'error'; reply.error = failure.message; reply.errorCode = failure.code; } }

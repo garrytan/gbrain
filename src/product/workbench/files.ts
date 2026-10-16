@@ -52,26 +52,93 @@ async function docx(title: string, content: string) {
   zip.forEach((_path, file) => { file.date = new Date('1980-01-01T00:00:00Z'); });
   return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
 }
-export async function saveWorkbenchArtifact(store: WorkbenchAgentStore, input: { agent: WorkbenchAgent; conversationId: string; messageId: string; title: string; content: string; citations: WorkbenchCitation[]; format?: WorkbenchArtifact['format']; signal?: AbortSignal }) {
-  input.signal?.throwIfAborted();
-  const { agent, conversationId, messageId, title, content, citations } = input;
+function familyIdOf(artifact: WorkbenchArtifact) { return artifact.familyId || artifact.id; }
+function revisionOf(artifact: WorkbenchArtifact) { return artifact.revision ?? 1; }
+function latestArtifacts(rows: WorkbenchArtifact[]) {
+  const byFamily = new Map<string, WorkbenchArtifact>();
+  for (const row of rows) {
+    const key = familyIdOf(row);
+    const current = byFamily.get(key);
+    if (!current || revisionOf(row) > revisionOf(current) || (revisionOf(row) === revisionOf(current) && row.createdAt > current.createdAt)) byFamily.set(key, row);
+  }
+  return [...byFamily.values()];
+}
+function optionText(rows: WorkbenchArtifact[]) {
+  return latestArtifacts(rows).map(item => `${item.title}（${item.id}，第 ${revisionOf(item)} 版，哈希 ${item.hash}）`).join('；');
+}
+function publicationDrift(artifact: WorkbenchArtifact) {
+  if (!artifact.publishedPath || !existsSync(artifact.publishedPath)) return { conflict: false, missing: false };
+  if (!existsSync(artifact.path)) return { conflict: true, missing: true };
+  return { conflict: !readFileSync(artifact.publishedPath).equals(readFileSync(artifact.path)), missing: false };
+}
+function prepareArtifact(input: { title: string; content: string; citations: WorkbenchCitation[]; format: WorkbenchArtifact['format'] }) {
+  const { title, content, citations, format } = input;
   if (!title.trim() || title.length > 120 || !content.trim() || content.length > 100000) throw new Error('成果标题或内容无效');
   for (const match of content.matchAll(/\[(\d+)\]/g)) if (!citations[Number(match[1]) - 1]) throw new Error('成果含未经核对的引用编号');
-  const format = input.format ?? agent.deliveryFormat;
   if (!['markdown', 'docx'].includes(format)) throw new Error('交付格式无效');
   const hash = createHash('sha256').update(JSON.stringify([title, content, citations, format])).digest('hex');
-  const id = createHash('sha256').update(JSON.stringify([conversationId, messageId, hash])).digest('hex');
-  const existing = store.artifacts().find(row => row.id === id);
-  if (existing) { if (!existsSync(existing.path)) throw new Error('已保存成果的文件缺失'); return existing; }
   const sources = citations.map((item, index) => `[${index + 1}] ${item.title} — ${item.sourceId ?? '本地文件'}/${item.slug}`);
   const rendered = `${content}${sources.length ? `\n\n资料依据\n${sources.join('\n')}` : ''}`;
+  return { hash, rendered };
+}
+async function writeArtifactFile(store: WorkbenchAgentStore, id: string, format: WorkbenchArtifact['format'], title: string, rendered: string, signal?: AbortSignal) {
   const directory = join(store.workbench.root, 'artifacts'); mkdirSync(directory, { recursive: true, mode: 0o700 });
   const path = join(directory, `${id}.${format === 'docx' ? 'docx' : 'md'}`);
   const bytes = format === 'docx' ? await docx(title, rendered) : Buffer.from(`# ${title}\n\n${rendered}\n`);
-  input.signal?.throwIfAborted();
+  signal?.throwIfAborted();
   if (!existsSync(path)) writeFileSync(path, bytes, { mode: 0o600, flag: 'wx' });
   else if (!readFileSync(path).equals(bytes)) throw new Error('成果文件已改变，保留人工内容');
-  const artifact: WorkbenchArtifact = { id, agentId: agent.id, conversationId, messageId, title, content, citations: structuredClone(citations), path, format, createdAt: new Date().toISOString(), hash };
+  return path;
+}
+export function listWorkbenchArtifacts(store: WorkbenchAgentStore, agentId: string, conversationId: string) {
+  return store.artifacts().filter(row => row.agentId === agentId && row.conversationId === conversationId).map(row => ({ id: row.id, familyId: familyIdOf(row), revision: revisionOf(row), title: row.title, format: row.format, parentId: row.parentId ?? null, hash: row.hash, publishedPath: row.publishedPath ?? null, createdAt: row.createdAt }));
+}
+export function readWorkbenchArtifact(store: WorkbenchAgentStore, input: { agentId: string; conversationId: string; artifactId: string; offset?: number }) {
+  const artifact = store.artifacts().find(row => row.id === input.artifactId && row.agentId === input.agentId && row.conversationId === input.conversationId);
+  if (!artifact) throw new Error('成果不存在');
+  const offset = input.offset ?? 0;
+  if (!Number.isInteger(offset) || offset < 0 || offset > artifact.content.length) throw new Error('读取位置无效');
+  const drift = publicationDrift(artifact);
+  const content = artifact.content.slice(offset, offset + 6000);
+  return { id: artifact.id, familyId: familyIdOf(artifact), revision: revisionOf(artifact), parentId: artifact.parentId ?? null, title: artifact.title, format: artifact.format, hash: artifact.hash, publishedPath: artifact.publishedPath ?? null, citations: artifact.citations, conflict: drift.conflict, content, offset, nextOffset: offset + content.length < artifact.content.length ? offset + content.length : null, ...(drift.conflict ? { note: '已发布文件和保存的正文不一致，不能在这一版上继续改，也不会覆盖外部修改。' } : {}) };
+}
+export async function saveWorkbenchArtifact(store: WorkbenchAgentStore, input: { agent: WorkbenchAgent; conversationId: string; messageId: string; title: string; content: string; citations: WorkbenchCitation[]; format?: WorkbenchArtifact['format']; signal?: AbortSignal }) {
+  input.signal?.throwIfAborted();
+  const { agent, conversationId, messageId, title, content, citations } = input;
+  const format = input.format ?? agent.deliveryFormat;
+  const prepared = prepareArtifact({ title, content, citations, format });
+  const id = createHash('sha256').update(JSON.stringify([conversationId, messageId, prepared.hash])).digest('hex');
+  const existing = store.artifacts().find(row => row.id === id);
+  if (existing) { if (!existsSync(existing.path)) throw new Error('已保存成果的文件缺失'); return existing; }
+  const path = await writeArtifactFile(store, id, format, title, prepared.rendered, input.signal);
+  const artifact: WorkbenchArtifact = { id, familyId: id, revision: 1, agentId: agent.id, conversationId, messageId, title, content, citations: structuredClone(citations), path, format, createdAt: new Date().toISOString(), hash: prepared.hash };
+  store.recordArtifact(artifact); return artifact;
+}
+export async function reviseWorkbenchArtifact(store: WorkbenchAgentStore, input: { agent: WorkbenchAgent; conversationId: string; messageId: string; baseArtifactId: string; baseHash: string; title: string; content: string; citations: WorkbenchCitation[]; format?: WorkbenchArtifact['format']; signal?: AbortSignal }) {
+  input.signal?.throwIfAborted();
+  const { agent, conversationId, messageId, title, content, citations } = input;
+  const mine = store.artifacts().filter(row => row.agentId === agent.id && row.conversationId === conversationId);
+  const base = mine.find(row => row.id === input.baseArtifactId);
+  if (!base) throw new Error(mine.length ? `成果不存在。当前可选：${optionText(mine)}` : '成果不存在');
+  const format = input.format ?? agent.deliveryFormat;
+  const prepared = prepareArtifact({ title, content, citations, format });
+  const id = createHash('sha256').update(JSON.stringify([conversationId, messageId, prepared.hash])).digest('hex');
+  const existing = store.artifacts().find(row => row.id === id);
+  if (existing) {
+    if (!existsSync(existing.path)) throw new Error('已保存成果的文件缺失');
+    const sameFamily = familyIdOf(existing) === familyIdOf(base);
+    const sameLine = existing.parentId === base.id || existing.id === base.id;
+    if (sameFamily && sameLine && existing.hash === prepared.hash) return existing;
+    throw new Error('成果文件已改变，保留人工内容');
+  }
+  const newer = mine.some(row => row.parentId === base.id || (familyIdOf(row) === familyIdOf(base) && revisionOf(row) > revisionOf(base)));
+  if (newer) throw new Error(`要改的不是最新一版。当前可选：${optionText(mine)}`);
+  if (base.hash !== input.baseHash) throw new Error('这版成果的内容已经变了，请重新读取后再改');
+  const drift = publicationDrift(base);
+  if (drift.missing) throw new Error('已保存成果的文件缺失');
+  if (drift.conflict) throw new Error('成果文件已被外部修改，未覆盖');
+  const path = await writeArtifactFile(store, id, format, title, prepared.rendered, input.signal);
+  const artifact: WorkbenchArtifact = { id, familyId: familyIdOf(base), parentId: base.id, revision: revisionOf(base) + 1, baseHash: base.hash, agentId: agent.id, conversationId, messageId, title, content, citations: structuredClone(citations), path, format, createdAt: new Date().toISOString(), hash: prepared.hash };
   store.recordArtifact(artifact); return artifact;
 }
 export function artifactFilename(title: string, format: WorkbenchArtifact['format']) {

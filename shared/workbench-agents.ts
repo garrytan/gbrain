@@ -45,6 +45,10 @@ export interface WorkbenchArtifact {
   citations: WorkbenchCitation[];
   createdAt: string;
   hash: string;
+  familyId?: string;
+  parentId?: string;
+  revision?: number;
+  baseHash?: string;
 }
 export function agentRoleLabel(id: string) {
   return id === 'main' ? '主助手' : '专用助手';

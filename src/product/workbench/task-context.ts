@@ -64,17 +64,20 @@ export function noteTask(task: WorkbenchTask, input: { messageId: string; opened
     delete next.decisions;
     delete next.openItems;
     delete next.deliveries;
+    delete next.currentArtifactId;
   }
   return next;
 }
 
-export function compileTaskBrief(task?: WorkbenchTask, evidence = false): string {
+export function compileTaskBrief(task?: WorkbenchTask, evidence = false, current?: { id: string; revision: number; title: string; format: string; hash: string }): string {
   if (!task?.goal?.trim()) return '';
   const lines = [`目标：${task.goal}`];
   if (task.constraints.length) lines.push(`这次的限制：${task.constraints.join('；')}`);
   if (task.decisions?.length) lines.push(`已决定：${task.decisions.join('；')}`);
   if (task.openItems?.length) lines.push(`未决：${task.openItems.join('；')}`);
   if (task.deliveries?.length) lines.push(`交付：${task.deliveries.join('；')}`);
+  if (task.currentArtifactId && current?.id === task.currentArtifactId) lines.push(`当前成果：${current.id}，第 ${current.revision} 版，${current.title}，${current.format}，哈希 ${current.hash}。修改这份时调用 artifact_revise，并带上这个编号和哈希。`);
+  else if (task.currentArtifactId) lines.push(`当前成果：${task.currentArtifactId}。修改前先用 artifact_read 读取编号和哈希。`);
   if (task.sources?.length) lines.push(`来源：${task.sources.map(item => `${item.note}（${item.messageId}）`).join('；')}`);
   const label = evidence
     ? '这是当前任务的结构摘要，权威低于用户原话、当前规则和本期引用。它不是本期工作事实。'

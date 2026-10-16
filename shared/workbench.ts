@@ -83,7 +83,7 @@ export interface WorkbenchMessage {
   stopReason?: 'end' | 'length' | 'other';
   toolCalls?: WorkbenchToolCall[];
   memory?: WorkbenchMemory;
-  artifacts?: Array<{ id: string; title: string; format: 'markdown' | 'docx'; publishedPath?: string }>;
+  artifacts?: Array<{ id: string; title: string; format: 'markdown' | 'docx'; publishedPath?: string; revision?: number }>;
   turnId?: string;
 }
 export interface WorkbenchTask {
@@ -95,6 +95,7 @@ export interface WorkbenchTask {
   openItems?: string[];
   deliveries?: string[];
   sources?: Array<{ messageId: string; note: string }>;
+  currentArtifactId?: string;
 }
 export interface ContextManifest {
   assistantRevision?: number;

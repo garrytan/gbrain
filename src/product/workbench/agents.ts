@@ -10,7 +10,7 @@ import type { WorkbenchAgent, WorkbenchArtifact, WorkbenchSchedule } from '../..
 import type { WorkbenchStore } from './store';
 
 type AgentState = { agents: WorkbenchAgent[]; artifacts: WorkbenchArtifact[]; schedules: Record<string, { slot: string; conversationId: string; runId?: string }> };
-const supportedTools = new Set(['search', 'query', 'get_page', 'knowledge_search', 'knowledge_read', 'memory_recall', 'local_files', 'local_read', 'artifact_save']);
+const supportedTools = new Set(['search', 'query', 'get_page', 'knowledge_search', 'knowledge_read', 'memory_recall', 'local_files', 'local_read', 'artifact_save', 'artifact_list', 'artifact_read', 'artifact_revise']);
 export function compatibleSkill(detail: { frontmatter?: Record<string, unknown> }) {
   const tools = Array.isArray(detail.frontmatter?.tools) ? detail.frontmatter!.tools as string[] : [];
   const missingTools = tools.filter(tool => !supportedTools.has(tool));

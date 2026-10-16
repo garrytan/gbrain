@@ -95,7 +95,8 @@ export class WorkbenchAgentCoordinator {
         this.store.recordArtifact(next);
         return next;
       }));
-      reply.artifacts = artifacts.map(({ id, title, format, publishedPath }) => ({ id, title, format, publishedPath }));
+      reply.artifacts = artifacts.map(({ id, title, format, publishedPath, revision }) => ({ id, title, format, publishedPath, ...(revision && revision > 1 ? { revision } : {}) }));
+      if (conversation.task && !conversation.task.currentArtifactId && artifacts.length === 1) conversation.task = { ...conversation.task, currentArtifactId: artifacts[0]!.id };
       this.store.workbench.save(conversation);
       return { assistantId: agent.id, assistantName: agent.name, conversationId: conversation.id, artifacts: artifacts.map(({ id, title, format, publishedPath }) => ({ id, title, format, publishedPath })), status: 'completed' };
     } finally { clearInterval(progressTimer); await progressPending; signal.removeEventListener('abort', cancel); }
