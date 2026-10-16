@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, statSync } from 'nod
 import { join, isAbsolute } from 'node:path';
 import { atomicWriteFileSync } from '../../core/atomic-write';
 import { defaultAssistant, normalizeAssistant } from '../../../shared/workbench';
+import { normalizePlaybook } from './playbook';
 import { compactRule } from './turn-policy';
 import { isValidSourceId } from '../../core/source-id';
 import type { WorkbenchAgent, WorkbenchArtifact, WorkbenchSchedule } from '../../../shared/workbench-agents';
@@ -46,8 +47,9 @@ function normalizeProfile(input: Record<string, unknown>, previous?: WorkbenchAg
   const ruleSource = Object.hasOwn(input, 'standingRules') ? input.standingRules : previous?.standingRules;
   if (ruleSource !== undefined && (!Array.isArray(ruleSource) || ruleSource.length > 40 || ruleSource.some(rule => typeof rule !== 'string' || !rule.trim()))) throw new Error('工作规则无效');
   const standingRules = ruleSource === undefined ? undefined : [...new Set(ruleSource.map(rule => compactRule(rule)))];
+  const playbook = Object.hasOwn(input, 'playbook') ? (input.playbook == null ? undefined : normalizePlaybook(input.playbook)) : previous?.playbook ?? undefined;
   const now = new Date().toISOString();
-  return { ...base, id: previous?.id ?? randomUUID(), revision: (previous?.revision ?? 0) + 1, sourceIds: [...new Set(sourceIds)], skills: [...new Set(skills)], workflow, readDirectories: [...new Set(readDirectories)], deliveryFormat, ...(standingRules ? { standingRules } : {}), schedule: schedule(Object.hasOwn(input, 'schedule') ? input.schedule : previous?.schedule), createdAt: previous?.createdAt ?? now, updatedAt: now };
+  return { ...base, id: previous?.id ?? randomUUID(), revision: (previous?.revision ?? 0) + 1, sourceIds: [...new Set(sourceIds)], skills: [...new Set(skills)], workflow, readDirectories: [...new Set(readDirectories)], deliveryFormat, ...(standingRules ? { standingRules } : {}), ...(playbook ? { playbook } : {}), schedule: schedule(Object.hasOwn(input, 'schedule') ? input.schedule : previous?.schedule), createdAt: previous?.createdAt ?? now, updatedAt: now };
 }
 export class WorkbenchAgentStore {
   constructor(readonly workbench: WorkbenchStore) {}
@@ -83,6 +85,16 @@ export class WorkbenchAgentStore {
     const state = this.read();
     const current = this.get(id);
     const next = { ...current, standingRules, revision: current.revision + 1, updatedAt: new Date().toISOString() };
+    state.agents = [...state.agents.filter(agent => agent.id !== id), next];
+    this.write(state);
+    return this.get(id);
+  }
+  rememberPlaybook(id: string, playbook: WorkbenchAgent['playbook']): WorkbenchAgent {
+    if (!playbook) throw new Error('做法无效');
+    const nextPlaybook = normalizePlaybook(playbook);
+    const state = this.read();
+    const current = this.get(id);
+    const next = { ...current, playbook: nextPlaybook, revision: current.revision + 1, updatedAt: new Date().toISOString() };
     state.agents = [...state.agents.filter(agent => agent.id !== id), next];
     this.write(state);
     return this.get(id);

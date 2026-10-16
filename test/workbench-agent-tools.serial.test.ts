@@ -24,8 +24,8 @@ function fixture() {
 }
 test('a main bot conversation creates a persistent specialist with rules and a scoped workflow', async () => {
   const f = fixture(); let requests = 0;
-  __setChatTransportForTests(async options => { requests++; expect(options.system).toContain('主助手'); return requests === 1 ? call('assistant_create', { name: '周报助手', systemPrompt: '只写有依据的工作', workflow: '核对时间和事实，按完成、推进中分类', skills: ['weekly-report'], sourceIds: ['default'] }) : answer('周报助手已创建，可以直接交给它任务。'); });
-  const conversation = f.service.create({ knowledge: false }); f.service.send(conversation.id, { text: '创建一个周报助手，读取知识库，按完成和推进中写周报' }); await f.service.settled(conversation.id);
+  __setChatTransportForTests(async options => { requests++; expect(options.system).toContain('主助手'); expect(options.system).toContain('要按这个创建吗'); return requests === 1 ? call('assistant_create', { name: '周报助手', systemPrompt: '只写有依据的工作', workflow: '核对时间和事实，按完成、推进中分类', skills: ['weekly-report'], sourceIds: ['default'] }) : answer('周报助手已创建，可以直接交给它任务。'); });
+  const conversation = f.service.create({ knowledge: false }); f.service.send(conversation.id, { text: '确认创建周报助手，读取知识库，按完成和推进中写周报' }); await f.service.settled(conversation.id);
   const saved = new WorkbenchAgentStore(new WorkbenchStore(f.root)).list().find(agent => agent.name === '周报助手')!;
   expect(saved.skills).toEqual(['weekly-report']); expect(saved.workflow).toContain('核对');
   expect(f.service.get(conversation.id).messages.at(-1)?.status).toBe('complete');
@@ -57,13 +57,15 @@ test('specialists cannot manage other assistants or expand file permissions from
   const f = fixture(); const agent = f.agents.create({ name: '周报助手' });
   const handlers = agentHandlers(f.context, { agent, userText: '写一份周报', conversationId: 'unused', messageId: 'unused', cite: () => 1, citations: [], active: () => true });
   await expect(handlers.get('assistant_create')!.execute({ name: '越权助手' }, new AbortController().signal)).rejects.toThrow('没有授权');
-  const main = agentHandlers(f.context, { agent: f.agents.get('main'), userText: '创建一个周报助手', conversationId: 'unused', messageId: 'unused', cite: () => 1, citations: [], active: () => true });
+  const main = agentHandlers(f.context, { agent: f.agents.get('main'), userText: '确认创建周报助手', conversationId: 'unused', messageId: 'unused', cite: () => 1, citations: [], active: () => true });
   await expect(main.get('assistant_create')!.execute({ name: '越权助手', systemPrompt: '规则', workflow: '步骤', readDirectories: [f.root] }, new AbortController().signal)).rejects.toThrow('明确给出');
 });
 test('the main assistant configures file access before it can use local reading tools', () => {
   const f = fixture();
   const tools = agentTools(f.agents.get('main'), `创建一个周报助手，读取 ${f.root}`, f.context).map(tool => tool.name);
-  expect(tools).toContain('assistant_create');
+  expect(tools).not.toContain('assistant_create');
+  const confirmed = agentTools(f.agents.get('main'), `确认创建周报助手，读取 ${f.root}`, f.context).map(tool => tool.name);
+  expect(confirmed).toContain('assistant_create');
   expect(tools).not.toContain('local_files');
   expect(tools).not.toContain('local_read');
   const granted = f.agents.create({ name: '周报助手', readDirectories: [f.root] });

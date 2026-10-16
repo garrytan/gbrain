@@ -108,14 +108,30 @@ describe('首页按有没有知识库区分，并接上现有能力', () => {
     expect(workbench).toContain('{agentRoleLabel(wb.assistantId)}</small>');
     expect(workbench).not.toContain('新建对话');
     expect(workbench).toContain('清理当前任务上下文');
+    expect(workbench).toContain('undoRules');
+    expect(read('admin/src/workbench/useWorkbench.ts')).toContain("call.name === 'assistant_create'");
     expect(workbench).toContain('向${assistant.name}发送');
     expect(workbench).toContain('{assistant.name} · {wb.knowledge ? \'结合知识库回答\' : \'普通对话\'}');
     expect(message).toContain('已保存到 ${item.publishedPath}');
+    expect(message).toContain('撤销');
     expect(message).toContain("assistantRole === '主助手' ? 'main' : 'specialist'");
     expect(css).toContain('button[data-kind="specialist"] .wb-agent-avatar');
+    expect(css).toContain('.wb-agent-list { display: flex; flex-direction: column; justify-content: flex-start;');
+    expect(css).toContain('.knowledge-workbench .wb-agent-list button { display: flex; align-items: center; justify-content: flex-start; gap: 8px; flex: 0 0 auto;');
     expect(css).toContain('.wb-assistant-chip[data-kind="specialist"]');
     expect(css).toContain('.wb-message[data-kind="specialist"] .wb-avatar');
-    expect(read('admin/src/workbench/AgentSettings.tsx')).toContain('周报等成果会写入所选知识来源的本地目录，优先主数据源路径');
+    const settings = read('admin/src/workbench/AgentSettings.tsx');
+    expect(settings).toContain('周报等成果会写入所选知识来源的本地目录，优先主数据源路径');
+    expect(settings).toContain('从对话记下的工作规则');
+    expect(settings).toContain('已存的做法');
+    expect(settings).toContain('就按这次的存下来');
+    expect(settings).toContain('存下做法不会自动打开定时');
+    expect(settings).toContain('这个助手的对话使用知识库');
+    expect(settings).not.toContain('新对话使用知识库');
+    expect(workbench).toContain('rosterStatus');
+    expect(message).toContain('evidenceGap');
+    expect(message).toContain('playbookNotice');
+    expect(read('admin/src/workbench/AgentCards.tsx')).toContain('已准备好「{agent.name}」');
   });
 
   test('菜单默认展开且保留手动折叠，两个 MCP 页对调，对话模型记住上次选择，停止按钮是蓝色', () => {

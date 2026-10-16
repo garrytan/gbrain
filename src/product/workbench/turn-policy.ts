@@ -32,18 +32,19 @@ export function taskNeedsSkill(agent: { workflow?: string; skills?: string[] }, 
   return workCue.test(normalized);
 }
 
-export function learnTurn(input: { name: string; standingRules?: string[]; recentUserTexts: string[]; text: string }): { scope: TurnScope; rules: string[]; notice?: string; taskNote?: string } {
+export function learnTurn(input: { name: string; standingRules?: string[]; recentUserTexts: string[]; text: string }): { scope: TurnScope; rules: string[]; added: string[]; notice?: string; taskNote?: string } {
   const scope = classifyTurn(input.text);
   const current = input.standingRules ?? [];
-  if (scope === 'once') return { scope, rules: current, taskNote: compactRule(input.text) };
-  if (scope === 'chat') return { scope, rules: current };
+  if (scope === 'once') return { scope, rules: current, added: [], taskNote: compactRule(input.text) };
+  if (scope === 'chat') return { scope, rules: current, added: [] };
   const specific = compactRule(input.text);
   const generic = genericAffirmation.test(specific.replace(/[。！!\s]/g, ''));
   const additions = scope === 'durable' && generic ? input.recentUserTexts.map(compactRule).filter(text => instructional(text) && classifyTurn(text) !== 'once') : [specific];
   const rules = [...current];
   for (const rule of additions) if (rule && !rules.includes(rule)) rules.push(rule);
   const capped = rules.slice(-40);
+  const added = capped.filter(rule => !current.includes(rule));
   const changed = capped.join('\n') !== current.join('\n');
   const notice = !changed ? undefined : scope === 'durable' ? `已更新「${input.name}」工作规则` : `已更新${input.name}规则：${specific}`;
-  return { scope, rules: capped, notice };
+  return { scope, rules: capped, added, notice };
 }

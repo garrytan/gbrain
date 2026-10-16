@@ -7,6 +7,16 @@ export interface WorkbenchSchedule {
   timezone: string;
   prompt: string;
 }
+export interface WorkbenchPlaybook {
+  name: string;
+  when: string;
+  inputs: string;
+  steps: string[];
+  checks: string;
+  output: string;
+  approval: string;
+  updatedAt: string;
+}
 export interface WorkbenchAgent extends KnowledgeAssistantSettings {
   id: string;
   revision: number;
@@ -17,6 +27,7 @@ export interface WorkbenchAgent extends KnowledgeAssistantSettings {
   deliveryFormat: 'markdown' | 'docx';
   schedule?: WorkbenchSchedule;
   standingRules?: string[];
+  playbook?: WorkbenchPlaybook | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -40,6 +51,12 @@ export function agentRoleLabel(id: string) {
 export function agentAvatar(input: { id: string; name: string; emoji: string }) {
   if (input.id !== 'main' && input.emoji === '知') return [...input.name][0] || input.emoji;
   return input.emoji;
+}
+export function rosterStatus(agentId: string, rows: Array<{ assistantId?: string; running?: boolean; activity?: string; updatedAt: string }>): string {
+  const mine = rows.filter(row => (row.assistantId ?? 'main') === agentId);
+  const active = mine.find(row => row.running && row.activity);
+  if (active?.activity) return active.activity;
+  return [...mine].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]?.activity ?? '';
 }
 export interface WorkbenchSkill {
   name: string;

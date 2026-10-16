@@ -77,6 +77,10 @@
 .wb-muted { color: var(--product-muted); font-size: 12px; padding: 8px 0; }
 .wb-error { color: #ef9494; background: #322020; border: 1px solid #694040; padding: 10px 14px; border-radius: 8px; overflow-wrap: anywhere; }
 .wb-notice { color: #d7c48a; background: #2c2818; border: 1px solid #5c5340; padding: 8px 12px; border-radius: 8px; overflow-wrap: anywhere; }
+.wb-learned-rules { display: grid; gap: 8px; }
+.wb-learned-rules ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.wb-learned-rules li { display: flex; gap: 8px; align-items: flex-start; justify-content: space-between; }
+.wb-learned-rules li span { overflow-wrap: anywhere; }
 .wb-notice button { margin-left: 8px; }
 .wb-progress { color: var(--product-muted); display: flex; gap: 10px; align-items: center; }
 .wb-progress i { width: 7px; height: 7px; background: #9ebbea; border-radius: 50%; }
@@ -144,8 +148,8 @@ html[data-theme="dark"] .knowledge-workbench button.wb-cite:hover, html[data-the
 .wb-tool-output :is(b, small) { display: block; }
 .wb-tool-output > div + div { border-top: 1px solid var(--product-line, var(--console-line)); padding-top: 8px; margin-top: 8px; }
 .wb-tool-output p { margin: 4px 0; }
-.wb-agent-list { display: grid; gap: 4px; max-height: 180px; overflow: auto; margin: 8px 0; }
-.wb-agent-list button { display: flex; align-items: center; gap: 8px; text-align: left; padding: 8px 10px; border-radius: 6px; }
+.wb-agent-list { display: flex; flex-direction: column; justify-content: flex-start; align-items: stretch; gap: 2px; overflow: auto; }
+.knowledge-workbench .wb-agent-list button { display: flex; align-items: center; justify-content: flex-start; gap: 8px; flex: 0 0 auto; width: 100%; height: auto; min-height: 0; text-align: left; padding: 7px 8px; border-radius: 8px; }
 .wb-agent-list button.selected { background: var(--ui-raised, #f1f3f5); box-shadow: inset 3px 0 0 #4c7dff; }
 .wb-agent-list button small { color: var(--product-muted, var(--muted)); }
 .wb-weekdays { display: flex; flex-wrap: wrap; gap: 12px; margin: 10px 0; }
@@ -166,10 +170,10 @@ html[data-theme="dark"] .knowledge-workbench button.wb-cite:hover, html[data-the
 .wb-agent-list button[data-kind="specialist"] .wb-agent-avatar { background: #4c7dff; color: #fff; }
 .wb-agent-meta { min-width: 0; flex: 1; display: grid; }
 .wb-agent-meta b { display: block; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.wb-agent-meta small { display: block; margin-top: 2px; font-size: 10px; }
+.wb-agent-meta small { display: block; margin-top: 2px; font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wb-agent-list button.selected .wb-agent-meta small { color: #4c7dff; font-weight: 600; }
-.wb-agent-list { max-height: none; margin: 0; flex: 1; min-height: 0; }
-.wb-agent-list button { border: 0; }
+.wb-agent-list { max-height: none; margin: 0; flex: 1 1 auto; min-height: 0; }
+.knowledge-workbench .wb-agent-list button { border: 0; }
 .wb-history-label { color: var(--product-muted); padding: 6px 8px 0; }
 .wb-sidebar-links { display: grid; gap: 3px; padding-top: 10px; border-top: 1px solid var(--product-line); }
 .wb-sidebar-links button { justify-content: flex-start; border: 0; }

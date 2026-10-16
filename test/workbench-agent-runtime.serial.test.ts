@@ -66,7 +66,7 @@ afterAll(async () => { slow = false; if (server) await new Promise<void>(resolve
 
 test('authenticated conversation creation configures rules, skill and file access, then survives reopening', async () => {
   const conversation = await request('/conversations', { knowledge: false });
-  await request(`/conversations/${conversation.id}/messages`, { text: `创建周报助手，读取 ${directory}，只写有依据的工作`, knowledge: false });
+  await request(`/conversations/${conversation.id}/messages`, { text: `确认创建周报助手，读取 ${directory}，只写有依据的工作`, knowledge: false });
   for (let count = 0; count < 200; count++) { const value = await request(`/conversations/${conversation.id}`); if (value.messages.at(-1)?.status !== 'running') break; await Bun.sleep(30); }
   agent = (await request('/agents')).agents.find((row: any) => row.name === '周报助手');
   expect(agent.skills).toEqual(['weekly-report']); expect(agent.readDirectories).toEqual([directory]);

@@ -6,7 +6,7 @@ import { productFetch } from '../lib/product-fetch';
 import {useProductTasks} from '../product/TaskActivity';
 import type { WorkbenchAgent } from '../../../shared/workbench-agents';
 
-type ConversationRow = Omit<WorkbenchConversation, 'messages'> & { messageCount: number; running: boolean };
+type ConversationRow = Omit<WorkbenchConversation, 'messages'> & { messageCount: number; running: boolean; activity?: string };
 export async function workbenchRequest<T>(path: string, body?: unknown, method = body === undefined ? 'GET' : 'POST'): Promise<T> {
   const response = await productFetch(`/admin/api/workbench${path}`, { method, ...(body === undefined ? {} : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }) });
   let result: { error?: string };
@@ -52,6 +52,7 @@ export function useWorkbench({ serviceReady = true, databaseReady = true }: { se
   const [pending, setPending] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const active = useRef<string | undefined>(undefined);
+  const seenAgentEdits = useRef(new Set<string>());
   const mounted = useRef(true);
   const modelsRef = useRef(models);
   const selectionRevision = useRef(0);
@@ -118,6 +119,8 @@ export function useWorkbench({ serviceReady = true, databaseReady = true }: { se
     const poll = async () => {
       try {
         const next = await workbenchRequest<WorkbenchConversation>(`/conversations/${id}?lite=1`);
+        const edits = next.messages.flatMap(message => message.toolCalls ?? []).filter(call => (call.name === 'assistant_create' || call.name === 'assistant_update') && call.status === 'complete' && !seenAgentEdits.current.has(call.id));
+        if (edits.length) { for (const call of edits) seenAgentEdits.current.add(call.id); void refresh(); }
         if (stopped || active.current !== id) return;
         setConversation(current => mergePolledConversation(current, next));
         if (memoryTaskActive||next.messages.some(m => m.status === 'running'||(m.memory&&['pending','queued','running'].includes(m.memory.status)))) timer = setTimeout(poll, next.messages.some(m=>m.status==='running')?200:1000);
@@ -206,9 +209,16 @@ export function useWorkbench({ serviceReady = true, databaseReady = true }: { se
     catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
     finally { setPending(false); }
   };
+  const undoRules = async (messageId: string) => {
+    if (!conversation || running || pending) return;
+    const id = conversation.id; setError(''); setPending(true);
+    try { const next = await workbenchRequest<WorkbenchConversation>(`/conversations/${id}/rules/undo`, { messageId }); if (active.current === id) setConversation(next); await refresh(); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+    finally { setPending(false); }
+  };
   const saveAgent = async (value: WorkbenchAgent) => {
     const saved = await workbenchRequest<WorkbenchAgent>(`/agents/${value.id}`, value, 'PUT');
     await refresh(); setAssistant(saved); if (saved.model) setModel(saved.model); if (!conversation) setKnowledge(saved.knowledge); return saved;
   };
-  return { rows: rows.filter(row => (row.assistantId ?? 'main') === assistantId), allRows: rows, agents, assistantId, selectAgent, saveAgent, refresh, models, modelsLoaded, conversation, model, setModel: chooseModel, knowledge: knowledge && databaseReady, setKnowledge, assistant, saveAssistant, error, setError, loaded, pending, running, select, send, action, clearContext };
+  return { rows: rows.filter(row => (row.assistantId ?? 'main') === assistantId), allRows: rows, agents, assistantId, selectAgent, saveAgent, refresh, models, modelsLoaded, conversation, model, setModel: chooseModel, knowledge: knowledge && databaseReady, setKnowledge, assistant, saveAssistant, error, setError, loaded, pending, running, select, send, action, clearContext, undoRules };
 }

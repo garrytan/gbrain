@@ -24,7 +24,7 @@ configureGateway(buildGatewayConfig(config));
 const service = new WorkbenchService(store, () => models, knowledgeWorkbenchAnswer(engine, { search: async () => ({ results: [] } as any), answer: chat, loop: toolLoop }, undefined, context));
 try {
   const main = service.create({ model, knowledge: false });
-  service.send(main.id, { text: `创建一个周报助手。读取 ${materials}，只写有依据的工作，使用 weekly-report 技能，区分已完成、推进中和下周计划，交付 Word。` });
+  service.send(main.id, { text: `确认创建周报助手。读取 ${materials}，只写有依据的工作，使用 weekly-report 技能，区分已完成、推进中和下周计划，交付 Word。` });
   await service.settled(main.id);
   const mainReply = store.get(main.id).messages.at(-1)!;
   if (mainReply.status !== 'complete') throw new Error(mainReply.error ?? '创建助手未完成');

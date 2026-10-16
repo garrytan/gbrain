@@ -3,6 +3,7 @@ import type { MinionJobContext } from '../../core/minions/types';
 import type { ProductTaskRuntime } from '../tasks/runtime';
 import type { BrainEngine } from '../../core/engine';
 import { WorkbenchAgentStore, scheduleOccurrence } from './agents';
+import { scheduledTaskPrompt } from './playbook';
 import type { WorkbenchService } from './service';
 import { publishArtifactToSource, saveWorkbenchArtifact } from './files';
 import { TaskProgressAdapter } from '../tasks/progress-adapter';
@@ -42,7 +43,7 @@ export class WorkbenchAgentCoordinator {
         if (previous?.slot === slot && previous.runId) continue;
         const conversation = previous?.slot === slot ? this.service.get(previous.conversationId) : this.service.openAssistant(agent.id) ?? this.service.create({ assistantId: agent.id });
         this.store.recordSchedule(agent.id, { slot, conversationId: conversation.id });
-        const result = await this.submit(agent.id, `${agent.schedule.prompt}\n报告周期截止时间：${slot}。按资料中的实际事件日期区分本期完成、推进中和计划。`, `${agent.id}:${slot}`, true, conversation.id);
+        const result = await this.submit(agent.id, scheduledTaskPrompt(agent, slot), `${agent.id}:${slot}`, true, conversation.id);
         this.store.recordSchedule(agent.id, { slot, conversationId: conversation.id, runId: result.run.id });
       }
     } finally { this.scanning = false; }
@@ -79,6 +80,7 @@ export class WorkbenchAgentCoordinator {
       const conversation = this.service.get(initial.id); const reply = conversation.messages.at(-1);
       if (!reply || reply.role !== 'assistant' || reply.status !== 'complete') throw new Error(reply?.error ?? '助手未完成任务');
       if (reply.stopReason === 'length') throw new Error('助手输出尚未完整，已保存对话，请继续后再交付');
+      if (reply.evidenceGap) return { assistantId: agent.id, assistantName: agent.name, conversationId: conversation.id, artifacts: [], status: 'completed' };
       let artifacts = this.store.artifacts().filter(row => row.conversationId === initial.id && row.messageId === reply.id);
       if (agent.skills.includes('weekly-report') && !reply.citations?.length) throw new Error('缺少可核对的工作材料，请在任务对话补充资料后继续');
       if (!artifacts.length) {

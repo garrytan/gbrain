@@ -72,6 +72,10 @@ export interface WorkbenchMessage {
   contextMessages?: number;
   contextNote?: string;
   ruleNotice?: string;
+  learnedRules?: string[];
+  playbookNotice?: string;
+  savedPlaybook?: string;
+  evidenceGap?: boolean;
   attachments?: WorkbenchAttachment[];
   attachmentSupplement?: string;
   stopReason?: 'end' | 'length' | 'other';

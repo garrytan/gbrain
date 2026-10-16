@@ -1,5 +1,5 @@
 import React from 'react';
-import { ArrowRight, Bot, CalendarDays } from 'lucide-react';
+import { ArrowRight, Bot } from 'lucide-react';
 import type { WorkbenchAgent, WorkbenchSchedule } from '../../../shared/workbench-agents';
 import type { WorkbenchToolCall } from '../../../shared/workbench';
 
@@ -21,7 +21,7 @@ export function AgentCards({ calls, agents, onAgent, onConversation }: { calls: 
         const agent = agents.find(item => item.id === output.id);
         if (!agent || seen.has(agent.id)) return [];
         seen.add(agent.id);
-        return [<section key={call.id} className="wb-result-card" aria-label="已配置的助手"><Bot size={22} /><div><strong>{agent.name}</strong><p>{agent.description || '已按你的要求配置，可开始工作。'}</p><small><CalendarDays size={13} />{scheduleLabel(agent.schedule)}</small></div><button onClick={() => onAgent(agent.id)}>开始对话<ArrowRight size={14} /></button></section>];
+        return [<section key={call.id} className="wb-result-card" aria-label="已配置的助手"><Bot size={22} /><div><strong>{agent.name}</strong><p>已准备好「{agent.name}」。在左侧可以直接找它说话。</p></div><button onClick={() => onAgent(agent.id)}>开始对话<ArrowRight size={14} /></button></section>];
       }
       if (call.name === 'task_submit' && output.submitted && typeof output.conversationId === 'string') {
         return [<section key={call.id} className="wb-result-card" aria-label="已提交的任务"><Bot size={22} /><div><strong>已交给{agents.find(item => item.id === output.assistantId)?.name || '专用助手'}</strong><p>任务已交给这个助手，进展和成果会留在它的对话里。</p></div><button onClick={() => onConversation(output.conversationId)}>查看进展<ArrowRight size={14} /></button></section>];
