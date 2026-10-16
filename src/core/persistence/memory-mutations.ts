@@ -90,6 +90,16 @@ async function planRememberTarget(ctx: OperationContext, sourceId: string, sourc
       `Entity page ${slug} in source ${sourceId} is deleted or not visible to this caller, so nothing was saved. Remember the fact against a visible entity, or without an entity (it is then filed under memory/unattributed).`);
   }
   if (inferred && !snapshot) throw new InferredTargetRejected('NO_ENTITY');
+  // Opt-in workspace filing contract: a named subject must have a page.
+  // Run after scope/visibility checks and before admission, so a refused save
+  // creates neither a fact nor a durable request. Subjectless notes retain
+  // their existing behavior; remember never creates placeholder entity pages.
+  if (entitySlug !== null && !snapshot &&
+    /^(true|1|on|yes)$/i.test(await ctx.engine.getConfig('facts.require_entity_page') ?? 'false')) {
+    throw verbError('invalid_params',
+      'entity_page_required: the named entity must resolve to an existing visible page before this fact can be saved.',
+      'Use entity/search and get_page to resolve the subject in this write source. If it is new, create its sourced entity page with put_page, then retry remember with the canonical page slug. Do not omit entity to bypass this filing rule.');
+  }
   // Wave B: a segmented entity page over the single-string ceiling cannot take a fence row; named or inferred, the save refuses
   // before admission instead of misfiling it. Below the ceiling an inferred target's checks read the page back whole, as preparation does.
   if (entitySlug !== null && snapshot && segmentedOverCeiling(snapshot.page)) throw segmentedRememberRefusal(slug, sourceId, inferred !== null);
