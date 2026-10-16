@@ -107,8 +107,35 @@ export async function runWorkbenchTools(input: WorkbenchAnswerInput & {
     if (!settled.length) continue;
     handlers.set(name, { ...handler, execute: async (raw, abort, execution) => {
       const prior = settled.find(call => sameToolInput(call.input, raw));
-      if (prior?.output) { try { return JSON.parse(prior.output); } catch { return handler.execute(raw, abort, execution); } }
-      return handler.execute(raw, abort, execution);
+      if (!prior?.output) return handler.execute(raw, abort, execution);
+      let parsed: unknown;
+      try { parsed = JSON.parse(prior.output); } catch { return handler.execute(raw, abort, execution); }
+      if (name === 'knowledge_search') {
+        const output = parsed as { results?: unknown };
+        if (!output || typeof output !== 'object' || !Array.isArray(output.results)) return handler.execute(raw, abort, execution);
+        const kept: Array<Record<string, unknown>> = [];
+        for (const row of output.results) {
+          if (!row || typeof row !== 'object') continue;
+          const item = row as Record<string, unknown>;
+          if (typeof item.slug !== 'string') continue;
+          const sourceId = typeof item.source_id === 'string' ? item.source_id : null;
+          if (sourceIds && (!sourceId || !sourceIds.includes(sourceId))) continue;
+          item.citation = citation(sourceId, item.slug, String(item.title ?? ''), String(item.snippet ?? ''));
+          if (sourceId) allowed.set(JSON.stringify([sourceId, item.slug]), citations[Number(item.citation) - 1]!);
+          kept.push(item);
+        }
+        output.results = kept;
+        return output;
+      }
+      if (name === 'knowledge_read') {
+        const item = parsed as { source_id?: unknown; slug?: unknown; revision?: unknown };
+        const sourceId = typeof item?.source_id === 'string' ? item.source_id : '';
+        const slug = typeof item?.slug === 'string' ? item.slug : '';
+        if (!sourceId || !slug || !allowed.get(JSON.stringify([sourceId, slug])) || (sourceIds && !sourceIds.includes(sourceId)) || typeof item.revision !== 'string' || !item.revision) return handler.execute(raw, abort, execution);
+        reads.set(JSON.stringify([sourceId, slug]), item.revision);
+        return parsed;
+      }
+      return parsed;
     } });
   }
   const tools=[...(input.knowledge?KNOWLEDGE_TOOLS:[]),...(input.native?workbenchMemoryTools(userText,input.knowledge):[]),...(input.agents && input.agent ? agentTools(input.agent,userText,input.agents) : [])];

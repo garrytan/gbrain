@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { WorkbenchCitation, WorkbenchConversation, WorkbenchMemory, WorkbenchMessage, WorkbenchModel, WorkbenchTask, WorkbenchToolCall } from '../../../shared/workbench';
-import { advanceStoredReads, attachmentRead, enrichAttachments, incomingAttachments, namedAttachmentSupplement, resolveListedAttachments, summarySource, modelReadsPdfNatively, taskVisualAttachments } from './attachments';
+import { advanceStoredReads, attachmentRead, enrichAttachments, incomingAttachments, namedAttachmentSupplement, resolveListedAttachments, summarySource, modelReadsPdfNatively, taskRecognizedSupplement, taskVisualAttachments } from './attachments';
 import { contextBudget, knowledgeReserve, planContext,conversationCitations,referenceProjection } from './context';
 import { WorkbenchStore } from './store';
 import { compressTranscript, contextFailure,requestOutputTokens } from './context-runtime';
@@ -70,6 +70,25 @@ export function revisionListing(conversation: Pick<WorkbenchConversation, 'revis
     messageCount: item.messages.length,
     messages: [] as WorkbenchMessage[],
   }));
+}
+
+function restoredMessages(current: WorkbenchMessage[], revision: { reason: 'edit' | 'retry' | 'restore'; baseMessageId?: string; messages: WorkbenchMessage[] }): WorkbenchMessage[] {
+  const suffix = structuredClone(revision.messages);
+  if (revision.baseMessageId) {
+    const index = current.findIndex(message => message.id === revision.baseMessageId);
+    if (index < 0) throw new Error('这段历史的前文已经不在，不能安全恢复');
+    return [...current.slice(0, index + 1), ...suffix];
+  }
+  const head = suffix[0];
+  if (head) {
+    const index = current.findIndex(message => message.id === head.id);
+    if (index >= 0) return [...current.slice(0, index), ...suffix];
+  }
+  if (revision.reason === 'retry' && suffix.length > 0 && suffix.every(message => message.role === 'assistant')) {
+    const end = current.at(-1)?.role === 'assistant' ? current.length - 1 : current.length;
+    return [...current.slice(0, end), ...suffix];
+  }
+  return suffix;
 }
 
 function capRevisions<T extends { id: string }>(revisions: T[], keepId?: string): T[] {
@@ -230,7 +249,8 @@ export class WorkbenchService {
       const previous = target.text;
       conversation.revisions ??= [];
       const removed = conversation.messages.slice(index);
-      conversation.revisions.push({ id: randomUUID(), createdAt: now, reason: 'edit', preview: revisionPreview(removed), messages: structuredClone(removed) });
+      const baseMessageId = index > 0 ? conversation.messages[index - 1]!.id : undefined;
+      conversation.revisions.push({ id: randomUUID(), createdAt: now, reason: 'edit', preview: revisionPreview(removed), ...(baseMessageId ? { baseMessageId } : {}), messages: structuredClone(removed) });
       conversation.revisions = capRevisions(conversation.revisions);
       target.text = text;
       delete target.memory;
@@ -251,7 +271,8 @@ export class WorkbenchService {
       carriedPlaybook = previousReply.savedPlaybook;
       settledTools = previousReply.toolCalls?.filter(call => call.status === 'complete');
       conversation.revisions ??= [];
-      conversation.revisions.push({ id: randomUUID(), createdAt: now, reason: 'retry', preview: revisionPreview([previousReply]), messages: [structuredClone(previousReply)] });
+      const baseMessageId = conversation.messages.at(-2)?.id;
+      conversation.revisions.push({ id: randomUUID(), createdAt: now, reason: 'retry', preview: revisionPreview([previousReply]), ...(baseMessageId ? { baseMessageId } : {}), messages: [structuredClone(previousReply)] });
       conversation.revisions = capRevisions(conversation.revisions);
       conversation.messages.pop();
     } else {
@@ -454,10 +475,15 @@ export class WorkbenchService {
         const recentIds = new Set(recent.map(message => message.id));
         const spokenTurn = [...conversation.messages].reverse().find(message => message.role === 'user');
         if (!input.retry && spokenTurn) {
-          const named = namedAttachmentSupplement(conversation.messages, spokenTurn.text, recentIds);
+          const named = [namedAttachmentSupplement(conversation.messages, spokenTurn.text, recentIds), taskRecognizedSupplement(conversation.messages, conversation.task, recentIds)].filter(Boolean).join('\n\n');
           if (named && !spokenTurn.attachmentSupplement?.includes(named)) spokenTurn.attachmentSupplement = [spokenTurn.attachmentSupplement, named].filter(Boolean).join('\n\n');
         }
+        const modelSeesImages = this.models().find(item => item.id === model)?.vision === true;
         const visuals = taskVisualAttachments(this.modelMessages(conversation.id, conversation.messages), conversation.task, recentIds);
+        if (!modelSeesImages) {
+          visuals.omitted.unshift(...visuals.kept.map(item => ({ messageId: item.messageId, name: item.name })));
+          visuals.kept.length = 0;
+        }
         const visualItems = [...visuals.kept.map(item => ({ kind: 'image', ref: item.name, state: 'kept' as const })), ...visuals.omitted.map(item => ({ kind: 'image', ref: item.name, state: 'omitted' as const }))];
         const compressionModel = assistant.context.summaryModel && this.models().some(item => item.id === assistant.context.summaryModel) ? assistant.context.summaryModel : model;
         const result = await this.answer({
@@ -642,9 +668,10 @@ export class WorkbenchService {
     if (!revision) throw new Error('这段历史不存在');
     const snapshot = JSON.stringify(conversation);
     const restoredAt = new Date().toISOString();
+    const nextMessages = restoredMessages(conversation.messages, revision);
     conversation.revisions ??= [];
     conversation.revisions.push({ id: randomUUID(), createdAt: restoredAt, reason: 'restore', preview: revisionPreview(conversation.messages), messages: structuredClone(conversation.messages) });
-    conversation.messages = structuredClone(revision.messages);
+    conversation.messages = nextMessages;
     conversation.revisions = capRevisions(conversation.revisions, revisionId);
     delete conversation.summary;
     delete conversation.summaryUntil;

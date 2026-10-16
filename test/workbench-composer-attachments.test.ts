@@ -56,7 +56,12 @@ test('加号、拖入和粘贴都能加入附件，发送成功后清空未发�
   expect(source).toContain('sentIds');
   expect(source).toContain('assignSessionAttachments');
   expect(source).not.toContain('setAttachments([])');
-  expect(source).toContain('disabled={wb.pending || wb.running}');
+  const attach = source.slice(source.indexOf('aria-label="添加附件"'), source.indexOf('aria-label="添加附件"') + 220);
+  expect(attach).toContain('disabled={wb.pending}');
+  expect(attach).not.toContain('wb.running');
+  expect(source).toContain('if (!files.length || wb.pending) return;');
+  const home = readFileSync(new URL('../admin/src/product/HomePage.tsx', import.meta.url), 'utf8');
+  expect(home).toContain('disabled={wb.pending || wb.running}');
   expect(source).toContain('composerFromSaved');
   expect(hook).toContain('attachmentsHydrated');
   expect(hook).toContain('?lite=1');

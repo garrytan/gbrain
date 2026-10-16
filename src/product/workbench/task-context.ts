@@ -4,14 +4,21 @@ import { classifyTurn, compactRule, taskNeedsSkill } from './turn-policy';
 
 const followUp = /^(?:继续|继续做|继续写|接着做|接着写|接着|执行吧|开始吧|就按这个|按这个做|做吧|写吧|可以|好|好的|行|嗯|执行)$/;
 const agreementOnly = /^(?:可以|好|好的|行|嗯|执行)$/;
+const continuationCue = /继续|接着|就按这个|按这个|按刚才|还是按|执行吧|开始吧/;
 
 export function continuesActiveTask(text: string): boolean {
   return followUp.test(text.replace(/\s+/g, '').replace(/[。！!？?，,]/g, ''));
 }
 
+export function continuesCurrentWork(text: string): boolean {
+  if (continuesActiveTask(text)) return true;
+  return continuationCue.test(text.replace(/\s+/g, '').replace(/[。！!？?，,]/g, ''));
+}
+
 export function advanceTask(input: { task?: WorkbenchTask; notes?: string[]; text: string; recentUserTexts: string[]; agent: { workflow?: string; skills?: string[] }; now: string; id: () => string }): { task?: WorkbenchTask; inherited: boolean; opened: boolean } {
   const text = input.text.trim();
   const normalized = text.replace(/\s+/g, '').replace(/[。！!？?，,]/g, '');
+  if (input.task && continuesCurrentWork(text)) return { task: { ...input.task, updatedAt: input.now }, inherited: true, opened: false };
   if (continuesActiveTask(text)) {
     if (input.task) return { task: { ...input.task, updatedAt: input.now }, inherited: true, opened: false };
     if (agreementOnly.test(normalized)) return { inherited: false, opened: false };

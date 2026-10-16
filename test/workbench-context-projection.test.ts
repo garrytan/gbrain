@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { __setChatTransportForTests, configureGateway, resetGateway, toolLoop, type ChatResult } from '../src/core/ai/gateway';
-import { advanceStoredReads, namedAttachmentSupplement, summarySource, taskVisualAttachments } from '../src/product/workbench/attachments';
+import { advanceStoredReads, namedAttachmentSupplement, summarySource, taskRecognizedSupplement, taskVisualAttachments } from '../src/product/workbench/attachments';
 import { WorkbenchAgentStore } from '../src/product/workbench/agents';
 import { compileTaskBrief, retrievalQuery } from '../src/product/workbench/task-context';
 import { knowledgeWorkbenchAnswer } from '../src/product/workbench/routes';
@@ -400,4 +400,188 @@ test('可以查看并恢复修改前的内容，当前稿也留在历史里；�
   await busy.settled(conversation.id);
   const files = readdirSync(dir).filter(name => /^[a-f0-9-]{36}\.json$/.test(name));
   expect(files).toEqual([`${conversation.id}.json`]);
+});
+
+test('编辑第二轮后再恢复，前面的项目背景还在；恢复重新生成前也不会只剩一条回答', async () => {
+  const dir = root();
+  const store = new WorkbenchStore(dir);
+  const service = new WorkbenchService(store, models, async () => reply('答完'));
+  const agent = new WorkbenchAgentStore(store).create({ name: '周报助手', workflow: '先查知识库', skills: ['weekly-report'], systemPrompt: '你是周报助手' });
+  const conversation = service.create({ assistantId: agent.id, knowledge: false });
+  service.send(conversation.id, { text: '项目背景不能漏掉' });
+  await service.settled(conversation.id);
+  service.send(conversation.id, { text: '第二条旧问题' });
+  await service.settled(conversation.id);
+  const second = service.get(conversation.id).messages.filter(message => message.role === 'user')[1]!;
+  service.send(conversation.id, { text: '第二条新问题', editMessageId: second.id });
+  await service.settled(conversation.id);
+  const edited = service.get(conversation.id);
+  const previous = edited.revisions?.find(item => item.reason === 'edit');
+  expect(previous?.messages.some(message => message.text === '第二条旧问题')).toBe(true);
+  expect(previous?.messages.some(message => message.text === '项目背景不能漏掉')).toBe(false);
+  const restored = service.restoreRevision(conversation.id, previous!.id);
+  expect(restored.messages.some(message => message.text === '项目背景不能漏掉')).toBe(true);
+  expect(restored.messages.some(message => message.text === '第二条旧问题')).toBe(true);
+  expect(restored.messages.some(message => message.text === '第二条新问题')).toBe(false);
+  const back = restored.revisions?.find(item => item.reason === 'restore' && item.messages.some(message => message.text === '第二条新问题'));
+  service.restoreRevision(conversation.id, back!.id);
+  expect(service.get(conversation.id).messages.some(message => message.text === '项目背景不能漏掉')).toBe(true);
+  expect(service.get(conversation.id).messages.some(message => message.text === '第二条新问题')).toBe(true);
+  service.restoreRevision(conversation.id, previous!.id);
+  const again = service.get(conversation.id);
+  expect(again.messages.some(message => message.text === '项目背景不能漏掉')).toBe(true);
+  expect(again.messages.some(message => message.text === '第二条旧问题')).toBe(true);
+  again.revisions = [...(again.revisions ?? []), { id: 'rev-missing-base', createdAt: now(), reason: 'edit', baseMessageId: 'gone', messages: [{ id: 'only-new', role: 'user', text: '不该替换全文', createdAt: now(), status: 'complete' }] }];
+  store.save(again);
+  const before = service.get(conversation.id).messages.map(message => message.text);
+  expect(() => service.restoreRevision(conversation.id, 'rev-missing-base')).toThrow('这段历史的前文已经不在，不能安全恢复');
+  expect(service.get(conversation.id).messages.map(message => message.text)).toEqual(before);
+
+  const retryDir = root();
+  const retryStore = new WorkbenchStore(retryDir);
+  let turn = 0;
+  const retryService = new WorkbenchService(retryStore, models, async () => reply(turn++ === 0 ? '第一遍回答' : '第二遍回答'));
+  const retryAgent = new WorkbenchAgentStore(retryStore).create({ name: '周报助手', workflow: '先查知识库', skills: ['weekly-report'], systemPrompt: '你是周报助手' });
+  const retry = retryService.create({ assistantId: retryAgent.id, knowledge: false });
+  retryService.send(retry.id, { text: '请保留这个用户问题' });
+  await retryService.settled(retry.id);
+  retryService.send(retry.id, { retry: true });
+  await retryService.settled(retry.id);
+  const retryRevision = retryService.get(retry.id).revisions?.find(item => item.reason === 'retry');
+  expect(retryRevision?.messages.every(message => message.role === 'assistant')).toBe(true);
+  const restoredRetry = retryService.restoreRevision(retry.id, retryRevision!.id);
+  expect(restoredRetry.messages[0]?.role).toBe('user');
+  expect(restoredRetry.messages[0]?.text).toBe('请保留这个用户问题');
+  expect(restoredRetry.messages.some(message => message.text === '第一遍回答')).toBe(true);
+  expect(restoredRetry.messages.some(message => message.role === 'assistant')).toBe(true);
+});
+
+test('继续按刚才的要求做，仍是同一件任务，这次不要写下周计划还在', async () => {
+  const dir = root();
+  const store = new WorkbenchStore(dir);
+  const service = new WorkbenchService(store, models, async () => reply('好'));
+  const agent = new WorkbenchAgentStore(store).create({ name: '周报助手', workflow: '先查知识库', skills: ['weekly-report'], systemPrompt: '你是周报助手' });
+  const conversation = service.create({ assistantId: agent.id, knowledge: false });
+  service.send(conversation.id, { text: '生成本周周报' });
+  await service.settled(conversation.id);
+  service.send(conversation.id, { text: '这次不要写下周计划' });
+  await service.settled(conversation.id);
+  const started = service.get(conversation.id).task;
+  service.send(conversation.id, { text: '继续按刚才的要求生成周报' });
+  await service.settled(conversation.id);
+  const kept = service.get(conversation.id);
+  expect(kept.task?.id).toBe(started?.id);
+  expect(kept.task?.constraints).toEqual(['这次不要写下周计划']);
+  expect(kept.taskNotes).toEqual(['这次不要写下周计划']);
+  expect(kept.messages.at(-1)?.contextManifest?.task?.inherited).toBe(true);
+  service.send(conversation.id, { text: '帮我做报销' });
+  await service.settled(conversation.id);
+  const next = service.get(conversation.id);
+  expect(next.task?.id).not.toBe(started?.id);
+  expect(next.task?.goal).toContain('报销');
+  expect(next.task?.constraints).toEqual([]);
+  expect(next.taskNotes).toBeUndefined();
+});
+
+test('重试时沿用已搜到的资料，接着读取同一页；识别过的图片不再当成原图发给不能看图的模型', async () => {
+  configureGateway({ generative_enabled: true, chat_model: 'service-test:chat', env: {} });
+  const stamp = now();
+  const settledSearch: WorkbenchToolCall[] = [{ id: 'prior-search', name: 'knowledge_search', input: JSON.stringify({ query: '预算' }), status: 'complete', output: JSON.stringify({ results: [{ citation: 1, source_id: 'default', slug: 'budget', title: '预算表', snippet: '8800' }], truncated: false }), startedAt: stamp, completedAt: stamp }];
+  let pageReads = 0;
+  let searches = 0;
+  const runner = knowledgeWorkbenchAnswer({ getPage: async () => { pageReads += 1; return { source_id: 'default', compiled_truth: '预算8800', timeline: '', content_hash: 'hash-1' }; } } as never, {
+    search: async () => { searches += 1; return { results: [] } as never; },
+    answer: async () => { throw new Error('不应直接回答'); },
+    loop: async (options: { toolHandlers: Map<string, { execute: (raw: unknown, abort: AbortSignal) => Promise<unknown> }>; abortSignal: AbortSignal; onTextDelta?: (text: string) => void }) => {
+      const replayed = await options.toolHandlers.get('knowledge_search')!.execute({ query: '预算' }, options.abortSignal) as { results: unknown[] };
+      expect(replayed.results).toHaveLength(1);
+      await options.toolHandlers.get('knowledge_read')!.execute({ source_id: 'default', slug: 'budget' }, options.abortSignal);
+      options.onTextDelta?.('预算8800 [1]');
+      return { text: '预算8800 [1]', model: 'service-test:chat', stopReason: 'end' as const, messages: [] };
+    },
+  } as never);
+  const first = await runner({ model: 'service-test:chat', knowledge: true, signal: new AbortController().signal, progress: () => {}, contextWindow: 8192, settledTools: settledSearch, messages: [{ id: 'u', role: 'user', text: '请核对预算', status: 'complete', createdAt: stamp }] });
+  expect(searches).toBe(1);
+  expect(pageReads).toBe(1);
+  expect(first.citations).toHaveLength(1);
+  expect(first.citations[0]?.slug).toBe('budget');
+
+  const dir = root();
+  const store = new WorkbenchStore(dir);
+  const id = randomUUID();
+  store.save({ id, title: '新对话', model: 'local', knowledge: true, sourceId: 'default', createdAt: stamp, updatedAt: stamp, messages: [{ id: 'u', role: 'user', text: '请补充知识：把核对结果写进页面', createdAt: stamp, status: 'complete' }] });
+  let writes = 0;
+  const credited = knowledgeWorkbenchAnswer({
+    getPage: async () => { pageReads += 1; return { source_id: 'default', compiled_truth: '预算8800', timeline: '', content_hash: 'hash-1' }; },
+    transaction: async () => { writes += 1; throw new Error('版本核对已到达'); },
+  } as never, {
+    search: async () => ({ results: [] }) as never,
+    answer: async () => { throw new Error('不应直接回答'); },
+    loop: async (options: { toolHandlers: Map<string, { execute: (raw: unknown, abort: AbortSignal) => Promise<{ content?: string }> }>; abortSignal: AbortSignal; onTextDelta?: (text: string) => void }) => {
+      await options.toolHandlers.get('knowledge_search')!.execute({ query: '预算' }, options.abortSignal);
+      const read = await options.toolHandlers.get('knowledge_read')!.execute({ source_id: 'default', slug: 'budget', offset: 0 }, options.abortSignal);
+      expect(read.content).toContain('不应直接交回');
+      expect(pageReads).toBe(1);
+      await options.toolHandlers.get('knowledge_append')!.execute({ source_id: 'default', slug: 'budget', revision: 'hash-1', content: '补充核对结果' }, options.abortSignal);
+      options.onTextDelta?.('已核对');
+      return { text: '已核对', model: 'service-test:chat', stopReason: 'end' as const, messages: [] };
+    },
+  } as never, { store, tasks: {} as never });
+  const settledRead: WorkbenchToolCall[] = [
+    settledSearch[0]!,
+    { id: 'prior-read', name: 'knowledge_read', input: JSON.stringify({ source_id: 'default', slug: 'budget', offset: 0 }), status: 'complete', output: JSON.stringify({ citation: 1, source_id: 'default', slug: 'budget', title: '预算表', revision: 'hash-1', content: '不应直接交回的旧正文', offset: 0, nextOffset: null, truncated: false }), startedAt: stamp, completedAt: stamp },
+  ];
+  await expect(credited({ model: 'service-test:chat', knowledge: true, sourceId: 'default', conversationId: id, signal: new AbortController().signal, progress: () => {}, contextWindow: 8192, settledTools: settledRead, messages: [{ id: 'u', role: 'user', text: '请补充知识：把核对结果写进页面', status: 'complete', createdAt: stamp }] })).rejects.toThrow('版本核对已到达');
+  expect(writes).toBe(1);
+  expect(pageReads).toBe(1);
+
+  const blocked = knowledgeWorkbenchAnswer({ getPage: async () => { pageReads += 1; return null; } } as never, {
+    search: async () => ({ results: [] }) as never,
+    answer: async () => { throw new Error('不应直接回答'); },
+    loop: async (options: { toolHandlers: Map<string, { execute: (raw: unknown, abort: AbortSignal) => Promise<unknown> }>; abortSignal: AbortSignal }) => {
+      await options.toolHandlers.get('knowledge_read')!.execute({ source_id: 'default', slug: 'budget' }, options.abortSignal);
+      return { text: '不应成功', model: 'service-test:chat', stopReason: 'end' as const, messages: [] };
+    },
+  } as never);
+  await expect(blocked({ model: 'service-test:chat', knowledge: true, signal: new AbortController().signal, progress: () => {}, contextWindow: 8192, settledTools: [settledRead[1]!], messages: [{ id: 'u2', role: 'user', text: '请核对预算', status: 'complete', createdAt: stamp }] })).rejects.toThrow('请先搜索，再使用搜索结果中的精确 Source 和页面路径。');
+  expect(pageReads).toBe(1);
+
+  const imageId = randomUUID();
+  const oldImage: WorkbenchMessage = { id: 'old-image', role: 'user', text: '看图', status: 'complete', createdAt: stamp, attachments: [{ id: imageId, name: 'scan.png', mime: 'image/png', route: 'ocr', included: 4, text: '金额 8800', preview: 'data:image/png;base64,AAAA' }] };
+  const task = { goal: '核对截图', sources: [{ messageId: 'old-image', note: '提出任务' }] };
+  expect(taskVisualAttachments([oldImage], task, new Set()).kept).toHaveLength(0);
+  const recognized = taskRecognizedSupplement([oldImage], task, new Set());
+  expect(recognized).toContain('识别文字');
+  expect(recognized).toContain('金额 8800');
+  expect(recognized).not.toContain('base64');
+
+  const visualDir = root();
+  const visualStore = new WorkbenchStore(visualDir);
+  let visuals: Array<{ image: string }> = [];
+  let supplement = '';
+  const visualService = new WorkbenchService(visualStore, models, async input => {
+    visuals = input.visualAttachments ?? [];
+    supplement = [...input.messages].reverse().find(message => message.role === 'user')?.attachmentSupplement ?? '';
+    return reply('好');
+  }, async () => '新摘要');
+  const visualAgent = new WorkbenchAgentStore(visualStore).create({ name: '周报助手', workflow: '先查知识库', skills: ['weekly-report'], systemPrompt: '你是周报助手' });
+  const profile = new WorkbenchAgentStore(visualStore).get(visualAgent.id);
+  profile.context.maxMessages = 2;
+  new WorkbenchAgentStore(visualStore).replace(profile);
+  const visual = visualService.create({ assistantId: visualAgent.id, knowledge: false });
+  const saved = visualService.get(visual.id);
+  saved.messages = [
+    oldImage,
+    { id: 'ack', role: 'assistant', text: '看过了', createdAt: stamp, status: 'complete' },
+    { id: 'pad-user', role: 'user', text: '先说到这里', createdAt: stamp, status: 'complete' },
+    { id: 'pad-assistant', role: 'assistant', text: '好', createdAt: stamp, status: 'complete' },
+  ];
+  saved.task = { id: 'image-task', goal: '核对截图', constraints: [], updatedAt: stamp, sources: [{ messageId: 'old-image', note: '提出任务' }] };
+  visualStore.save(saved);
+  visualService.send(visual.id, { text: '继续' });
+  await visualService.settled(visual.id);
+  expect(visuals).toHaveLength(0);
+  expect(supplement).toContain('识别文字');
+  expect(supplement).toContain('金额 8800');
+  expect(supplement).not.toContain('base64');
 });

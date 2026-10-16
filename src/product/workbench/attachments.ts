@@ -114,13 +114,31 @@ export function taskVisualAttachments(messages: WorkbenchMessage[], task: Pick<W
     const attachments = message.attachments ?? [];
     if (!sources.has(message.id) && !attachments.some(item => item.name && goal.includes(item.name))) continue;
     for (const item of attachments) {
-      if (item.route !== 'vision' && !item.mime.startsWith('image/')) continue;
+      if (item.route !== 'vision') continue;
       const image = item.data ? `data:${item.mime || 'image/png'};base64,${item.data}` : item.preview;
       if (!image || kept.length >= 4) { omitted.push({ messageId: message.id, name: item.name }); continue; }
       kept.push({ messageId: message.id, name: item.name, mime: item.mime || 'image/png', image });
     }
   }
   return { kept, omitted };
+}
+
+export function taskRecognizedSupplement(messages: WorkbenchMessage[], task: Pick<WorkbenchTask, 'goal' | 'sources'> | undefined, recentIds: ReadonlySet<string>): string {
+  if (!task) return '';
+  const sources = new Set((task.sources ?? []).map(item => item.messageId));
+  const goal = task.goal ?? '';
+  const parts: string[] = [];
+  for (const message of messages) {
+    if (recentIds.has(message.id)) continue;
+    const attachments = message.attachments ?? [];
+    if (!sources.has(message.id) && !attachments.some(item => item.name && goal.includes(item.name))) continue;
+    for (const item of attachments) {
+      if (item.route === 'vision' || !item.mime.startsWith('image/') || !item.text?.trim()) continue;
+      parts.push(`【图片 ${item.name}】识别文字，不是新文件。\n${item.text.trim().slice(0, 2000)}`);
+      if (parts.length >= 4) return parts.join('\n\n');
+    }
+  }
+  return parts.join('\n\n');
 }
 
 export function namedAttachmentSupplement(messages: WorkbenchMessage[], text: string, skipIds: ReadonlySet<string>): string {

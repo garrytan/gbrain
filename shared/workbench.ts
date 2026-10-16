@@ -126,7 +126,7 @@ export interface WorkbenchConversation {
   sourceId?: string;
   assistantId?: string;
   taskKey?: string;
-  revisions?: Array<{ id: string; createdAt: string; reason: 'edit' | 'retry' | 'restore'; preview?: string; messageCount?: number; messages: WorkbenchMessage[] }>;
+  revisions?: Array<{ id: string; createdAt: string; reason: 'edit' | 'retry' | 'restore'; preview?: string; messageCount?: number; baseMessageId?: string; messages: WorkbenchMessage[] }>;
 }
 export interface WorkbenchModel { id: string; name: string; contextWindow?: number; vision?: boolean }
 export const FALLBACK_CONTEXT_TOKENS = 32_000;
