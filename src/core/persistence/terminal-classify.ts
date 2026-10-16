@@ -303,12 +303,31 @@ export const PAGE_REMOVAL_OPERATIONS: readonly string[] = ['delete_page', 'purge
  * The supersession rule of `gbrain repair failed-writes`, as a predicate over a candidate later request `c` of the
  * failed request `r` (both `persistence_requests` aliases): the same intent committed, failed or still pending; a later
  * page removal committed or pending; for a `put_page`, any later write committed or pending, or a later caller
- * `put_page` that failed (the newer content). Literal strings only; NULL-safe for a compacted `c` (no intent).
+ * `put_page` that failed (the newer content). A committed connector retry also resolves its explicit retryOf
+ * ancestors, but only within the same principal, source incarnation, operation, target and connector intent kind.
+ * Literal strings only; NULL-safe for a compacted `c` (no intent).
  */
 export function supersessionSql(r: string, c: string): string {
   const removals = PAGE_REMOVAL_OPERATIONS.map(op => `'${op}'`).join(',');
+  // Follow recorded receipts, not retryBase alone: another refusal of the same checkpoint is not proof.
+  // Decreasing sequence bounds the walk and prevents malformed/cyclic lineage from resolving anything.
+  const connectorRetry = `(${c}.state='committed' AND ${r}.operation='submit_job' AND ${c}.operation=${r}.operation
+    AND ${c}.principal_kind=${r}.principal_kind AND ${c}.principal_id=${r}.principal_id
+    AND ${c}.source_incarnation=${r}.source_incarnation
+    AND ${r}.intent->>'kind' IN ('connector_v2_import','connector_v2_delete','connector_v2_checkpoint')
+    AND ${c}.intent->>'kind'=${r}.intent->>'kind' AND EXISTS (
+      WITH RECURSIVE retry_lineage AS (
+        SELECT ${c}.request_id, ${c}.sequence, ${c}.intent
+        UNION ALL
+        SELECT p.request_id, p.sequence, p.intent FROM persistence_requests p JOIN retry_lineage l
+          ON p.request_id::text=l.intent->>'retryOf' AND p.sequence<l.sequence
+        WHERE p.source_id=${r}.source_id AND p.source_incarnation=${r}.source_incarnation
+          AND p.principal_kind=${r}.principal_kind AND p.principal_id=${r}.principal_id
+          AND p.operation=${r}.operation AND p.slug=${r}.slug AND p.intent->>'kind'=${r}.intent->>'kind'
+      ) SELECT 1 FROM retry_lineage WHERE request_id::text=${r}.request_id::text))`;
   return `(${c}.source_id=${r}.source_id AND ${c}.slug=${r}.slug AND ${c}.sequence>${r}.sequence AND (
     (${c}.digest=${r}.digest AND ${c}.state IN ('committed','failed','queued','running','recovering'))
+    OR ${connectorRetry}
     OR (${c}.state IN ('committed','queued','running','recovering') AND (${c}.operation IN (${removals}) OR ${r}.operation='put_page'))
     OR (${r}.operation='put_page' AND ${c}.state='failed' AND ${c}.operation='put_page' AND COALESCE(NOT (${c}.intent ? 'kind'), false))))`;
 }
