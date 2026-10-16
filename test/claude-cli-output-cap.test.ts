@@ -60,7 +60,7 @@ async function withCli<T>(
 ): Promise<T> {
   const dir = mkdtempSync(join(tmpdir(), 'claude-output-cap-'));
   const capsPath = join(dir, 'caps');
-  const lines = ['#!/bin/sh', 'cat > /dev/null', `printf '%s\\n' "$CLAUDE_CODE_MAX_OUTPUT_TOKENS" >> "${capsPath}"`];
+  const lines = ['#!/bin/sh', 'cat > /dev/null', `printf '%s\\n' "$@" > "${join(dir, 'args')}"`, `printf '%s\\n' "$CLAUDE_CODE_MAX_OUTPUT_TOKENS" >> "${capsPath}"`];
   for (const [cap, { body, exit }] of Object.entries(responses)) {
     const file = join(dir, `response-${cap === '*' ? 'default' : cap}.txt`);
     writeFileSync(file, typeof body === 'string' ? body : JSON.stringify(body));
@@ -193,6 +193,73 @@ describe('claude-cli output-cap envelope finishes as length (#6523)', () => {
 const success = (text: string, usage: Record<string, number> = { input_tokens: 10, output_tokens: 30 }) =>
   envelope(text, { is_error: false, subtype: 'success', stop_reason: 'end_turn', usage });
 
+// The CLI can continue an output-capped message, then return only its tail.
+const continued = (tail: string) => [
+  { type: 'system', subtype: 'init' },
+  { type: 'assistant', parent_tool_use_id: null, message: {
+    role: 'assistant', content: [{ type: 'text', text: '[{"partial":' }], stop_reason: 'max_tokens',
+  } },
+  { type: 'assistant', parent_tool_use_id: null, message: {
+    role: 'assistant', content: [{ type: 'text', text: tail }], stop_reason: 'end_turn',
+  } },
+  success(tail, USAGE),
+];
+
+describe('claude-cli automatic continuation does not hide truncation (#6791)', () => {
+  test('requests assistant events even without verbose user settings', async () => {
+    await withCli({ '*': { body: success('complete'), exit: 0 } }, async (stub) => {
+      await generate();
+      const args = readFileSync(join(stub.dir, 'args'), 'utf8').split('\n');
+      expect(args).toContain('--verbose');
+      expect(args.slice(args.indexOf('--output-format'), args.indexOf('--output-format') + 2)).toEqual(['--output-format', 'json']);
+    });
+  });
+
+  test('a capped prefix followed by end_turn returns length without tail text or tools, preserving usage', async () => {
+    for (const tail of ['"event"},{"who":["person-a","person-b"]}]', '<use_tools>[{"name":"delete_page","input":{"slug":"notes/example"}}]</use_tools>']) {
+      await withCli({ '*': { body: continued(tail), exit: 0 } }, async () => {
+        const out = await generate();
+        expect(out.finishReason).toBe('length');
+        expect(out.content).toEqual([{ type: 'text', text: '' }]);
+        expect(out.usage).toEqual({ inputTokens: 15, outputTokens: 2048, totalTokens: 2063, cachedInputTokens: 3 });
+      });
+    }
+  });
+});
+
+describe('claude-cli continuation boundaries', () => {
+  test('normal assistant messages, nested subagent caps and quoted stop reasons leave a complete result alone', async () => {
+    const complete = '<use_tools>[{"name":"search","input":{"query":"example"}}]</use_tools>';
+    const messages = [null, 42, 'max_tokens',
+      { type: 'assistant', message: { stop_reason: 'end_turn', content: [{ type: 'text', text: 'max_tokens' }] } },
+      { type: 'assistant', parent_tool_use_id: 'nested-tool', message: { stop_reason: 'max_tokens' } },
+      { type: 'user', message: { stop_reason: 'max_tokens' } },
+    ];
+    await withCli({ '*': { body: [...messages, success(complete)], exit: 0 } }, async () => {
+      const out = await generate();
+      expect(out.finishReason).toBe('tool-calls');
+      expect(out.content).toHaveLength(1);
+      expect(out.content[0]).toMatchObject({ type: 'tool-call', toolName: 'search', input: '{"query":"example"}' });
+    });
+  });
+
+  test('a continuation does not mask a later API error, refusal or process failure', async () => {
+    for (const [last, exit] of [[envelope('API Error: unavailable', { api_error_status: 503 }), 0],
+      [envelope('API Error: unavailable', { api_error_status: 503 }), 1], [success('tail'), 2]] as const) {
+      await withCli({ '*': { body: [...continued('tail').slice(0, -1), last], exit } }, async () => {
+        const error = await rejection(generate);
+        expect(error).toBeInstanceOf(ClaudeCliProcessError);
+        expect((error as ClaudeCliProcessError).exitCode).toBe(exit);
+      });
+    }
+    await withCli({ '*': { body: [...continued('tail').slice(0, -1), { ...success('refused'), stop_reason: 'refusal' }], exit: 0 } }, async () => {
+      const out = await generate();
+      expect(out.finishReason).toBe('content-filter');
+      expect(out.content).toEqual([{ type: 'text', text: 'refused' }]);
+    });
+  });
+});
+
 describe('escalation ladders through the gateway with the stub transport', () => {
   const engines: Array<{ backend: string; engine: BrainEngine }> = [];
   const dbDir = mkdtempSync(join(tmpdir(), 'claude-output-cap-db-'));
@@ -247,6 +314,21 @@ describe('escalation ladders through the gateway with the stub transport', () =>
     }
   }, 120_000);
 
+  test('loops_extract: a continued tail escalates once instead of parsing nested JSON as a complete answer', async () => {
+    const complete = success(JSON.stringify({ commitments: [], decisions_pending: [{ text: 'Pick a kickoff week', quote: 'Which week works for the kickoff?' }] }));
+    for (const { backend, engine } of engines) {
+      await withCli({ '2048': { body: continued('"event"},{"who":["person-a","person-b"]}]'), exit: 0 }, '8192': { body: complete, exit: 0 } }, async (stub) => {
+        await thread(engine, 'emails/continued-output-escalates');
+        const result = await runLoopsExtract(engine, { slug: 'emails/continued-output-escalates', sourceId: 'default' });
+        expect(result.status, backend).toBe('extracted');
+        expect(result.decisions, backend).toBe(1);
+        expect(stub.caps(), backend).toEqual(['2048', '8192']);
+        const rows = await engine.executeRaw<{ summary: string }>('SELECT summary FROM open_loops');
+        expect(rows.map(row => row.summary), backend).toEqual(['Pick a kickoff week']);
+      });
+    }
+  }, 120_000);
+
   test('loops_extract: two cap failures stop at the ceiling as a retryable truncation with no rows and no third call', async () => {
     for (const { backend, engine } of engines) {
       await withCli({ '2048': { body: envelope(capMessage(2048)), exit: 1 }, '8192': { body: envelope(capMessage(8192)), exit: 1 } }, async (stub) => {
@@ -255,6 +337,19 @@ describe('escalation ladders through the gateway with the stub transport', () =>
         expect(error, backend).toBeInstanceOf(LoopsExtractRetryableError);
         expect((error as LoopsExtractRetryableError).reason, backend).toBe('truncated');
         expect((error as Error).message, backend).toContain('8192-token');
+        expect(stub.caps(), backend).toEqual(['2048', '8192']);
+        expect(await engine.executeRaw('SELECT id FROM open_loops'), backend).toHaveLength(0);
+      });
+    }
+  }, 120_000);
+
+  test('loops_extract: continued tails at both rungs stop at the ceiling without publishing', async () => {
+    for (const { backend, engine } of engines) {
+      await withCli({ '*': { body: continued('{"commitments":[],"decisions_pending":[]}'), exit: 0 } }, async (stub) => {
+        await thread(engine, 'emails/continued-output-ceiling');
+        const error = await rejection(() => runLoopsExtract(engine, { slug: 'emails/continued-output-ceiling', sourceId: 'default' }));
+        expect(error, backend).toBeInstanceOf(LoopsExtractRetryableError);
+        expect((error as LoopsExtractRetryableError).reason, backend).toBe('truncated');
         expect(stub.caps(), backend).toEqual(['2048', '8192']);
         expect(await engine.executeRaw('SELECT id FROM open_loops'), backend).toHaveLength(0);
       });

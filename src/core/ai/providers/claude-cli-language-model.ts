@@ -152,8 +152,8 @@ type EnvelopeParse =
  * output shapes: the bare result object, and the verbose-mode event ARRAY —
  * with `"verbose": true` in ~/.claude/settings.json the CLI emits
  * [{type:"system",subtype:"init",...}, ..., {type:"result",...}] instead of the
- * bare object, and there is no CLI flag to force it off (no --no-verbose;
- * --settings '{}' merges, does not replace). Verified on CLI 2.1.145.
+ * bare object. We request verbose output to retain assistant stop reasons:
+ * an automatic continuation can otherwise hide truncation behind end_turn.
  */
 function parseResultEnvelope(stdout: string): EnvelopeParse {
   let parsed: unknown;
@@ -170,7 +170,15 @@ function parseResultEnvelope(stdout: string): EnvelopeParse {
     if (!resultEvent) {
       return { ok: false, reason: 'no-result-event' };
     }
-    parsed = resultEvent;
+    // A continued response's result may contain only its final fragment. Do
+    // not guess how to concatenate messages (or execute tail-only tools): let
+    // the caller's bounded length retry obtain a complete answer. Error and
+    // refusal envelopes keep their own semantics; usage stays aggregate.
+    const capped = parsed.some((ev: { type?: string; parent_tool_use_id?: unknown; message?: { stop_reason?: string } } | null) =>
+      ev?.type === 'assistant' && ev.parent_tool_use_id == null && ev.message?.stop_reason === 'max_tokens');
+    parsed = capped && resultEvent.is_error === false && resultEvent.stop_reason !== 'refusal'
+      ? { ...resultEvent, result: '', stop_reason: 'max_tokens' }
+      : resultEvent;
   }
   // JSON.parse accepts bare primitives (null / numbers / strings); none of
   // them is a result envelope, and letting one through would make the
@@ -381,6 +389,7 @@ function runClaude(
     const args = [
       '--print',
       '--output-format', 'json',
+      '--verbose',
       '--model', model,
       '--disable-slash-commands',
       // Agent isolation: this subprocess must behave like a raw LLM, not a
