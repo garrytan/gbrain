@@ -169,7 +169,7 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
   // refuses the group, as it does for every writer; explicit writers (no flag) refuse the forgotten claim.
   let withdrawnSkipped = 0;
   let capped = 0;
-  const cap = await readPageCap(engine);
+  let cap: Awaited<ReturnType<typeof readPageCap>> | undefined;
   let fenceRows = Object.values(fenced).reduce((sum, text) => sum + parseFactsFence(text).facts.length, 0);
   const originalFenceRows = fenceRows;
   // #6333 shadow (managed mirror of the backstop's counter): a same-page rewording is counted on the entity outcome
@@ -196,7 +196,7 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
     const gate = taint ? decideFactWrite(fact, { sourceId: row.source_id, slug: row.slug, payload: { ...fact, embedding: null },
       input: derivedGateInput(taint.trust, row.id), cfg: gateCfg! }) : undefined;
     if (gate && gate.action !== 'insert') { blocked.push(gate); continue; }
-    if (snapshot && fact.entity_slug !== null && !fallback(fact) && !supersedes && checkPageCap(cap, fenceRows).refuse) {
+    if (snapshot && fact.entity_slug !== null && !fallback(fact) && !supersedes && checkPageCap(cap ??= await readPageCap(engine), fenceRows).refuse) {
       if (p.withdrawn !== 'skip') throw pageCapError(row.slug);
       capped++; seen.delete(key); continue;
     }
@@ -241,8 +241,7 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
     noop: entries.every(entry => entry.duplicateId !== null || entry.duplicateOf !== undefined),
     ...(taint ? { trust: taint.trust } : {}),
     additionalPageKeys, afterCommit: async db => {
-      await page?.afterCommit?.(db);
-      await reportPageCap(db, row.source_id, row.slug, cap, originalFenceRows, capped);
+      if (cap) await reportPageCap(db, row.source_id, row.slug, cap, originalFenceRows, capped, fenceRows - originalFenceRows);
     }, validate: async tx => {
       await validate(tx, true);
       for (const entry of entries) {
@@ -254,7 +253,6 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
           const refusal = factsRefusal('revision_conflict', 'The original subject was withdrawn after preparation.', row,
             'The original subject withdrawal must be respected before publication.');
           refusal.withdrawn = (await factWithdrawnRefusal(tx, row.source_id, original)).withdrawn;
-          refusal.retryable = true;
           throw refusal;
         }
         if (p.withdrawn !== 'skip') await assertFactNotWithdrawn(tx, row.source_id, entry.fact);
@@ -272,11 +270,18 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
         if ((current.candidate?.id ?? null) !== (entry.duplicateId ?? entry.supersedes?.id ?? null)) throw factsRefusal('revision_conflict', 'The fact deduplication state changed before publication.', row,
           `A matching fact in source ${row.source_id} was added or retired before publication, so the deduplication decision for ${row.slug} is stale and none of these facts were published.`);
       }
-      // capture-policy PR: config can change after preparation; recheck beneath the publication guard.
-      const liveCap = await readPageCap(tx);
-      if (liveCap.max !== cap.max) {
-        throw opError('revision_conflict', 'The facts cap changed after preparation.',
-          'Retry extraction with the current cap to recompute admitted and capped counts.', { retryable: true });
+      // Recheck only prepared appends beneath the publication guard.
+      if (snapshot && entries.some(entry => entry.rowNum !== undefined && !entry.supersedes)) {
+        const liveCap = await readPageCap(tx);
+        let liveRows = originalFenceRows;
+        for (const entry of entries) {
+          if (entry.rowNum === undefined) continue;
+          if (!entry.supersedes && checkPageCap(liveCap, liveRows).refuse) {
+            throw opError('revision_conflict', 'The facts cap changed after preparation.',
+              'Retry extraction with the current cap to recompute admitted and capped counts.');
+          }
+          liveRows++;
+        }
       }
       await page?.validate?.(tx);
     }, apply: async tx => {

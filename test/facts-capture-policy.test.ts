@@ -57,6 +57,9 @@ test('bare names never route to person pages in a custom directory', async () =>
 });
 
 const falsePositives = [
+  'Acme confirmed a restaurant chain as its first customer',
+  "Acme's wifi chip launch is delayed",
+  'Board meeting scheduled for 2026-12-03 to vote on the merger',
   'An intro call with X took place on July 20, 2026 about Y',
   'An intro call with X took place on <date> about Y',
   'The board meeting may revisit pricing', '24/7 call center',
@@ -77,7 +80,7 @@ for (const fact of ['Thomas Example said Acme is still interested in the models'
   'Alice said Acme is still interested…',
   'Alice Example is co-founder and CEO of Acme', 'Alice Example said Acme, Inc. is hiring',
   'Alice Example likes her company', 'Alice Example likes his startup', 'Alice Example likes their firm']) {
-  test(`broad routing corpus stays: ${fact}`, async () => expect((await route(fact)).rerouted).toBe(false));
+  test(`broad routing corpus stays: ${fact}`, async () => expect(await route(fact)).toMatchObject({ rerouted: false, reason: /(?:her company|his startup|their firm)/.test(fact) ? 'possessive_broad' : 'broad_mentioned' }));
 }
 test('standalone invoice routes to person', async () => {
   expect((await route('Alice Example paid invoice 123 on August 17')).slug).toBe('people/alice-example');

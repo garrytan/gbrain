@@ -1,4 +1,4 @@
-/** capture-policy PR: exercise both writers with synthetic source-scoped PGLite pages. */
+/** capture-policy: exercise both writers with synthetic source-scoped PGLite pages. */
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from 'bun:test';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -35,7 +35,7 @@ afterEach(async () => { await disposePersistenceConsumer(engine); __setChatTrans
 afterAll(async () => { await engine.disconnect(); });
 async function run(managed = false) {
   if (managed) await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
-  return withEnv({ GBRAIN_HOME: home }, () => runFactsPipeline(`Synthetic source turn: ${claim}`, { engine, config: { engine: 'pglite', embedding_disabled: true }, sourceId: 'default', source: 'mcp:extract_facts', sessionId: null, remote: false }));
+  return withEnv({ GBRAIN_HOME: home }, () => runFactsPipeline(`Synthetic source turn: ${claim}`, { engine, config: { engine: 'pglite', embedding_disabled: true }, sourceId: 'default', source: 'mcp:extract_facts', sessionId: null, remote: false, notabilityFilter: 'all' }));
 }
 for (const managed of [false, true]) for (const mode of ['off', 'shadow', 'on']) test(`filter ${mode}, managed=${managed} preserves or drops at admission`, async () => {
   claim = 'Meeting scheduled for tomorrow at 3pm'; await engine.setConfig('facts.capture_filter', mode);
@@ -161,6 +161,7 @@ test('policy-only ingest rows do not affect extraction health', async () => {
 for (const managed of [false, true]) test(`conversation policy counts preserve raw extraction totals, managed=${managed}`, async () => {
   const { runExtractConversationFactsCore } = await import('../src/commands/extract-conversation-facts.ts');
   await engine.setConfig('facts.capture_filter', 'shadow');
+  await engine.setConfig('facts.page_write_notability_filter', 'high-only');
   await engine.setConfig('conversation_parser.llm_fallback_enabled', 'false');
   const slug = 'conversations/capture-example';
   await engine.putPage(slug, { type: 'conversation', title: 'Synthetic chat', compiled_truth: [
@@ -251,14 +252,66 @@ test('routing reads index-only aliases and normalizes their punctuation', async 
   expect(await engine.getPageAliases(company, { sourceId: 'another-source' })).toEqual([]);
 });
 
-for (const managed of [false, true]) test(`notability threshold composes before regex shadow, managed=${managed}`, async () => {
+for (const managed of [false, true]) test(`page-write notability does not override caller admission, managed=${managed}`, async () => {
   await engine.setConfig('facts.page_write_notability_filter', 'high-only');
   await engine.setConfig('facts.capture_filter', 'shadow');
   claim = 'Acme Example approved its annual strategy';
-  // The fixture extractor labels this substantive claim medium: notability is
-  // a separate threshold, while substance only vetoes the regex categories.
+  // An explicit caller-owned 'all' must retain medium claims regardless of the
+  // live page-write setting; put_page jobs freeze their own threshold.
   const result = await run(managed);
-  expect(result.inserted).toBe(0);
-  expect(result.filtered).toBe(1);
+  expect(result.inserted).toBe(1);
+  expect(result.filtered ?? 0).toBe(0);
   expect(result.would_filter ?? 0).toBe(0);
 });
+
+for (const limit of ['4', '0', '2']) test(`live cap ${limit} still admits prepared append`, async () => {
+  const { installFaultHook } = await import('../src/core/persistence/fault-points.ts');
+  await engine.setConfig('facts.page_cap.max_rows', '3');
+  claim = 'Acme Example has an annual planning process';
+  await run(true);
+  let changed = false;
+  installFaultHook(async (point, detail) => {
+    if (point === 'consumer:prepared' && detail.operation === 'extract_facts' && !changed) {
+      changed = true;
+      await engine.setConfig('facts.page_cap.max_rows', limit);
+    }
+  });
+  try {
+    claim = 'Acme Example has a quarterly review process';
+    expect((await run()).inserted).toBe(1);
+  } finally { installFaultHook(undefined); }
+  expect(changed).toBe(true);
+}, 60_000);
+
+test('managed warning logs exactly once on crossing and again only for capping', async () => {
+  await engine.setConfig('facts.page_cap.warn_rows', '1');
+  await engine.setConfig('facts.page_cap.max_rows', '2');
+  claim = 'Acme Example has an annual planning process';
+  await run(true);
+  const logs = () => engine.executeRaw("SELECT id FROM ingest_log WHERE summary LIKE 'page_cap:%'");
+  expect(await logs()).toHaveLength(1);
+  await run(); // receipt replay
+  expect(await logs()).toHaveLength(1);
+  claim = 'Acme Example has a quarterly review process';
+  await run();
+  expect(await logs()).toHaveLength(1);
+  claim = 'Acme Example has a monthly hiring process';
+  expect((await run()).capped).toBe(1);
+  expect(await logs()).toHaveLength(2);
+}, 60_000);
+
+for (const managed of [false, true]) test(`replacement ignores invalid stored cap, managed=${managed}`, async () => {
+  const { dispatchToolCall } = await import('../src/mcp/dispatch.ts');
+  if (managed) await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+  await withEnv({ GBRAIN_HOME: home }, async () => {
+    const call = async (fact: string, replaces?: number) => {
+      const response = await dispatchToolCall(engine, 'remember', { fact, entity: person,
+        provenance: 'synthetic fixture', ...(replaces ? { replaces } : {}) }, { remote: false });
+      expect(response.isError).not.toBe(true);
+      return JSON.parse(response.content[0]!.text!);
+    };
+    const first = await call('Alice Example prefers annual planning');
+    await engine.setConfig('facts.page_cap.max_rows', 'invalid');
+    await call('Alice Example prefers monthly planning', first.id);
+  });
+}, 60_000);

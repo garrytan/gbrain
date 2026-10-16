@@ -866,17 +866,17 @@ export async function currentConversationVersionToken(engine: BrainEngine, page:
 }
 
 async function filterConversationCapture(state: ExtractCoreState, sessionId: string, extracted: ExtractedFact[], policyCounts: CaptureCounts) {
-    const policyAuthority = (await state.managed?.run)?.authority.writer;
-    const policy = await applyCapturePolicy({ engine: state.engine, sourceId: state.sourceId, sessionId,
-      source: PER_SEGMENT_SOURCE_PREFIX, remote: false }, extracted, state.factVisibility,
-      policyAuthority ? { authority: policyAuthority } : null, { log: false });
-    extracted = policy.facts;
-    for (const [key, value] of Object.entries(policy.counts)) {
-      const k = key as keyof CaptureCounts;
-      policyCounts[k] = (policyCounts[k] ?? 0) + value;
-      state.result.capture_counts ??= {};
-      state.result.capture_counts[k] = (state.result.capture_counts[k] ?? 0) + value;
-    }
+  const policyAuthority = (await state.managed?.run)?.authority.writer;
+  const policy = await applyCapturePolicy({ engine: state.engine, sourceId: state.sourceId, sessionId,
+    source: PER_SEGMENT_SOURCE_PREFIX, remote: false }, extracted, state.factVisibility,
+    policyAuthority ? { authority: policyAuthority } : null, { log: false });
+  extracted = policy.facts;
+  for (const [key, value] of Object.entries(policy.counts)) {
+    const k = key as keyof CaptureCounts;
+    policyCounts[k] = (policyCounts[k] ?? 0) + value;
+    state.result.capture_counts ??= {};
+    state.result.capture_counts[k] = (state.result.capture_counts[k] ?? 0) + value;
+  }
   return extracted;
 }
 

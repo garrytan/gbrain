@@ -86,7 +86,7 @@ export interface FenceTarget {
 
 /** Input fact prepared by runPipelineWithBody (post-dedup). */
 export interface FenceInputFact {
-  /** capture-policy PR: explicit supersession may append its replacement at the cap. */
+  /** capture-policy: explicit supersession may append its replacement at the cap. */
   replacesExisting?: boolean;
   embedding_model?: string | null;
   fact: string;
@@ -114,7 +114,7 @@ export interface FenceInputFact {
 }
 
 export interface FenceWriteResult {
-  /** capture-policy PR: refused appends, with no DB fallback. */
+  /** capture-policy: refused appends, with no DB fallback. */
   capped?: number;
   /** Number of new rows written + indexed. */
   inserted: number;
@@ -500,7 +500,7 @@ export async function writeFactsToFence(
       const fenceRefusal = refuseUnparsedFence(body, target, filePath);
       if (fenceRefusal) return { inserted: 0, ids: [], fenceWriteFailed: true, fenceRefusal, ...withdrawnSkipped };
       const { facts: existingFenceFacts } = parseFactsFence(body);
-      const cap = await readPageCap(engine);
+      const cap = facts.some(fact => !fact.replacesExisting) ? await readPageCap(engine) : { warn: 0, max: 0 };
       const { admitted, capped } = admitFenceAppends(facts, cap, existingFenceFacts.length);
       facts = admitted;
       if (!facts.length) {
@@ -626,7 +626,7 @@ export async function writeFactsToFence(
           durabilityPrewriteState,
         );
       }
-      await reportPageCap(engine, target.sourceId, target.slug, cap, existingFenceFacts.length, capped);
+      await reportPageCap(engine, target.sourceId, target.slug, cap, existingFenceFacts.length, capped, result.inserted);
       return { inserted: result.inserted, ids: result.ids, capped, ...withdrawnSkipped };
     },
     { timeoutMs: 5_000 },

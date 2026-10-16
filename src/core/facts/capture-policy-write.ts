@@ -1,10 +1,9 @@
-/** Shared automatic-capture policy adapter (capture-policy PR); explicit writers never call this. */
+/** Shared automatic-capture policy adapter (capture-policy); explicit writers never call this. */
 import type { FactsBackstopCtx } from './backstop.ts';
 import type { ExtractedFact } from './extract.ts';
 import type { ManagedFactsSession } from '../persistence/facts-maintenance.ts';
 import { resolveStrictEntityReference, resolveEntitySlugWithSource } from '../entities/resolve.ts';
 import { classifyCaptureValue, captureMode, chooseSpecificEntity, routingTypes } from './capture-policy.ts';
-import { resolvePageWriteNotabilityFilter } from './notability-filter.ts';
 import { isFactWithdrawn } from './withdrawal.ts';
 import { linkAllowed } from './subject-infer-write.ts';
 import { appendContextNote } from './subject-infer.ts';
@@ -20,8 +19,7 @@ export async function applyCapturePolicy(
   const filter = captureMode(await engine.getConfig('facts.capture_filter'));
   const routing = captureMode(await engine.getConfig('facts.capture_routing'));
   const counts: CaptureCounts = {};
-  const notability = await resolvePageWriteNotabilityFilter(engine);
-  if (filter === 'off' && routing === 'off' && notability === 'all') return { facts: input, counts };
+  if (filter === 'off' && routing === 'off') return { facts: input, counts };
   const facts: ExtractedFact[] = [];
   const broadTypes = routingTypes(await engine.getConfig('facts.routing.broad_types'), 'company');
   const specificTypes = routingTypes(await engine.getConfig('facts.routing.specific_types'), 'person,project,deal');
@@ -30,9 +28,6 @@ export async function applyCapturePolicy(
   const excludePrivate = options.excludePrivate === true || managed?.authority.excludePrivate === true || await excludesPrivateWrites(engine, remote);
   const count = (key: keyof CaptureCounts) => { counts[key] = (counts[key] ?? 0) + 1; };
   for (let f of input) {
-    if (notability === 'high-only' && f.notability !== 'high' || notability === 'medium-and-up' && f.notability === 'low') {
-      count('filtered'); continue;
-    }
     if (filter !== 'off' && classifyCaptureValue(f).verdict === 'drop') {
       count(filter === 'on' ? 'filtered' : 'would_filter');
       if (filter === 'on') continue;

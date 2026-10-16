@@ -186,11 +186,10 @@ External archivers remain compatible: archive rows to make space, or increase
 source conversation do not append entity fences and therefore do not use this
 fence cap.
 
-The regex filter is independent of the existing #6231
-`facts.page_write_notability_filter` (`all`, `medium-and-up`, `high-only`).
-Automatic capture first applies that notability threshold, then applies the
-regex categories using `facts.capture_filter`. No separate low-notability knob
-exists. Regex categories support shadow mode; enable `on` only after reviewing
+Existing per-caller notability filters already cover low-tier facts. Page-write jobs
+freeze `facts.page_write_notability_filter` across retries. The capture filter
+only adds the regex categories and gives conversation extraction no new global
+notability threshold. Regex categories support shadow mode; enable `on` only after reviewing
 shadow counts and representative false positives. Topic-bearing proposed calls
 are kept, including a proposed Friday call to discuss scopes. Absolute dates
 alone never drop an event; modal "may" and "24/7" are not scheduling dates.
@@ -207,10 +206,6 @@ Conversation-derived database-only batches are also exempt as described above.
 
 **Say to your agent:** "Set the capture filter and routing to shadow, show me
 aggregate counts, and let me review examples before enabling drops."
-
-**Say to your agent:** "Keep medium and high notability facts during automatic
-capture using facts.page_write_notability_filter; explain what re-extraction
-will be needed if I later loosen this threshold."
 
 **Say to your agent:** "Set an optional fence row cap, check both thresholds,
 and explain how to archive rows or re-extract source material after drops."

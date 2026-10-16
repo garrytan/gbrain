@@ -45,7 +45,7 @@ export function heldFileDiagnostic(message: string | null | undefined, sourceId 
 }
 
 export function writeFailureDiagnostic(code: string, message?: string | null): { reason: string; message: string; suggestion: string } {
-  // capture-policy PR: a bounded cap refusal is actionable through the frozen verb error envelope.
+  // capture-policy: a bounded cap refusal is actionable through the frozen verb error envelope.
   if (code === 'facts_page_cap') return {
     reason: 'facts_page_cap', message: message!, suggestion: 'Archive existing fence rows on the named page or increase facts.page_cap.max_rows, then retry with a new request_id.',
   };

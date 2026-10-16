@@ -122,7 +122,7 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   const validate = async (tx: BrainEngine) => {
     await assertFactNotWithdrawn(tx, row.source_id, input, { excludePrivate });
     if (embedding && JSON.stringify(await tx.executeRaw(`${embeddingConfigSql} FOR SHARE`)) !== observedEmbeddingConfig) conflict(row);
-    // capture-policy PR: an explicit new fact is capped under the publication guard; replacements remain allowed.
+    // capture-policy: an explicit new fact is capped under the publication guard; replacements remain allowed.
     if (p.fence === true && snapshot && replaces === null && status !== 'superseded' && status !== 'duplicate') {
       const rows = [snapshot.page.compiled_truth, snapshot.page.timeline ?? '']
         .reduce((sum, text) => sum + parseFactsFence(text).facts.length, 0);
@@ -191,11 +191,10 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
     ...(page?.exclusiveSources ? { exclusiveSources: page.exclusiveSources } : {}),
     ...(additionalPageKeys ? { additionalPageKeys } : {}),
     afterCommit: async db => {
-      await page?.afterCommit?.(db);
-      if (p.fence === true && snapshot) {
+      if (p.fence === true && snapshot && replaces === null && status !== 'superseded' && status !== 'duplicate') {
         const rows = [snapshot.page.compiled_truth, snapshot.page.timeline ?? '']
           .reduce((sum, text) => sum + parseFactsFence(text).facts.length, 0);
-        await reportPageCap(db, row.source_id, row.slug, await readPageCap(db), rows);
+        await reportPageCap(db, row.source_id, row.slug, await readPageCap(db), rows, 0, 1);
       }
     },
     validate: async tx => { await validate(tx); await page?.validate?.(tx); }, apply: async tx => {

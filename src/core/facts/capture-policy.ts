@@ -1,5 +1,5 @@
 /**
- * Capture-time admission policy (capture-policy PR).
+ * Capture-time admission policy (capture-policy).
  * Deterministic and conservative: framed marketing and logistics can drop;
  * scheduling needs both a scheduling signal and a date/time. Physical shipping,
  * travel/account logistics and short-lived status drop only without substance.
@@ -26,23 +26,21 @@ export function classifyCaptureValue(input: CaptureClaim): CaptureVerdict {
   const substance = input.kind === 'metric' || !!input.claim_metric || [
     /\$|\b(?:USD|EUR)\b|\d\s*%|\b\d+(?:\.\d+)?\s*[kmb]\b/i,
     /\b(?:decided|agreed|signed|approved|rejected|hired|raised|closed|invested|terminated|acquired|licensed|filed|must|will not)\b/i,
-    /\b(?:patent|IP|FTO|IND|FDA|contract|term sheet|NDA|license|strategy|priority|risk|competitor|valuation)\b/i,
+    /\b(?:patent|IP|FTO|IND|FDA|contract|term sheet|NDA|license|strategy|priority|risk|competitor|valuation|merger|acquisition)\b/i,
     /\b(?:round|Series|revenue|ARR|MRR|margin|headcount)\b/i,
   ].some(pattern => pattern.test(text));
   if (substance) return { verdict: 'keep', category: null, rule: 'capture.substance.v1' };
   const future = /\b(?:will|scheduled for|planned for|upcoming|invite|reschedul\w*|proposed|set up)\b/i.test(text);
   const past = /\b(?:took place|was held|met|had a (?:meeting|call)|discussed|presented)\b/i.test(text);
-  const topic = /\b(?:about|regarding|to (?:discuss|share|review|present|negotiate))\b/i.test(text);
+  const topic = /\b(?:about|regarding|to (?:discuss|share|review|present|negotiate|vote|approve|reject))\b/i.test(text);
   const counterparty = /\bwith\s+\p{Lu}[\p{L}]+/u.test(text);
   const relativeTime = /\b(?:\d{1,2}:\d{2}|\d{1,2}\s*(?:am|pm)|noon|midnight|today|tomorrow|tonight|next week|next month|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(text);
   const absoluteDate = /\b(?:\d{4}-\d{2}-\d{2}|(?:january|february|april|june|july|august|september|october|november|december)\s+\d{1,2}|\d{1,2}\/\d{1,2}\/\d{2,4})\b/i.test(text);
   if (/\b(?:meeting|call|appointment|invite|reschedul\w*|attend\w*)\b/i.test(text)
     && future && (relativeTime || absoluteDate) && !past && !topic && !counterparty) return drop('scheduling');
-  const status = /\b(?:booked|reserved|confirmed|check-in|departs|lands|arrived|delayed|tracking)\b/i.test(text);
-  if (status
-    && /\b(?:parcel|courier|tracking number|delivery ETA|customs (?:status|clearance)|physical shipment)\b/i.test(text)) return drop('shipping');
-  if (status
-    && /\b(?:travel booking|hotel|flight|restaurant|room booking|parking|wi-?fi|password reset)\b/i.test(text)) return drop('logistics');
+  const framed = (noun: string) => new RegExp(`\\b(?:${noun})\\s+(?:(?:is|was)\\s+)?(?:booked|reserved|confirmed|check-in|departs|lands|arrived|delayed|tracking)\\b|\\b(?:booked|reserved|confirmed)\\s+(?:(?:a|the|my)\\s+)?(?:${noun})\\b`, 'i').test(text);
+  if (/\btracking number is\b/i.test(text) || framed('parcel|courier|tracking number|delivery ETA|customs (?:status|clearance)|physical shipment')) return drop('shipping');
+  if (framed('travel booking|hotel|flight|restaurant table|room booking|parking|wi-?fi|password reset link')) return drop('logistics');
   if (/\b(?:received|arrived|sent us|in my inbox)\b/i.test(text)
     && /\b(?:newsletter|unsubscribe|limited time|sponsored (?:email|message|post|content|offer)|promotional offer|webinar invitation|marketing email)\b/i.test(text)) return drop('spam');
   if (/\b(?:is running late|out of office until|waiting for a reply|will send (?:it|this) tomorrow|reminder to)\b/i.test(text)) return drop('transient');

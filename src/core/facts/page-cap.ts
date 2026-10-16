@@ -1,4 +1,4 @@
-/** Optional fence append ceiling (capture-policy PR). Checks never write or log. */
+/** Optional fence append ceiling (capture-policy). Checks never write or log. */
 import type { BrainEngine } from '../engine.ts';
 import { opError } from '../ops/contract.ts';
 import { writeFactsAbsorbLog } from './absorb-log.ts';
@@ -28,8 +28,8 @@ export function checkPageCap(cap: PageCap, rows: number, appends = 1): { warn: b
   return { warn: cap.warn > 0 && rows >= cap.warn, refuse: cap.max > 0 && rows + appends > cap.max };
 }
 /** Call after publication only; failed transactions must not consume warnings. */
-export async function reportPageCap(engine: BrainEngine, sourceId: string, slug: string, cap: PageCap, rows: number, capped = 0) {
-  if (!checkPageCap(cap, rows, 0).warn && !capped) return;
+export async function reportPageCap(engine: BrainEngine, sourceId: string, slug: string, cap: PageCap, rows: number, capped = 0, inserted = 0) {
+  if (!(cap.warn > 0 && rows < cap.warn && rows + inserted >= cap.warn) && !capped) return;
   await writeFactsAbsorbLog(engine, slug, 'page_cap', `warn_rows=${cap.warn} rows=${rows} capped=${capped}`, sourceId);
 }
 
