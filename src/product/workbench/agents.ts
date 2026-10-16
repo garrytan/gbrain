@@ -49,7 +49,8 @@ function normalizeProfile(input: Record<string, unknown>, previous?: WorkbenchAg
   const standingRules = ruleSource === undefined ? undefined : [...new Set(ruleSource.map(rule => compactRule(rule)))];
   const playbook = Object.hasOwn(input, 'playbook') ? (input.playbook == null ? undefined : normalizePlaybook(input.playbook)) : previous?.playbook ?? undefined;
   const now = new Date().toISOString();
-  return { ...base, id: previous?.id ?? randomUUID(), revision: (previous?.revision ?? 0) + 1, sourceIds: [...new Set(sourceIds)], skills: [...new Set(skills)], workflow, readDirectories: [...new Set(readDirectories)], deliveryFormat, ...(standingRules ? { standingRules } : {}), ...(playbook ? { playbook } : {}), schedule: schedule(Object.hasOwn(input, 'schedule') ? input.schedule : previous?.schedule), createdAt: previous?.createdAt ?? now, updatedAt: now };
+  const retiredRules = previous?.retiredRules?.filter(item => item && typeof item.text === 'string' && typeof item.replacedBy === 'string');
+  return { ...base, id: previous?.id ?? randomUUID(), revision: (previous?.revision ?? 0) + 1, sourceIds: [...new Set(sourceIds)], skills: [...new Set(skills)], workflow, readDirectories: [...new Set(readDirectories)], deliveryFormat, ...(standingRules ? { standingRules } : {}), ...(retiredRules?.length ? { retiredRules } : {}), ...(playbook ? { playbook } : {}), schedule: schedule(Object.hasOwn(input, 'schedule') ? input.schedule : previous?.schedule), createdAt: previous?.createdAt ?? now, updatedAt: now };
 }
 export class WorkbenchAgentStore {
   constructor(readonly workbench: WorkbenchStore) {}
@@ -79,12 +80,12 @@ export class WorkbenchAgentStore {
     if (this.list().some(row => row.name === agent.name)) throw new Error('已有同名助手，请修改现有助手或使用其他名称');
     state.agents.push(agent); this.write(state); return agent;
   }
-  rememberRules(id: string, rules: string[]): WorkbenchAgent {
+  rememberRules(id: string, rules: string[], retiredRules?: WorkbenchAgent['retiredRules']): WorkbenchAgent {
     const standingRules = [...new Set(rules.map(compactRule).filter(Boolean))].slice(-40);
     if (standingRules.some(rule => rule.length > 240)) throw new Error('单条工作规则不超过 240 个字符');
     const state = this.read();
     const current = this.get(id);
-    const next = { ...current, standingRules, revision: current.revision + 1, updatedAt: new Date().toISOString() };
+    const next = { ...current, standingRules, ...(retiredRules ? { retiredRules: retiredRules.filter(item => !standingRules.includes(item.text)).slice(-40) } : {}), revision: current.revision + 1, updatedAt: new Date().toISOString() };
     state.agents = [...state.agents.filter(agent => agent.id !== id), next];
     this.write(state);
     return this.get(id);
@@ -98,6 +99,14 @@ export class WorkbenchAgentStore {
     state.agents = [...state.agents.filter(agent => agent.id !== id), next];
     this.write(state);
     return this.get(id);
+  }
+  replace(agent: WorkbenchAgent): WorkbenchAgent {
+    const next = structuredClone(agent);
+    const state = this.read();
+    if (next.id !== 'main' && !state.agents.some(row => row.id === next.id)) throw new Error('助手不存在');
+    state.agents = [...state.agents.filter(row => row.id !== next.id), next];
+    this.write(state);
+    return this.get(next.id);
   }
   update(id: string, input: Record<string, unknown>): WorkbenchAgent {
     const state = this.read(); const previous = this.get(id);

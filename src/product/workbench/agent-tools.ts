@@ -7,6 +7,7 @@ import type { WorkbenchCitation } from '../../../shared/workbench';
 import type { WorkbenchAgent, WorkbenchSkill } from '../../../shared/workbench-agents';
 import { compatibleSkill, WorkbenchAgentStore } from './agents';
 import { CURRENT_EVIDENCE_RULE, needsCurrentEvidence, playbookPrompt, wantsSavedPlaybook } from './playbook';
+import { continuesActiveTask } from './task-context';
 import { taskNeedsSkill } from './turn-policy';
 import { listLocalFiles, publishArtifactToSource, readLocalFile, saveWorkbenchArtifact } from './files';
 
@@ -42,9 +43,10 @@ export async function validateAgent(context: WorkbenchAgentTools, input: Record<
     if (!rows.length) throw new Error(`知识来源不存在或已归档：${source}`);
   }
 }
-export async function agentInstructions(context: WorkbenchAgentTools, agent: WorkbenchAgent, options: { userText?: string; taskNotes?: string[] } = {}) {
+export async function agentInstructions(context: WorkbenchAgentTools, agent: WorkbenchAgent, options: { userText?: string; taskNotes?: string[]; taskActive?: boolean } = {}) {
   const notes = options.taskNotes?.map(note => note.trim()).filter(Boolean) ?? [];
-  const triggered = options.userText === undefined || !options.userText.trim() ? true : taskNeedsSkill(agent, options.userText) || notes.length > 0;
+  const follow = !!options.taskActive && !!options.userText && continuesActiveTask(options.userText);
+  const triggered = options.userText === undefined || !options.userText.trim() ? true : taskNeedsSkill(agent, options.userText) || notes.length > 0 || follow;
   const loaded = [];
   if (triggered) for (const name of agent.skills) {
     const detail = await agentSkill(context, name);

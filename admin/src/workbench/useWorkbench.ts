@@ -216,9 +216,16 @@ export function useWorkbench({ serviceReady = true, databaseReady = true }: { se
     catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
     finally { setPending(false); }
   };
+  const restoreRevision = async (revisionId: string) => {
+    if (!conversation || running || pending) return;
+    const id = conversation.id; setError(''); setPending(true);
+    try { const next = await workbenchRequest<WorkbenchConversation>(`/conversations/${id}/revisions/${revisionId}/restore`, {}); if (active.current === id) setConversation(next); await refresh(); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+    finally { setPending(false); }
+  };
   const saveAgent = async (value: WorkbenchAgent) => {
     const saved = await workbenchRequest<WorkbenchAgent>(`/agents/${value.id}`, value, 'PUT');
     await refresh(); setAssistant(saved); if (saved.model) setModel(saved.model); if (!conversation) setKnowledge(saved.knowledge); return saved;
   };
-  return { rows: rows.filter(row => (row.assistantId ?? 'main') === assistantId), allRows: rows, agents, assistantId, selectAgent, saveAgent, refresh, models, modelsLoaded, conversation, model, setModel: chooseModel, knowledge: knowledge && databaseReady, setKnowledge, assistant, saveAssistant, error, setError, loaded, pending, running, select, send, action, clearContext, undoRules };
+  return { rows: rows.filter(row => (row.assistantId ?? 'main') === assistantId), allRows: rows, agents, assistantId, selectAgent, saveAgent, refresh, models, modelsLoaded, conversation, model, setModel: chooseModel, knowledge: knowledge && databaseReady, setKnowledge, assistant, saveAssistant, error, setError, loaded, pending, running, select, send, action, clearContext, undoRules, restoreRevision };
 }

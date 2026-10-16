@@ -51,7 +51,7 @@
 .wb-more { position: relative; }
 .wb-more summary { list-style: none; cursor: pointer; border: 1px solid var(--product-line); border-radius: 7px; padding: 8px 11px; }
 .wb-more summary::-webkit-details-marker { display: none; }
-.wb-more div { position: absolute; right: 0; top: calc(100% + 6px); z-index: 6; min-width: 196px; padding: 6px; background: var(--product-panel); border: 1px solid var(--product-line); border-radius: 8px; }
+.wb-more div { position: absolute; right: 0; top: calc(100% + 6px); z-index: 6; min-width: 196px; max-height: 280px; overflow: auto; padding: 6px; background: var(--product-panel); border: 1px solid var(--product-line); border-radius: 8px; }
 .wb-more button { width: 100%; justify-content: flex-start; border: 0; white-space: nowrap; }
 .wb-context-floor { margin: 18px 0; color: var(--product-muted); font-size: 12px; text-align: center; }
 .wb-messages { overflow: auto; flex: 1; min-height: 0; scroll-behavior: auto; }

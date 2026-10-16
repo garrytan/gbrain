@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import type { WorkbenchCitation, WorkbenchConversation, WorkbenchMemory, WorkbenchMessage, WorkbenchModel, WorkbenchToolCall } from '../../../shared/workbench';
-import { advanceStoredReads, attachmentRead, enrichAttachments, incomingAttachments, resolveListedAttachments, summarySource, modelReadsPdfNatively } from './attachments';
-import { knowledgeReserve, planContext,conversationCitations,referenceProjection } from './context';
+import type { WorkbenchCitation, WorkbenchConversation, WorkbenchMemory, WorkbenchMessage, WorkbenchModel, WorkbenchTask, WorkbenchToolCall } from '../../../shared/workbench';
+import { advanceStoredReads, attachmentRead, enrichAttachments, incomingAttachments, namedAttachmentSupplement, resolveListedAttachments, summarySource, modelReadsPdfNatively, taskVisualAttachments } from './attachments';
+import { contextBudget, knowledgeReserve, planContext,conversationCitations,referenceProjection } from './context';
 import { WorkbenchStore } from './store';
 import { compressTranscript, contextFailure,requestOutputTokens } from './context-runtime';
 import type {ChatRequestEvent} from '../../core/ai/chat-request-runtime';
@@ -10,7 +10,8 @@ import { memoryVersion } from './memory-identity';
 import { WorkbenchAgentStore } from './agents';
 import type { WorkbenchAgent } from '../../../shared/workbench-agents';
 import { activityLine, compilePlaybook, EVIDENCE_GAP_TEXT, needsCurrentEvidence, visibleAssistantText, wantsSavedPlaybook } from './playbook';
-import { learnTurn } from './turn-policy';
+import { advanceTask, noteTask } from './task-context';
+import { compactRule, learnTurn } from './turn-policy';
 
 export { conversationContext } from './context';
 
@@ -22,6 +23,7 @@ export interface WorkbenchAnswerInput {
   messages: WorkbenchMessage[];
   summary?: string;
   taskNotes?: string[];
+  task?: WorkbenchTask;
   priorCitations?: WorkbenchCitation[];
   model: string;
   knowledge: boolean;
@@ -31,6 +33,8 @@ export interface WorkbenchAnswerInput {
   contextThreshold?: number;
   signal: AbortSignal;
   attachmentSupplement?: string;
+  visualAttachments?: Array<{ name: string; mime: string; image: string }>;
+  settledTools?: WorkbenchToolCall[];
   progress: (stage: string) => void;
   onDelta?: (delta: string) => void;
   onReplace?: (text: string, model: string) => void;
@@ -52,6 +56,29 @@ async function compressOlder(model: string, prior: string, pending: WorkbenchMes
   return compressTranscript({model,prior,transcript:pending.map(message=>`${message.role === 'user' ? '用户' : '助手'}：${summarySource(message)}`).join('\n'),signal,summarize,contextWindow});
 }
 
+function revisionPreview(messages: WorkbenchMessage[]): string {
+  const text = messages.find(message => message.role === 'user' && message.text.trim())?.text ?? messages.find(message => message.text.trim())?.text ?? '';
+  return text.trim().slice(0, 40);
+}
+
+export function revisionListing(conversation: Pick<WorkbenchConversation, 'revisions'>) {
+  return (conversation.revisions ?? []).map(item => ({
+    id: item.id,
+    createdAt: item.createdAt,
+    reason: item.reason,
+    ...(item.preview ? { preview: item.preview } : {}),
+    messageCount: item.messages.length,
+    messages: [] as WorkbenchMessage[],
+  }));
+}
+
+function capRevisions<T extends { id: string }>(revisions: T[], keepId?: string): T[] {
+  if (revisions.length <= 30) return revisions;
+  const tail = new Set(revisions.slice(keepId ? -29 : -30).map(item => item.id));
+  if (keepId) tail.add(keepId);
+  return revisions.filter(item => tail.has(item.id));
+}
+
 export class WorkbenchService {
   private active = new Map<string, { abort: AbortController; promise: Promise<void>; generation: number; live: WorkbenchConversation; replyId: string; rejectReady?: (error: unknown) => void }>();
   private acceptance = new Map<string, Promise<WorkbenchConversation>>();
@@ -64,7 +91,7 @@ export class WorkbenchService {
     for (const conversation of store.list()) {
       let changed = false;
       for (const message of conversation.messages) if (message.status === 'running') {
-        message.status = 'error'; message.error = '上次生成因服务退出而中断，请重试。'; message.errorCode='service_interrupted';
+        message.status = 'error'; message.error = '上次生成因服务退出而中断。这只是界面恢复，模型没有接着写；已经完成的工具不会自动再执行。请重试。'; message.errorCode='service_interrupted';
         for (const call of message.toolCalls ?? []) if (call.status === 'running') { call.status = 'error'; call.error = message.error; call.completedAt = new Date().toISOString(); }
         changed = true;
       }
@@ -113,7 +140,9 @@ export class WorkbenchService {
     if (last) conversation.contextFloor = last.id;
     delete conversation.summary;
     delete conversation.summaryUntil;
+    delete conversation.summaryAssistantRevision;
     delete conversation.taskNotes;
+    delete conversation.task;
     conversation.updatedAt = new Date().toISOString();
     this.store.save(conversation);
     return conversation;
@@ -126,9 +155,14 @@ export class WorkbenchService {
     if (!message || !learned.length) throw new Error('这条更新已经撤销，或没有可撤销的规则');
     const assistantId = conversation.assistantId ?? 'main';
     const agent = new WorkbenchAgentStore(this.store).get(assistantId);
-    new WorkbenchAgentStore(this.store).rememberRules(assistantId, (agent.standingRules ?? []).filter(rule => !learned.includes(rule)));
+    const current = agent.standingRules ?? [];
+    const replaced = message.replacedRules?.filter(Boolean) ?? [];
+    const standing = [...replaced.filter(rule => !current.includes(rule)), ...current.filter(rule => !learned.includes(rule))];
+    const retired = (agent.retiredRules ?? []).filter(item => !replaced.includes(item.text) && !standing.includes(item.text));
+    new WorkbenchAgentStore(this.store).rememberRules(assistantId, standing, retired);
     message.ruleNotice = '已撤销刚记下的工作规则';
     delete message.learnedRules;
+    delete message.replacedRules;
     conversation.updatedAt = new Date().toISOString();
     this.store.save(conversation);
     return this.get(id);
@@ -176,8 +210,10 @@ export class WorkbenchService {
     const attachmentFlags = { vision: this.models().find(item => item.id === model)?.vision === true, pdfNative: modelReadsPdfNatively() };
     const snapshot = JSON.stringify(conversation);
     const previousAttachmentIds = new Set(conversation.messages.flatMap(message => (message.attachments ?? []).map(item => item.id)));
+    let settledTools: WorkbenchToolCall[] | undefined;
     let carriedNotice: string | undefined;
     let carriedRules: string[] | undefined;
+    let carriedReplaced: string[] | undefined;
     let carriedPlaybookNotice: string | undefined;
     let carriedPlaybook: string | undefined;
     if (input.editMessageId) {
@@ -193,7 +229,9 @@ export class WorkbenchService {
       if (!text && !kept) throw new Error('请输入 1–32000 个字符');
       const previous = target.text;
       conversation.revisions ??= [];
-      conversation.revisions.push({ id: randomUUID(), createdAt: now, reason: 'edit', messages: structuredClone(conversation.messages.slice(index)) });
+      const removed = conversation.messages.slice(index);
+      conversation.revisions.push({ id: randomUUID(), createdAt: now, reason: 'edit', preview: revisionPreview(removed), messages: structuredClone(removed) });
+      conversation.revisions = capRevisions(conversation.revisions);
       target.text = text;
       delete target.memory;
       if (nextAttachments) this.applyEditedAttachments(conversation.id, target, nextAttachments, input.attachmentsHydrated === true);
@@ -201,17 +239,20 @@ export class WorkbenchService {
       if (index === 0 && (conversation.title === '新对话' || conversation.title === previous.slice(0, 40))) conversation.title = (text || nextAttachments?.[0]?.name || previous).slice(0, 40);
       if (conversation.summaryUntil) {
         const anchor = conversation.messages.findIndex(message => message.id === conversation.summaryUntil);
-        if (anchor === -1 || anchor >= index) { delete conversation.summary; delete conversation.summaryUntil; }
+        if (anchor === -1 || anchor >= index) { delete conversation.summary; delete conversation.summaryUntil; delete conversation.summaryAssistantRevision; }
       }
     } else if (input.retry) {
       const previousReply = conversation.messages.at(-1);
       if (previousReply?.role !== 'assistant') throw new Error('没有可重新生成的回答');
       carriedNotice = previousReply.ruleNotice;
       carriedRules = previousReply.learnedRules;
+      carriedReplaced = previousReply.replacedRules;
       carriedPlaybookNotice = previousReply.playbookNotice;
       carriedPlaybook = previousReply.savedPlaybook;
+      settledTools = previousReply.toolCalls?.filter(call => call.status === 'complete');
       conversation.revisions ??= [];
-      conversation.revisions.push({ id: randomUUID(), createdAt: now, reason: 'retry', messages: [structuredClone(previousReply)] });
+      conversation.revisions.push({ id: randomUUID(), createdAt: now, reason: 'retry', preview: revisionPreview([previousReply]), messages: [structuredClone(previousReply)] });
+      conversation.revisions = capRevisions(conversation.revisions);
       conversation.messages.pop();
     } else {
       const nextAttachments = incomingAttachments(input.attachments, attachmentFlags);
@@ -221,37 +262,76 @@ export class WorkbenchService {
       if (conversation.messages.length === 1) conversation.title = (text || nextAttachments[0]?.name || '\u9644\u4ef6').slice(0, 40);
     }
     conversation.model = model; conversation.knowledge = input.knowledge ?? conversation.knowledge; conversation.updatedAt = now;
-    let assistant = new WorkbenchAgentStore(this.store).get(conversation.assistantId ?? 'main');
+    const turnId = randomUUID();
+    const currentUser = [...conversation.messages].reverse().find(message => message.role === 'user');
+    if (currentUser) currentUser.turnId = turnId;
+    const agentBefore = structuredClone(new WorkbenchAgentStore(this.store).get(conversation.assistantId ?? 'main'));
+    let assistant = agentBefore;
     let turnScope: ReturnType<typeof learnTurn>['scope'] | undefined;
     let ruleNotice = carriedNotice;
     let learnedRules = carriedRules?.filter(Boolean);
+    let replacedRules = carriedReplaced?.filter(Boolean);
+    let taskInherited = false;
     let playbookNotice = carriedPlaybookNotice;
     let savedPlaybook = carriedPlaybook;
     if (!input.retry) {
       const spoken = [...conversation.messages].reverse().find(message => message.role === 'user');
-      if (spoken?.text && wantsSavedPlaybook(spoken.text)) {
+      if (spoken?.text) {
         const floor = conversation.contextFloor ? conversation.messages.findIndex(message => message.id === conversation.contextFloor) : -1;
-        const playbook = compilePlaybook({ name: assistant.name, workflow: assistant.workflow, standingRules: assistant.standingRules, deliveryFormat: assistant.deliveryFormat, recentUserTexts: conversation.messages.filter((message, index) => message.role === 'user' && message.id !== spoken.id && index > floor).map(message => message.text) });
-        assistant = new WorkbenchAgentStore(this.store).rememberPlaybook(assistant.id, playbook);
-        playbookNotice = `已把这次存成「${playbook.name}」的做法`;
-        savedPlaybook = playbook.name;
-        turnScope = 'once';
-      } else if (spoken?.text) {
-        const floor = conversation.contextFloor ? conversation.messages.findIndex(message => message.id === conversation.contextFloor) : -1;
-        const learning = learnTurn({ name: assistant.name, standingRules: assistant.standingRules, recentUserTexts: conversation.messages.filter((message, index) => message.role === 'user' && message.id !== spoken.id && index > floor).map(message => message.text), text: spoken.text });
-        turnScope = learning.scope;
-        ruleNotice = learning.notice;
-        learnedRules = learning.added;
-        if (learning.scope === 'once' && learning.taskNote) conversation.taskNotes = [...new Set([...(conversation.taskNotes ?? []), learning.taskNote])].slice(-8);
-        else if (learning.rules.join('\n') !== (assistant.standingRules ?? []).join('\n')) assistant = new WorkbenchAgentStore(this.store).rememberRules(assistant.id, learning.rules);
+        const recentUserTexts = conversation.messages.filter((message, index) => message.role === 'user' && message.id !== spoken.id && index > floor).map(message => message.text);
+        const advanced = advanceTask({ task: conversation.task, notes: conversation.taskNotes, text: spoken.text, recentUserTexts, agent: assistant, now, id: () => randomUUID() });
+        taskInherited = advanced.inherited;
+        if (advanced.task) conversation.task = advanced.task;
+        if (advanced.opened) delete conversation.taskNotes;
+        if (wantsSavedPlaybook(spoken.text)) {
+          const playbook = compilePlaybook({ name: assistant.name, workflow: assistant.workflow, standingRules: assistant.standingRules, deliveryFormat: assistant.deliveryFormat, recentUserTexts });
+          assistant = new WorkbenchAgentStore(this.store).rememberPlaybook(assistant.id, playbook);
+          playbookNotice = `已把这次存成「${playbook.name}」的做法`;
+          savedPlaybook = playbook.name;
+          turnScope = 'once';
+        } else {
+          const learning = learnTurn({ name: assistant.name, standingRules: assistant.standingRules, recentUserTexts, text: spoken.text });
+          turnScope = learning.scope;
+          ruleNotice = learning.notice;
+          learnedRules = learning.added;
+          if (learning.replaced.length) replacedRules = learning.replaced.map(item => item.text);
+          let onceNote: string | undefined;
+          if (learning.scope === 'once' && learning.taskNote) {
+            onceNote = learning.taskNote;
+            const constraints = [...new Set([...(conversation.task?.constraints ?? []), learning.taskNote])].slice(-8);
+            conversation.task = conversation.task ? { ...conversation.task, constraints, updatedAt: now } : { id: randomUUID(), goal: compactRule(learning.taskNote), constraints, updatedAt: now };
+            conversation.taskNotes = constraints;
+          } else if (conversation.task) {
+            if (conversation.task.constraints.length) conversation.taskNotes = [...conversation.task.constraints];
+            else delete conversation.taskNotes;
+          }
+          if (learning.scope === 'correction' && conversation.task && learning.added.length) conversation.task = { ...conversation.task, decisions: [...new Set([...(conversation.task.decisions ?? []), ...learning.added])].slice(-8), updatedAt: now };
+          if (learning.replaced.length || learning.rules.join('\n') !== (assistant.standingRules ?? []).join('\n')) {
+            const retired = [...(assistant.retiredRules ?? []).filter(item => !learning.rules.includes(item.text) && !learning.replaced.some(next => next.text === item.text)), ...learning.replaced];
+            assistant = new WorkbenchAgentStore(this.store).rememberRules(assistant.id, learning.rules, retired);
+          }
+          if (conversation.task?.sources) {
+            const liveIds = new Set(conversation.messages.map(message => message.id));
+            conversation.task = { ...conversation.task, sources: conversation.task.sources.filter(item => liveIds.has(item.messageId)) };
+          }
+          if (conversation.task && onceNote) conversation.task = noteTask(conversation.task, { messageId: spoken.id, opened: advanced.opened, inherited: advanced.inherited, constraint: onceNote });
+        }
+        if (conversation.task && turnScope !== 'once') {
+          const liveIds = new Set(conversation.messages.map(message => message.id));
+          if (conversation.task.sources?.some(item => !liveIds.has(item.messageId))) conversation.task = { ...conversation.task, sources: conversation.task.sources.filter(item => liveIds.has(item.messageId)) };
+          conversation.task = noteTask(conversation.task, { messageId: spoken.id, opened: advanced.opened, inherited: advanced.inherited });
+        } else if (conversation.task?.sources?.some(item => !conversation.messages.some(message => message.id === item.messageId))) {
+          const liveIds = new Set(conversation.messages.map(message => message.id));
+          conversation.task = { ...conversation.task, sources: conversation.task.sources!.filter(item => liveIds.has(item.messageId)) };
+        }
       }
     }
     const contextWindow = this.models().find(item => item.id === model)?.contextWindow;
     const modelName = this.models().find(item => item.id === model)?.name || model;
     const hasAttachments = conversation.messages.some(message => message.attachments?.length);
     const reply: WorkbenchMessage = {
-      id: randomUUID(), role: 'assistant', text: '', createdAt: now, status: 'running', model, modelName,
-      stage: hasAttachments ? '正在读取附件' : '正在准备回答', ...(ruleNotice ? { ruleNotice } : {}), ...(learnedRules?.length ? { learnedRules } : {}), ...(playbookNotice ? { playbookNotice } : {}), ...(savedPlaybook ? { savedPlaybook } : {}),
+      id: randomUUID(), role: 'assistant', text: '', createdAt: now, status: 'running', model, modelName, turnId,
+      stage: hasAttachments ? '正在读取附件' : '正在准备回答', ...(ruleNotice ? { ruleNotice } : {}), ...(learnedRules?.length ? { learnedRules } : {}), ...(replacedRules?.length ? { replacedRules } : {}), ...(playbookNotice ? { playbookNotice } : {}), ...(savedPlaybook ? { savedPlaybook } : {}),
     };
     conversation.messages.push(reply); this.store.save(conversation);
     const generation = (this.turnSerial.get(id) ?? 0) + 1;
@@ -309,11 +389,17 @@ export class WorkbenchService {
           }
           if (!opened) {
             this.rollback(conversation, snapshot, previousAttachmentIds);
+            new WorkbenchAgentStore(this.store).replace(agentBefore);
             const failure = error instanceof Error && error.name === 'AbortError' ? new Error('已停止生成') : error;
             rejectReady(failure instanceof Error ? failure : new Error(String(failure)));
             return;
           }
           throw error;
+        }
+        if (conversation.summary && typeof conversation.summaryAssistantRevision === 'number' && conversation.summaryAssistantRevision !== assistant.revision) {
+          delete conversation.summary;
+          delete conversation.summaryUntil;
+          delete conversation.summaryAssistantRevision;
         }
         const priorCitations=conversationCitations(conversation.messages);
         const outputReserve=requestOutputTokens(model,contextWindow);
@@ -330,7 +416,8 @@ export class WorkbenchService {
             if (anchor >= 0) pending = older.slice(anchor + 1);
             else if (!conversation.messages.some(message => message.id === conversation.summaryUntil)) prior = '';
           }
-          if (pending.length || !prior) {
+          const aligned = pending.length > 0 && pending.every(message => message.role === 'assistant') && Boolean(prior);
+          if ((pending.length || !prior) && !aligned) {
             reply.stage = '正在压缩更早的对话';
             saveSoon(true);
             const summaryModel = assistant.context.summaryModel;
@@ -340,10 +427,11 @@ export class WorkbenchService {
             summary = compressed;
             conversation.summary = summary;
             conversation.summaryUntil = older[older.length - 1]!.id;
+            conversation.summaryAssistantRevision = assistant.revision;
             contextOptions.summaryUntil = conversation.summaryUntil;
             saveSoon(true);
           } else summary = prior;
-          reply.contextNote = `更早的 ${olderTurns} 轮已压缩为摘要，仍会参与这次回答`;
+          if (olderTurns) reply.contextNote = `更早的 ${olderTurns} 轮已压缩为摘要，仍会参与这次回答`;
         }
         for (let attempt = 0; attempt < conversation.messages.length; attempt++) {
           const planned = planContext(conversation.messages, assistant.context, { ...contextOptions, summary });
@@ -356,18 +444,28 @@ export class WorkbenchService {
           older = planned.older;
           conversation.summary = summary;
           conversation.summaryUntil = older.at(-1)?.id;
+          conversation.summaryAssistantRevision = assistant.revision;
           contextOptions.summaryUntil = conversation.summaryUntil;
           saveSoon(true);
         }
         reply.contextMessages = recent.length;
-        if (older.length) reply.contextNote = `更早的 ${older.filter(message => message.role === 'user').length} 轮已压缩为摘要，仍会参与这次回答`;
+        const coveredTurns = older.filter(message => message.role === 'user').length;
+        if (coveredTurns) reply.contextNote = `更早的 ${coveredTurns} 轮已压缩为摘要，仍会参与这次回答`;
+        const recentIds = new Set(recent.map(message => message.id));
+        const spokenTurn = [...conversation.messages].reverse().find(message => message.role === 'user');
+        if (!input.retry && spokenTurn) {
+          const named = namedAttachmentSupplement(conversation.messages, spokenTurn.text, recentIds);
+          if (named && !spokenTurn.attachmentSupplement?.includes(named)) spokenTurn.attachmentSupplement = [spokenTurn.attachmentSupplement, named].filter(Boolean).join('\n\n');
+        }
+        const visuals = taskVisualAttachments(this.modelMessages(conversation.id, conversation.messages), conversation.task, recentIds);
+        const visualItems = [...visuals.kept.map(item => ({ kind: 'image', ref: item.name, state: 'kept' as const })), ...visuals.omitted.map(item => ({ kind: 'image', ref: item.name, state: 'omitted' as const }))];
         const compressionModel = assistant.context.summaryModel && this.models().some(item => item.id === assistant.context.summaryModel) ? assistant.context.summaryModel : model;
         const result = await this.answer({
           agent: assistant, messageId: reply.id,
           contextWindow, contextThreshold: assistant.context.threshold,
           ...(this.summarize ? { contextSummarizer: { model: compressionModel, contextWindow: this.models().find(item => item.id === compressionModel)?.contextWindow, summarize: this.summarize } } : {}),
           sourceId: conversation.sourceId, conversationId: conversation.id,
-          messages: this.modelMessages(conversation.id, recent), ...(summary ? { summary } : {}), ...(conversation.taskNotes?.length ? { taskNotes: conversation.taskNotes } : {}), ...(conversation.knowledge?{priorCitations}:{}), model, knowledge: conversation.knowledge,
+          messages: this.modelMessages(conversation.id, recent), ...(summary ? { summary } : {}), ...(conversation.taskNotes?.length ? { taskNotes: conversation.taskNotes } : {}), ...(conversation.task ? { task: conversation.task } : {}), ...(conversation.knowledge?{priorCitations}:{}), ...(visuals.kept.length ? { visualAttachments: visuals.kept.map(({ name, mime, image }) => ({ name, mime, image })) } : {}), ...(settledTools?.length ? { settledTools } : {}), model, knowledge: conversation.knowledge,
           ...(assistant.systemPrompt.trim() ? { systemPrompt: assistant.systemPrompt } : {}),
           ...(assistant.temperature !== null ? { temperature: assistant.temperature } : {}),
           signal: session.signal,
@@ -401,9 +499,25 @@ export class WorkbenchService {
           const spoken = [...conversation.messages].reverse().find(message => message.role === 'user');
           let knowledge = result.knowledge ?? (conversation.knowledge ? (citations.length ? 'used' : 'none') : 'off');
           let text = visibleAssistantText(result.text, reply.toolCalls);
-          const evidenceGap = !!spoken?.text && needsCurrentEvidence(spoken.text) && !wantsSavedPlaybook(spoken.text) && knowledge !== 'off' && citations.length === 0;
+          const evidenceTask = !wantsSavedPlaybook(spoken?.text ?? '') && (needsCurrentEvidence(spoken?.text ?? '') || needsCurrentEvidence(conversation.task?.goal ?? ''));
+          const evidenceGap = evidenceTask && knowledge !== 'off' && citations.length === 0;
           if (evidenceGap) { text = EVIDENCE_GAP_TEXT; knowledge = 'none'; reply.evidenceGap = true; }
           else delete reply.evidenceGap;
+          reply.contextManifest = {
+            assistantRevision: assistant.revision,
+            ...(conversation.task ? { task: { id: conversation.task.id, goal: conversation.task.goal, inherited: taskInherited, constraints: [...conversation.task.constraints] } } : {}),
+            rules: [
+              ...(assistant.standingRules ?? []).map(rule => ({ text: rule, state: 'active' as const })),
+              ...(assistant.retiredRules ?? []).map(rule => ({ text: rule.text, state: 'replaced' as const, replacedBy: rule.replacedBy })),
+            ],
+            knowledge: conversation.knowledge,
+            evidenceTask,
+            citations: citations.length,
+            budget: { window: contextWindow ?? 32000, inputBudget: contextBudget(contextWindow, assistant.context.threshold, outputReserve), outputReserve },
+            ...(reply.turnId ? { turnId: reply.turnId } : {}),
+            ...(reply.contextNote ? { omitted: [reply.contextNote] } : {}),
+            ...(visualItems.length ? { items: visualItems } : {}),
+          };
           reply.text = text;
           reply.model = result.model || model;
           reply.modelName = this.models().find(item => item.id === reply.model)?.name || reply.modelName;
@@ -412,6 +526,18 @@ export class WorkbenchService {
           if (result.stopReason) reply.stopReason = result.stopReason;
           reply.status = 'complete';
           reply.artifacts = evidenceGap ? [] : new WorkbenchAgentStore(this.store).artifacts().filter(item => item.conversationId === id && item.messageId === reply.id).map(({ id: artifactId, title, format, publishedPath }) => ({ id: artifactId, title, format, publishedPath }));
+          if (conversation.task) {
+            if (evidenceGap) conversation.task = { ...conversation.task, openItems: [...new Set([...(conversation.task.openItems ?? []), '本期材料还没齐'])].slice(-8) };
+            else if (citations.length && conversation.task.openItems?.includes('本期材料还没齐')) {
+              const openItems = conversation.task.openItems.filter(item => item !== '本期材料还没齐');
+              const next = { ...conversation.task };
+              if (openItems.length) next.openItems = openItems;
+              else delete next.openItems;
+              conversation.task = next;
+            }
+            const delivered = (reply.artifacts ?? []).map(item => item.publishedPath || item.title).filter((item): item is string => Boolean(item));
+            if (delivered.length) conversation.task = { ...conversation.task, deliveries: [...new Set([...(conversation.task.deliveries ?? []), ...delivered])].slice(-8) };
+          }
         }
       } catch (error) { if (opened && this.owns(id, generation) && !abort.signal.aborted) { const failure = contextFailure(error); reply.status = 'error'; reply.error = failure.message; reply.errorCode = failure.code; } }
       finally {
@@ -501,7 +627,37 @@ export class WorkbenchService {
     else delete conversation.summary;
     if (restored.summaryUntil) conversation.summaryUntil = restored.summaryUntil;
     else delete conversation.summaryUntil;
+    if (typeof restored.summaryAssistantRevision === 'number') conversation.summaryAssistantRevision = restored.summaryAssistantRevision;
+    else delete conversation.summaryAssistantRevision;
+    if (restored.task) conversation.task = restored.task;
+    else delete conversation.task;
+    if (restored.taskNotes) conversation.taskNotes = restored.taskNotes;
+    else delete conversation.taskNotes;
     this.store.save(conversation);
+  }
+  restoreRevision(id: string, revisionId: string): WorkbenchConversation {
+    if (this.active.has(id)) throw new Error('请先停止当前生成');
+    const conversation = this.get(id);
+    const revision = conversation.revisions?.find(item => item.id === revisionId);
+    if (!revision) throw new Error('这段历史不存在');
+    const snapshot = JSON.stringify(conversation);
+    const restoredAt = new Date().toISOString();
+    conversation.revisions ??= [];
+    conversation.revisions.push({ id: randomUUID(), createdAt: restoredAt, reason: 'restore', preview: revisionPreview(conversation.messages), messages: structuredClone(conversation.messages) });
+    conversation.messages = structuredClone(revision.messages);
+    conversation.revisions = capRevisions(conversation.revisions, revisionId);
+    delete conversation.summary;
+    delete conversation.summaryUntil;
+    delete conversation.summaryAssistantRevision;
+    const live = new Set(conversation.messages.map(message => message.id));
+    if (conversation.task?.sources?.some(item => !live.has(item.messageId))) {
+      delete conversation.task;
+      delete conversation.taskNotes;
+    }
+    conversation.updatedAt = restoredAt;
+    this.dropRemovedAttachments(snapshot, conversation);
+    this.store.save(conversation);
+    return this.get(id);
   }
   private modelMessages(conversationId: string, messages: WorkbenchMessage[]): WorkbenchMessage[] {
     return messages.map(message => {

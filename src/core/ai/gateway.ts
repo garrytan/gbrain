@@ -2416,6 +2416,7 @@ export interface ChatOpts {
   /** Receives answer text as the provider streams it. Tool calls stay on the buffered path. */
   onTextDelta?: (delta: string) => void;
   onTextReset?: (model: string) => void;
+  fitRequest?: (opts: ChatOpts) => ChatOpts | Promise<ChatOpts>;
 }
 
 /** Stringify a tool result without letting BigInt/circular values kill a job. */
@@ -3031,6 +3032,7 @@ function isChatFallbackEligible(err: unknown, signal?: AbortSignal): boolean {
   if (name === 'AbortError' || name === 'BudgetExhausted' || name === 'BudgetExceededError') {
     return false;
   }
+  if (err && typeof err === 'object' && 'code' in err && (err as { code?: unknown }).code === 'pmbrain_context_budget') return false;
   const normalized = normalizeAIError(err);
   if (normalized instanceof AITransientError) return true;
   if (!(normalized instanceof AIConfigError)) return false;
@@ -3047,6 +3049,13 @@ function isChatFallbackEligible(err: unknown, signal?: AbortSignal): boolean {
  * appends the ordinary `models.default`/`chat_model` model, so an optional
  * advanced override can never make the ordinary installation unusable.
  */
+function providerWindow(model: string, declared?: number): number | undefined {
+  try {
+    const cap = resolveRecipe(model).recipe.touchpoints.chat?.max_context_tokens;
+    if (typeof cap === 'number' && cap > 0) return declared ? Math.min(declared, cap) : cap;
+  } catch { /* 未知模型沿用调用方声明的窗口 */ }
+  return declared;
+}
 export async function chat(opts: ChatOpts): Promise<ChatResult> {
   // The canonical CLI/Admin builders pass the file-plane decision into the
   // process-local gateway. Do not reload the user's config file here: that
@@ -3074,14 +3083,16 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
     let emitted = false;
     if (index > 0) opts.onTextReset?.(model);
     try {
-      const callOpts={ ...opts, model, ...(opts.onTextDelta ? { onTextDelta: (delta: string) => { if (delta) emitted = true; opts.onTextDelta!(delta); } } : {}) };
-      let result = await withChatRequest(callOpts,chatOnce);
+      const callOpts={ ...opts, model, contextWindow: providerWindow(model, opts.contextWindow), ...(opts.onTextDelta ? { onTextDelta: (delta: string) => { if (delta) emitted = true; opts.onTextDelta!(delta); } } : {}) };
+      const fitted = opts.fitRequest ? await opts.fitRequest(callOpts) : callOpts;
+      let result = await withChatRequest(fitted,chatOnce);
       if(opts.retryLength&&result.stopReason==='length'){
         const current=Math.min(opts.maxTokens??defaultMaxOutputTokens(model),chatOutputLimit(model,opts.modelOutputLimit)??Infinity);
         const maxTokens=await lengthRecoveryLimit(callOpts,current);
         if(maxTokens<=current)return result;
         opts.onTextReset?.(model);
-        const retried=await withChatRequest({...callOpts,maxTokens},chatOnce);
+        const retryOpts={...fitted,maxTokens};
+        const retried=await withChatRequest(opts.fitRequest?await opts.fitRequest(retryOpts):retryOpts,chatOnce);
         result={...retried,usage:{
           input_tokens:result.usage.input_tokens+retried.usage.input_tokens,
           output_tokens:result.usage.output_tokens+retried.usage.output_tokens,
@@ -3185,6 +3196,8 @@ export interface ToolLoopOpts {
   abortSignal?: AbortSignal;
   /** Apply Anthropic cache_control to system + last tool. Silently ignored elsewhere. */
   cacheSystem?: boolean;
+  fitRequest?: ChatOpts['fitRequest'];
+  contextWindow?: number;
 
   /** Crash-replay state. When set, the loop resumes from the recorded position. */
   replayState?: ToolLoopReplayState;
@@ -3305,7 +3318,7 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
       finalTurn=retry?.finalTurn??(!!opts.finalizeOnLastTurn&&(turnIdx===maxTurns-1||!!(await opts.shouldFinalize?.(messages))));
       let callMessages=retry?.messages??(finalTurn&&opts.prepareFinalMessages?await opts.prepareFinalMessages():messages);
       let callMaxTokens=retry?.maxTokens??maxTokens;
-      let callContextWindow: number | undefined;
+      let callContextWindow: number | undefined = opts.contextWindow;
       let callSystem=opts.system??'';
       const prepared=await opts.beforeModelCall?.({ turnIdx, messages:callMessages,maxTokens:callMaxTokens,...(opts.finalizeOnLastTurn?{finalTurn}:{}) });
       if(prepared){
@@ -3325,6 +3338,7 @@ export async function toolLoop(opts: ToolLoopOpts): Promise<ToolLoopResult> {
         responseSchema:jsonToolCalls?{name:'entity_response',schema:{type:'object',additionalProperties:true}}:undefined,
         maxTokens:callMaxTokens,
         contextWindow:callContextWindow,
+        fitRequest:opts.fitRequest,
         timeoutMs:opts.turnTimeoutMs,
         requestPolicy:opts.requestPolicy,
         onRequestEvent:opts.onRequestEvent,

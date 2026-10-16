@@ -27,6 +27,7 @@ export interface WorkbenchAgent extends KnowledgeAssistantSettings {
   deliveryFormat: 'markdown' | 'docx';
   schedule?: WorkbenchSchedule;
   standingRules?: string[];
+  retiredRules?: Array<{ text: string; replacedBy: string }>;
   playbook?: WorkbenchPlaybook | null;
   createdAt: string;
   updatedAt: string;

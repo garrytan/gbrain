@@ -1,4 +1,4 @@
-import type {ChatBlock,ChatMessage,ChatToolDef} from '../../core/ai/gateway';
+import type {ChatBlock,ChatMessage,ChatOpts,ChatToolDef} from '../../core/ai/gateway';
 import {chatOutputLimit} from '../../core/ai/gateway';
 import {defaultMaxOutputTokens} from '../../core/ai/model-compatibility';
 import {classifyChatError} from '../../core/ai/errors';
@@ -88,6 +88,11 @@ export function requestOutputTokens(model?:string,contextWindow?:number,explicit
   let limit=explicit;
   if(model)try{limit=chatOutputLimit(model,limit);}catch{}
   return Math.max(1,Math.min(defaultMaxOutputTokens(model),Math.floor((contextWindow??32000)/4),limit??Infinity));
+}
+export async function fitProviderRequest(opts: ChatOpts): Promise<ChatOpts> {
+  const context = new RequestContext({ contextWindow: opts.contextWindow, system: opts.system ?? '', tools: opts.tools ?? [], signal: opts.abortSignal ?? new AbortController().signal, model: opts.model, threshold: .8, outputLimit: opts.maxTokens });
+  const prepared = await context.prepare(opts.messages, opts.maxTokens);
+  return { ...opts, system: prepared.system, messages: prepared.messages, maxTokens: prepared.maxTokens, contextWindow: prepared.contextWindow };
 }
 export class RequestContext {
   readonly budget:number;

@@ -71,8 +71,10 @@ export interface WorkbenchMessage {
   knowledge?: 'used' | 'none' | 'off';
   contextMessages?: number;
   contextNote?: string;
+  contextManifest?: ContextManifest;
   ruleNotice?: string;
   learnedRules?: string[];
+  replacedRules?: string[];
   playbookNotice?: string;
   savedPlaybook?: string;
   evidenceGap?: boolean;
@@ -82,6 +84,29 @@ export interface WorkbenchMessage {
   toolCalls?: WorkbenchToolCall[];
   memory?: WorkbenchMemory;
   artifacts?: Array<{ id: string; title: string; format: 'markdown' | 'docx'; publishedPath?: string }>;
+  turnId?: string;
+}
+export interface WorkbenchTask {
+  id: string;
+  goal: string;
+  constraints: string[];
+  updatedAt: string;
+  decisions?: string[];
+  openItems?: string[];
+  deliveries?: string[];
+  sources?: Array<{ messageId: string; note: string }>;
+}
+export interface ContextManifest {
+  assistantRevision?: number;
+  task?: { id: string; goal: string; inherited: boolean; constraints: string[] };
+  rules: Array<{ text: string; state: 'active' | 'replaced'; replacedBy?: string }>;
+  knowledge: boolean;
+  evidenceTask: boolean;
+  citations: number;
+  budget: { window: number; inputBudget: number; outputReserve: number };
+  omitted?: string[];
+  turnId?: string;
+  items?: Array<{ kind: string; ref: string; state: 'kept' | 'omitted' }>;
 }
 export interface WorkbenchConversation {
   id: string;
@@ -93,13 +118,15 @@ export interface WorkbenchConversation {
   messages: WorkbenchMessage[];
   summary?: string;
   summaryUntil?: string;
+  summaryAssistantRevision?: number;
   contextFloor?: string;
   taskNotes?: string[];
+  task?: WorkbenchTask;
   primary?: boolean;
   sourceId?: string;
   assistantId?: string;
   taskKey?: string;
-  revisions?: Array<{ id: string; createdAt: string; reason: 'edit' | 'retry'; messages: WorkbenchMessage[] }>;
+  revisions?: Array<{ id: string; createdAt: string; reason: 'edit' | 'retry' | 'restore'; preview?: string; messageCount?: number; messages: WorkbenchMessage[] }>;
 }
 export interface WorkbenchModel { id: string; name: string; contextWindow?: number; vision?: boolean }
 export const FALLBACK_CONTEXT_TOKENS = 32_000;

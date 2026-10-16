@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { extname } from 'node:path';
 import type { ChatBlock } from '../../core/ai/gateway';
 import { ATTACHMENT_MAX_BYTES, ATTACHMENT_MAX_COUNT, toolHistoryText,toolContextHistory } from '../../../shared/workbench';
-import type { WorkbenchAttachment, WorkbenchMessage } from '../../../shared/workbench';
+import type { WorkbenchAttachment, WorkbenchMessage, WorkbenchTask } from '../../../shared/workbench';
 
 export { ATTACHMENT_MAX_BYTES, ATTACHMENT_MAX_COUNT };
 export const ATTACHMENT_PROMPT_CAP = 12_000;
@@ -101,6 +101,40 @@ export function summarySource(message: Pick<WorkbenchMessage, 'text' | 'attachme
     else parts.push(`【附件 ${item.name}】`);
   }
   return parts.join('\n');
+}
+
+export function taskVisualAttachments(messages: WorkbenchMessage[], task: Pick<WorkbenchTask, 'goal' | 'sources'> | undefined, recentIds: ReadonlySet<string>): { kept: Array<{ messageId: string; name: string; mime: string; image: string }>; omitted: Array<{ messageId: string; name: string }> } {
+  const kept: Array<{ messageId: string; name: string; mime: string; image: string }> = [];
+  const omitted: Array<{ messageId: string; name: string }> = [];
+  if (!task) return { kept, omitted };
+  const sources = new Set((task.sources ?? []).map(item => item.messageId));
+  const goal = task.goal ?? '';
+  for (const message of messages) {
+    if (recentIds.has(message.id)) continue;
+    const attachments = message.attachments ?? [];
+    if (!sources.has(message.id) && !attachments.some(item => item.name && goal.includes(item.name))) continue;
+    for (const item of attachments) {
+      if (item.route !== 'vision' && !item.mime.startsWith('image/')) continue;
+      const image = item.data ? `data:${item.mime || 'image/png'};base64,${item.data}` : item.preview;
+      if (!image || kept.length >= 4) { omitted.push({ messageId: message.id, name: item.name }); continue; }
+      kept.push({ messageId: message.id, name: item.name, mime: item.mime || 'image/png', image });
+    }
+  }
+  return { kept, omitted };
+}
+
+export function namedAttachmentSupplement(messages: WorkbenchMessage[], text: string, skipIds: ReadonlySet<string>): string {
+  const needle = text.trim();
+  if (!needle) return '';
+  for (const message of messages) {
+    if (message.role !== 'user' || skipIds.has(message.id)) continue;
+    for (const item of message.attachments ?? []) {
+      if (!item.name || !needle.includes(item.name) || item.route === 'vision' || item.mime.startsWith('image/')) continue;
+      const excerpt = attachmentExcerpt(item);
+      if (excerpt) return excerpt;
+    }
+  }
+  return '';
 }
 
 export function retrievalText(message: Pick<WorkbenchMessage, 'text' | 'attachments'>): string {
