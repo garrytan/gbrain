@@ -64,6 +64,7 @@
  *   `--override-disabled` to force-run.
  */
 
+import { applyCapturePolicy } from '../core/facts/capture-policy-write.ts';
 import { extractExitCode, extractRunStatus, recordFailedPage } from '../core/facts/conversation-run-status.ts';
 import type { BrainEngine, NewFact } from '../core/engine.ts';
 import type { Page } from '../core/types.ts';
@@ -1071,6 +1072,7 @@ async function processPage(
       extracted = extraction.facts;
     }
 
+    extracted = (await applyCapturePolicy({ engine: state.engine, sourceId: state.sourceId, sessionId, source: 'mcp:extract_facts', remote: false }, extracted, state.factVisibility, null)).facts;
     state.result.segments_processed++;
     segmentsThisPage++;
     state.result.facts_extracted += extracted.length;

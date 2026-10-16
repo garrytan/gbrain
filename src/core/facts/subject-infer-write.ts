@@ -57,7 +57,7 @@ async function writesDatabaseOnly(engine: BrainEngine, sourceId: string): Promis
   return await isWriteThroughDisabled(engine) || await lookupSourceLocalPath(engine, sourceId) === null;
 }
 
-async function linkAllowed(ctx: FactsBackstopCtx, slug: string, fact: string, visibility: string, remote: boolean,
+export async function linkAllowed(ctx: FactsBackstopCtx, slug: string, fact: string, visibility: string, remote: boolean,
   managed: ManagedFactsSession | null): Promise<boolean> {
   const engine = ctx.engine;
   const { isFactWithdrawn } = await import('./withdrawal.ts');

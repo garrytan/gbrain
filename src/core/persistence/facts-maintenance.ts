@@ -1,3 +1,4 @@
+import type { CaptureCounts } from '../facts/capture-policy-write.ts';
 import { isConnectorSourceKind } from './connector-identity.ts';
 import type { BrainEngine, NewFact } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
@@ -34,7 +35,8 @@ import { assertAmbientCaptureAdmissible, captureGateLaneForSource } from '../fac
 import { declareDerivation, type DerivationDeclaration } from '../trust/taint.ts';
 import type { TaintInput, WriteTrust } from '../trust/tier.ts';
 
-export interface ManagedFactsResult {
+export interface ManagedFactsResult extends CaptureCounts {
+  capped?: number;
   inserted: number; duplicate: number; superseded: number; fact_ids: number[]; entity_slugs: string[]; write_requests: WriteReceipt[];
   /** #6506: candidates the automatic extraction skipped because the exact claim was forgotten in this source and visibility. */
   withdrawn_skipped?: number;
@@ -50,6 +52,7 @@ export type FrozenExtractedFact = Omit<NewFact, 'embedding' | 'valid_from' | 'va
 export interface ManagedFactIntent extends Record<string, unknown> {
   kind: 'managed_facts_entity' | 'managed_facts_complete';
   batchKey: string; inputDigest: string; origin: ManagedFactOrigin | null; originalRequestId: string | null;
+  capture_counts?: CaptureCounts;
   expected_revision?: string; facts?: FrozenExtractedFact[]; children?: string[];
   /** Direct single-fact writes keep writeSingleFact's supersession rule. */
   supersede?: true;
@@ -291,12 +294,19 @@ async function collectManagedFacts(engine: BrainEngine, session: ManagedFactsSes
     const finished = await waitForWrite(engine, row, session.config, maintenancePublishWaitMs());
     writeResponse(finished);
     result.write_requests.push(receiptFor(finished));
+    if ((row.intent?.kind ?? row.outcome?.kind) === 'managed_facts_complete') {
+      const policy = (row.intent?.capture_counts ?? finished.outcome?.capture_counts) as CaptureCounts | undefined;
+      for (const key of ['filtered', 'rerouted', 'would_filter', 'would_reroute', 'withdrawn_skipped'] as const) {
+        if (policy?.[key]) result[key] = (result[key] ?? 0) + policy[key];
+      }
+    }
     if ((row.intent?.kind ?? row.outcome?.kind) === 'managed_facts_entity') {
       const out = finished.outcome!;
       result.inserted += Number(out.inserted ?? 0);
       result.duplicate += Number(out.duplicate ?? 0);
       result.superseded += Number(out.superseded ?? 0);
       result.fact_ids.push(...(out.fact_ids as number[] ?? []));
+      if (out.capped) result.capped = (result.capped ?? 0) + Number(out.capped);
       if (out.withdrawn_skipped) result.withdrawn_skipped = (result.withdrawn_skipped ?? 0) + Number(out.withdrawn_skipped);
       if (out.would_dedup_same_page) result.would_dedup_same_page = (result.would_dedup_same_page ?? 0) + Number(out.would_dedup_same_page);
       if (out.inserted && out.fenced) result.entity_slugs.push(row.slug);
@@ -454,7 +464,7 @@ async function readmitWithdrawnFacts(engine: BrainEngine, followUp: ManagedFacts
 
 export async function publishManagedFacts(engine: BrainEngine, session: ManagedFactsSession, ctx: FactsBackstopCtx,
   facts: ExtractedFact[], visibility: 'private' | 'world', pageSlug?: string,
-  options: { supersede?: boolean; explicitContext?: boolean; attributeFallback?: boolean; withdrawn?: 'skip' } = {}): Promise<ManagedFactsResult> {
+  options: { supersede?: boolean; explicitContext?: boolean; attributeFallback?: boolean; withdrawn?: 'skip'; captureCounts?: CaptureCounts } = {}): Promise<ManagedFactsResult> {
   const embedded = facts.some(fact => fact.embedding !== null && fact.embedding !== undefined);
   if (embedded) await assertManagedFactsEmbedding(engine, session.config, session.embedding);
   const sourceId = session.authority.sourceId;
@@ -469,7 +479,8 @@ export async function publishManagedFacts(engine: BrainEngine, session: ManagedF
     await authorizeWrite(engine, session.authority, 'extract_facts', slug);
     await authorizePageVisibility(engine, session.authority, slug);
     const group = groups.get(slug) ?? [];
-    const context = options.explicitContext ? fact.context ?? null : ctx.sourceSlug ?? pageSlug ?? null;
+    const baseContext = options.explicitContext ? fact.context ?? null : ctx.sourceSlug ?? pageSlug ?? null;
+    const context = fact.routed_from ? appendContextNote(baseContext, `routed from ${fact.routed_from}`) : baseContext;
     // #5836: an inferred subject carries its provenance note into the fence cell and the row.
     group.push({ ...fact, entity_slug: attributed, visibility, context: fact.entity_inferred ? appendContextNote(context, inferenceNote(fact.entity_inferred)) : context,
       embedding: fact.embedding ? Array.from(fact.embedding) : null,
@@ -491,14 +502,14 @@ export async function publishManagedFacts(engine: BrainEngine, session: ManagedF
       ...(session.derivation ? { derivation: session.derivation } : {}),
       ...(snapshot ? { expected_revision: snapshot.revision } : {}), facts: group } });
   }
-  return collectManagedFacts(engine, session, await admitManagedFactsBatch(engine, session, inputs, embedded, ctx.abortSignal));
+  return collectManagedFacts(engine, session, await admitManagedFactsBatch(engine, session, inputs, embedded, ctx.abortSignal, options.captureCounts));
 }
 
 interface ManagedFactsEntityInput { slug: string; pageId: number | null; intent: ManagedFactIntent }
 
 /** One transaction: the session's per-entity fact requests, then the completion request that names them. */
 async function admitManagedFactsBatch(engine: BrainEngine, session: ManagedFactsSession, inputs: ManagedFactsEntityInput[],
-  embedded: boolean, signal?: AbortSignal): Promise<WriteRequest[]> {
+  embedded: boolean, signal?: AbortSignal, captureCounts?: CaptureCounts): Promise<WriteRequest[]> {
   const sourceId = session.authority.sourceId;
   return engine.transaction(async tx => {
     await assertAmbientCaptureAdmissible(tx, session.captureSource);
@@ -507,7 +518,7 @@ async function admitManagedFactsBatch(engine: BrainEngine, session: ManagedFacts
     const accepted: WriteRequest[] = [];
     for (const input of [...inputs, { slug: '__managed_facts_complete__', pageId: null, intent: {
       kind: 'managed_facts_complete', batchKey: session.batchKey, inputDigest: session.inputDigest,
-      origin: session.origin, originalRequestId: session.originalRequestId, children,
+      origin: session.origin, originalRequestId: session.originalRequestId, children, capture_counts: captureCounts,
       ...(session.captureSource ? { capture_source: session.captureSource } : {}) } as ManagedFactIntent }]) {
       if (signal?.aborted) throw new DOMException('Fact extraction was aborted before admission.', 'AbortError');
       await authorizePageVisibility(tx, session.authority, input.slug);

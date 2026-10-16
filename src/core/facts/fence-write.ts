@@ -34,6 +34,7 @@
  * sees the constraint.
  */
 
+import { checkPageCap } from './page-cap.ts';
 import { execFileSync } from '../spawn.ts';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, appendFileSync } from 'node:fs';
 import { dirname, isAbsolute, relative } from 'node:path';
@@ -85,6 +86,8 @@ export interface FenceTarget {
 
 /** Input fact prepared by runPipelineWithBody (post-dedup). */
 export interface FenceInputFact {
+  /** #capture-policy: explicit supersession may append its replacement at the cap. */
+  replacesExisting?: boolean;
   embedding_model?: string | null;
   fact: string;
   kind: NewFact['kind'];
@@ -111,6 +114,8 @@ export interface FenceInputFact {
 }
 
 export interface FenceWriteResult {
+  /** #capture-policy: refused appends, with no DB fallback. */
+  capped?: number;
   /** Number of new rows written + indexed. */
   inserted: number;
   /** DB ids assigned to the inserted rows, in input order. */
@@ -450,8 +455,7 @@ export async function writeFactsToFence(
         body = stubEntityPage(target.slug, activePack?.manifest ?? null);
       }
 
-      // 2. Upsert each fact onto the fence in input order. row_num
-      //    monotonically increases (max-existing + 1 per call, append-only).
+      // 2. Upsert each fact in input order. row_num
       //
       //    Seed the counter from the DB as well as the fence file. Uniqueness
       //    is enforced by idx_facts_fence_key on
@@ -490,6 +494,7 @@ export async function writeFactsToFence(
       const fenceRefusal = refuseUnparsedFence(body, target, filePath);
       if (fenceRefusal) return { inserted: 0, ids: [], fenceWriteFailed: true, fenceRefusal, ...withdrawnSkipped };
       const { facts: existingFenceFacts } = parseFactsFence(body);
+      if (facts.some(f => !f.replacesExisting) && !await checkPageCap(engine, target.sourceId, target.slug, existingFenceFacts.length, facts.filter(f => !f.replacesExisting).length)) return { inserted: 0, ids: [], capped: facts.length, ...withdrawnSkipped };
       const fileMaxRowNum = existingFenceFacts.length > 0
         ? Math.max(...existingFenceFacts.map(f => f.rowNum))
         : 0;

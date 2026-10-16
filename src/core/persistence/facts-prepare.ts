@@ -1,3 +1,4 @@
+import { checkPageCap, pageCapError } from '../facts/page-cap.ts';
 import type { BrainEngine, NewFact } from '../engine.ts';
 import { attributionCompatible } from '../facts/attribution.ts';
 import type { GBrainConfig } from '../config.ts';
@@ -127,7 +128,7 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
       'once the entity requests are final, run extract_facts again for the same turn with a new request_id only if facts are still missing.');
     const withdrawnSkipped = done.reduce((sum, item) => sum + Number(item.outcome.withdrawn_skipped ?? 0), 0);
     const wouldDedupSamePage = done.reduce((sum, item) => sum + Number(item.outcome.would_dedup_same_page ?? 0), 0);
-    return { status: 'completed', entity_requests: children.length, kind: p.kind, batch_key: p.batchKey, input_digest: p.inputDigest,
+    return { ...(p.capture_counts ? { capture_counts: p.capture_counts } : {}), status: 'completed', entity_requests: children.length, kind: p.kind, batch_key: p.batchKey, input_digest: p.inputDigest,
       inserted: done.reduce((sum, item) => sum + Number(item.outcome.inserted ?? 0), 0),
       duplicate: done.reduce((sum, item) => sum + Number(item.outcome.duplicate ?? 0), 0),
       ...(withdrawnSkipped ? { withdrawn_skipped: withdrawnSkipped } : {}),
@@ -166,6 +167,7 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
   // #6506: automatic extraction skips a forgotten claim and keeps the rest of the group; a purge tombstone still
   // refuses the group, as it does for every writer; explicit writers (no flag) refuse the forgotten claim.
   let withdrawnSkipped = 0;
+  let capped = 0;
   // #6333 shadow (managed mirror of the backstop's counter): a same-page rewording is counted on the entity outcome
   // and named on stderr; nothing is dropped. The count is frozen in the receipt, so a replay reports it, not recounts it.
   let wouldDedupSamePage = 0;
@@ -186,6 +188,10 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
     const gate = taint ? decideFactWrite(fact, { sourceId: row.source_id, slug: row.slug, payload: { ...fact, embedding: null },
       input: derivedGateInput(taint.trust, row.id), cfg: gateCfg! }) : undefined;
     if (gate && gate.action !== 'insert') { blocked.push(gate); continue; }
+    if (snapshot && fact.entity_slug !== null && !fallback(fact) && !supersedes && !await checkPageCap(engine, row.source_id, row.slug, parseFactsFence(next[section]).facts.length)) {
+      if (p.withdrawn !== 'skip') throw pageCapError(row.slug);
+      capped++; seen.delete(key); continue;
+    }
     const rowNum = fact.entity_slug !== null && !fallback(fact) ? nextRow++ : undefined;
     // #6385 R12: an entity fence that does not parse cleanly refuses typed instead of losing the rows it skipped.
     if (rowNum !== undefined) next = { ...next, [section]: refuseUnparsedRewrite(next, row.slug, row.source_id, () => upsertFactRow(next[section], {
@@ -244,6 +250,12 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
         if ((current.candidate?.id ?? null) !== (entry.duplicateId ?? entry.supersedes?.id ?? null)) throw factsRefusal('revision_conflict', 'The fact deduplication state changed before publication.', row,
           `A matching fact in source ${row.source_id} was added or retired before publication, so the deduplication decision for ${row.slug} is stale and none of these facts were published.`);
       }
+      // #capture-policy: config can change after preparation; recheck beneath the publication guard.
+      let capRows = parseFactsFence(fenced[section]).facts.length;
+      for (const entry of entries) if (entry.rowNum !== undefined) {
+        if (!entry.supersedes && !await checkPageCap(tx, row.source_id, row.slug, capRows)) throw pageCapError(row.slug);
+        capRows++;
+      }
       await page?.validate?.(tx);
     }, apply: async tx => {
       if (page) await withPageTierKept(tx, { sourceId: row.source_id, slug: row.slug }, () => page!.apply(tx));
@@ -272,6 +284,7 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
       for (const gate of blocked) await applyGateDecision(tx, gate, { table: 'facts', sourceId: row.source_id }, async () => null, write_gate);
       return { status: 'completed', inserted, duplicate: entries.length - inserted, superseded, fact_ids: ids, ...(blocked.length ? { write_gate } : {}),
         ...(withdrawnSkipped ? { withdrawn_skipped: withdrawnSkipped } : {}),
+        ...(capped ? { capped } : {}),
         ...(wouldDedupSamePage ? { would_dedup_same_page: wouldDedupSamePage } : {}),
         fenced: page !== undefined, kind: p.kind, batch_key: p.batchKey, input_digest: p.inputDigest,
         ...(page && target?.fixes.length ? { fences_normalized: pageFencesNormalized({ sourceId: row.source_id, slug: row.slug, fixes: target.fixes,

@@ -1,3 +1,4 @@
+import { checkPageCap, pageCapError } from '../facts/page-cap.ts';
 import type { BrainEngine, NewFact } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { Action } from '../agent-output.ts';
@@ -121,6 +122,8 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   const validate = async (tx: BrainEngine) => {
     await assertFactNotWithdrawn(tx, row.source_id, input, { excludePrivate });
     if (embedding && JSON.stringify(await tx.executeRaw(`${embeddingConfigSql} FOR SHARE`)) !== observedEmbeddingConfig) conflict(row);
+    // #capture-policy: an explicit new fact is capped under the publication guard; replacements remain allowed.
+    if (p.fence === true && snapshot && status !== 'superseded' && status !== 'duplicate' && !await checkPageCap(tx, row.source_id, row.slug, [snapshot.page.compiled_truth, snapshot.page.timeline ?? ''].reduce((n, text) => n + parseFactsFence(text).facts.length, 0))) throw pageCapError(row.slug);
     const current = await decide(tx, true);
     if (candidateState(current) !== candidateState(decision)) conflict(row);
     if ((await lexical(tx))?.id !== lexicalOld?.id) conflict(row);
@@ -156,6 +159,7 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
     // #6686: the fence is edited in the section it lives in (a lone timeline fence stays below the sentinel); the other section is kept byte for byte.
     const section = factsFenceSection(target.page);
     const fenced = { compiled_truth: target.page.compiled_truth, timeline: target.page.timeline ?? '' };
+    if (status !== 'superseded' && !await checkPageCap(engine, row.source_id, row.slug, parseFactsFence(fenced[section]).facts.length)) throw pageCapError(row.slug);
     // #6385 R12: an entity fence that does not parse cleanly refuses typed instead of losing the rows it skipped.
     const appended = refuseUnparsedRewrite(target.page, row.slug, row.source_id, () => upsertFactRow(fenced[section], {
       claim: input.fact, kind: input.kind, visibility: input.visibility, confidence: 1, notability: 'medium', validFrom: formatFenceDate(validFrom),

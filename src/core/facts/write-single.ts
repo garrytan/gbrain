@@ -37,6 +37,7 @@
  * FactsBackstopCtx (whose `source` union is pipeline-internal).
  */
 
+import { pageCapError } from './page-cap.ts';
 import type { BrainEngine, FactInsertStatus, NewFact } from '../engine.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { recordTaintEdges } from '../trust/taint.ts';
@@ -219,6 +220,7 @@ export async function writeSingleFact(
       [
         {
           fact: factText,
+          replacesExisting: supersedeId !== null,
           kind,
           notability: 'medium',
           source: input.provenance,
@@ -236,6 +238,7 @@ export async function writeSingleFact(
       input.derivation,
     );
 
+    if (result.capped) throw pageCapError(resolvedSlug);
     if (result.fenceWriteFailed) {
       if (result.fenceRefusal) throw result.fenceRefusal;
       // Parse-validate rejected the .tmp (quarantined). Hard failure — do NOT

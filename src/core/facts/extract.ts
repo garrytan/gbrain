@@ -304,6 +304,8 @@ export type ExtractedFact = NewFact & {
   entity_slug: string | null;
   /** #5836: the subject was inferred at write time (subject-infer-write.ts), not named by the extractor. */
   entity_inferred?: 'page' | 'mention';
+  /** #capture-policy: original broad subject, carried into fence provenance. */
+  routed_from?: string;
 };
 
 /**

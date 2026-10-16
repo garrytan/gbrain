@@ -129,3 +129,60 @@ appear under `brain` (a take the owner asserts, via `propose_takes`) and
 *default* canonical owner string for reads; it does not merge those other
 strings. Per-take attribution for other people (e.g. `people/bob-example`) is
 unaffected and correct.
+
+## Capture-time fact policy
+
+Automatic extraction (the shared backstop and conversation extraction) can
+classify low-value facts before deduplication. Explicit `remember` and
+single-fact writes bypass this admission policy. Defaults preserve existing
+capture behavior; start with shadow mode to measure potential recall loss.
+
+| Key | Default | Behavior |
+| --- | --- | --- |
+| `facts.capture_filter` | `off` | `off`, `shadow` (count only), or `on` (drop) |
+| `facts.capture_routing` | `off` | `off`, `shadow` (count only), or `on` (route) |
+| `facts.routing.broad_types` | `company` | Comma-separated broad page types |
+| `facts.routing.specific_types` | `person,project,deal` | Allowed specific page types or corresponding directories |
+| `facts.page_cap.warn_rows` | `0` | Warn once per source/page/process at this fence row count; 0 disables |
+| `facts.page_cap.max_rows` | `0` | Refuse appends at this fence row count; 0 disables |
+
+| Filter category | Admission rule |
+| --- | --- |
+| `low_notability` | Extractor explicitly labels the claim low |
+| `scheduling` | Meeting/call/appointment/invite/reschedule/attendance plus a time/date expression |
+| `shipping` | Physical parcel/courier/tracking/delivery ETA/customs status |
+| `logistics` | Travel booking, hotel, flight, restaurant, room booking, parking, wifi, password reset |
+| `spam` | Newsletter, webinar invitation, promotional offer, unsubscribe, limited-time or sponsored/marketing email |
+| `transient` | Running late, out of office until, waiting for a reply, will send it tomorrow, reminder to |
+
+Money amounts, percentages, claim metrics, decision/commitment verbs, legal/IP
+terms and strategic terms veto every category except low notability and spam.
+Unknown cases are kept. Delivery in a technical claim, operating calendars,
+commercial discount options and management follow-up are not noise signals.
+Stable `capture.<category>.v1` rule IDs identify drops. Counts (`filtered`,
+`rerouted`, `capped`, `would_filter`, `would_reroute`) accompany backstop results;
+policy and cap events are recorded in the ingest log without claim text.
+
+Routing starts only from a broad entity. Exact slugs, unique basenames and
+unique aliases must identify exactly one live specific entity. Fuzzy and
+same-name matches never route. Another specific entity, another broad entity,
+an unresolved competing real name, a bare first name, an opening broad name,
+or a person's possessive company/startup/firm veto routing. Role tokens,
+ordinary sentence openers and references to nonentity pages do not compete.
+Authorization and page-visibility checks still apply. Routed context includes
+`routed from <original slug>`.
+
+A withdrawal on the original subject prevents routing; a withdrawal on the
+new subject also prevents capture. Withdrawals are subject-scoped, so routing
+changes the subject of future facts; it does not migrate existing withdrawals.
+Shadow mode leaves stored facts unchanged.
+
+Caps count every parsed fence row, including struck rows. When both thresholds
+are enabled, max must be at least warn. Checks occur under the legacy page lock
+or managed publication guard. Refused appends create neither a fence row nor a
+DB-only/shadow row. Explicit writes receive an error; automatic writes count
+refusals. Existing-row strike/rewrite and explicit supersession are allowed.
+External archivers remain compatible: archive rows to make space, or increase
+`facts.page_cap.max_rows`. Conversation-derived batches stored against their
+source conversation do not append entity fences and therefore do not use this
+fence cap.
