@@ -139,7 +139,7 @@ export function useWorkbench({ serviceReady = true, databaseReady = true }: { se
     finally { setPending(false); }
   };
   const send = async (text: string, retry = false, editMessageId?: string, files?: { id: string; name: string; file?: File; saved?: boolean; mime?: string }[], attachmentsHydrated = false) => {
-    if (pending || running || !serviceReady) return false;
+    if (pending || !serviceReady) return false;
     const useKnowledge = knowledge && databaseReady;
     setPending(true); setError('');
     let createdId: string | undefined;

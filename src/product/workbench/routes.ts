@@ -279,7 +279,8 @@ export function registerWorkbenchRoutes(app: express.Express, requireAdmin: Requ
   }, handler(req => {
     const conversationId = id(req);
     if ((req.body?.knowledge ?? service.get(conversationId).knowledge) && options.databaseAvailable && !availability().databaseReady) throw new Error('知识库正在准备，暂时无法检索。');
-    service.send(conversationId, req.body ?? {}); return service.accepted(conversationId);
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    service.send(conversationId, { ...body, interrupt: true }); return service.accepted(conversationId);
   }));
   app.post(`${base}/conversations/:id/cancel`, requireAdmin, handler(req => service.cancel(id(req))));
   return { service, agents: agentStore, coordinator };

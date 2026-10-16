@@ -54,6 +54,44 @@ test('multi-turn conversation sends prior user and assistant messages and persis
   expect(seen[1].map((m: any) => m.text)).toEqual(['我喜欢蓝色', '记住了：蓝色', '我喜欢什么颜色？']);
   expect(new WorkbenchStore(dir).get(thread.id).messages.length).toBe(4);
 });
+test('停止后马上可以再发，生成中追加的新要求不会被旧回答盖掉', async () => {
+  let releaseFirst!: () => void;
+  let firstStarted!: () => void;
+  const firstGate = new Promise<void>(resolve => { releaseFirst = resolve; });
+  const firstStartedGate = new Promise<void>(resolve => { firstStarted = resolve; });
+  let calls = 0;
+  const service = new WorkbenchService(new WorkbenchStore(root()), () => [{ id: 'ollama:local', name: '本地' }], async input => {
+    calls += 1;
+    if (calls === 1) {
+      input.onDelta?.('旧的一半');
+      firstStarted();
+      await firstGate;
+      input.onDelta?.('不应写入');
+      return { text: '迟到的旧回答', model: 'ollama:local', citations: [] };
+    }
+    return { text: '只写川商出海', model: 'ollama:local', citations: [] };
+  });
+  const thread = service.create({});
+  service.send(thread.id, { text: '生成本周周报' });
+  await firstStartedGate;
+  expect(() => service.send(thread.id, { text: '任务不要打断' })).toThrow('当前会话正在生成');
+  const stopped = service.cancel(thread.id);
+  expect(stopped.messages.at(-1)?.status).toBe('cancelled');
+  expect(service.list().find(row => row.id === thread.id)?.running).toBe(false);
+  service.send(thread.id, { text: '停止后继续' });
+  expect(service.get(thread.id).messages.map(message => message.text)).toEqual(['生成本周周报', '旧的一半', '停止后继续', '']);
+  const replaced = service.send(thread.id, { text: '我只做川商出海的', interrupt: true });
+  expect(replaced.messages.at(-2)?.text).toBe('我只做川商出海的');
+  expect(replaced.messages.filter(message => message.role === 'assistant').slice(0, 2).every(message => message.status === 'cancelled')).toBe(true);
+  releaseFirst();
+  await service.settled(thread.id);
+  await service.settled(thread.id);
+  const saved = service.get(thread.id).messages;
+  expect(saved[1]?.status).toBe('cancelled');
+  expect(saved[1]?.text).toBe('旧的一半');
+  expect(saved.at(-1)?.status).toBe('complete');
+  expect(saved.at(-1)?.text).toBe('只写川商出海');
+});
 test('conversations do not leak history, cancellation ignores a late answer and retry is explicit', async () => {
   let finish!: (v: any) => void;
   const service = new WorkbenchService(new WorkbenchStore(root()), () => [{ id: 'ollama:local', name: '本地' }], () => new Promise(resolve => { finish = resolve; }));

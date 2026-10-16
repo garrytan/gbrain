@@ -53,8 +53,10 @@ async function compressOlder(model: string, prior: string, pending: WorkbenchMes
 }
 
 export class WorkbenchService {
-  private active = new Map<string, { abort: AbortController; promise: Promise<void> }>();
+  private active = new Map<string, { abort: AbortController; promise: Promise<void>; generation: number; live: WorkbenchConversation; replyId: string; rejectReady?: (error: unknown) => void }>();
   private acceptance = new Map<string, Promise<WorkbenchConversation>>();
+  private turnSerial = new Map<string, number>();
+  private retiring = new Map<string, Promise<void>>();
   constructor(private store: WorkbenchStore, private models: () => WorkbenchModel[], private answer: WorkbenchAnswer, private summarize?: WorkbenchSummarizer, private attachmentIo?: {
     ocr?: (bytes: Buffer, mime: string, signal: AbortSignal) => Promise<string>;
     office?: (bytes: Buffer, name: string, signal: AbortSignal) => Promise<string>;
@@ -141,8 +143,33 @@ export class WorkbenchService {
     if (emptyOnly && this.get(id).messages.length) throw new Error('会话已有消息，不能自动清理');
     this.store.remove(id);
   }
-  send(id: string, input: { text?: string; model?: string; knowledge?: boolean; retry?: boolean; editMessageId?: string; attachments?: unknown; attachmentsHydrated?: boolean }) {
-    if (this.active.has(id)) throw new Error('当前会话正在生成，请等待或停止');
+  private owns(id: string, generation: number) { return this.turnSerial.get(id) === generation; }
+  private releaseTurn(id: string) {
+    const current = this.active.get(id);
+    if (!current) return;
+    current.abort.abort();
+    const reply = current.live.messages.find(message => message.id === current.replyId);
+    if (reply?.status === 'running') {
+      reply.status = 'cancelled';
+      delete reply.stage;
+      for (const call of reply.toolCalls ?? []) if (call.status === 'running') { call.status = 'cancelled'; call.error = '已停止'; call.completedAt = new Date().toISOString(); }
+      current.live.updatedAt = new Date().toISOString();
+      this.store.save(current.live);
+    }
+    this.turnSerial.set(id, current.generation + 1);
+    if (current.promise) {
+      const previous = this.retiring.get(id);
+      this.retiring.set(id, previous ? previous.then(() => current.promise) : current.promise);
+    }
+    this.active.delete(id);
+    this.acceptance.delete(id);
+    current.rejectReady?.(Object.assign(new Error('已停止生成'), { name: 'AbortError' }));
+  }
+  send(id: string, input: { text?: string; model?: string; knowledge?: boolean; retry?: boolean; editMessageId?: string; attachments?: unknown; attachmentsHydrated?: boolean; interrupt?: boolean }) {
+    if (this.active.has(id)) {
+      if (input.interrupt !== true) throw new Error('当前会话正在生成，请等待或停止');
+      this.releaseTurn(id);
+    }
     const conversation = this.get(id); const model = this.model(input.model ?? conversation.model);
     if(this.memoryHooks&&!conversation.sourceId)conversation.sourceId='default';
     const now = new Date().toISOString();
@@ -227,6 +254,8 @@ export class WorkbenchService {
       stage: hasAttachments ? '正在读取附件' : '正在准备回答', ...(ruleNotice ? { ruleNotice } : {}), ...(learnedRules?.length ? { learnedRules } : {}), ...(playbookNotice ? { playbookNotice } : {}), ...(savedPlaybook ? { savedPlaybook } : {}),
     };
     conversation.messages.push(reply); this.store.save(conversation);
+    const generation = (this.turnSerial.get(id) ?? 0) + 1;
+    this.turnSerial.set(id, generation);
     const abort = new AbortController();
     const session=assistantSession(model,abort.signal);
     let opened = false;
@@ -234,9 +263,12 @@ export class WorkbenchService {
     let rejectReady!: (error: unknown) => void;
     const ready = new Promise<WorkbenchConversation>((resolve, reject) => { acceptReady = resolve; rejectReady = reject; });
     ready.catch(() => undefined);
+    const turn = { abort, promise: Promise.resolve(), generation, live: conversation, replyId: reply.id, rejectReady };
     this.acceptance.set(id, ready);
+    this.active.set(id, turn);
     let lastSave = 0;
     const saveSoon = (force = false) => {
+      if (!this.owns(id, generation)) return;
       if (abort.signal.aborted && !force) return;
       const nowMs = Date.now();
       if (!force && lastSave !== 0 && nowMs - lastSave < 80) return;
@@ -252,7 +284,8 @@ export class WorkbenchService {
       saveSoon();
     };
     const summarizer=this.summarize?async(value:Parameters<WorkbenchSummarizer>[0])=>this.summarize!({...value,onRequestEvent:reportRequest}):undefined;
-    const promise = (async () => {
+    let promise!: Promise<void>;
+    promise = (async () => {
       try {
         const userTurn = [...conversation.messages].reverse().find(message => message.role === 'user');
         try {
@@ -270,6 +303,10 @@ export class WorkbenchService {
           opened = true;
           acceptReady(conversation);
         } catch (error) {
+          if (!this.owns(id, generation)) {
+            if (!opened) rejectReady(error instanceof Error ? error : new Error(String(error)));
+            return;
+          }
           if (!opened) {
             this.rollback(conversation, snapshot, previousAttachmentIds);
             const failure = error instanceof Error && error.name === 'AbortError' ? new Error('已停止生成') : error;
@@ -358,7 +395,7 @@ export class WorkbenchService {
           onRequestEvent:reportRequest,
         });
         session.signal.throwIfAborted();
-        if (!abort.signal.aborted) {
+        if (!abort.signal.aborted && this.owns(id, generation)) {
           if (!result.text.trim()) throw new Error('模型未返回可用回答，已有工具结果和完整会话已保留，请重试。');
           const citations = result.citations ?? [];
           const spoken = [...conversation.messages].reverse().find(message => message.role === 'user');
@@ -376,30 +413,38 @@ export class WorkbenchService {
           reply.status = 'complete';
           reply.artifacts = evidenceGap ? [] : new WorkbenchAgentStore(this.store).artifacts().filter(item => item.conversationId === id && item.messageId === reply.id).map(({ id: artifactId, title, format, publishedPath }) => ({ id: artifactId, title, format, publishedPath }));
         }
-      } catch (error) { if (opened && !abort.signal.aborted) { const failure = contextFailure(error); reply.status = 'error'; reply.error = failure.message; reply.errorCode = failure.code; } }
+      } catch (error) { if (opened && this.owns(id, generation) && !abort.signal.aborted) { const failure = contextFailure(error); reply.status = 'error'; reply.error = failure.message; reply.errorCode = failure.code; } }
       finally {
         session.close();
-        if (opened) {
+        const mine = this.owns(id, generation);
+        if (mine && opened) {
           if (abort.signal.aborted) reply.status = 'cancelled';
           for (const call of reply.toolCalls ?? []) if (call.status === 'running') { call.status = abort.signal.aborted ? 'cancelled' : 'error'; call.error = abort.signal.aborted ? '已停止' : reply.error || '工具执行中断'; call.completedAt = new Date().toISOString(); }
           delete reply.stage;
           conversation.updatedAt = new Date().toISOString();
           this.store.save(conversation);
         }
-        this.active.delete(id);
-        this.acceptance.delete(id);
-        if (opened && this.memoryHooks) await this.memoryHooks.settled(id).catch(error => console.error('[workbench memory]', error));
+        if (this.active.get(id)?.generation === generation) this.active.delete(id);
+        if (mine) this.acceptance.delete(id);
+        if (this.retiring.get(id) === promise) this.retiring.delete(id);
+        if (mine && opened && this.memoryHooks) await this.memoryHooks.settled(id).catch(error => console.error('[workbench memory]', error));
       }
     })();
-    this.active.set(id, { abort, promise }); return conversation;
-  }
-  cancel(id: string) {
-    this.active.get(id)?.abort.abort();
-    const conversation = this.get(id); const reply = conversation.messages.at(-1);
-    if (reply?.status === 'running') { reply.status = 'cancelled'; delete reply.stage; for (const call of reply.toolCalls ?? []) if (call.status === 'running') { call.status = 'cancelled'; call.completedAt = new Date().toISOString(); } this.store.save(conversation); }
+    turn.promise = promise;
     return conversation;
   }
-  async settled(id: string) { await this.active.get(id)?.promise; }
+  cancel(id: string) {
+    this.releaseTurn(id);
+    const conversation = this.get(id); const reply = conversation.messages.at(-1);
+    if (reply?.status === 'running') { reply.status = 'cancelled'; delete reply.stage; for (const call of reply.toolCalls ?? []) if (call.status === 'running') { call.status = 'cancelled'; call.error = '已停止'; call.completedAt = new Date().toISOString(); } this.store.save(conversation); }
+    return conversation;
+  }
+  async settled(id: string) {
+    const current = this.active.get(id)?.promise;
+    if (current) { await current; return; }
+    const leftover = this.retiring.get(id);
+    if (leftover) await leftover;
+  }
   accepted(id: string): Promise<WorkbenchConversation> {
     const pending = this.acceptance.get(id);
     if (!pending) throw new Error('发送还没有开始');

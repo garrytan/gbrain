@@ -62,14 +62,16 @@ export class WorkbenchAgentCoordinator {
       const tail = initial.messages.at(-1);
       const lastUser = [...initial.messages].reverse().find(message => message.role === 'user');
       const samePrompt = lastUser?.text === input.prompt && tail?.role === 'assistant' ? tail : undefined;
+      let replyId: string | undefined;
       if (!samePrompt || (samePrompt.status !== 'complete' && samePrompt.status !== 'running')) {
         this.service.send(initial.id, samePrompt ? { retry: true } : { text: input.prompt });
-        await this.service.accepted(initial.id);
+        const started = await this.service.accepted(initial.id);
+        replyId = started.messages.at(-1)?.id;
         const adapter = new TaskProgressAdapter('assistant_task');
         adapter.view.name = agent.name; adapter.view.stage = '正在执行助手任务';
         await context.updateProgress({ output: '正在执行助手任务', product: adapter.view });
         progressTimer = setInterval(() => {
-          const reply = this.service.get(initial.id).messages.at(-1);
+          const reply = this.service.get(initial.id).messages.find(message => message.id === replyId);
           adapter.view.stage = reply?.stage ?? '正在保存成果';
           progressPending = progressPending.then(async () => { if (!signal.aborted) await context.updateProgress({ output: adapter.view.stage, product: structuredClone(adapter.view) }); }).catch(error => console.error('[assistant progress]', error));
         }, 1000);
@@ -77,7 +79,7 @@ export class WorkbenchAgentCoordinator {
       }
       signal.throwIfAborted();
       if (!await context.isActive()) throw new Error('任务执行租约已失效');
-      const conversation = this.service.get(initial.id); const reply = conversation.messages.at(-1);
+      const conversation = this.service.get(initial.id); const reply = (replyId ? conversation.messages.find(message => message.id === replyId) : undefined) ?? conversation.messages.at(-1);
       if (!reply || reply.role !== 'assistant' || reply.status !== 'complete') throw new Error(reply?.error ?? '助手未完成任务');
       if (reply.stopReason === 'length') throw new Error('助手输出尚未完整，已保存对话，请继续后再交付');
       if (reply.evidenceGap) return { assistantId: agent.id, assistantName: agent.name, conversationId: conversation.id, artifacts: [], status: 'completed' };

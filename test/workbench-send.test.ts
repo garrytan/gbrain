@@ -4,14 +4,14 @@ import { filePayload } from '../admin/src/workbench/composer-attachments';
 import { mergePolledConversation } from '../admin/src/workbench/useWorkbench';
 import type { WorkbenchConversation } from '../shared/workbench';
 
-function sendHarness(failMessage = false, serviceReady = true, databaseReady = true, knowledge = false, assistantId = 'main') {
+function sendHarness(failMessage = false, serviceReady = true, databaseReady = true, knowledge = false, assistantId = 'main', running = false) {
   const source = readFileSync(new URL('../admin/src/workbench/useWorkbench.ts', import.meta.url), 'utf8');
   const code = new Bun.Transpiler({ loader: 'ts' }).transformSync(source.slice(source.indexOf('  const send ='), source.indexOf('  const action =')));
   const requests: string[] = [];
   const bodies: any[] = [];
   let current: any;
   const env = {
-    pending: false, running: false, conversation: undefined, model: 'local', knowledge, serviceReady, databaseReady,
+    pending: false, running, conversation: undefined, model: 'local', knowledge, serviceReady, databaseReady,
     active: { current: undefined as string | undefined }, setPending: () => {}, setError: () => {},
     assistantRef: { current: assistantId },
     setConversation: (value: any) => { current = value; },
@@ -61,13 +61,20 @@ test('发送已成功而列表刷新失败时，不删除会话并返回这个�
   expect(run.env.active.current).toBe('thread');
 });
 
+test('正在生成时仍可以把新要求发出去', async () => {
+  const run = sendHarness(false, true, true, false, 'main', true);
+  expect(await run.send('我只做川商出海的')).toBe('thread');
+  expect(run.requests).toContain('POST /conversations/thread/messages');
+});
+
 test('只有 HTTP 不可用才停止发送，数据库准备时明确发送普通对话', async () => {
   const offline = sendHarness(false, false, false, true);
   expect(await offline.send('问题')).toBe(false);
   expect(offline.requests).toHaveLength(0);
   const preparing = sendHarness(false, true, false, true);
   expect(await preparing.send('问题')).toBe('thread');
-  expect(preparing.bodies.every(body => body.knowledge === false)).toBe(true);
+  const sent = preparing.bodies.find(body => body.text === '问题');
+  expect(sent.knowledge).toBe(false);
 });
 
 test('发送响应丢失时只请求清理空会话，已有消息的会话继续保留', async () => {

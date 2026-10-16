@@ -54,7 +54,7 @@
 .wb-more div { position: absolute; right: 0; top: calc(100% + 6px); z-index: 6; min-width: 196px; padding: 6px; background: var(--product-panel); border: 1px solid var(--product-line); border-radius: 8px; }
 .wb-more button { width: 100%; justify-content: flex-start; border: 0; white-space: nowrap; }
 .wb-context-floor { margin: 18px 0; color: var(--product-muted); font-size: 12px; text-align: center; }
-.wb-messages { overflow: auto; flex: 1; min-height: 0; scroll-behavior: smooth; }
+.wb-messages { overflow: auto; flex: 1; min-height: 0; scroll-behavior: auto; }
 .wb-message-column { max-width: 950px; padding: 24px 30px; margin: auto; }
 .wb-welcome { padding-top: clamp(45px,12vh,130px); text-align: center; }
 .wb-welcome > div:first-child { display: inline-flex; padding: 17px; background: var(--product-panel); border-radius: 16px; }
@@ -101,6 +101,7 @@ html[data-theme="dark"] .knowledge-workbench button.wb-cite:hover, html[data-the
 .wb-composer { background: var(--product-panel); border: 1px solid var(--product-line); border-radius: 22px; padding: 14px 16px 10px; }
 .product-app .wb-composer textarea { display: block; width: 100%; min-height: 52px; max-height: 220px; resize: none; border: 0; box-shadow: none; background: transparent; color: inherit; font: inherit; font-size: 15px; line-height: 1.6; padding: 2px 2px 8px; outline: none; }
 .wb-composer footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 36px; }
+.wb-compose-actions { display: flex; align-items: center; gap: 8px; }
 .wb-composer footer span { color: var(--product-muted); font-size: 12px; line-height: 1.4; }
 .knowledge-workbench .wb-composer footer button { width: 32px; height: 32px; min-width: 32px; min-height: 32px; padding: 0; border-radius: 50%; flex: none; }
 .knowledge-workbench .wb-send { background: transparent; color: var(--product-muted); border-color: var(--product-line); }
