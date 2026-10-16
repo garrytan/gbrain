@@ -34,7 +34,7 @@
  * sees the constraint.
  */
 
-import { checkPageCap } from './page-cap.ts';
+import { admitFenceAppends, readPageCap, reportPageCap } from './page-cap.ts';
 import { execFileSync } from '../spawn.ts';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, appendFileSync } from 'node:fs';
 import { dirname, isAbsolute, relative } from 'node:path';
@@ -86,7 +86,7 @@ export interface FenceTarget {
 
 /** Input fact prepared by runPipelineWithBody (post-dedup). */
 export interface FenceInputFact {
-  /** #capture-policy: explicit supersession may append its replacement at the cap. */
+  /** capture-policy PR: explicit supersession may append its replacement at the cap. */
   replacesExisting?: boolean;
   embedding_model?: string | null;
   fact: string;
@@ -114,7 +114,7 @@ export interface FenceInputFact {
 }
 
 export interface FenceWriteResult {
-  /** #capture-policy: refused appends, with no DB fallback. */
+  /** capture-policy PR: refused appends, with no DB fallback. */
   capped?: number;
   /** Number of new rows written + indexed. */
   inserted: number;
@@ -298,6 +298,22 @@ export function stubEntityPage(
   return `---\ntype: ${yamlScalar(type)}\ntitle: ${yamlScalar(title)}\nslug: ${yamlScalar(slug)}\n---\n\n# ${title}\n`;
 }
 
+async function readFenceRowMaximum(engine: BrainEngine, target: FenceTarget): Promise<number> {
+  let dbMaxRowNum = 0;
+  try {
+    const rows = await engine.executeRaw<{ max_row_num: number | null }>(
+      `SELECT MAX(row_num) AS max_row_num FROM facts
+        WHERE source_id = $1 AND source_markdown_slug = $2`,
+      [target.sourceId, target.slug],
+    );
+    dbMaxRowNum = Number(rows[0]?.max_row_num ?? 0);
+  } catch (err) {
+    console.warn(`[facts.fence] FACTS_ROW_NUM_HINT_UNAVAILABLE: ${target.slug} (source ${target.sourceId}): ${err instanceof Error ? err.message : String(err)}; numbering from the file alone`);
+  }
+  return dbMaxRowNum;
+}
+
+
 /**
  * Run a markdown-first fence write for one entity. Acquires the page
  * lock, reads or stub-creates the file, appends each input fact to
@@ -480,21 +496,17 @@ export async function writeFactsToFence(
       //    a fence write must not become impossible just because the counter
       //    hint is unavailable. The degradation is reported, never silent,
       //    because file-only numbering is the duplicate-key class above.
-      let dbMaxRowNum = 0;
-      try {
-        const rows = await engine.executeRaw<{ max_row_num: number | null }>(
-          `SELECT MAX(row_num) AS max_row_num FROM facts
-            WHERE source_id = $1 AND source_markdown_slug = $2`,
-          [target.sourceId, target.slug],
-        );
-        dbMaxRowNum = Number(rows[0]?.max_row_num ?? 0);
-      } catch (err) {
-        console.warn(`[facts.fence] FACTS_ROW_NUM_HINT_UNAVAILABLE: ${target.slug} (source ${target.sourceId}): ${err instanceof Error ? err.message : String(err)}; numbering from the file alone`);
-      }
+      const dbMaxRowNum = await readFenceRowMaximum(engine, target);
       const fenceRefusal = refuseUnparsedFence(body, target, filePath);
       if (fenceRefusal) return { inserted: 0, ids: [], fenceWriteFailed: true, fenceRefusal, ...withdrawnSkipped };
       const { facts: existingFenceFacts } = parseFactsFence(body);
-      if (facts.some(f => !f.replacesExisting) && !await checkPageCap(engine, target.sourceId, target.slug, existingFenceFacts.length, facts.filter(f => !f.replacesExisting).length)) return { inserted: 0, ids: [], capped: facts.length, ...withdrawnSkipped };
+      const cap = await readPageCap(engine);
+      const { admitted, capped } = admitFenceAppends(facts, cap, existingFenceFacts.length);
+      facts = admitted;
+      if (!facts.length) {
+        await reportPageCap(engine, target.sourceId, target.slug, cap, existingFenceFacts.length, capped);
+        return { inserted: 0, ids: [], capped, ...withdrawnSkipped };
+      }
       const fileMaxRowNum = existingFenceFacts.length > 0
         ? Math.max(...existingFenceFacts.map(f => f.rowNum))
         : 0;
@@ -614,7 +626,8 @@ export async function writeFactsToFence(
           durabilityPrewriteState,
         );
       }
-      return { inserted: result.inserted, ids: result.ids, ...withdrawnSkipped };
+      await reportPageCap(engine, target.sourceId, target.slug, cap, existingFenceFacts.length, capped);
+      return { inserted: result.inserted, ids: result.ids, capped, ...withdrawnSkipped };
     },
     { timeoutMs: 5_000 },
   );

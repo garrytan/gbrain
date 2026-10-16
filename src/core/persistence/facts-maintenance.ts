@@ -36,7 +36,6 @@ import { declareDerivation, type DerivationDeclaration } from '../trust/taint.ts
 import type { TaintInput, WriteTrust } from '../trust/tier.ts';
 
 export interface ManagedFactsResult extends CaptureCounts {
-  capped?: number;
   inserted: number; duplicate: number; superseded: number; fact_ids: number[]; entity_slugs: string[]; write_requests: WriteReceipt[];
   /** #6506: candidates the automatic extraction skipped because the exact claim was forgotten in this source and visibility. */
   withdrawn_skipped?: number;
@@ -48,6 +47,7 @@ export type FrozenExtractedFact = Omit<NewFact, 'embedding' | 'valid_from' | 'va
   embedding: number[] | null; valid_from: string; valid_until: string | null;
   /** #5836: a write-time inferred subject dedups exact text only, never superseding or dropping a similar fact. */
   entity_inferred?: InferredVia;
+  routed_from?: string;
 };
 export interface ManagedFactIntent extends Record<string, unknown> {
   kind: 'managed_facts_entity' | 'managed_facts_complete';

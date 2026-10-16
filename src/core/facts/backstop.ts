@@ -37,6 +37,7 @@
  * commit 13 wires it.
  */
 
+import type { ExtractedFact } from './extract.ts';
 import { applyCapturePolicy, type CaptureCounts } from './capture-policy-write.ts';
 import { observationDateFrom, resolveObservationDate, type ObservationDate } from '../ai/date-grounding.ts';
 import { factEventTime } from './event-time.ts';
@@ -697,6 +698,24 @@ async function derivedFactWriter(ctx: FactsBackstopCtx, input: PipelineInput, de
   return { insertDerivedFact, gateGroup, write_gate };
 }
 
+/** Infer subjects and apply automatic admission before deduplication. */
+async function prepareCapturedFacts(ctx: FactsBackstopCtx, extracted: ExtractedFact[], visibility: 'private' | 'world',
+  pageSlug: string | undefined, managed: import('../persistence/facts-maintenance.ts').ManagedFactsSession | null) {
+  const { resolveEntitySlugWithSource } = await import('../entities/resolve.ts');
+  const inferred = await inferMissingSubjects(ctx, extracted, visibility, pageSlug, managed);
+  const policy = await applyCapturePolicy(ctx, inferred, visibility, managed);
+  const dedup = await dedupCapturedFacts(ctx, policy.facts, visibility, resolveEntitySlugWithSource);
+  return { policy, ...dedup };
+}
+
+async function publishCapturedFacts(ctx: FactsBackstopCtx, managed: import('../persistence/facts-maintenance.ts').ManagedFactsSession,
+  facts: ExtractedFact[], visibility: 'private' | 'world', pageSlug: string | undefined, counts: CaptureCounts, dropped: number) {
+  if (!facts.length && dropped && !Object.keys(counts).length) return null;
+  const { publishManagedFacts } = await import('../persistence/facts-maintenance.ts');
+  return publishManagedFacts(ctx.engine, managed, ctx, facts, visibility, pageSlug,
+    { withdrawn: 'skip', captureCounts: counts });
+}
+
 /** The actual pipeline body — always runs inside a BudgetTracker scope (#4210). */
 async function runPipelineBodyInner(
   input: PipelineInput,
@@ -781,10 +800,10 @@ async function runPipelineBodyInner(
   // facts.default_visibility (fail-closed to 'private').
   const { resolveDefaultVisibility } = await import('./visibility.ts');
   const visibility = ctx.visibility ?? (await resolveDefaultVisibility(ctx.engine));
-  const policy = await applyCapturePolicy(ctx, await inferMissingSubjects(ctx, outcome.facts, visibility, input.pageSlug, managed), visibility, managed);
-  const { facts, dropped } = await dedupCapturedFacts(ctx, policy.facts, visibility, resolveEntitySlugWithSource);
+  const { policy, facts, dropped } = await prepareCapturedFacts(ctx, outcome.facts, visibility, input.pageSlug, managed);
   if (!managed) await assertAmbientCaptureAdmissible(ctx.engine, ctx.source);
-  if (managed) return withCaptureDrops(dropped, facts.length || !dropped.length || Object.keys(policy.counts).length ? await publishManagedFacts(ctx.engine, managed, ctx, facts, visibility, input.pageSlug, { withdrawn: 'skip', captureCounts: policy.counts }) : null);
+  if (managed) return withCaptureDrops(dropped,
+    await publishCapturedFacts(ctx, managed, facts, visibility, input.pageSlug, policy.counts, dropped.length));
 
   const counts: PipelineCounts = { inserted: 0, duplicate: dropped.length, superseded: 0, fact_ids: [...dropped], ...policy.counts };
   let wouldDedupSamePageCount = 0;
@@ -978,7 +997,7 @@ async function runPipelineBodyInner(
       derivation,
     );
 
-    if (result.capped) { counts.capped = (counts.capped ?? 0) + result.capped; continue; }
+    if (result.capped) counts.capped = (counts.capped ?? 0) + result.capped;
     if (result.fenceWriteFailed) {
       // Fence parse-validate rejected the .tmp; .tmp stays as
       // quarantine. The JSONL log is the operator surface. Treat

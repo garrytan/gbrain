@@ -114,7 +114,7 @@ export async function writeFactsAbsorbLog(
     const cleanedDetail = (detail ?? '').toString().slice(0, 240);
     await engine.logIngest({
       source_id: sourceId,
-      // #capture-policy: successful policy decisions are not extraction-health failures.
+      // capture-policy PR: successful policy decisions are not extraction-health failures.
       source_type: reason === 'capture_policy' || reason === 'page_cap' ? 'facts:policy' : 'facts:absorb',
       source_ref: ref,
       pages_updated: [],

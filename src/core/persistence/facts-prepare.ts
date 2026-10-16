@@ -1,4 +1,4 @@
-import { checkPageCap, pageCapError } from '../facts/page-cap.ts';
+import { checkPageCap, readPageCap, reportPageCap, pageCapError } from '../facts/page-cap.ts';
 import type { BrainEngine, NewFact } from '../engine.ts';
 import { attributionCompatible } from '../facts/attribution.ts';
 import type { GBrainConfig } from '../config.ts';
@@ -52,7 +52,7 @@ function dedupEmbedding(fact: { embedding?: Float32Array | null; entity_inferred
   return fact.entity_inferred ? null : fact.embedding ?? null;
 }
 
-function thawFact(fact: FrozenExtractedFact): NewFact & { entity_slug: string | null; kind: NonNullable<NewFact['kind']>; visibility: NonNullable<NewFact['visibility']> } {
+function thawFact(fact: FrozenExtractedFact): NewFact & { entity_slug: string | null; kind: NonNullable<NewFact['kind']>; visibility: NonNullable<NewFact['visibility']>; routed_from?: string } {
   return { ...fact, entity_slug: fact.entity_slug ?? null, kind: fact.kind ?? 'fact', visibility: fact.visibility ?? 'private',
     valid_from: new Date(fact.valid_from), valid_until: fact.valid_until ? new Date(fact.valid_until) : null,
     embedding: fact.embedding ? new Float32Array(fact.embedding) : null };
@@ -121,7 +121,7 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
   const additionalPageKeys = p.origin ? [{ sourceId: row.source_id, slug: p.origin.slug }] : [];
   if (p.kind === 'managed_facts_complete') return { observedRevision: null, noop: true, additionalPageKeys, validate, apply: async tx => {
     const children = p.children ?? [];
-    const done = await tx.executeRaw<{ outcome: { inserted?: number; duplicate?: number; fact_ids?: number[]; withdrawn_skipped?: number; would_dedup_same_page?: number } }>(`SELECT outcome FROM persistence_requests WHERE id=ANY($1::uuid[]) AND source_incarnation=$2::uuid
+    const done = await tx.executeRaw<{ outcome: { inserted?: number; duplicate?: number; fact_ids?: number[]; capped?: number; withdrawn_skipped?: number; would_dedup_same_page?: number } }>(`SELECT outcome FROM persistence_requests WHERE id=ANY($1::uuid[]) AND source_incarnation=$2::uuid
       AND state='committed' AND COALESCE(intent->>'batchKey',outcome->>'batch_key')=$3 AND operation='extract_facts'`, [children, row.source_incarnation, p.batchKey]);
     if (done.length !== children.length) throw factsRefusal('revision_conflict', FACTS_BATCH_INCOMPLETE_MESSAGE, row,
       `${children.length - done.length} of the batch's ${children.length} per-entity fact requests have not committed, so the extraction cannot be recorded as complete.`,
@@ -130,6 +130,7 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
     const wouldDedupSamePage = done.reduce((sum, item) => sum + Number(item.outcome.would_dedup_same_page ?? 0), 0);
     return { ...(p.capture_counts ? { capture_counts: p.capture_counts } : {}), status: 'completed', entity_requests: children.length, kind: p.kind, batch_key: p.batchKey, input_digest: p.inputDigest,
       inserted: done.reduce((sum, item) => sum + Number(item.outcome.inserted ?? 0), 0),
+      capped: done.reduce((sum, item) => sum + Number(item.outcome.capped ?? 0), 0),
       duplicate: done.reduce((sum, item) => sum + Number(item.outcome.duplicate ?? 0), 0),
       ...(withdrawnSkipped ? { withdrawn_skipped: withdrawnSkipped } : {}),
       ...(wouldDedupSamePage ? { would_dedup_same_page: wouldDedupSamePage } : {}),
@@ -168,10 +169,17 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
   // refuses the group, as it does for every writer; explicit writers (no flag) refuse the forgotten claim.
   let withdrawnSkipped = 0;
   let capped = 0;
+  const cap = await readPageCap(engine);
+  let fenceRows = Object.values(fenced).reduce((sum, text) => sum + parseFactsFence(text).facts.length, 0);
+  const originalFenceRows = fenceRows;
   // #6333 shadow (managed mirror of the backstop's counter): a same-page rewording is counted on the entity outcome
   // and named on stderr; nothing is dropped. The count is frozen in the receipt, so a replay reports it, not recounts it.
   let wouldDedupSamePage = 0;
   for (const fact of facts) {
+    if (fact.routed_from && await isFactWithdrawn(engine, row.source_id, fact.visibility, fact.fact, fact.routed_from)) {
+      if (p.withdrawn === 'skip') { withdrawnSkipped++; continue; }
+      await assertFactNotWithdrawn(engine, row.source_id, { ...fact, entity_slug: fact.routed_from });
+    }
     if (p.withdrawn === 'skip') {
       await assertFactNotPurged(engine, row.source_id, fact);
       if (await isFactWithdrawn(engine, row.source_id, fact.visibility, fact.fact, fact.entity_slug)) { withdrawnSkipped++; continue; }
@@ -188,7 +196,7 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
     const gate = taint ? decideFactWrite(fact, { sourceId: row.source_id, slug: row.slug, payload: { ...fact, embedding: null },
       input: derivedGateInput(taint.trust, row.id), cfg: gateCfg! }) : undefined;
     if (gate && gate.action !== 'insert') { blocked.push(gate); continue; }
-    if (snapshot && fact.entity_slug !== null && !fallback(fact) && !supersedes && !await checkPageCap(engine, row.source_id, row.slug, parseFactsFence(next[section]).facts.length)) {
+    if (snapshot && fact.entity_slug !== null && !fallback(fact) && !supersedes && checkPageCap(cap, fenceRows).refuse) {
       if (p.withdrawn !== 'skip') throw pageCapError(row.slug);
       capped++; seen.delete(key); continue;
     }
@@ -201,6 +209,7 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
       claimMetric: fact.claim_metric ?? undefined, claimValue: fact.claim_value ?? undefined,
       claimUnit: fact.claim_unit ?? undefined, claimPeriod: fact.claim_period ?? undefined,
       ...(fact.attributed_to ? { attributedTo: fact.attributed_to } : {}) }).body) };
+    if (rowNum !== undefined) fenceRows++;
     // Strike the superseded row in this page's fence, as the remember mutation does (#6686: in the section that holds it).
     if (supersedes && rowNum !== undefined && supersedes.source_markdown_slug === row.slug && supersedes.row_num != null) {
       next = strikeFactRowInPage(next, Number(supersedes.row_num), rowNum);
@@ -227,14 +236,27 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
     if (page.observedRevision !== snapshot.revision) throw factsRefusal('revision_conflict', 'The fact entity changed during preparation.', row,
       `Entity page ${row.slug} changed while its ## Facts table was being prepared, so none of these facts were published.`);
   }
-  return { observedRevision: snapshot?.revision ?? null, file: page?.file, ...(page?.exclusiveSources ? { exclusiveSources: page.exclusiveSources } : {}), noop: entries.every(entry => entry.duplicateId !== null || entry.duplicateOf !== undefined),
+  return { observedRevision: snapshot?.revision ?? null, file: page?.file,
+    ...(page?.exclusiveSources ? { exclusiveSources: page.exclusiveSources } : {}),
+    noop: entries.every(entry => entry.duplicateId !== null || entry.duplicateOf !== undefined),
     ...(taint ? { trust: taint.trust } : {}),
-    additionalPageKeys, validate: async tx => {
+    additionalPageKeys, afterCommit: async db => {
+      await page?.afterCommit?.(db);
+      await reportPageCap(db, row.source_id, row.slug, cap, originalFenceRows, capped);
+    }, validate: async tx => {
       await validate(tx, true);
       for (const entry of entries) {
         // #6506 (R15): under `withdrawn: 'skip'` a claim forgotten between preparation and this locked validation is a
         // terminal revision_conflict whose detail names the withdrawal (the fence body is already rendered, and an
         // extract_facts request is never re-prepared); an input-keyed batch recovers through its follow-up batch.
+        if (entry.fact.routed_from && await isFactWithdrawn(tx, row.source_id, entry.fact.visibility, entry.fact.fact, entry.fact.routed_from)) {
+          const original = { ...entry.fact, entity_slug: entry.fact.routed_from };
+          const refusal = factsRefusal('revision_conflict', 'The original subject was withdrawn after preparation.', row,
+            'The original subject withdrawal must be respected before publication.');
+          refusal.withdrawn = (await factWithdrawnRefusal(tx, row.source_id, original)).withdrawn;
+          refusal.retryable = true;
+          throw refusal;
+        }
         if (p.withdrawn !== 'skip') await assertFactNotWithdrawn(tx, row.source_id, entry.fact);
         else {
           await assertFactNotPurged(tx, row.source_id, entry.fact);
@@ -250,11 +272,11 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
         if ((current.candidate?.id ?? null) !== (entry.duplicateId ?? entry.supersedes?.id ?? null)) throw factsRefusal('revision_conflict', 'The fact deduplication state changed before publication.', row,
           `A matching fact in source ${row.source_id} was added or retired before publication, so the deduplication decision for ${row.slug} is stale and none of these facts were published.`);
       }
-      // #capture-policy: config can change after preparation; recheck beneath the publication guard.
-      let capRows = parseFactsFence(fenced[section]).facts.length;
-      for (const entry of entries) if (entry.rowNum !== undefined) {
-        if (!entry.supersedes && !await checkPageCap(tx, row.source_id, row.slug, capRows)) throw pageCapError(row.slug);
-        capRows++;
+      // capture-policy PR: config can change after preparation; recheck beneath the publication guard.
+      const liveCap = await readPageCap(tx);
+      if (liveCap.max !== cap.max) {
+        throw opError('revision_conflict', 'The facts cap changed after preparation.',
+          'Retry extraction with the current cap to recompute admitted and capped counts.', { retryable: true });
       }
       await page?.validate?.(tx);
     }, apply: async tx => {

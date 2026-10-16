@@ -1505,7 +1505,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'facts.default_visibility',
   'facts.entity_inference', // #5836: write-time subject inference kill switch (subject-infer.ts)
   'facts.capture_filter', 'facts.capture_routing', 'facts.routing.broad_types', 'facts.routing.specific_types',
-  'facts.page_cap.warn_rows', 'facts.page_cap.max_rows', // #capture-policy: optional fence append limits
+  'facts.page_cap.warn_rows', 'facts.page_cap.max_rows', // capture-policy PR: optional fence append limits
   'facts.candidate_fusion', // C2: 'rrf_free' (default, cosine arm) | 'interleave' (cosine + keyword; facts/single-prepare.ts)
   'facts.supersession_thresholds', // JSON {"provider:model@dims": number | "off"} (facts/supersession-threshold.ts)
   'facts.page_write_notability_filter', // #6231: tiers page-write extraction keeps (facts/notability-filter.ts)

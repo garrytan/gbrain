@@ -45,8 +45,8 @@ export function heldFileDiagnostic(message: string | null | undefined, sourceId 
 }
 
 export function writeFailureDiagnostic(code: string, message?: string | null): { reason: string; message: string; suggestion: string } {
-  // #capture-policy: a bounded cap refusal is actionable through the frozen verb error envelope.
-  if (code === 'invalid_params' && /^Facts fence cap reached for [^\s]{1,300}\. Archive existing rows or increase facts\.page_cap\.max_rows; nothing was written\.$/.test(message ?? '')) return {
+  // capture-policy PR: a bounded cap refusal is actionable through the frozen verb error envelope.
+  if (code === 'facts_page_cap') return {
     reason: 'facts_page_cap', message: message!, suggestion: 'Archive existing fence rows on the named page or increase facts.page_cap.max_rows, then retry with a new request_id.',
   };
   const held = code === 'source_changed' ? heldFileDiagnostic(message) : null;
@@ -172,7 +172,7 @@ export async function runMemoryWrite<T>(run: () => Promise<T>): Promise<T> {
       throw purged;
     }
     const code = ['permission_denied','scope_denied','source_changed','writer_registration_required'].includes(error.code)
-      ? 'scope_denied' : ['revision_required','revision_conflict','idempotency_conflict','invalid_params','page_identity_changed'].includes(error.code)
+      ? 'scope_denied' : ['revision_required','revision_conflict','idempotency_conflict','facts_page_cap','invalid_params','page_identity_changed'].includes(error.code)
         ? 'invalid_params' : 'unavailable';
     const diagnostic = error.code === 'source_changed' ? writeFailureDiagnostic(error.code, error.message) : null;
     const frozen = verbError(code,diagnostic?.message ?? error.message,diagnostic?.suggestion ?? error.suggestion ?? 'Inspect writer status before retrying.');
@@ -192,7 +192,7 @@ export function frozenVerbWriteError(receipt: WriteReceipt, reason?: WriteErrorC
     : receipt.state === 'conflict' ? 'revision_conflict'
       : receipt.state === 'cancelled' ? 'cancelled' : 'storage_error');
   const code = ['source_changed','permission_denied','scope_denied','writer_registration_required'].includes(writeError) ? 'scope_denied'
-    : ['revision_required', 'revision_conflict', 'idempotency_conflict','invalid_params','page_identity_changed','purged_content'].includes(writeError) || writeError.startsWith('core_')
+    : ['revision_required', 'revision_conflict', 'idempotency_conflict','facts_page_cap','invalid_params','page_identity_changed','purged_content'].includes(writeError) || writeError.startsWith('core_')
       ? 'invalid_params' : 'unavailable';
   const diagnostic = writeFailureDiagnostic(writeError, message);
   const suggestion = pending

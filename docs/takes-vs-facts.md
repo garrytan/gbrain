@@ -143,20 +143,19 @@ capture behavior; start with shadow mode to measure potential recall loss.
 | `facts.capture_routing` | `off` | `off`, `shadow` (count only), or `on` (route) |
 | `facts.routing.broad_types` | `company` | Comma-separated broad page types |
 | `facts.routing.specific_types` | `person,project,deal` | Allowed specific page types or corresponding directories |
-| `facts.page_cap.warn_rows` | `0` | Warn once per source/page/process at this fence row count; 0 disables |
+| `facts.page_cap.warn_rows` | `0` | Record a warning after publication at this fence row count; 0 disables |
 | `facts.page_cap.max_rows` | `0` | Refuse appends at this fence row count; 0 disables |
 
 | Filter category | Admission rule |
 | --- | --- |
-| `low_notability` | Extractor explicitly labels the claim low |
-| `scheduling` | Meeting/call/appointment/invite/reschedule/attendance plus a time/date expression |
-| `shipping` | Physical parcel/courier/tracking/delivery ETA/customs status |
-| `logistics` | Travel booking, hotel, flight, restaurant, room booking, parking, wifi, password reset |
-| `spam` | Newsletter, webinar invitation, promotional offer, unsubscribe, limited-time or sponsored/marketing email |
+| `scheduling` | Future/proposed meeting logistics with a time; past events, topic clauses and named counterparties are kept |
+| `shipping` | Physical shipping plus booking/status/tracking frame |
+| `logistics` | Travel/account logistics plus booked/reserved/confirmed/check-in/departs/lands/arrived/delayed/tracking frame |
+| `spam` | Marketing terms plus received/arrived/sent us/in my inbox frame |
 | `transient` | Running late, out of office until, waiting for a reply, will send it tomorrow, reminder to |
 
 Money amounts, percentages, claim metrics, decision/commitment verbs, legal/IP
-terms and strategic terms veto every category except low notability and spam.
+terms and strategic terms veto every regex category, including spam.
 Unknown cases are kept. Delivery in a technical claim, operating calendars,
 commercial discount options and management follow-up are not noise signals.
 Stable `capture.<category>.v1` rule IDs identify drops. Counts (`filtered`,
@@ -166,8 +165,8 @@ policy and cap events are recorded in the ingest log without claim text.
 Routing starts only from a broad entity. Exact slugs, unique basenames and
 unique aliases must identify exactly one live specific entity. Fuzzy and
 same-name matches never route. Another specific entity, another broad entity,
-an unresolved competing real name, a bare first name, an opening broad name,
-or a person's possessive company/startup/firm veto routing. Role tokens,
+an unresolved competing real name, a bare first name, any broad title/alias/slug/basename anywhere in the claim,
+or a person's possessive (including her/his/their) company/startup/firm veto routing. Role tokens,
 ordinary sentence openers and references to nonentity pages do not compete.
 Authorization and page-visibility checks still apply. Routed context includes
 `routed from <original slug>`.
@@ -186,3 +185,32 @@ External archivers remain compatible: archive rows to make space, or increase
 `facts.page_cap.max_rows`. Conversation-derived batches stored against their
 source conversation do not append entity fences and therefore do not use this
 fence cap.
+
+The regex filter is independent of the existing #6231
+`facts.page_write_notability_filter` (`all`, `medium-and-up`, `high-only`).
+Automatic capture first applies that notability threshold, then applies the
+regex categories using `facts.capture_filter`. No separate low-notability knob
+exists. Regex categories support shadow mode; enable `on` only after reviewing
+shadow counts and representative false positives. Topic-bearing proposed calls
+are kept, including a proposed Friday call to discuss scopes. Absolute dates
+alone never drop an event; modal "may" and "24/7" are not scheduling dates.
+
+Drops are not stored anywhere. Start in shadow mode. Loosening or disabling a
+filter does not restore previously extracted facts: explicitly re-extract the
+original sources (which may incur model costs). Conversation generation keys
+do not include this policy; force re-extraction after changing it.
+
+`gbrain facts relink` is exempt from the append cap: it moves facts already
+stored in the database into their entity fences rather than admitting new
+knowledge. It can exceed `max_rows`; archive rows before subsequent capture.
+Conversation-derived database-only batches are also exempt as described above.
+
+**Say to your agent:** "Set the capture filter and routing to shadow, show me
+aggregate counts, and let me review examples before enabling drops."
+
+**Say to your agent:** "Keep medium and high notability facts during automatic
+capture using facts.page_write_notability_filter; explain what re-extraction
+will be needed if I later loosen this threshold."
+
+**Say to your agent:** "Set an optional fence row cap, check both thresholds,
+and explain how to archive rows or re-extract source material after drops."

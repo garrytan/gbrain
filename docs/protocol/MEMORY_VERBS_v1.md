@@ -1128,3 +1128,9 @@ constants at the top of that file (`PAGES = 200_000`, `LINKS = 1_000_000`,
 `ALIASES = 300_000`, `FACTS = 400_000`) and run
 `bun test test/entity-card-perf.slow.test.ts --timeout=1800000` — seeding
 dominates (~minutes); the measured calls report p50/p99 + the ratio guard.
+
+A `remember` fence append refused by the optional capture-policy PR cap returns
+`invalid_params`, with `write_error: facts_page_cap`. The internal refusal uses
+code `facts_page_cap` and detail containing the slug. Its failure diagnostic
+uses reason `facts_page_cap` and suggests archiving rows or increasing
+`facts.page_cap.max_rows`. A replacement remains allowed at the cap.
