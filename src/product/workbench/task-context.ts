@@ -5,28 +5,38 @@ import { classifyTurn, compactRule, taskNeedsSkill } from './turn-policy';
 const followUp = /^(?:继续|继续做|继续写|接着做|接着写|接着|执行吧|开始吧|就按这个|按这个做|做吧|写吧|可以|好|好的|行|嗯|执行)$/;
 const agreementOnly = /^(?:可以|好|好的|行|嗯|执行)$/;
 const continuationCue = /继续|接着|就按这个|按这个|按刚才|还是按|执行吧|开始吧/;
+const leavesCurrentTaskCue = /(?:不要|别再|不用|不再|停止)(?:再)?(?:继续|接着)|改做|换成|换做|另做|另外做/;
+const replacementCue = /改做|换成|换做|另做|另外做/;
+
+function normalizedWork(text: string): string {
+  return text.replace(/\s+/g, '').replace(/[。！!？?，,]/g, '');
+}
 
 export function continuesActiveTask(text: string): boolean {
-  return followUp.test(text.replace(/\s+/g, '').replace(/[。！!？?，,]/g, ''));
+  return followUp.test(normalizedWork(text));
 }
 
 export function continuesCurrentWork(text: string): boolean {
   if (continuesActiveTask(text)) return true;
-  return continuationCue.test(text.replace(/\s+/g, '').replace(/[。！!？?，,]/g, ''));
+  return continuationCue.test(normalizedWork(text));
+}
+
+export function carriesCurrentMethod(text: string): boolean {
+  return continuesCurrentWork(text) && !leavesCurrentTaskCue.test(normalizedWork(text));
 }
 
 export function advanceTask(input: { task?: WorkbenchTask; notes?: string[]; text: string; recentUserTexts: string[]; agent: { workflow?: string; skills?: string[] }; now: string; id: () => string }): { task?: WorkbenchTask; inherited: boolean; opened: boolean } {
   const text = input.text.trim();
-  const normalized = text.replace(/\s+/g, '').replace(/[。！!？?，,]/g, '');
-  if (input.task && continuesCurrentWork(text)) return { task: { ...input.task, updatedAt: input.now }, inherited: true, opened: false };
+  const normalized = normalizedWork(text);
+  if (input.task && carriesCurrentMethod(text)) return { task: { ...input.task, updatedAt: input.now }, inherited: true, opened: false };
   if (continuesActiveTask(text)) {
-    if (input.task) return { task: { ...input.task, updatedAt: input.now }, inherited: true, opened: false };
     if (agreementOnly.test(normalized)) return { inherited: false, opened: false };
     const goal = [...input.recentUserTexts].reverse().find(item => classifyTurn(item) === 'chat' && taskNeedsSkill(input.agent, item));
     if (!goal) return { inherited: false, opened: false };
     return { task: { id: input.id(), goal: compactRule(goal), constraints: [...(input.notes ?? [])], updatedAt: input.now }, inherited: true, opened: false };
   }
-  if (classifyTurn(text) === 'chat' && taskNeedsSkill(input.agent, text)) {
+  const canReplace = !!input.task && replacementCue.test(normalized) && !!(input.agent.workflow || input.agent.skills?.length);
+  if (classifyTurn(text) === 'chat' && (taskNeedsSkill(input.agent, text) || canReplace)) {
     const goal = compactRule(text);
     if (input.task?.goal === goal) return { task: { ...input.task, updatedAt: input.now }, inherited: true, opened: false };
     return { task: { id: input.id(), goal, constraints: [], updatedAt: input.now }, inherited: false, opened: true };

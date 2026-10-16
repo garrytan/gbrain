@@ -131,9 +131,10 @@ export async function runWorkbenchTools(input: WorkbenchAnswerInput & {
         const item = parsed as { source_id?: unknown; slug?: unknown; revision?: unknown };
         const sourceId = typeof item?.source_id === 'string' ? item.source_id : '';
         const slug = typeof item?.slug === 'string' ? item.slug : '';
-        if (!sourceId || !slug || !allowed.get(JSON.stringify([sourceId, slug])) || (sourceIds && !sourceIds.includes(sourceId)) || typeof item.revision !== 'string' || !item.revision) return handler.execute(raw, abort, execution);
+        const index = citations.findIndex(row => row.sourceId === sourceId && row.slug === slug);
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || !sourceId || !slug || index < 0 || !allowed.get(JSON.stringify([sourceId, slug])) || (sourceIds && !sourceIds.includes(sourceId)) || typeof item.revision !== 'string' || !item.revision) return handler.execute(raw, abort, execution);
         reads.set(JSON.stringify([sourceId, slug]), item.revision);
-        return parsed;
+        return { ...parsed, citation: index + 1 };
       }
       return parsed;
     } });

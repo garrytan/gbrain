@@ -24,6 +24,7 @@ export interface WorkbenchAnswerInput {
   summary?: string;
   taskNotes?: string[];
   task?: WorkbenchTask;
+  taskMethod?: boolean;
   priorCitations?: WorkbenchCitation[];
   model: string;
   knowledge: boolean;
@@ -85,8 +86,10 @@ function restoredMessages(current: WorkbenchMessage[], revision: { reason: 'edit
     if (index >= 0) return [...current.slice(0, index), ...suffix];
   }
   if (revision.reason === 'retry' && suffix.length > 0 && suffix.every(message => message.role === 'assistant')) {
-    const end = current.at(-1)?.role === 'assistant' ? current.length - 1 : current.length;
-    return [...current.slice(0, end), ...suffix];
+    const turnId = suffix[0]?.turnId;
+    const userIndex = turnId && suffix.every(message => message.turnId === turnId) ? current.findIndex(message => message.role === 'user' && message.turnId === turnId) : -1;
+    if (userIndex >= 0) return [...current.slice(0, userIndex + 1), ...suffix];
+    throw new Error('这段重新生成前的记录没有对上原来的问题，不能安全恢复');
   }
   return suffix;
 }
@@ -491,7 +494,7 @@ export class WorkbenchService {
           contextWindow, contextThreshold: assistant.context.threshold,
           ...(this.summarize ? { contextSummarizer: { model: compressionModel, contextWindow: this.models().find(item => item.id === compressionModel)?.contextWindow, summarize: this.summarize } } : {}),
           sourceId: conversation.sourceId, conversationId: conversation.id,
-          messages: this.modelMessages(conversation.id, recent), ...(summary ? { summary } : {}), ...(conversation.taskNotes?.length ? { taskNotes: conversation.taskNotes } : {}), ...(conversation.task ? { task: conversation.task } : {}), ...(conversation.knowledge?{priorCitations}:{}), ...(visuals.kept.length ? { visualAttachments: visuals.kept.map(({ name, mime, image }) => ({ name, mime, image })) } : {}), ...(settledTools?.length ? { settledTools } : {}), model, knowledge: conversation.knowledge,
+          messages: this.modelMessages(conversation.id, recent), ...(summary ? { summary } : {}), ...(conversation.taskNotes?.length ? { taskNotes: conversation.taskNotes } : {}), ...(conversation.task ? { task: conversation.task } : {}), taskMethod: taskInherited, ...(conversation.knowledge?{priorCitations}:{}), ...(visuals.kept.length ? { visualAttachments: visuals.kept.map(({ name, mime, image }) => ({ name, mime, image })) } : {}), ...(settledTools?.length ? { settledTools } : {}), model, knowledge: conversation.knowledge,
           ...(assistant.systemPrompt.trim() ? { systemPrompt: assistant.systemPrompt } : {}),
           ...(assistant.temperature !== null ? { temperature: assistant.temperature } : {}),
           signal: session.signal,

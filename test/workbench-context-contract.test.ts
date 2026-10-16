@@ -58,6 +58,61 @@ test('先交代周报后再说继续或执行吧，仍沿用这件任务；换�
   expect(hello).not.toContain('<workflow>');
 });
 
+test('接着把剩下的做完仍沿用这件任务的做法；不要继续并改做别的，就不再带上旧目标和这次的限制', async () => {
+  const dir = root();
+  const methods: Array<boolean | undefined> = [];
+  const store = new WorkbenchStore(dir);
+  const service = new WorkbenchService(store, () => [{ id: 'ollama:local', name: '本地', contextWindow: 8192 }], async input => {
+    methods.push(input.taskMethod);
+    return { text: '好', model: 'ollama:local', citations: [] };
+  });
+  const agent = new WorkbenchAgentStore(store).create({ name: '周报助手', workflow: '先查知识库，再写完成事项、问题和计划', skills: ['weekly-report'], systemPrompt: '你是周报助手' });
+  const conversation = service.create({ assistantId: agent.id, knowledge: false });
+  service.send(conversation.id, { text: '生成本周周报' });
+  await service.settled(conversation.id);
+  service.send(conversation.id, { text: '这次不要写下周计划' });
+  await service.settled(conversation.id);
+  const started = service.get(conversation.id).task;
+  expect(started?.constraints).toEqual(['这次不要写下周计划']);
+  service.send(conversation.id, { text: '不要继续了' });
+  await service.settled(conversation.id);
+  const paused = service.get(conversation.id);
+  expect(paused.task?.id).toBe(started?.id);
+  expect(paused.task?.goal).toContain('生成本周周报');
+  expect(paused.task?.constraints).toEqual(['这次不要写下周计划']);
+  expect(paused.messages.at(-1)?.contextManifest?.task?.inherited).toBe(false);
+  expect(methods.at(-1)).toBe(false);
+  service.send(conversation.id, { text: '接着把剩下的做完' });
+  await service.settled(conversation.id);
+  const kept = service.get(conversation.id);
+  expect(kept.task?.id).toBe(started?.id);
+  expect(kept.task?.constraints).toEqual(['这次不要写下周计划']);
+  expect(kept.messages.at(-1)?.contextManifest?.task?.inherited).toBe(true);
+  expect(methods.at(-1)).toBe(true);
+  const weekly = { ...defaultAssistant(), id: 'weekly', revision: 3, name: '周报助手', skills: ['weekly-report'], workflow: '先查知识库，再写完成事项、问题和计划', sourceIds: ['default'], readDirectories: [], deliveryFormat: 'docx' as const, createdAt: '', updatedAt: '' };
+  const context = { engine: {}, config: () => ({}) } as never;
+  const follow = await agentInstructions(context, weekly, { userText: '接着把剩下的做完', taskActive: true });
+  expect(follow).toContain('<workflow>');
+  expect(follow).toContain('<skill name="weekly-report">');
+  expect(follow).toContain('计划不能写成已完成');
+  const explicitStop = await agentInstructions(context, weekly, { userText: '接着把剩下的做完', taskActive: true, taskMethod: false });
+  expect(explicitStop).not.toContain('<workflow>');
+  expect(explicitStop).not.toContain('<skill name=');
+  const inheritedHello = await agentInstructions(context, weekly, { userText: '你好', taskActive: true, taskMethod: true });
+  expect(inheritedHello).toContain('<workflow>');
+  expect(inheritedHello).toContain('<skill name="weekly-report">');
+  service.send(conversation.id, { text: '不要继续生成周报，改做报销' });
+  await service.settled(conversation.id);
+  const next = service.get(conversation.id);
+  expect(next.task?.id).not.toBe(started?.id);
+  expect(next.task?.goal).toContain('报销');
+  expect(next.task?.goal).not.toBe(started?.goal);
+  expect(next.task?.constraints).toEqual([]);
+  expect(next.taskNotes).toBeUndefined();
+  expect(next.messages.at(-1)?.contextManifest?.task?.inherited).toBe(false);
+  expect(methods.at(-1)).toBe(false);
+});
+
 test('相反的规则用新的替代旧的，撤销后恢复，重新打开仍然一致', async () => {
   const replaced = learnTurn({ name: '周报助手', standingRules: ['风险要写完整', '标题不要日期'], recentUserTexts: [], text: '风险不要写那么多' });
   expect(replaced.rules).toEqual(['标题不要日期', '风险不要写那么多']);

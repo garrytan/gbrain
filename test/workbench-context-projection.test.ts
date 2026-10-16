@@ -456,6 +456,48 @@ test('编辑第二轮后再恢复，前面的项目背景还在；恢复重新�
   expect(restoredRetry.messages.some(message => message.role === 'assistant')).toBe(true);
 });
 
+test('旧的重新生成记录对不上原来的问题，就不能接到后来的新问题后面', async () => {
+  const dir = root();
+  const store = new WorkbenchStore(dir);
+  let turn = 0;
+  const service = new WorkbenchService(store, models, async input => {
+    const user = [...input.messages].reverse().find(message => message.role === 'user')?.text ?? '';
+    turn += 1;
+    return reply(`第${turn}遍：${user}`);
+  });
+  const agent = new WorkbenchAgentStore(store).create({ name: '周报助手', workflow: '先查知识库', skills: ['weekly-report'], systemPrompt: '你是周报助手' });
+  const conversation = service.create({ assistantId: agent.id, knowledge: false });
+  service.send(conversation.id, { text: '问题甲' });
+  await service.settled(conversation.id);
+  service.send(conversation.id, { retry: true });
+  await service.settled(conversation.id);
+  const saved = service.get(conversation.id);
+  const retryRevision = saved.revisions?.find(item => item.reason === 'retry');
+  expect(retryRevision?.messages[0]?.text).toBe('第1遍：问题甲');
+  expect(retryRevision?.baseMessageId).toBeTruthy();
+  delete retryRevision!.baseMessageId;
+  store.save(saved);
+  expect(() => service.restoreRevision(conversation.id, retryRevision!.id)).toThrow('这段重新生成前的记录没有对上原来的问题，不能安全恢复');
+  service.send(conversation.id, { text: '问题乙' });
+  await service.settled(conversation.id);
+  const before = service.get(conversation.id);
+  const texts = before.messages.map(message => message.text);
+  expect(texts.at(-2)).toBe('问题乙');
+  expect(texts.at(-1)).toBe('第3遍：问题乙');
+  expect(() => service.restoreRevision(conversation.id, retryRevision!.id)).toThrow('这段重新生成前的记录没有对上原来的问题，不能安全恢复');
+  expect(service.get(conversation.id).messages.map(message => message.text)).toEqual(texts);
+  const aligned = service.get(conversation.id);
+  const user = aligned.messages.find(message => message.text === '问题甲')!;
+  const stored = aligned.revisions?.find(item => item.id === retryRevision!.id)!;
+  user.turnId = 'same-turn';
+  stored.messages[0]!.turnId = 'same-turn';
+  store.save(aligned);
+  const restored = service.restoreRevision(conversation.id, stored.id);
+  expect(restored.messages.some(message => message.role === 'user' && message.text === '问题甲')).toBe(true);
+  expect(restored.messages.some(message => message.role === 'assistant' && message.text === '第1遍：问题甲')).toBe(true);
+  expect(restored.messages.some(message => message.text === '问题乙')).toBe(false);
+});
+
 test('继续按刚才的要求做，仍是同一件任务，这次不要写下周计划还在', async () => {
   const dir = root();
   const store = new WorkbenchStore(dir);
@@ -584,4 +626,39 @@ test('重试时沿用已搜到的资料，接着读取同一页；识别过的�
   expect(supplement).toContain('识别文字');
   expect(supplement).toContain('金额 8800');
   expect(supplement).not.toContain('base64');
+});
+
+test('本轮已经有另一条引用时，重放读取改用这一轮的编号，正文仍是刚才那一页', async () => {
+  configureGateway({ generative_enabled: true, chat_model: 'service-test:chat', env: {} });
+  const stamp = now();
+  let pageReads = 0;
+  const settled: WorkbenchToolCall[] = [
+    { id: 'prior-search', name: 'knowledge_search', input: JSON.stringify({ query: '预算' }), status: 'complete', output: JSON.stringify({ results: [{ citation: 1, source_id: 'default', slug: 'budget', title: '预算表', snippet: '8800' }], truncated: false }), startedAt: stamp, completedAt: stamp },
+    { id: 'prior-read', name: 'knowledge_read', input: JSON.stringify({ source_id: 'default', slug: 'budget' }), status: 'complete', output: JSON.stringify({ citation: 1, source_id: 'default', slug: 'budget', title: '预算表', revision: 'hash-budget', content: '预算8800', offset: 0, nextOffset: null, truncated: false }), startedAt: stamp, completedAt: stamp },
+  ];
+  const runner = knowledgeWorkbenchAnswer({ getPage: async () => { pageReads += 1; throw new Error('不应再读原文'); } } as never, {
+    search: async () => ({ results: [] }) as never,
+    answer: async () => { throw new Error('不应直接回答'); },
+    loop: async (options: { toolHandlers: Map<string, { execute: (raw: unknown, abort: AbortSignal) => Promise<unknown> }>; abortSignal: AbortSignal; onTextDelta?: (text: string) => void }) => {
+      const found = await options.toolHandlers.get('knowledge_search')!.execute({ query: '预算' }, options.abortSignal) as { results: Array<{ citation: number; slug: string }> };
+      const read = await options.toolHandlers.get('knowledge_read')!.execute({ source_id: 'default', slug: 'budget' }, options.abortSignal) as { citation: number; slug: string; content: string };
+      expect(found.results[0]?.slug).toBe('budget');
+      expect(read.slug).toBe('budget');
+      expect(read.content).toContain('预算8800');
+      expect(read.citation).toBe(found.results[0]?.citation);
+      expect(read.citation).toBe(2);
+      options.onTextDelta?.(`预算8800 [${read.citation}]`);
+      return { text: `预算8800 [${read.citation}]`, model: 'service-test:chat', stopReason: 'end' as const, messages: [] };
+    },
+  } as never);
+  const result = await runner({
+    model: 'service-test:chat', knowledge: true, signal: new AbortController().signal, progress: () => {}, contextWindow: 8192, settledTools: settled,
+    priorCitations: [{ sourceId: 'default', slug: 'intro', title: '背景', snippet: '项目背景' }],
+    messages: [
+      { id: 'a', role: 'assistant', text: '背景 [1]', status: 'complete', createdAt: stamp },
+      { id: 'u', role: 'user', text: '核对预算', status: 'complete', createdAt: stamp },
+    ],
+  });
+  expect(pageReads).toBe(0);
+  expect(result.citations.map(item => item.slug)).toEqual(['intro', 'budget']);
 });
