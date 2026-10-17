@@ -207,7 +207,7 @@ freeze `facts.page_write_notability_filter` across retries. The capture filter
 only adds the regex categories and gives conversation extraction no new global
 notability threshold. Regex categories support shadow mode; enable `on` only after reviewing
 shadow counts and representative false positives. Topic-bearing proposed calls
-are kept, including a proposed Friday call to discuss scopes. Absolute dates
+are kept, including a proposed Friday call to discuss the roadmap. Absolute dates
 alone never drop an event; modal "may" and "24/7" are not scheduling dates.
 
 Drops are not stored anywhere. Start in shadow mode. Loosening or disabling a

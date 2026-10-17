@@ -167,10 +167,10 @@ for (const managed of [false, true]) test(`conversation policy counts preserve r
   await engine.setConfig('conversation_parser.llm_fallback_enabled', 'false');
   const slug = 'conversations/capture-example';
   await engine.putPage(slug, { type: 'conversation', title: 'Synthetic chat', compiled_truth: [
-    '**Alice Example** (2026-06-02 9:00 AM): Can we arrange a call?',
-    '**Bob Example** (2026-06-02 9:01 AM): Yes, send the invitation.',
-    '**Alice Example** (2026-06-02 9:02 AM): Tomorrow at noon works.',
-    '**Bob Example** (2026-06-02 9:03 AM): Thank you, see you then.',
+    '**Alice Example** (2031-06-02 9:00 AM): Can we arrange a call?',
+    '**Bob Example** (2031-06-02 9:01 AM): Yes, send the invitation.',
+    '**Alice Example** (2031-06-02 9:02 AM): Tomorrow at noon works.',
+    '**Bob Example** (2031-06-02 9:03 AM): Thank you, see you then.',
   ].join('\n') }, { sourceId: 'default' });
   if (managed) await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
   await withEnv({ GBRAIN_HOME: home }, async () => {
