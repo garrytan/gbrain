@@ -1,3 +1,4 @@
+import { checkPageCap, readPageCap, reportPageCap, pageCapError } from '../facts/page-cap.ts';
 import type { BrainEngine, NewFact } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { Action } from '../agent-output.ts';
@@ -121,6 +122,12 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   const validate = async (tx: BrainEngine) => {
     await assertFactNotWithdrawn(tx, row.source_id, input, { excludePrivate });
     if (embedding && JSON.stringify(await tx.executeRaw(`${embeddingConfigSql} FOR SHARE`)) !== observedEmbeddingConfig) conflict(row);
+    // capture-policy: an explicit new fact is capped under the publication guard; replacements remain allowed.
+    if (p.fence === true && snapshot && replaces === null && status !== 'superseded' && status !== 'duplicate') {
+      const rows = [snapshot.page.compiled_truth, snapshot.page.timeline ?? '']
+        .reduce((sum, text) => sum + parseFactsFence(text).facts.length, 0);
+      if (checkPageCap(await readPageCap(tx), rows).refuse) throw pageCapError(row.slug);
+    }
     const current = await decide(tx, true);
     if (candidateState(current) !== candidateState(decision)) conflict(row);
     if ((await lexical(tx))?.id !== lexicalOld?.id) conflict(row);
@@ -156,6 +163,10 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
     // #6686: the fence is edited in the section it lives in (a lone timeline fence stays below the sentinel); the other section is kept byte for byte.
     const section = factsFenceSection(target.page);
     const fenced = { compiled_truth: target.page.compiled_truth, timeline: target.page.timeline ?? '' };
+    if (replaces === null && status !== 'superseded') {
+      const rows = Object.values(fenced).reduce((sum, text) => sum + parseFactsFence(text).facts.length, 0);
+      if (checkPageCap(await readPageCap(engine), rows).refuse) throw pageCapError(row.slug);
+    }
     // #6385 R12: an entity fence that does not parse cleanly refuses typed instead of losing the rows it skipped.
     const appended = refuseUnparsedRewrite(target.page, row.slug, row.source_id, () => upsertFactRow(fenced[section], {
       claim: input.fact, kind: input.kind, visibility: input.visibility, confidence: 1, notability: 'medium', validFrom: formatFenceDate(validFrom),
@@ -176,7 +187,17 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   // The belief ledger records the superseded fact in its own stream, so that stream's page key is held too.
   const supersededStream = status === 'superseded' ? decision.candidate!.source_markdown_slug ?? decision.candidate!.entity_slug ?? null : null;
   const additionalPageKeys = supersededStream && supersededStream !== row.slug ? [{ sourceId: row.source_id, slug: supersededStream }] : undefined;
-  return { observedRevision, file: page?.file, ...(page?.exclusiveSources ? { exclusiveSources: page.exclusiveSources } : {}), ...(additionalPageKeys ? { additionalPageKeys } : {}), validate: async tx => { await validate(tx); await page?.validate?.(tx); }, apply: async tx => {
+  return { observedRevision, file: page?.file,
+    ...(page?.exclusiveSources ? { exclusiveSources: page.exclusiveSources } : {}),
+    ...(additionalPageKeys ? { additionalPageKeys } : {}),
+    afterCommit: async db => {
+      if (p.fence === true && snapshot && replaces === null && status !== 'superseded' && status !== 'duplicate') {
+        const rows = [snapshot.page.compiled_truth, snapshot.page.timeline ?? '']
+          .reduce((sum, text) => sum + parseFactsFence(text).facts.length, 0);
+        await reportPageCap(db, row.source_id, row.slug, await readPageCap(db), rows, 0, 1);
+      }
+    },
+    validate: async tx => { await validate(tx); await page?.validate?.(tx); }, apply: async tx => {
     const pageReceipt = page ? await withPageTierKept(tx, { sourceId: row.source_id, slug: row.slug }, () => page!.apply(tx)) as { size_state?: unknown } | undefined : undefined;
     let id: number;
     if (rowNum !== undefined) {

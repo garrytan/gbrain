@@ -174,9 +174,11 @@ export async function conversationGeneration(engine: BrainEngine, authority: Mai
   const [base] = await engine.executeRaw<{ id: number | string | null }>(
     `SELECT max(id) AS id FROM facts WHERE source_id=$1 AND source_markdown_slug=$2 AND source LIKE '${CONVERSATION_FACTS_SOURCE_PREFIX}%'`,
     [sourceId, input.slug]);
+  let lowRubric = false;
+  try { lowRubric = (await engine.getConfig('facts.extraction_low_rubric') ?? '').trim().toLowerCase() === 'on'; } catch { /* Config failures read as off, matching extraction. */ }
   const key = digest(['conversation-facts', CONVERSATION_FACTS_PROTOCOL, authority.writer.sourceIncarnation, snapshot.page.id,
     snapshot.revision, input.versionToken, CONVERSATION_EXTRACTOR_VERSION, input.since, input.segmentLimit,
-    base?.id == null ? null : Number(base.id)]);
+    base?.id == null ? null : Number(base.id), ...(lowRubric ? ['low-rubric'] : [])]);
   return { key, revision: snapshot.revision, pageId: snapshot.page.id };
 }
 

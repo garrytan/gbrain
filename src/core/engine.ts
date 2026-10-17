@@ -2493,6 +2493,9 @@ export interface BrainEngine {
     opts?: Pick<PageReadScope, 'excludePrivate'>,
   ): Promise<{ canonical_slug: string; source_id: string } | null>;
 
+  /** Stored aliases for one live source-scoped page, respecting private-page exclusion. */
+  getPageAliases(slug: string, opts: { sourceId: string; excludePrivate?: boolean }): Promise<string[]>;
+
   /**
    * T3 retrieval-cathedral — free-text alias resolution for SEARCH.
    * Given a set of NORMALIZED alias strings (normalizeAlias() output),

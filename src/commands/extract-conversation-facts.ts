@@ -64,6 +64,8 @@
  *   `--override-disabled` to force-run.
  */
 
+import { writeFactsAbsorbLog } from '../core/facts/absorb-log.ts';
+import { type CaptureCounts, applyCapturePolicy } from '../core/facts/capture-policy-write.ts';
 import { extractExitCode, extractRunStatus, recordFailedPage } from '../core/facts/conversation-run-status.ts';
 import type { BrainEngine, NewFact } from '../core/engine.ts';
 import type { Page } from '../core/types.ts';
@@ -288,6 +290,7 @@ export interface ExtractConversationFactsCoreOpts {
 export { extractExitCode, extractRunStatus };
 
 export interface ExtractConversationFactsResult {
+  capture_counts?: CaptureCounts;
   pages_considered: number;
   pages_processed: number;
   pages_skipped: number;
@@ -862,6 +865,21 @@ export async function currentConversationVersionToken(engine: BrainEngine, page:
   return (await preparePageSnapshot(engine, page)).versionToken;
 }
 
+async function filterConversationCapture(state: ExtractCoreState, sessionId: string, extracted: ExtractedFact[], policyCounts: CaptureCounts) {
+  const policyAuthority = (await state.managed?.run)?.authority.writer;
+  const policy = await applyCapturePolicy({ engine: state.engine, sourceId: state.sourceId, sessionId,
+    source: PER_SEGMENT_SOURCE_PREFIX, remote: false }, extracted, state.factVisibility,
+    policyAuthority ? { authority: policyAuthority } : null, { log: false });
+  extracted = policy.facts;
+  for (const [key, value] of Object.entries(policy.counts)) {
+    const k = key as keyof CaptureCounts;
+    policyCounts[k] = (policyCounts[k] ?? 0) + value;
+    state.result.capture_counts ??= {};
+    state.result.capture_counts[k] = (state.result.capture_counts[k] ?? 0) + value;
+  }
+  return extracted;
+}
+
 async function processPage(
   state: ExtractCoreState,
   snapshot: ConversationPageSnapshot,
@@ -1023,6 +1041,7 @@ async function processPage(
   let pageInsertedTotal = 0;
   const managedRows: Array<NewFact & { row_num: number; source_markdown_slug: string }> = [];
   const pageResolution = emptySaveTimeResolutionCounts();
+  const policyCounts: CaptureCounts = {};
 
   for (const seg of segments) {
     if (state.segmentLimit > 0 && segmentsThisPage >= state.segmentLimit) break;
@@ -1071,9 +1090,10 @@ async function processPage(
       extracted = extraction.facts;
     }
 
+    state.result.facts_extracted += extracted.length;
+    extracted = await filterConversationCapture(state, sessionId, extracted, policyCounts);
     state.result.segments_processed++;
     segmentsThisPage++;
-    state.result.facts_extracted += extracted.length;
 
     // This bulk path bypasses writeSingleFact and writes through insertFacts.
     // Canonicalize every extractor-provided entity via the shipped resolver
@@ -1124,6 +1144,9 @@ async function processPage(
     newestEnd = seg.endIso;
     if (state.sleepMs > 0) await sleep(state.sleepMs);
   }
+
+  if (Object.keys(policyCounts).length) await writeFactsAbsorbLog(state.engine, page.slug,
+    'capture_policy', JSON.stringify(policyCounts), state.sourceId);
 
   // Eng-v2 C7 / E16: write terminal audit row after all segments commit
   // successfully. Only run when every segment was processed — including a
@@ -1939,6 +1962,11 @@ export async function runExtractConversationFacts(
       aggregate.orphan_facts_cleaned += perSource.orphan_facts_cleaned;
       aggregate.segments_processed += perSource.segments_processed;
       aggregate.facts_extracted += perSource.facts_extracted;
+      for (const [key, value] of Object.entries(perSource.capture_counts ?? {})) {
+        const k = key as keyof CaptureCounts;
+        aggregate.capture_counts ??= {};
+        aggregate.capture_counts[k] = (aggregate.capture_counts[k] ?? 0) + value;
+      }
       aggregate.facts_inserted += perSource.facts_inserted;
       aggregate.fallback_slugify_count += perSource.fallback_slugify_count;
       aggregate.resolution_errors += perSource.resolution_errors;

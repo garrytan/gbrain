@@ -37,6 +37,8 @@
  * commit 13 wires it.
  */
 
+import type { ExtractedFact } from './extract.ts';
+import { applyCapturePolicy, type CaptureCounts } from './capture-policy-write.ts';
 import { observationDateFrom, resolveObservationDate, type ObservationDate } from '../ai/date-grounding.ts';
 import { factEventTime } from './event-time.ts';
 import type { BrainEngine, FactInsertStatus, NewFact } from '../engine.ts';
@@ -161,6 +163,7 @@ export type FactsBackstopResult =
     }
   | {
       mode: 'inline';
+      filtered?: number; rerouted?: number; capped?: number; would_filter?: number; would_reroute?: number;
       inserted: number;
       duplicate: number;
       superseded: number;
@@ -194,7 +197,7 @@ interface PipelineInput {
 }
 
 /** One page or turn pipeline run's counts (runPipelineWithBody). */
-interface PipelineResult { inserted: number; duplicate: number; superseded: number; fact_ids: number[]; entity_slugs: string[]; skipped_reason?: import('./extract.ts').ExtractFailureReason; write_gate?: GateTally; fence_refused?: number; would_dedup_same_page?: number; withdrawn_skipped?: number }
+interface PipelineResult extends CaptureCounts { inserted: number; duplicate: number; superseded: number; fact_ids: number[]; entity_slugs: string[]; skipped_reason?: import('./extract.ts').ExtractFailureReason; write_gate?: GateTally; fence_refused?: number; would_dedup_same_page?: number; withdrawn_skipped?: number }
 
 interface ParsedPageInput {
   slug: string;
@@ -526,7 +529,7 @@ export async function runFactsBackstop(
 export async function runFactsPipeline(
   turnText: string,
   ctx: FactsBackstopCtx,
-): Promise<{
+): Promise<CaptureCounts & {
   inserted: number;
   duplicate: number;
   superseded: number;
@@ -652,7 +655,7 @@ async function runPipelineWithBody(
 }
 
 /** The unmanaged pipeline's running counters; `withdrawn_skipped` rides along only once a forgotten claim was skipped. */
-interface PipelineCounts { inserted: number; duplicate: number; superseded: number; fact_ids: number[]; withdrawn_skipped?: number }
+interface PipelineCounts extends CaptureCounts { inserted: number; duplicate: number; superseded: number; fact_ids: number[]; withdrawn_skipped?: number }
 
 /** #6506: the unmanaged pipeline counts a skipped forgotten claim the way the managed publisher does (B-10 kept it silent). */
 function countWithdrawnSkip(counts: PipelineCounts): void {
@@ -693,6 +696,24 @@ async function derivedFactWriter(ctx: FactsBackstopCtx, input: PipelineInput, de
     return { keep: decisions.map(d => d.action === 'insert'), keptFacts: facts.flatMap((fact, i) => decisions[i].action === 'insert' ? [{ ...fact, gate: decisions[i] }] : []) };
   };
   return { insertDerivedFact, gateGroup, write_gate };
+}
+
+/** Infer subjects and apply automatic admission before deduplication. */
+async function prepareCapturedFacts(ctx: FactsBackstopCtx, extracted: ExtractedFact[], visibility: 'private' | 'world',
+  pageSlug: string | undefined, managed: import('../persistence/facts-maintenance.ts').ManagedFactsSession | null) {
+  const { resolveEntitySlugWithSource } = await import('../entities/resolve.ts');
+  const inferred = await inferMissingSubjects(ctx, extracted, visibility, pageSlug, managed);
+  const policy = await applyCapturePolicy(ctx, inferred, visibility, managed);
+  const dedup = await dedupCapturedFacts(ctx, policy.facts, visibility, resolveEntitySlugWithSource);
+  return { policy, ...dedup };
+}
+
+async function publishCapturedFacts(ctx: FactsBackstopCtx, managed: import('../persistence/facts-maintenance.ts').ManagedFactsSession,
+  facts: ExtractedFact[], visibility: 'private' | 'world', pageSlug: string | undefined, counts: CaptureCounts, dropped: number) {
+  if (!facts.length && dropped && !Object.keys(counts).length) return null;
+  const { publishManagedFacts } = await import('../persistence/facts-maintenance.ts');
+  return publishManagedFacts(ctx.engine, managed, ctx, facts, visibility, pageSlug,
+    { withdrawn: 'skip', captureCounts: counts });
 }
 
 /** The actual pipeline body — always runs inside a BudgetTracker scope (#4210). */
@@ -779,12 +800,12 @@ async function runPipelineBodyInner(
   // facts.default_visibility (fail-closed to 'private').
   const { resolveDefaultVisibility } = await import('./visibility.ts');
   const visibility = ctx.visibility ?? (await resolveDefaultVisibility(ctx.engine));
-  // #5888: one exact-duplicate check for the capture lanes, before either writer.
-  const { facts, dropped } = await dedupCapturedFacts(ctx, await inferMissingSubjects(ctx, outcome.facts, visibility, input.pageSlug, managed), visibility, resolveEntitySlugWithSource);
+  const { policy, facts, dropped } = await prepareCapturedFacts(ctx, outcome.facts, visibility, input.pageSlug, managed);
   if (!managed) await assertAmbientCaptureAdmissible(ctx.engine, ctx.source);
-  if (managed) return withCaptureDrops(dropped, facts.length || !dropped.length ? await publishManagedFacts(ctx.engine, managed, ctx, facts, visibility, input.pageSlug, { withdrawn: 'skip' }) : null);
+  if (managed) return withCaptureDrops(dropped,
+    await publishCapturedFacts(ctx, managed, facts, visibility, input.pageSlug, policy.counts, dropped.length));
 
-  const counts: PipelineCounts = { inserted: 0, duplicate: dropped.length, superseded: 0, fact_ids: [...dropped] };
+  const counts: PipelineCounts = { inserted: 0, duplicate: dropped.length, superseded: 0, fact_ids: [...dropped], ...policy.counts };
   let wouldDedupSamePageCount = 0;
   const writer = await derivedFactWriter(ctx, input, derivation, counts);
   const { insertDerivedFact, write_gate } = writer;
@@ -921,7 +942,7 @@ async function runPipelineBodyInner(
       // DB-only row has no fence to name the page it came from, so the page
       // path's slug fills context when the caller passed no sourceSlug.
       valid_from: factEventTime(f, ctx),
-      context: annotateUnverifiedResolution(ctx.sourceSlug ?? input.pageSlug ?? null, resolutionSource, f.entity_inferred),
+      context: annotateUnverifiedResolution(f.routed_from ? appendContextNote(ctx.sourceSlug ?? input.pageSlug ?? null, `routed from ${f.routed_from}`) : ctx.sourceSlug ?? input.pageSlug ?? null, resolutionSource, f.entity_inferred),
     };
     await insertDerivedFact(newFact); // legacy DB-only fallback for unparented / thin-client facts (no entity page to fence onto)
   }
@@ -945,7 +966,7 @@ async function runPipelineBodyInner(
       source: f.source,
       // #4206: the caller's source_slug (which page/transcript the turn came
       // from) lands in the fence context cell — visible in recall projections.
-      context: annotateUnverifiedResolution(ctx.sourceSlug ?? null, resolutionSource, f.entity_inferred),
+      context: annotateUnverifiedResolution(f.routed_from ? appendContextNote(ctx.sourceSlug ?? null, `routed from ${f.routed_from}`) : ctx.sourceSlug ?? null, resolutionSource, f.entity_inferred),
       visibility,
       confidence: f.confidence,
       // #4206: extractor-derived date wins; then the caller's event time
@@ -976,6 +997,7 @@ async function runPipelineBodyInner(
       derivation,
     );
 
+    if (result.capped) counts.capped = (counts.capped ?? 0) + result.capped;
     if (result.fenceWriteFailed) {
       // Fence parse-validate rejected the .tmp; .tmp stays as
       // quarantine. The JSONL log is the operator surface. Treat
@@ -1010,7 +1032,7 @@ async function runPipelineBodyInner(
           embedding_model: f.embedding_model ?? null, attributed_to: f.attributed_to ?? null,
           // #4206: caller event-time fallback + provenance context.
           valid_from: factEventTime(f, ctx),
-          context: ctx.sourceSlug ?? input.pageSlug ?? null,
+          context: f.routed_from ? appendContextNote(ctx.sourceSlug ?? input.pageSlug ?? null, `routed from ${f.routed_from}`) : ctx.sourceSlug ?? input.pageSlug ?? null,
         };
         await insertDerivedFact(newFact); // stub-guard / unresolvable-target fallback for unprefixed or fallback-resolved entity slugs (no fenceable page or usable tree)
       }
@@ -1039,7 +1061,7 @@ async function runPipelineBodyInner(
           embedding_model: f.embedding_model ?? null, attributed_to: f.attributed_to ?? null,
           // #4206: caller event-time fallback + provenance context.
           valid_from: factEventTime(f, ctx),
-          context: ctx.sourceSlug ?? input.pageSlug ?? null,
+          context: f.routed_from ? appendContextNote(ctx.sourceSlug ?? input.pageSlug ?? null, `routed from ${f.routed_from}`) : ctx.sourceSlug ?? input.pageSlug ?? null,
         };
         await insertDerivedFact(newFact); // DB-only fallback when the fence lane declined the write (write_through opt-out race / localPath echo)
       }

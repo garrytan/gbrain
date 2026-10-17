@@ -55,6 +55,8 @@ export const FACTS_ABSORB_REASONS = [
   'gateway_rate_limit',
   'gateway_model_not_found',
   'write_refused',
+  'capture_policy',
+  'page_cap',
 ] as const;
 
 /**
@@ -112,7 +114,8 @@ export async function writeFactsAbsorbLog(
     const cleanedDetail = (detail ?? '').toString().slice(0, 240);
     await engine.logIngest({
       source_id: sourceId,
-      source_type: 'facts:absorb',
+      // capture-policy: successful policy decisions are not extraction-health failures.
+      source_type: reason === 'capture_policy' || reason === 'page_cap' ? 'facts:policy' : 'facts:absorb',
       source_ref: ref,
       pages_updated: [],
       summary: `${reason}: ${cleanedDetail}`,

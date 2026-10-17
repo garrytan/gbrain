@@ -94,7 +94,7 @@ const ROLE_AND_TERM_TOKENS = new Set([
  * capitalized opener ("Blake joined Acme Example") is treated as a name that
  * competes with the match.
  */
-const SENTENCE_OPENERS = new Set([
+export const SENTENCE_OPENERS = new Set([
   'met', 'meeting', 'talked', 'spoke', 'called', 'emailed', 'texted', 'messaged', 'asked', 'told', 'said', 'says', 'heard',
   'raised', 'closed', 'signed', 'hired', 'fired', 'lost', 'won', 'launched', 'shipped', 'released', 'announced', 'opened',
   'moved', 'booked', 'bought', 'sold', 'sent', 'paid', 'got', 'had', 'has', 'have', 'went', 'came', 'saw', 'ate', 'ran', 'slept',
@@ -116,7 +116,7 @@ const SENTENCE_OPENERS = new Set([
  */
 const SLUG_SEG = '[\\p{Ll}\\p{Lm}\\p{Lo}\\p{N}][\\p{Ll}\\p{Lm}\\p{Lo}\\p{N}_-]*';
 const SLUG_EDGE = '[\\p{L}\\p{M}\\p{N}_/-]';
-const SLUG_IN_TEXT_RE = new RegExp(`(?<!${SLUG_EDGE})${SLUG_SEG}(?:/${SLUG_SEG})+(?!${SLUG_EDGE})`, 'gu');
+export const SLUG_IN_TEXT_RE = new RegExp(`(?<!${SLUG_EDGE})${SLUG_SEG}(?:/${SLUG_SEG})+(?!${SLUG_EDGE})`, 'gu');
 
 /** Two distinct entities already make the subject unknown; more resolution is wasted work. */
 const DISTINCT_ENTITY_LIMIT = 2;
@@ -166,12 +166,12 @@ export async function inferFactSubject(engine: BrainEngine, sourceId: string, in
 }
 
 /** "Joined Acme Example" glues the opener into the name run; resolve the name without it. */
-function shedOpener<T extends { query: string }>(c: T): T {
+export function shedOpener<T extends { query: string }>(c: T): T {
   const [first, ...rest] = c.query.split(/\s+/);
   return rest.length && SENTENCE_OPENERS.has(first!.toLowerCase()) ? { ...c, query: rest.join(' ') } : c;
 }
 
-function isNonName(query: string): boolean {
+export function isNonName(query: string): boolean {
   if (/\s/.test(query)) return false;
   return isCommonCapitalizedWord(query) || ROLE_AND_TERM_TOKENS.has(query.toLowerCase());
 }

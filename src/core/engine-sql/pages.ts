@@ -1008,6 +1008,16 @@ export async function updateSlug(exec: SqlExecutor, tx: BrainEngine, oldSlug: st
       return moved.length;
   }
 
+export async function getPageAliases(exec: LegacyUnscopedRead, slug: string,
+  opts: { sourceId: string; excludePrivate?: boolean }): Promise<string[]> {
+  const privacy = opts.excludePrivate ? sqlFragment`AND ${trustedSql(privatePagesFilterFragment('p'))}` : sqlFragment``;
+  const { rows } = await exec.run<{ alias_norm: string }>(sqlFragment`
+    SELECT a.alias_norm FROM page_aliases a JOIN pages p ON p.source_id=a.source_id AND p.slug=a.slug
+    WHERE a.source_id=${opts.sourceId} AND a.slug=${slug} AND p.deleted_at IS NULL ${privacy}
+    ORDER BY a.alias_norm`);
+  return rows.map(row => row.alias_norm);
+}
+
 /**
  * Replace a page's frontmatter alias set under its page-key lock, inside the
  * engine's transaction. Derived rows (`origin` declared/subject, written by

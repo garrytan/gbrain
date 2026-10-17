@@ -57,8 +57,8 @@ async function writesDatabaseOnly(engine: BrainEngine, sourceId: string): Promis
   return await isWriteThroughDisabled(engine) || await lookupSourceLocalPath(engine, sourceId) === null;
 }
 
-async function linkAllowed(ctx: FactsBackstopCtx, slug: string, fact: string, visibility: string, remote: boolean,
-  managed: ManagedFactsSession | null): Promise<boolean> {
+export async function linkAllowed(ctx: Pick<FactsBackstopCtx, 'engine' | 'sourceId' | 'operationContext'>, slug: string, fact: string, visibility: string, remote: boolean,
+  managed: Pick<ManagedFactsSession, 'authority'> | null): Promise<boolean> {
   const engine = ctx.engine;
   const { isFactWithdrawn } = await import('./withdrawal.ts');
   if (await isFactWithdrawn(engine, ctx.sourceId, visibility, fact, slug)) return false;

@@ -129,3 +129,136 @@ appear under `brain` (a take the owner asserts, via `propose_takes`) and
 *default* canonical owner string for reads; it does not merge those other
 strings. Per-take attribution for other people (e.g. `people/bob-example`) is
 unaffected and correct.
+
+## Capture-time fact policy
+
+Automatic extraction (the shared backstop and conversation extraction) can
+classify low-value facts before deduplication. Explicit `remember` and
+single-fact writes bypass this admission policy. Defaults preserve existing
+capture behavior; start with shadow mode to measure potential recall loss.
+
+| Key | Default | Behavior |
+| --- | --- | --- |
+| `facts.capture_filter` | `off` | `off`, `shadow` (count only), or `on` (drop) |
+| `facts.capture_routing` | `off` | `off`, `shadow` (count only), or `on` (route) |
+| `facts.routing.broad_types` | `company` | Comma-separated broad page types |
+| `facts.routing.home_entities` | empty | Comma-separated exact home slugs; allows home-name mentions, subject to specific_types and decision/analysis vetoes |
+| `facts.extraction_low_rubric` | `off` | Only `on` enables the broader low-notability extraction prompt; independent of deterministic filtering |
+| `facts.routing.specific_types` | `person,project,deal` | Allowed specific page types or corresponding directories |
+| `facts.page_cap.warn_rows` | `0` | Record a warning after publication at this fence row count; 0 disables |
+| `facts.page_cap.max_rows` | `0` | Refuse appends at this fence row count; 0 disables |
+
+| Filter category | Admission rule |
+| --- | --- |
+| `scheduling` | A meeting/call/appointment/invite/reschedul*/attend* token AND future marker (`will`, `scheduled for`, `planned for`, `upcoming`, `invite`, `reschedul*`, `proposed`, `set up`) AND a supported time/date. Veto: `took place`, `was held`, `met`, `had a meeting/call`, `discussed`, `presented`; `about`, `regarding`, `to discuss/share/review/present/negotiate/vote/approve/reject`; or `with` followed by a capitalized name. |
+| `shipping` | `tracking number is`, or parcel/courier/tracking number/delivery ETA/customs status/customs clearance/physical shipment followed by a status predicate below. |
+| `logistics` | travel booking/hotel/flight/restaurant table/room booking/parking/wifi/wi-fi/password reset link followed by a status predicate below. |
+| `spam` | `received`, `arrived`, `sent us` or `in my inbox` AND newsletter/unsubscribe/limited time/sponsored email,message,post,content,offer/promotional offer/webinar invitation/marketing email. |
+| `transient` | `is running late`, `out of office until`, `waiting for a reply`, `will send it/this tomorrow`, or `reminder to`. |
+
+A status predicate is `is/was booked/reserved/confirmed/delayed/tracking`, or
+bare `booked/reserved/confirmed/departs/lands/arrived/delayed` followed by
+end of text, `.`, `!`, `?`, or `on/at/for/until`. The noun must immediately
+precede it. Noun modifiers (`flight tracking software`, `hotel check-in kiosks`)
+and reversed phrases (`confirmed the flight test date`) stay.
+Supported times are HH:MM, a number plus am/pm, noon, midnight, today,
+tomorrow, tonight, next week/month, weekdays; supported dates are YYYY-MM-DD,
+month plus day (January, February, April, June–December), or D/M/YY(YY).
+All matching is case-insensitive except the capitalized-name scheduling veto.
+
+The substance veto runs first: metric kind or a nonempty claim_metric; `$`,
+USD/EUR, a digit plus `%`, a number plus k/m/b; decided/agreed/signed/approved/
+rejected/hired/raised/closed/invested/terminated/acquired/licensed/filed/must/
+will not; patent/IP/FTO/IND/FDA/contract/term sheet/NDA/license/strategy/priority/
+risk/competitor/valuation/merger/acquisition; round/Series/revenue/ARR/MRR/
+margin/headcount. These keep the claim regardless of every category above.
+Unknown cases are kept. Delivery in a technical claim, operating calendars,
+commercial discount options and management follow-up are not noise signals.
+Stable `capture.<category>.v1` rule IDs identify drops. Counts (`filtered`,
+`rerouted`, `capped`, `would_filter`, `would_reroute`) accompany backstop results;
+policy and cap events are recorded in the ingest log without claim text.
+
+Routing starts only from a broad entity. Exact slugs, unique basenames and
+unique aliases must identify exactly one live specific entity. Fuzzy and
+same-name matches never route. Another specific entity, another broad entity,
+an unresolved competing real name, a bare first name, any broad title/alias/slug/basename anywhere in the claim,
+or a person's possessive (including her/his/their) company/startup/firm veto routing. Role tokens,
+ordinary sentence openers and references to nonentity pages do not compete.
+Authorization and page-visibility checks still apply. Routed context includes
+`routed from <original slug>`.
+
+A withdrawal on the original subject prevents routing; a withdrawal on the
+new subject also prevents capture. Withdrawals are subject-scoped, so routing
+changes the subject of future facts; it does not migrate existing withdrawals.
+Shadow mode leaves stored facts unchanged.
+
+Caps count every parsed fence row, including struck rows. When both thresholds
+are enabled, max must be at least warn. Checks occur under the legacy page lock
+or managed publication guard. Refused appends create neither a fence row nor a
+DB-only/shadow row. Explicit writes receive an error; automatic writes count
+refusals. Existing-row strike/rewrite and explicit supersession are allowed.
+External archivers remain compatible: archive rows to make space, or increase
+`facts.page_cap.max_rows`. Conversation-derived batches stored against their
+source conversation do not append entity fences and therefore do not use this
+fence cap.
+
+Existing per-caller notability filters already cover low-tier facts. Page-write jobs
+freeze `facts.page_write_notability_filter` across retries. The capture filter
+only adds the regex categories and gives conversation extraction no new global
+notability threshold. Regex categories support shadow mode; enable `on` only after reviewing
+shadow counts and representative false positives. Topic-bearing proposed calls
+are kept, including a proposed Friday call to discuss the roadmap. Absolute dates
+alone never drop an event; modal "may" and "24/7" are not scheduling dates.
+
+Drops are not stored anywhere. Start in shadow mode. Loosening or disabling a
+filter does not restore previously extracted facts: explicitly re-extract the
+original sources (which may incur model costs). Managed conversation generation keys include the effective low-rubric flag.
+Other capture policy changes do not change that key; force re-extraction after
+changing them. A new key does not by itself bypass incremental selection or
+restore facts already omitted.
+
+`gbrain facts relink` is exempt from the append cap: it moves facts already
+stored in the database into their entity fences rather than admitting new
+knowledge. It can exceed `max_rows`; archive rows before subsequent capture.
+Conversation-derived database-only batches are also exempt as described above.
+
+**Say to your agent:** "Set the capture filter and routing to shadow, show me
+aggregate counts, and let me review examples before enabling drops."
+
+**Say to your agent:** "Set an optional fence row cap, check both thresholds,
+and explain how to archive rows or re-extract source material after drops."
+
+### Home routing and the extraction rubric
+
+Home routing is experimental: an earlier broader home-company variant misrouted
+2 of 5 predictions on a small held-out sample. Start with routing in `shadow`
+and inspect examples before enabling it. Add `company` to specific_types only
+if company counterparties should qualify. A home name may be mentioned, but a
+home-subject decision (`rejected`, `declined`, `chose`, `selected`, `decided`,
+optionally after `has`/`had`) stays on the home page. This includes
+possessive board/team subjects (`Acme Example’s board rejected …`) and
+first-person decisions (`We rejected/declined/chose …`) on home pages. Analysis tokens
+(comparable/comparables, comps, competitor/competitors, benchmark/benchmarks,
+positioning, valuation, our strategy, board member, reports directly, headcount,
+portfolio company) also veto routing. All other ambiguity, identity, visibility
+and withdrawal checks still apply. This routes new facts only. Missing entities
+stay unparented under upstream behavior, now pinned by tests.
+
+The opt-in low rubric calls scheduling, travel/shipping/address administration,
+marketing/outreach and transient next steps low. With a caller's filter that
+drops low facts, the prompt says to skip them entirely: facts are never emitted,
+so there are no admission counts or shadow observations for those omissions.
+The deterministic filter's shadow setting cannot observe them. A proxy using a
+different model from production scored precision 6/10 and recall 6/16; four of
+ten rubric low predictions were not labelled DROP. Leave it off unless that
+recall tradeoff is acceptable. Turning it off requires explicit re-extraction
+to recover omissions. The managed generation fingerprint now includes the flag;
+it previously stayed unchanged, and the flag does not alter selection cursors.
+
+**Say to your agent:** "Set home_entities to my exact company slug, keep routing
+in shadow, and show me counterparty and home-decision examples. Explain
+specific_types before allowing company targets."
+
+**Say to your agent:** "Explain extraction_low_rubric and my caller's low-fact
+filter before enabling it. Show the omissions risk and how to re-extract;
+shadow counters cannot measure facts the prompt never emits."

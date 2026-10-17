@@ -27,6 +27,8 @@
  * hook (to stall publication), the maintenance wait and batch-cap test seams.
  */
 import { afterEach, expect, test } from 'bun:test';
+import { digest } from '../src/core/persistence/digest.ts';
+import { CONVERSATION_FACTS_PROTOCOL } from '../src/core/facts/conversation-publication.ts';
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { ExtractedFact } from '../src/core/facts/extract.ts';
@@ -265,6 +267,31 @@ for (const backend of testBackends()) {
       expect(forced).toMatchObject({ pages_processed: 1, segments_processed: 2 });
       expect(calls.n).toBe(5);
       expect((await requests(engine)).map(r => r.state)).toEqual(['committed', 'committed', 'committed']);
+    }, { databaseUrl });
+  }, 120_000);
+
+  test(`${backend}: low-rubric policy changes the conversation generation`, async () => {
+    await managedBrain(async brain => {
+      const { engine } = brain;
+      await putPage(brain, transcript());
+      const authority = (await maintenancePreflight(engine, 'default'))!;
+      const page = (await engine.getPage(SLUG, { sourceId: 'default' }))!;
+      const versionToken = await currentConversationVersionToken(engine, page);
+      const input = { slug: SLUG, page, versionToken, since: null, segmentLimit: 0 };
+      const off = await conversationGeneration(engine, authority, input);
+      const snapshot = (await engine.readPageSnapshot(SLUG, { sourceId: 'default' }))!;
+      expect(off.key).toBe(digest(['conversation-facts', CONVERSATION_FACTS_PROTOCOL, authority.writer.sourceIncarnation,
+        snapshot.page.id, snapshot.revision, versionToken, CONVERSATION_EXTRACTOR_VERSION, input.since, input.segmentLimit, null]));
+      const getConfig = engine.getConfig;
+      try {
+        engine.getConfig = async () => { throw new Error('config unavailable'); };
+        expect((await conversationGeneration(engine, authority, input)).key).toBe(off.key);
+      } finally { engine.getConfig = getConfig; }
+      await engine.setConfig('facts.extraction_low_rubric', 'on');
+      const on = await conversationGeneration(engine, authority, input);
+      expect(on.key).not.toBe(off.key);
+      await engine.setConfig('facts.extraction_low_rubric', 'off');
+      expect((await conversationGeneration(engine, authority, input)).key).toBe(off.key);
     }, { databaseUrl });
   }, 120_000);
 

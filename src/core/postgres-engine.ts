@@ -2605,6 +2605,10 @@ export class PostgresEngine implements BrainEngine {
     return pagesImpl.resolveSlugWithAliasDetailed(unscopedExecutor(this.engineSql, 'pages: unscoped on master (EO4 inventory)'), slug, sourceOrSources, opts);
   }
 
+  async getPageAliases(slug: string, opts: { sourceId: string; excludePrivate?: boolean }): Promise<string[]> {
+    return pagesImpl.getPageAliases(unscopedExecutor(this.engineSql, 'source-scoped stored page aliases'), slug, opts);
+  }
+
   async resolveAliases(
     aliasNorms: string[],
     opts?: PageReadScope,

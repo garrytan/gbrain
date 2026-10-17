@@ -322,6 +322,7 @@ export const CODES = {
   invalid_grant_clock_skew: { class: 'caller', summary: "Google connect credential error: invalid grant clock skew.", docs: 'docs/guides/google-connect.md#troubleshooting' },
   invalid_grant_revoked: { class: 'caller', summary: "Google connect credential error: invalid grant revoked.", docs: 'docs/guides/google-connect.md#troubleshooting' },
   invalid_grant_testing_expiry: { class: 'caller', summary: "Google connect credential error: invalid grant testing expiry.", docs: 'docs/guides/google-connect.md#troubleshooting' },
+  facts_page_cap: { docs: 'docs/guides/write-refusals.md#facts-page-cap', class: 'caller', summary: 'The facts fence append limit was reached; nothing was written.', exit: 2 },
   invalid_params: { class: 'caller', summary: "A parameter is missing, has the wrong type, or has an invalid value.", exit: 2 },
   invalid_rating: { class: 'caller', summary: "A rating must be an integer from 1 to 5.", docs: 'docs/guides/retrieval-feedback.md#invalid_rating' },
   invalid_receipt: { class: 'server', summary: "A company-source ingestion receipt input failed validation inside gbrain; nothing was written.", docs: 'docs/guides/company-brain-ingestion.md#resume-and-verify' },

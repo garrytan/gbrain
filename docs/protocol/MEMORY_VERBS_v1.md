@@ -1047,6 +1047,12 @@ Published so harness authors place calls by cost, not by learning at timeout:
 
 ## Error contract (uniform across all verbs)
 
+A `remember` fence append refused by the optional capture-policy cap returns
+`invalid_params`, with `write_error: facts_page_cap`. The internal refusal uses
+code `facts_page_cap` and detail containing the slug. Its failure diagnostic
+uses reason `facts_page_cap` and suggests archiving rows or increasing
+`facts.page_cap.max_rows`. A replacement remains allowed at the cap.
+
 ```json
 { "error": "<code>", "message": "...", "suggestion": "problem + cause + fix",
   "detail": "freeform specifics", "protocol_version": 1 }
