@@ -554,7 +554,9 @@ export async function planMigrationFlow(
   let concurrentWriters = { workers: 0, embedJobs: 0 };
   try {
     const { readWorkers } = await import('../core/minions/worker-registry.ts');
-    const workers = readWorkers().length;
+    // An unreadable registry must not also drop the embed-job count below.
+    let workers = 0;
+    try { workers = readWorkers().length; } catch { /* registry unreadable */ }
     const rows = await engine.executeRaw<{ n: number }>(
       `SELECT count(*)::int AS n FROM minion_jobs
         WHERE status IN ('waiting', 'running')

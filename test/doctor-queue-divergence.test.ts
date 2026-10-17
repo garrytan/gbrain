@@ -116,6 +116,20 @@ describe('queue_health — healthy queue stays quiet', () => {
   });
 });
 
+describe('queue_health — unreadable worker registry', () => {
+  it('reports liveness unknown instead of erroring or advising a worker start', async () => {
+    await seed('default', 'embed-backfill', 'waiting', { createdAtSql: "now() - interval '3 hours'" });
+    const check = await computeQueueHealthCheck(pgLike, {
+      readWorkers: () => { throw new Error('EACCES: permission denied'); },
+    });
+    expect(check.status).toBe('warn');
+    expect(check.details?.worker_alive).toBeNull();
+    expect(check.message).toContain('worker liveness is unknown');
+    expect(check.message).not.toContain('no live worker is registered');
+    expect(check.fix).toBeUndefined();
+  });
+});
+
 describe('malformed_path_pages discovery check (buildChecks seam)', () => {
   it('warns naming the count + slug when a page is backed by a bracketed filename', async () => {
     await base.executeRaw(

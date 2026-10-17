@@ -206,13 +206,15 @@ const PID_REUSE_TOLERANCE_MS = 5000;
  * confirmed-dead entries (pruning their files), filters by brain id, applies the
  * PID-reuse guard, and re-measures each live worker's niceness now.
  *
+ * A missing registry directory is an empty registry. Any other directory-read
+ * error (EACCES, ENOTDIR, ...) is thrown, so liveness callers such as
+ * `queueWorkerAlive` report "unknown" instead of a fabricated "no worker".
  * `getNice` is injectable for tests.
  */
 export function readWorkers(
   getNice: (pid: number) => number | null = (pid) => getEffectiveNiceness(pid),
 ): LiveWorker[] {
   const dir = workerRegistryDir();
-  if (!existsSync(dir)) return [];
 
   const brainId = currentBrainId();
   const live: LiveWorker[] = [];
@@ -220,8 +222,11 @@ export function readWorkers(
   let files: string[];
   try {
     files = readdirSync(dir).filter((f) => f.startsWith('worker-') && f.endsWith('.json'));
-  } catch {
-    return [];
+  } catch (e) {
+    // existsSync() also answers false for an unsearchable parent, so only a
+    // real ENOENT means "no workers"; everything else is an unknown.
+    if ((e as NodeJS.ErrnoException)?.code === 'ENOENT') return [];
+    throw e;
   }
 
   for (const f of files) {
