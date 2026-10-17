@@ -1477,6 +1477,10 @@ function instantiateEmbedding(recipe: Recipe, modelId: string, cfg: AIGatewayCon
       throw new AIConfigError(
         `claude-cli has no embedding model. Use openai or google for embeddings.`,
       );
+    case 'grok-cli':
+      throw new AIConfigError(`grok-cli has no embedding model. Use openai or google for embeddings.`);
+    case 'codex-cli':
+      throw new AIConfigError(`codex-cli has no embedding model. Use openai or google for embeddings.`);
     case 'openai-compatible': {
       // D12=A: unified auth via Recipe.resolveAuth (or default).
       const auth = applyResolveAuth(recipe, cfg, 'embedding');
@@ -2406,6 +2410,14 @@ function instantiateExpansion(recipe: Recipe, modelId: string, cfg: AIGatewayCon
       const { ClaudeCliLanguageModel } = require('./providers/claude-cli-language-model.ts');
       return new ClaudeCliLanguageModel(modelId);
     }
+    case 'grok-cli': {
+      const { GrokCliLanguageModel } = require('./providers/grok-cli-language-model.ts');
+      return new GrokCliLanguageModel(modelId);
+    }
+    case 'codex-cli': {
+      const { CodexCliLanguageModel } = require('./providers/codex-cli-language-model.ts');
+      return new CodexCliLanguageModel(modelId);
+    }
     case 'openai-compatible': {
       // D12=A: unified auth via Recipe.resolveAuth (or default).
       const auth = applyResolveAuth(recipe, cfg, 'expansion');
@@ -2553,7 +2565,7 @@ export async function expand(query: string): Promise<string[]> {
       return parseExpansionResponse(textResult.text) ?? [];
     };
 
-    if (recipe.implementation === 'claude-cli') {
+    if (recipe.implementation === 'claude-cli' || recipe.implementation === 'grok-cli') {
       // claude-cli is NOT structured-output capable, despite being a 'native'
       // tier recipe. ClaudeCliLanguageModel.doGenerate ignores
       // `options.responseFormat` entirely (it renders prompt → `claude
@@ -3323,6 +3335,14 @@ function instantiateChat(recipe: Recipe, modelId: string, cfg: AIGatewayConfig):
       // openai-compatible path below. No env-var switch, no global flag.
       const { ClaudeCliLanguageModel } = require('./providers/claude-cli-language-model.ts');
       return new ClaudeCliLanguageModel(modelId);
+    }
+    case 'grok-cli': {
+      const { GrokCliLanguageModel } = require('./providers/grok-cli-language-model.ts');
+      return new GrokCliLanguageModel(modelId);
+    }
+    case 'codex-cli': {
+      const { CodexCliLanguageModel } = require('./providers/codex-cli-language-model.ts');
+      return new CodexCliLanguageModel(modelId);
     }
     case 'openai-compatible': {
       // D12=A: unified auth via Recipe.resolveAuth (or default).
