@@ -220,6 +220,8 @@
   "test/balanced-reranker-default.test.ts": 6,
   "test/behavior-change-notice-cli.test.ts": 7412,
   "test/behavior-change-notice.test.ts": 1081,
+  "test/belief-history-invariance.slow.test.ts": 513000,
+  "test/belief-history-mutants.slow.test.ts": 241000,
   "test/belief-ledger-canonical-json.test.ts": 94,
   "test/belief-ledger-coverage.test.ts": 21643,
   "test/belief-ledger-group.test.ts": 6110,

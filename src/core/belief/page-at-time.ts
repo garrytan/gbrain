@@ -81,20 +81,44 @@ const SKIPPED = ['backfill', 'trust.retiered', 'trust.contested', 'trust.held', 
 const json = (v: unknown) => typeof v === 'string' ? JSON.parse(v) : v;
 const iso = (v: unknown) => v == null ? null : new Date(v as string).toISOString();
 
+const EVENT_COLUMNS = `e.id, e.page_lifetime::text AS lifetime, e.slug, e.event_type, e.origin, e.visibility, e.recorded_at, m.observed_at, e.source_time, e.value, e.purged,
+      EXISTS (SELECT 1 FROM belief_events l WHERE l.source_id = e.source_id AND l.page_lifetime = e.page_lifetime AND l.id > e.id AND l.origin <> 'backfill'
+        AND l.recorded_at <= $3::timestamptz) AS proven`;
+const toEventRow = (r: PageEventRow): PageEventRow => ({ ...r, id: Number(r.id), recorded_at: iso(r.recorded_at)!, observed_at: iso(r.observed_at), source_time: iso(r.source_time),
+  value: json(r.value) as PageEventRow['value'], purged: r.purged === true, proven: r.proven === true });
+
 /** The page events of every lifetime that ever stood at `slug` in the source's current incarnation (backfill rows excluded), each with whether a later event of its lifetime was recorded by T. */
 async function readPageEvents(engine: BrainEngine, sourceId: string, slug: string, at: Date): Promise<PageEventRow[]> {
   const rows = await engine.executeRaw<PageEventRow>(`WITH inc AS (SELECT incarnation FROM sources WHERE id = $1),
     lt AS (SELECT DISTINCT e.page_lifetime FROM belief_events e, inc WHERE e.source_id = $1 AND e.source_incarnation = inc.incarnation AND e.slug = $2
       AND e.subject_kind = 'page' AND e.page_lifetime IS NOT NULL AND e.origin <> 'backfill')
-    SELECT e.id, e.page_lifetime::text AS lifetime, e.slug, e.event_type, e.origin, e.visibility, e.recorded_at, m.observed_at, e.source_time, e.value, e.purged,
-      EXISTS (SELECT 1 FROM belief_events l WHERE l.source_id = e.source_id AND l.page_lifetime = e.page_lifetime AND l.id > e.id AND l.origin <> 'backfill'
-        AND l.recorded_at <= $3::timestamptz) AS proven
+    SELECT ${EVENT_COLUMNS}
     FROM belief_events e LEFT JOIN belief_commit_marks m ON m.publication_id = e.publication_id
     WHERE e.source_id = $1 AND e.page_lifetime IN (SELECT page_lifetime FROM lt) AND e.subject_kind = 'page' AND e.origin <> 'backfill'
       AND NOT (e.event_type = ANY($4::text[]))
     ORDER BY e.id`, [sourceId, slug, at.toISOString(), SKIPPED]);
-  return rows.map(r => ({ ...r, id: Number(r.id), recorded_at: iso(r.recorded_at)!, observed_at: iso(r.observed_at), source_time: iso(r.source_time),
-    value: json(r.value) as PageEventRow['value'], purged: r.purged === true, proven: r.proven === true }));
+  return rows.map(toEventRow);
+}
+
+/** The page events of the given lifetimes (backfill rows excluded), with whether a later event of each lifetime was recorded by T. */
+async function readLifetimeEvents(engine: BrainEngine, sourceId: string, lifetimes: readonly string[], at: Date): Promise<PageEventRow[]> {
+  if (!lifetimes.length) return [];
+  const rows = await engine.executeRaw<PageEventRow>(`SELECT ${EVENT_COLUMNS}
+    FROM belief_events e LEFT JOIN belief_commit_marks m ON m.publication_id = e.publication_id
+    WHERE e.source_id = $1 AND e.page_lifetime = ANY($2::uuid[]) AND e.subject_kind = 'page' AND e.origin <> 'backfill'
+      AND NOT (e.event_type = ANY($4::text[]))
+    ORDER BY e.id`, [sourceId, [...lifetimes], at.toISOString(), SKIPPED]);
+  return rows.map(toEventRow);
+}
+
+/**
+ * The content predicate page-at-time and the history text index share: the revision an event moved its page to, or
+ * null when it changed no content (a rename alone, a visibility change, a purge, an expiry or a hard delete).
+ */
+export function pageContentRevision(e: { event_type: string; value: Record<string, unknown> | null }): string | null {
+  const v = e.value ?? {};
+  const gone = GONE[e.event_type] ?? (v.hard === true ? 'hard_deleted' : null);
+  return gone == null && typeof v.revision_after === 'string' ? v.revision_after : null;
 }
 
 function visibilityAt(e: PageEventRow, t: number): 'visible' | 'not_visible' | 'unproven' {
@@ -112,13 +136,91 @@ function replay(events: PageEventRow[]): Draft[] {
   for (const e of events) {
     const v = e.value ?? {};
     const gone = GONE[e.event_type] ?? (v.hard === true ? 'hard_deleted' : null);
-    const content = gone == null && typeof v.revision_after === 'string';
-    const next: { slug: string; deleted: boolean; revision: string | null } = { slug: e.slug, revision: content ? v.revision_after as string : state?.revision ?? null,
+    const revision = pageContentRevision(e);
+    const content = revision != null;
+    const next: { slug: string; deleted: boolean; revision: string | null } = { slug: e.slug, revision: revision ?? state?.revision ?? null,
       deleted: gone != null || e.event_type === 'page.deleted' || (v.deleted === true && e.event_type !== 'page.restored') };
     if (state && !content && gone == null && next.slug === state.slug && next.deleted === state.deleted) continue;
     state = next;
     out.push({ lifetime: e.lifetime, slug: next.slug, revision: next.revision, deleted: next.deleted, gone, content,
       event: { id: e.id, type: e.event_type, origin: e.origin, recorded_at: e.recorded_at, visible_at: e.observed_at, source_time: e.source_time, visibility: e.visibility } });
+  }
+  return out;
+}
+
+interface LifetimeReplay { lifetime: string; all: Draft[]; known: Draft[]; straddling?: PageEventRow }
+
+/** Each lifetime's intervals: every one (`all`) and those known at T (`known`), plus the first transition still unproven at T, if any. */
+function replayAt(events: PageEventRow[], t: number): LifetimeReplay[] {
+  const out: LifetimeReplay[] = [];
+  for (const lifetime of [...new Set(events.map(e => e.lifetime))]) {
+    const list = events.filter(e => e.lifetime === lifetime);
+    const vis = list.map(e => visibilityAt(e, t));
+    const last = vis.lastIndexOf('visible');
+    const straddling = list.find((_, i) => i > last && vis[i] === 'unproven');
+    out.push({ lifetime, all: replay(list), known: replay(list.slice(0, last + 1)), ...(straddling ? { straddling } : {}) });
+  }
+  return out;
+}
+
+/** The content interval that owns a replay interval: the newest content transition at or before it. */
+const contentOwner = (l: LifetimeReplay, d: Draft) => [...l.all].reverse().find(c => c.content && c.event.id <= d.event.id) ?? null;
+
+export interface LifetimeAtTime {
+  lifetime: string;
+  /** A transition of the lifetime straddles T: its state then cannot be stated. */
+  unproven: boolean;
+  /** The lifetime's interval at T (whatever slug it stood at), or null before it existed or after it ended. */
+  current: PageInterval | null;
+  /** The opening event of the content interval that holds the body at T. */
+  content_event: number | null;
+  page_id: number | null;
+}
+
+/**
+ * Batch page-at-time over lifetimes (the historical retriever's exact check): each lifetime's interval at T with its
+ * body, under the same visibility rule as `readPageAtTime`. A straddling transition marks the lifetime unproven
+ * instead of refusing, so one in-flight write drops one page, not the whole read. Coverage is the caller's check.
+ */
+export async function readPagesAtTime(engine: BrainEngine, q: { sourceId: string; at: Date; lifetimes: readonly string[]; withBodies?: boolean }): Promise<Map<string, LifetimeAtTime>> {
+  const lifetimes = replayAt(await readLifetimeEvents(engine, q.sourceId, q.lifetimes, q.at), q.at.getTime());
+  const heads = lifetimes.filter(l => !l.straddling).map(l => ({ l, head: l.known[l.known.length - 1] }))
+    .filter((x): x is { l: LifetimeReplay; head: Draft } => !!x.head && x.head.gone == null);
+  const intervals = await withBodies(engine, lifetimes, heads.map(h => h.head), q.withBodies !== false);
+  const pageIds = heads.length ? await engine.executeRaw<{ page_lifetime: string; page_id: number | null }>(
+    'SELECT page_lifetime::text AS page_lifetime, page_id FROM belief_page_lifetimes WHERE page_lifetime = ANY($1::uuid[])', [heads.map(h => h.l.lifetime)]) : [];
+  const out = new Map<string, LifetimeAtTime>();
+  for (const l of lifetimes) out.set(l.lifetime, { lifetime: l.lifetime, unproven: !!l.straddling, current: null, content_event: null, page_id: null });
+  for (const { l, head } of heads) {
+    const pid = pageIds.find(r => r.page_lifetime === l.lifetime)?.page_id;
+    out.set(l.lifetime, { lifetime: l.lifetime, unproven: false, current: intervals.find(i => i.event.id === head.event.id) ?? null,
+      content_event: contentOwner(l, head)?.event.id ?? null, page_id: pid == null ? null : Number(pid) });
+  }
+  return out;
+}
+
+export interface ContentInterval extends PageInterval {
+  /** When the next content transition was recorded, and its event; null while open. */
+  known_until: string | null;
+  closing_event: number | null;
+}
+
+/**
+ * Every content interval of each lifetime as recorded so far, with its body (the history text index build): one per
+ * content transition, closed by the next one. A lifetime a purge, expiry or hard delete ended is `gone` and has none.
+ */
+export async function lifetimeContentIntervals(engine: BrainEngine, sourceId: string, lifetimes: readonly string[]): Promise<Map<string, { gone: boolean; intervals: ContentInterval[] }>> {
+  const [{ now }] = await engine.executeRaw<{ now: string }>('SELECT clock_timestamp() AS now');
+  const replays = replayAt(await readLifetimeEvents(engine, sourceId, lifetimes, new Date(iso(now)!)), Date.parse(iso(now)!)).map(l => ({ ...l, known: l.all }));
+  const out = new Map<string, { gone: boolean; intervals: ContentInterval[] }>();
+  for (const l of replays) {
+    const gone = l.all.some(d => d.gone);
+    const content = gone ? [] : l.all.filter(d => d.content);
+    const bodies = await withBodies(engine, [l], content, true);
+    out.set(l.lifetime, { gone, intervals: content.map((d, i) => {
+      const next = content[i + 1];
+      return { ...bodies.find(b => b.event.id === d.event.id)!, known_until: next ? next.event.recorded_at : null, closing_event: next ? next.event.id : null };
+    }) });
   }
   return out;
 }
@@ -152,18 +254,12 @@ export async function readPageAtTime(engine: BrainEngine, q: { sourceId: string;
   }
   if (!cov.ok) throw coverageRefusal(cov, q);
 
-  const lifetimes: Array<{ lifetime: string; all: Draft[]; known: Draft[] }> = [];
-  for (const lifetime of [...new Set(events.map(e => e.lifetime))]) {
-    const list = events.filter(e => e.lifetime === lifetime);
-    const vis = list.map(e => visibilityAt(e, t));
-    const last = vis.lastIndexOf('visible');
-    const straddling = list.find((_, i) => i > last && vis[i] === 'unproven');
-    if (straddling) {
-      throw opError('known_as_of_unproven', `A change to ${q.slug} recorded at ${straddling.recorded_at} was not yet proven committed at ${q.at.toISOString()}.`,
-        `The write was in flight at that instant, so the page then cannot be stated either way. Ask about an instant before ${straddling.recorded_at}, or after the write was observed committed.`,
-        { retryable: true });
-    }
-    lifetimes.push({ lifetime, all: replay(list), known: replay(list.slice(0, last + 1)) });
+  const lifetimes = replayAt(events, t);
+  const straddling = lifetimes.find(l => l.straddling)?.straddling;
+  if (straddling) {
+    throw opError('known_as_of_unproven', `A change to ${q.slug} recorded at ${straddling.recorded_at} was not yet proven committed at ${q.at.toISOString()}.`,
+      `The write was in flight at that instant, so the page then cannot be stated either way. Ask about an instant before ${straddling.recorded_at}, or after the write was observed committed.`,
+      { retryable: true });
   }
   const current = lifetimes.map(l => ({ l, head: l.known[l.known.length - 1] }))
     .filter((x): x is { l: typeof x.l; head: Draft } => !!x.head && x.head.slug === q.slug && x.head.gone == null)

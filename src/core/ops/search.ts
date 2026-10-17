@@ -54,6 +54,7 @@ import { keepEnumeratedRows, keywordCountMeta, parseSearchPaging, readKeywordPag
 import { searchLimitCap } from '../search/eval-pool-depth.ts';
 import { heldFilesNotice, stampHeldHits } from '../persistence/held-reads.ts';
 import { opError } from './contract.ts';
+import { KNOWN_AS_OF_PARAM, searchKnownAsOf } from './known-as-of.ts';
 import { MIN_TRUST_PARAM, resolveReadEligibility } from '../eligibility/policy.ts';
 import { projectionEligibleSql } from '../eligibility/sql.ts';
 import { stampPageTrust } from '../eligibility/stamp.ts';
@@ -665,8 +666,10 @@ const search: Operation = {
     recency: RECENCY_PARAM,
     fields: FIELDS_PARAM,
     min_trust: MIN_TRUST_PARAM,
+    known_as_of: { ...KNOWN_AS_OF_PARAM, description: 'Recorded time: the pages as this brain had recorded them at this ISO 8601 instant, ranked by the lexical historical retriever. Not as_of, which is valid time.' },
   },
   handler: async (ctx, p) => {
+    if (p.known_as_of !== undefined) return searchKnownAsOf(ctx, p);
     const startedAt = Date.now();
     const timings = new SearchTimings();
     const setup = <T>(work: () => Promise<T>) => timings.stage('setup', work);

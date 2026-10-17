@@ -107,3 +107,57 @@ export const BELIEF_FACTS_STREAM_INDEX = {
   table: 'facts',
   sql: 'CREATE INDEX IF NOT EXISTS idx_facts_belief_stream ON facts (source_id, source_markdown_slug) WHERE expired_at IS NULL',
 };
+
+/**
+ * The history text index (W3, docs/architecture/historical-retrieval.md section 4): one row per content interval of a
+ * page lifetime, its chunks stored once by content hash, and per source the build state behind the index cut. Derived
+ * from page_versions, the live pages and belief_events, so not canonical: a rebuild gives the same rows.
+ */
+export const BELIEF_HISTORY_INDEX_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS belief_text_revisions (
+  id                 BIGSERIAL PRIMARY KEY,
+  source_id          TEXT NOT NULL,
+  source_incarnation UUID NOT NULL,
+  page_lifetime      UUID NOT NULL,
+  revision           UUID NOT NULL,
+  title              TEXT,
+  aliases            TEXT[] NOT NULL DEFAULT '{}',
+  content_date       DATE,
+  visibility         TEXT NOT NULL,
+  segmented          BOOLEAN NOT NULL DEFAULT false,
+  known_from         TIMESTAMPTZ NOT NULL,
+  known_until        TIMESTAMPTZ,
+  opening_event      BIGINT NOT NULL UNIQUE,
+  closing_event      BIGINT,
+  stale              BOOLEAN NOT NULL DEFAULT false
+);
+CREATE INDEX IF NOT EXISTS belief_text_revisions_source ON belief_text_revisions (source_id, known_from);
+CREATE INDEX IF NOT EXISTS belief_text_revisions_lifetime ON belief_text_revisions (page_lifetime, known_from);
+CREATE INDEX IF NOT EXISTS belief_text_revisions_aliases ON belief_text_revisions USING GIN (aliases);
+${RLS('belief_text_revisions')}
+CREATE TABLE IF NOT EXISTS belief_text_chunks (
+  text_hash     BYTEA PRIMARY KEY,
+  search_vector TSVECTOR NOT NULL
+);
+CREATE INDEX IF NOT EXISTS belief_text_chunks_search ON belief_text_chunks USING GIN (search_vector);
+${RLS('belief_text_chunks')}
+CREATE TABLE IF NOT EXISTS belief_text_revision_chunks (
+  revision_row BIGINT NOT NULL REFERENCES belief_text_revisions(id) ON DELETE CASCADE,
+  ord          INTEGER NOT NULL,
+  kind         TEXT NOT NULL CHECK (kind IN ('body', 'take')),
+  holder       TEXT,
+  take_key     TEXT,
+  text_hash    BYTEA NOT NULL,
+  PRIMARY KEY (revision_row, ord)
+);
+CREATE INDEX IF NOT EXISTS belief_text_revision_chunks_hash ON belief_text_revision_chunks (text_hash);
+${RLS('belief_text_revision_chunks')}
+CREATE TABLE IF NOT EXISTS belief_text_index_state (
+  source_id          TEXT PRIMARY KEY,
+  source_incarnation UUID NOT NULL,
+  index_cut          TIMESTAMPTZ,
+  build_pass         SMALLINT NOT NULL DEFAULT 0,
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+${RLS('belief_text_index_state')}
+`;

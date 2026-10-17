@@ -9,6 +9,7 @@ import { MERGE_PRECONDITION_PARAMS, WRITE_REQUEST_PARAM } from '../persistence/p
  */
 
 import { opError, type Operation, type OperationContext } from './contract.ts';
+import { KNOWN_AS_OF_PARAM, takesListKnownAsOf } from './known-as-of.ts';
 import { MIN_TRUST_PARAM, resolveReadEligibility } from '../eligibility/policy.ts';
 import { stampRowTrust } from '../eligibility/stamp.ts';
 import { opTransport, paramUse } from './op-fix.ts';
@@ -78,8 +79,10 @@ const takes_list: Operation = {
     limit: { type: 'number', description: 'Max rows (default 100, cap 500)' },
     offset: { type: 'number', description: 'Skip first N rows' },
     min_trust: MIN_TRUST_PARAM,
+    known_as_of: { ...KNOWN_AS_OF_PARAM, description: 'Recorded time: the take rows of page_slug\'s body as this brain had recorded it at this ISO 8601 instant. Needs page_slug.' },
   },
   handler: async (ctx, p) => {
+    if (p.known_as_of !== undefined) return takesListKnownAsOf(ctx, p);
     const eligibility = await resolveReadEligibility(ctx, { minTrust: p.min_trust });
     const rows = await ctx.engine.listTakes({
       // #2200-class: honor federated/source scope (via the take's page.source_id).
@@ -293,12 +296,18 @@ const think: Operation = {
     since: { type: 'string', description: 'Start of temporal window (YYYY-MM-DD or YYYY-MM). Omit both bounds and a question naming one explicit date (2026-09-15, 2026-09, September 2026) is bounded to it; the result says window_source.' },
     until: { type: 'string', description: 'End of temporal window' },
     reference_date: { type: 'string', description: 'YYYY-MM-DD the question\'s relative time words resolve against (default: today in brain.timezone).' },
+    known_as_of: { ...KNOWN_AS_OF_PARAM, description: 'Recorded time: think over the evidence as this brain had recorded it at this ISO 8601 instant (lexical retrieval; refuses save and take).' },
   },
   // Local CLI can persist with save/take; remote/MCP callers are forced
   // read-only below before runThink/persistSynthesis sees those flags.
   mutating: true,
   handler: async (ctx, p) => {
     const remote = ctx.remote ?? true;
+    if (p.known_as_of !== undefined) {
+      for (const name of ['save', 'take', 'with_calibration'] as const) {
+        if (p[name]) throw opError('invalid_params', `think: ${name} cannot be combined with known_as_of.`, `A recorded-time think reads the past and writes nothing; drop ${name}, or drop known_as_of.`);
+      }
+    }
     // Codex P1 #7 + privacy: remote callers cannot persist via MCP.
     const safeSave = remote ? false : Boolean(p.save);
     const safeTake = remote ? false : Boolean(p.take);
@@ -326,6 +335,7 @@ const think: Operation = {
       since: p.since ? String(p.since) : undefined,
       until: p.until ? String(p.until) : undefined,
       ...(typeof p.reference_date === 'string' ? { referenceDate: p.reference_date } : {}),
+      ...(p.known_as_of !== undefined ? { knownAsOf: String(p.known_as_of) } : {}),
       takesHoldersAllowList: readHolders(ctx),
       ...thinkScope,
       excludePrivate: (await readPolicyOpts(ctx)).excludePrivate,

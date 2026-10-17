@@ -6,13 +6,14 @@
  */
 import type { OperationContext, ParamDef } from './contract.ts';
 import { opError } from './contract.ts';
-import { assertExplicitSourceLive, federatedSearchScope, pageNotFoundError, parseSourceIdParam } from './context.ts';
+import { assertExplicitSourceLive, federatedSearchScope, pageNotFoundError, parseSourceIdParam, readHolders } from './context.ts';
 import { inlineBodyBytes } from './get-page-body.ts';
 import { pageTrustForRead } from './get-page-projection.ts';
 import { parseKnownAsOf, readPageAtTime, remoteMayRead, type PageAtTime, type PageInterval } from '../belief/page-at-time.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { privatePagesFilterFragment } from '../search/private-visibility.ts';
 import { unifiedDiff } from '../skillpack/diff-text.ts';
+import { historicalEvidence, historyTakeRows } from '../belief/historical-search.ts';
 
 export const KNOWN_AS_OF_PARAM: ParamDef = { type: 'string', fullSurfaceOnly: true,
   description: 'Recorded time: the page as this brain had recorded it at this ISO 8601 instant (2026-10-01T12:00:00Z), from the belief ledger. Not as_of, which is valid time (a date).' };
@@ -126,4 +127,73 @@ export async function getVersionsKnownAsOf(ctx: OperationContext, p: Record<stri
   });
   const newest = views.reverse();
   return { slug, ...ledgerView(read), truncated: newest.length > limit, versions: newest.slice(0, limit) };
+}
+
+/** search parameters that select a current-state ranking stage, cursor or evidence view, none of which the historical retriever serves. */
+const SEARCH_UNSUPPORTED = ['cursor', 'offset', 'mode', 'types', 'return_unit', 'return_window', 'salience', 'recency', 'min_trust', 'token_budget'] as const;
+
+/** The sources a recorded-time search reads: the explicit or ambient scope, else every source the caller may read (an uncovered one refuses). */
+async function historicalScope(ctx: OperationContext, p: Record<string, unknown>, op: string): Promise<string[]> {
+  const sourceIdParam = parseSourceIdParam(p.source_id, op, { allowAll: true });
+  const scope = federatedSearchScope(ctx, sourceIdParam);
+  await assertExplicitSourceLive(ctx, sourceIdParam);
+  if (scope.sourceId) return [scope.sourceId];
+  if (scope.sourceIds?.length) return [...scope.sourceIds];
+  return (await ctx.engine.executeRaw<{ id: string }>('SELECT id FROM sources ORDER BY id COLLATE "C"')).map(r => r.id);
+}
+
+const callerHolders = (ctx: OperationContext) => ctx.remote === false ? undefined : readHolders(ctx) ?? ['world'];
+
+/**
+ * `search {known_as_of}` (W2 second slice, historical-retrieval.md section 8): the historical retriever as a keyword
+ * search, with think's refusals and disclosure. Lexical only; full surface only.
+ */
+export async function searchKnownAsOf(ctx: OperationContext, p: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const at = parseKnownAsOf(p.known_as_of);
+  const extra = SEARCH_UNSUPPORTED.filter(k => p[k] !== undefined);
+  if (extra.length || (p.match !== undefined && p.match !== 'keyword')) {
+    throw opError('invalid_params', `search: known_as_of does not combine with ${extra.length ? extra.join(', ') : `match: ${String(p.match)}`}.`,
+      'A recorded-time search is lexical and unpaged: pass query, known_as_of and optionally source_id, limit, snippet_chars or match: "keyword".');
+  }
+  const limit = Math.max(1, Math.min(Number(p.limit ?? 20) || 20, 100));
+  const query = String(p.query ?? '');
+  const result = await historicalEvidence(ctx.engine, { query, at, sources: await historicalScope(ctx, p, 'search'), remote: ctx.remote !== false,
+    holders: callerHolders(ctx), limit, takesLimit: 0 });
+  const { selectRelevantExcerpt } = await import('../think/gather.ts');
+  const snippet = typeof p.snippet_chars === 'number' && p.snippet_chars > 0 ? Math.floor(p.snippet_chars) : 600;
+  return {
+    known_as_of: result.known_as_of,
+    results: result.pages.map(r => ({ slug: r.slug, source_id: r.source_id, title: r.title, type: r.type, score: r.score, revision: r.revision, recorded_at: r.recorded_at,
+      content_date: r.content_date, trust_tier: r.trust_tier,
+      chunk_text: selectRelevantExcerpt([r.compiled_truth, r.timeline].filter(t => t.trim().length > 0).join('\n\n'), query, snippet, `${r.title ?? ''} ${r.slug}`) })),
+  };
+}
+
+/** takes_list parameters a body at T cannot answer. */
+const TAKES_UNSUPPORTED = ['resolved', 'sort_by', 'offset', 'min_trust'] as const;
+
+/**
+ * `takes_list {known_as_of, page_slug}` (section 8): the take rows of that page's body at T, with W4's holder and
+ * remote rule. Listing every take in the brain at T would mean reading every body, so page_slug is required.
+ */
+export async function takesListKnownAsOf(ctx: OperationContext, p: Record<string, unknown>): Promise<Array<Record<string, unknown>>> {
+  const at = parseKnownAsOf(p.known_as_of);
+  if (typeof p.page_slug !== 'string' || !p.page_slug) {
+    throw opError('invalid_params', 'takes_list: known_as_of needs page_slug.', 'Name the page whose takes as recorded you want; listing every take in the brain at an instant is not supported.');
+  }
+  const extra = TAKES_UNSUPPORTED.filter(k => p[k] !== undefined);
+  if (extra.length || p.active === false) {
+    throw opError('invalid_params', `takes_list: known_as_of does not combine with ${extra.length ? extra.join(', ') : 'active: false'}.`,
+      'List the active takes of the body at the instant with page_slug and known_as_of (plus holder, kind or limit).');
+  }
+  const slug = p.page_slug;
+  const sourceId = await targetSource(ctx, { ...p, slug }, 'takes_list');
+  const read = await readAsCaller(ctx, { sourceId, slug, at }, false);
+  const current = read.current && (await readable(ctx, read, [read.current], undefined))[0];
+  if (!current || current.deleted || !current.page) throw pageNotFoundError(ctx, slug, { includeDeleted: false, sourceIdParam: sourceId });
+  const rows = await historyTakeRows(ctx.engine, { sourceId, interval: current, at, remote: ctx.remote !== false, holders: callerHolders(ctx) });
+  const limit = Math.max(1, Math.min(Number(p.limit ?? 100) || 100, 500));
+  return rows.filter(t => (p.holder === undefined || t.holder === p.holder) && (p.kind === undefined || t.kind === p.kind)).slice(0, limit)
+    .map(t => ({ page_slug: current.slug, source_id: sourceId, row_num: t.row_num, take_key: t.take_key, claim: t.claim, kind: t.kind, holder: t.holder, weight: t.weight,
+      since_date: t.since_date, revision: current.revision, recorded_at: current.event.recorded_at, known_as_of: read.known_as_of, certified: read.certified }));
 }

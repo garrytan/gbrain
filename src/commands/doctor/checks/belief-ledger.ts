@@ -22,6 +22,7 @@ import {
   DRIFT_SAMPLE_PAGES, coverageIntervals, coveredSources, fillCommitMarks, orphanLifetimes, reconcileBeliefDrift, scanBeliefDrift, unmarkedPublications,
 } from '../../../core/belief/coverage-report.ts';
 import { preimageGaps } from '../../../core/belief/preimages.ts';
+import { historyIndexGaps, historyIndexState } from '../../../core/belief/history-index.ts';
 
 const DOCS = 'docs/designs/BELIEF_LEDGER.md#73-the-doctor-coverage-check';
 const UNSAFE_REPLAY = new Set(['unavailable', 'partial', 'unverified']);
@@ -54,7 +55,11 @@ async function runBeliefLedger(ctx: DoctorContext): Promise<Check[]> {
         intervals: intervals.length, drift: { checked: drift.checked, candidates: drift.candidates, exact: drift.exact, slugs: drift.drifted.slice(0, 10).map(d => d.slug), count: drift.drifted.length },
         drift_marks: open.drift.length, orphans: await orphanLifetimes(engine, sourceId, 5, { deep }), unmarked: (await unmarkedPublications(engine, sourceId, 1000, { deep })).length,
         restores: open.restores.filter(r => r.purge_replay && UNSAFE_REPLAY.has(r.purge_replay)),
-        preimage_gaps: (await preimageGaps(engine, sourceId, { deep, limit: 10 })).map(g => ({ slug: g.slug, event_id: g.event_id, event_type: g.event_type, revision: g.revision })) });
+        preimage_gaps: (await preimageGaps(engine, sourceId, { deep, limit: 10 })).map(g => ({ slug: g.slug, event_id: g.event_id, event_type: g.event_type, revision: g.revision })),
+        history_index: { ...await historyIndexState(engine, sourceId), ...(await engine.executeRaw<{ stale: number; orphans: number }>(`SELECT
+            (SELECT count(*) FROM belief_text_revisions WHERE source_id = $1 AND stale)::int AS stale,
+            (SELECT count(*) FROM belief_text_chunks c WHERE NOT EXISTS (SELECT 1 FROM belief_text_revision_chunks m WHERE m.text_hash = c.text_hash))::int AS orphans`, [sourceId]))[0] },
+        history_gaps: (await historyIndexGaps(engine, sourceId, { limit: 10 })).map(g => ({ slug: g.slug, event_id: g.event_id, event_type: g.event_type })) });
     }
     const details = { sources: perSource, deep, docs: DOCS };
     const restore = perSource.find(s => s.restores.length);
@@ -89,6 +94,16 @@ async function runBeliefLedger(ctx: DoctorContext): Promise<Check[]> {
           + '. A writer advanced a page\'s revision without versioning the page first, so page-at-time (known_as_of) discloses those bodies as version_missing; the body is not recoverable.',
         fix: agentFix(['gbrain', 'doctor', '--only', 'belief_ledger_coverage', '--tier', 'deep', '--json'],
           'Read-only: lists every such transition (slug, event id, revision) without the recency window, to report the writer.', 'belief_ledger_coverage', { docs: DOCS }) });
+      return checks;
+    }
+    const unindexed = perSource.filter(s => s.history_gaps.length);
+    if (unindexed.length) {
+      checks.push({ name: 'belief_ledger_coverage', status: 'warn', details,
+        message: unindexed.map(s => `${s.source_id}: ${s.history_gaps.length}${s.history_gaps.length === 10 ? '+' : ''} content event(s) have no history index row`
+          + ` (e.g. ${s.history_gaps.slice(0, 3).map(g => `${g.slug} at event ${g.event_id}`).join(', ')})`).join('; ')
+          + '. A writer appended page events without maintaining the history text index, so known_as_of retrieval cannot find those intervals; the build indexes them.',
+        fix: agentFix(['gbrain', 'beliefs', 'history-index', '--source', unindexed[0]!.source_id, '--apply', '--json'],
+          'Indexes every content interval that has no history index row, from page_versions and the live pages; it changes no page or ledger row.', 'belief_ledger_coverage', { docs: DOCS }) });
       return checks;
     }
     const pending = perSource.find(s => s.recording && !s.baseline.complete);

@@ -28,6 +28,9 @@ export interface ParsedCitation {
    * citations straight out of the parser.
    */
   source_id?: string | null;
+  /** W3: under known_as_of, the cited page's revision and the recorded_at of its interval at T. */
+  revision?: string | null;
+  recorded_at?: string | null;
 }
 
 /**

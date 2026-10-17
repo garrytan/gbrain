@@ -11,6 +11,7 @@ import { join, relative } from 'node:path';
 const root = join(import.meta.dir, '..');
 const REVIEWED: Record<string, string> = {
   'src/core/belief/backfill.ts': 'reads historical takes only and skips reservation rows (TAKE_RESERVATION_SOURCE); it renders nothing',
+  'src/core/belief/history-index.ts': 'indexes the take rows of a body for historical retrieval and skips reservation rows (TAKE_RESERVATION_SOURCE); it renders nothing',
   'src/core/belief/purge.ts': 'collects historical take claims to redact; a reservation carries no claim, and it renders nothing',
   'src/core/cycle/concept-publication.ts': 'compares rows of fence blocks it copies verbatim, reservations included',
   'src/core/cycle/extract-takes.ts': 'projects takes only; a reserved number has no take, so rebuild prunes its stale index row',

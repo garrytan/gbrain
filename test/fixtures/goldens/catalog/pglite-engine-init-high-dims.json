@@ -15,6 +15,13 @@
       "belief_page_lifetimes.belief_page_lifetimes_pkey": "p PRIMARY KEY (page_lifetime)",
       "belief_redactions.belief_redactions_pkey": "p PRIMARY KEY (id)",
       "belief_retier_manifest.belief_retier_manifest_pkey": "p PRIMARY KEY (summary_event, subject_kind, subject_key)",
+      "belief_text_chunks.belief_text_chunks_pkey": "p PRIMARY KEY (text_hash)",
+      "belief_text_index_state.belief_text_index_state_pkey": "p PRIMARY KEY (source_id)",
+      "belief_text_revision_chunks.belief_text_revision_chunks_kind_check": "c CHECK ((kind = ANY (ARRAY['body'::text, 'take'::text])))",
+      "belief_text_revision_chunks.belief_text_revision_chunks_pkey": "p PRIMARY KEY (revision_row, ord)",
+      "belief_text_revision_chunks.belief_text_revision_chunks_revision_row_fkey": "f FOREIGN KEY (revision_row) REFERENCES belief_text_revisions(id) ON DELETE CASCADE",
+      "belief_text_revisions.belief_text_revisions_opening_event_key": "u UNIQUE (opening_event)",
+      "belief_text_revisions.belief_text_revisions_pkey": "p PRIMARY KEY (id)",
       "budget_ledger.budget_ledger_pkey": "p PRIMARY KEY (scope, resolver_id, local_date)",
       "budget_reservations.budget_reservations_pkey": "p PRIMARY KEY (reservation_id)",
       "calibration_profiles.calibration_profiles_pkey": "p PRIMARY KEY (id)",
@@ -542,6 +549,18 @@
       "belief_retier_manifest": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
+      "belief_text_chunks": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
+      "belief_text_index_state": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
+      "belief_text_revision_chunks": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
+      "belief_text_revisions": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
       "budget_ledger": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
@@ -994,6 +1013,16 @@
       "belief_redactions_pkey": "CREATE UNIQUE INDEX belief_redactions_pkey ON public.belief_redactions USING btree (id)",
       "belief_redactions_subject": "CREATE INDEX belief_redactions_subject ON public.belief_redactions USING btree (source_id, subject_key, field)",
       "belief_retier_manifest_pkey": "CREATE UNIQUE INDEX belief_retier_manifest_pkey ON public.belief_retier_manifest USING btree (summary_event, subject_kind, subject_key)",
+      "belief_text_chunks_pkey": "CREATE UNIQUE INDEX belief_text_chunks_pkey ON public.belief_text_chunks USING btree (text_hash)",
+      "belief_text_chunks_search": "CREATE INDEX belief_text_chunks_search ON public.belief_text_chunks USING gin (search_vector)",
+      "belief_text_index_state_pkey": "CREATE UNIQUE INDEX belief_text_index_state_pkey ON public.belief_text_index_state USING btree (source_id)",
+      "belief_text_revision_chunks_hash": "CREATE INDEX belief_text_revision_chunks_hash ON public.belief_text_revision_chunks USING btree (text_hash)",
+      "belief_text_revision_chunks_pkey": "CREATE UNIQUE INDEX belief_text_revision_chunks_pkey ON public.belief_text_revision_chunks USING btree (revision_row, ord)",
+      "belief_text_revisions_aliases": "CREATE INDEX belief_text_revisions_aliases ON public.belief_text_revisions USING gin (aliases)",
+      "belief_text_revisions_lifetime": "CREATE INDEX belief_text_revisions_lifetime ON public.belief_text_revisions USING btree (page_lifetime, known_from)",
+      "belief_text_revisions_opening_event_key": "CREATE UNIQUE INDEX belief_text_revisions_opening_event_key ON public.belief_text_revisions USING btree (opening_event)",
+      "belief_text_revisions_pkey": "CREATE UNIQUE INDEX belief_text_revisions_pkey ON public.belief_text_revisions USING btree (id)",
+      "belief_text_revisions_source": "CREATE INDEX belief_text_revisions_source ON public.belief_text_revisions USING btree (source_id, known_from)",
       "budget_ledger_pkey": "CREATE UNIQUE INDEX budget_ledger_pkey ON public.budget_ledger USING btree (scope, resolver_id, local_date)",
       "budget_reservations_pkey": "CREATE UNIQUE INDEX budget_reservations_pkey ON public.budget_reservations USING btree (reservation_id)",
       "calibration_profiles_bias_tags_gin": "CREATE INDEX calibration_profiles_bias_tags_gin ON public.calibration_profiles USING gin (active_bias_tags)",
@@ -1427,6 +1456,7 @@
     "sequences": {
       "belief_events_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=belief_events.id",
       "belief_redactions_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=belief_redactions.id",
+      "belief_text_revisions_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=belief_text_revisions.id",
       "calibration_profiles_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=calibration_profiles.id",
       "chat_usage_log_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=chat_usage_log.id",
       "chronicle_judge_reservations_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=chronicle_judge_reservations.id",
@@ -1586,6 +1616,54 @@
           "4 subject_key text/text NOT NULL",
           "5 from_tier text/text NULL",
           "6 to_tier text/text NOT NULL"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
+      "belief_text_chunks": {
+        "columns": [
+          "1 text_hash bytea/bytea NOT NULL",
+          "2 search_vector tsvector/tsvector NOT NULL"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
+      "belief_text_index_state": {
+        "columns": [
+          "1 source_id text/text NOT NULL",
+          "2 source_incarnation uuid/uuid NOT NULL",
+          "3 index_cut timestamp with time zone/timestamptz NULL",
+          "4 build_pass smallint/int2 NOT NULL DEFAULT 0",
+          "5 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
+      "belief_text_revision_chunks": {
+        "columns": [
+          "1 revision_row bigint/int8 NOT NULL",
+          "2 ord integer/int4 NOT NULL",
+          "3 kind text/text NOT NULL",
+          "4 holder text/text NULL",
+          "5 take_key text/text NULL",
+          "6 text_hash bytea/bytea NOT NULL"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
+      "belief_text_revisions": {
+        "columns": [
+          "1 id bigint/int8 NOT NULL DEFAULT nextval('belief_text_revisions_id_seq'::regclass)",
+          "2 source_id text/text NOT NULL",
+          "3 source_incarnation uuid/uuid NOT NULL",
+          "4 page_lifetime uuid/uuid NOT NULL",
+          "5 revision uuid/uuid NOT NULL",
+          "6 title text/text NULL",
+          "7 aliases ARRAY/_text NOT NULL DEFAULT '{}'::text[]",
+          "8 content_date date/date NULL",
+          "9 visibility text/text NOT NULL",
+          "10 segmented boolean/bool NOT NULL DEFAULT false",
+          "11 known_from timestamp with time zone/timestamptz NOT NULL",
+          "12 known_until timestamp with time zone/timestamptz NULL",
+          "13 opening_event bigint/int8 NOT NULL",
+          "14 closing_event bigint/int8 NULL",
+          "15 stale boolean/bool NOT NULL DEFAULT false"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },

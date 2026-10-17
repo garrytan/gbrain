@@ -14,6 +14,7 @@ import { writeCliError } from '../cli/cli-error.ts';
 import { disableBeliefLedger, enableBeliefLedger } from '../core/belief/coverage.ts';
 import { coverageIntervals, coveredSources, fillCommitMarks, orphanLifetimes, reconcileBeliefDrift, unmarkedPublications, type CoverageInterval } from '../core/belief/coverage-report.ts';
 import { backfillBeliefHistory } from '../core/belief/backfill.ts';
+import { buildHistoryIndex } from '../core/belief/history-index.ts';
 import { readLedgerSource } from '../core/belief/ledger.ts';
 import { readManagedMode } from '../core/persistence/managed-mode.ts';
 import { resolveSourceId, SourceTargetError } from '../core/source-resolver.ts';
@@ -22,7 +23,7 @@ import { beliefChanges, renderBeliefChanges } from '../core/belief/changes.ts';
 import { parseSince } from '../core/since.ts';
 
 export const BELIEFS_USAGE = [
-  'Usage: gbrain beliefs <enable|disable|status|changes|reconcile|backfill|replay-purges> [--source <id>] [--json]',
+  'Usage: gbrain beliefs <enable|disable|status|changes|reconcile|backfill|history-index|replay-purges> [--source <id>] [--json]',
   '  enable     Start recording the belief ledger on a source: baselines every page (resumable) and sets the watermark.',
   '             Only a managed source\'s coverage is certified; an unmanaged source is recorded but uncertified.',
   '  disable    Stop recording (appends coverage.stopped); enabling again starts a new interval with a new baseline.',
@@ -34,12 +35,15 @@ export const BELIEFS_USAGE = [
   '  reconcile  Appends reconcile events for slugs whose state drifted from their newest event, and fills missing commit marks.',
   '             A drifted slug\'s interval stays uncertified on a managed source.',
   '  backfill   Seeds best-effort history before the coverage start from retained page versions (never certified).',
+  '  history-index [--apply]',
+  '             Builds the history text index known_as_of reads (preview unless --apply): pass 1 indexes every open interval,',
+  '             pass 2 the closed ones newest first. Resumable; a rerun indexes only what is missing.',
   '  replay-purges --archived-at <iso> (--purge-mirror <abs path> | --from-url-env <VAR>) [--apply]',
   '             After a Postgres restore, replays the purges the restored backup does not hold (dry run unless --apply).',
   '  --source <id>  The source (default: every covered source for status and reconcile; the resolved source, as for other commands, for the rest).',
 ].join('\n');
 
-const SUBCOMMANDS = ['enable', 'disable', 'status', 'changes', 'reconcile', 'backfill', 'replay-purges'] as const;
+const SUBCOMMANDS = ['enable', 'disable', 'status', 'changes', 'reconcile', 'backfill', 'history-index', 'replay-purges'] as const;
 
 /** `beliefs changes` arguments: the entity slugs and the window start, shared with the thin-client route. */
 export function beliefsChangesArgs(args: string[], now = Date.now()): { entities: string[]; since: string } {
@@ -93,7 +97,7 @@ export async function runBeliefs(engine: BrainEngine, args: string[]): Promise<v
   if (args.includes('--help') || args.includes('-h') || !sub) { console.log(BELIEFS_USAGE); return; }
   try {
     if (!(SUBCOMMANDS as readonly string[]).includes(sub)) {
-      throw opError('invalid_params', `Unknown beliefs subcommand '${sub}'.`, 'gbrain beliefs --help lists enable, disable, status, changes, reconcile, backfill and replay-purges.');
+      throw opError('invalid_params', `Unknown beliefs subcommand '${sub}'.`, 'gbrain beliefs --help lists enable, disable, status, changes, reconcile, backfill, history-index and replay-purges.');
     }
     const named = sourceArg(args);
     if (named !== undefined && !await readLedgerSource(engine, named)) throw unknownSource(named);
@@ -121,6 +125,15 @@ export async function runBeliefs(engine: BrainEngine, args: string[]): Promise<v
       const incomplete = result.pages.filter(p => !p.complete);
       await report(args, result, `Backfilled ${result.events} event(s) before ${result.since} across ${result.pages.length} page(s) of ${sourceId} (best effort, never certified)`
         + `${incomplete.length ? `; ${incomplete.length} page(s) incomplete (${[...new Set(incomplete.flatMap(p => p.reasons))].join(', ')})` : ''}.`);
+      return;
+    }
+    if (sub === 'history-index') {
+      const sourceId = await target();
+      const run = await buildHistoryIndex(engine, sourceId, { apply: args.includes('--apply') });
+      const state = run.complete ? 'complete' : run.index_cut ? `answering from ${run.index_cut}` : 'not answering yet (pass 1 unfinished)';
+      await report(args, run, run.applied
+        ? `History text index of ${sourceId}: ${run.indexed} interval(s) indexed; pass ${run.build_pass}, ${state}.`
+        : `History text index of ${sourceId}: ${run.intervals} interval(s) to index (${run.open_intervals} open, ${run.closed_intervals} closed, ${run.bytes} byte(s), about ${run.estimated_seconds}s); ${state}. Nothing written; rerun with --apply to build.`);
       return;
     }
     if (sub === 'changes') {

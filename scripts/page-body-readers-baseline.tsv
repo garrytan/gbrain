@@ -575,3 +575,14 @@ src/core/belief/page-at-time.ts	livePage	field	STREAM	known_as_of read: a segmen
 src/core/ops/known-as-of.ts	intervalView	field	STREAM	known_as_of read: a segmented version or page returns body segmented with body_ref (window read via get_page version_id), never a body string; inline bodies only
 src/core/ops/known-as-of.ts	getVersionsKnownAsOf	field	STREAM	known_as_of read: a segmented version or page returns body segmented with body_ref (window read via get_page version_id), never a body string; inline bodies only
 src/core/belief/preimages.ts	preimageGaps	sql	META	size only (octet_length) to exempt large pages; segmented pages and versions are excluded by body_storage
+src/core/belief/historical-search.ts	rawText	sql	STREAM	historical retriever (W3): the current_text mutant reads the live row; a segmented page is never a candidate (index rows of segmented intervals are excluded in SQL)
+src/core/belief/historical-search.ts	rawText	field	STREAM	historical retriever (W3): reads a page-at-time interval body; a segmented or unavailable interval is dropped and counted in bodies_unavailable before this runs
+src/core/belief/historical-search.ts	historicalBodies	field	STREAM	historical retriever (W3): overlays and projects inline interval bodies confirmed by readPagesAtTime; segmented intervals never reach it
+src/core/belief/historical-search.ts	historyTakeRowsOf	field	STREAM	historical retriever (W3): parses fence takes of inline interval bodies; segmented intervals never reach it (takes_list refuses them as not found)
+src/core/belief/historical-search.ts	hydratePages	field	STREAM	historical retriever (W3): returns the projected inline bodies at T; segmented intervals are counted in bodies_unavailable, never returned
+src/core/belief/historical-search.ts	readHistoricalCandidates	field	STREAM	historical retriever (W3): scores the projected inline body at T; segmented intervals are counted in bodies_unavailable, never scored
+src/core/belief/history-index.ts	insertRow	field	STREAM	history text index (W3): chunks an inline body; a segmented interval gets a row with segmented = true and no chunks
+src/core/belief/history-index.ts	rowOf	field	STREAM	history text index (W3): passes an inline interval body to insertRow; a segmented interval passes no body and is marked segmented
+src/core/belief/history-index.ts	maintainHistoryIndex	sql	STREAM	history text index (W3): reads the live row body_storage first; a segmented page opens a row with segmented = true and no chunks
+src/core/ops/known-as-of.ts	searchKnownAsOf	field	STREAM	search {known_as_of}: excerpts the projected inline body at T the retriever returned; segmented intervals never reach it
+src/core/think/historical.ts	toResult	field	STREAM	think {known_as_of}: renders the projected inline body at T the retriever returned; segmented intervals never reach it

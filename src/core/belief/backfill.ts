@@ -32,7 +32,7 @@ import { parseFactsFence } from '../facts-fence.ts';
 import { parseTakesFence, TAKE_RESERVATION_SOURCE } from '../takes-fence.ts';
 import { opError } from '../ops/contract.ts';
 import { privatePagesFilterFragment } from '../search/private-visibility.ts';
-import { factKey, lifetimeRef, pageKey, sha256Hex, takeClaimHash, takeKey, valueHash } from './keys.ts';
+import { factKey, keyedFenceTakes, lifetimeRef, pageKey, sha256Hex, takeClaimHash, takeKey, valueHash } from './keys.ts';
 import { appendBeliefEvents, markBeliefCommits, type BeliefEventDraft } from './append.ts';
 import { readLedgerSource } from './ledger.ts';
 import { resolveLifetimes } from './lifetimes.ts';
@@ -51,13 +51,24 @@ const toUuid = (hex: string) => `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.s
 const iso = (v: unknown) => v == null ? null : new Date(v as string).toISOString();
 const dateIso = (d?: string) => d ? iso(/^\d{4}-\d{2}-\d{2}$/.test(d) ? `${d}T00:00:00Z` : d) : null;
 
-/** Keyed fence subjects of one body: active fence facts by (page, fp, visibility) and takes by (page, claim hash, ordinal). Purge registers version carriers under these keys. */
-export async function bodySubjects(engine: BrainEngine, lifetime: string, text: string, pageVisibility: string): Promise<{ subjects: Keyed[]; warnings: string[] }> {
+/** The claims `bodySubjects` fingerprints for a body: its active fence facts and its takes other than reservations. */
+export function bodyClaims(text: string): string[] {
+  return [...parseFactsFence(text).facts.filter(f => f.active).map(f => f.claim),
+    ...parseTakesFence(text).takes.filter(t => t.source !== TAKE_RESERVATION_SOURCE).map(t => t.claim)];
+}
+
+/**
+ * Keyed fence subjects of one body: active fence facts by (page, fp, visibility) and takes by (page, claim hash, ordinal). Purge registers version carriers under these keys.
+ * `fingerprints` (claim to fingerprint, covering `bodyClaims(text)`) lets a batch reader fingerprint many bodies in one statement.
+ */
+export async function bodySubjects(engine: BrainEngine, lifetime: string, text: string, pageVisibility: string,
+  fingerprints?: ReadonlyMap<string, string>): Promise<{ subjects: Keyed[]; warnings: string[] }> {
   const facts = parseFactsFence(text);
   const takes = parseTakesFence(text);
   const active = facts.facts.filter(f => f.active);
-  const fps = active.length ? await engine.executeRaw<{ fp: string }>('SELECT gbrain_fact_fingerprint(c) AS fp FROM unnest($1::text[]) WITH ORDINALITY AS t(c, n) ORDER BY n',
-    [active.map(f => f.claim)]) : [];
+  const fingerprint = async (claims: string[]) => fingerprints ? claims.map(c => ({ fp: fingerprints.get(c)! }))
+    : claims.length ? engine.executeRaw<{ fp: string }>('SELECT gbrain_fact_fingerprint(c) AS fp FROM unnest($1::text[]) WITH ORDINALITY AS t(c, n) ORDER BY n', [claims]) : [];
+  const fps = await fingerprint(active.map(f => f.claim));
   const subject = lifetimeRef(lifetime);
   const groups = new Map<string, { raw: Parameters<typeof factValue>[0]; count: number }>();
   for (const [i, f] of active.entries()) {
@@ -74,19 +85,14 @@ export async function bodySubjects(engine: BrainEngine, lifetime: string, text: 
     return { kind: 'fact', key, value, vhash: valueHash(value), visibility: raw.visibility, claimFp: raw.fp, validFrom: raw.valid_from, validUntil: raw.valid_until };
   });
   const rows = takes.takes.filter(t => t.source !== TAKE_RESERVATION_SOURCE);
-  const takeFps = rows.length ? await engine.executeRaw<{ fp: string }>('SELECT gbrain_fact_fingerprint(c) AS fp FROM unnest($1::text[]) WITH ORDINALITY AS t(c, n) ORDER BY n',
-    [rows.map(t => t.claim)]) : [];
-  const byClaim = new Map<string, Array<{ t: typeof rows[number]; fp: string }>>();
-  rows.forEach((t, i) => { const h = takeClaimHash(t.claim, t.kind, t.holder); byClaim.set(h, [...byClaim.get(h) ?? [], { t, fp: takeFps[i]!.fp }]); });
-  for (const [hash, group] of byClaim) {
-    group.sort((a, b) => (a.t.sinceDate ?? '').localeCompare(b.t.sinceDate ?? '') || a.t.rowNum - b.t.rowNum);
-    group.forEach(({ t, fp }, ordinal) => {
-      const value = takeValue({ id: 0, page_id: 0, row_num: t.rowNum, claim: t.claim, claim_fp: fp, kind: t.kind, holder: t.holder, weight: t.weight,
-        since_date: t.sinceDate ?? null, until_date: t.untilDate ?? null, source: t.source ?? null, active: t.active, resolved_at: dateIso(t.resolvedAt),
-        resolved_outcome: t.resolvedOutcome ?? null, resolved_value: t.resolvedValue ?? null, resolved_unit: t.resolvedUnit ?? null,
-        resolved_source: t.resolvedEvidence ?? null, resolved_by: t.resolvedBy ?? null, resolved_quality: t.resolvedQuality ?? null, tier: '' });
-      subjects.push({ kind: 'take', key: takeKey(lifetime, hash, ordinal), value, vhash: valueHash(value), visibility: pageVisibility, claimFp: fp, validFrom: null, validUntil: null });
-    });
+  const takeFps = await fingerprint(rows.map(t => t.claim));
+  for (const { take: t, index, key } of keyedFenceTakes(lifetime, rows)) {
+    const fp = takeFps[index]!.fp;
+    const value = takeValue({ id: 0, page_id: 0, row_num: t.rowNum, claim: t.claim, claim_fp: fp, kind: t.kind, holder: t.holder, weight: t.weight,
+      since_date: t.sinceDate ?? null, until_date: t.untilDate ?? null, source: t.source ?? null, active: t.active, resolved_at: dateIso(t.resolvedAt),
+      resolved_outcome: t.resolvedOutcome ?? null, resolved_value: t.resolvedValue ?? null, resolved_unit: t.resolvedUnit ?? null,
+      resolved_source: t.resolvedEvidence ?? null, resolved_by: t.resolvedBy ?? null, resolved_quality: t.resolvedQuality ?? null, tier: '' });
+    subjects.push({ kind: 'take', key, value, vhash: valueHash(value), visibility: pageVisibility, claimFp: fp, validFrom: null, validUntil: null });
   }
   return { subjects, warnings: [...facts.warnings, ...takes.warnings] };
 }

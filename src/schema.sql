@@ -3323,3 +3323,68 @@ DO $rls$ BEGIN
   END IF;
 END $rls$;
 -- END GENERATED from src/core/belief/schema.ts (BELIEF_LEDGER_SCHEMA_SQL)
+
+-- BEGIN GENERATED from src/core/belief/schema.ts (BELIEF_HISTORY_INDEX_SCHEMA_SQL). Edit that file, then run: bun run build:schema
+CREATE TABLE IF NOT EXISTS belief_text_revisions (
+  id                 BIGSERIAL PRIMARY KEY,
+  source_id          TEXT NOT NULL,
+  source_incarnation UUID NOT NULL,
+  page_lifetime      UUID NOT NULL,
+  revision           UUID NOT NULL,
+  title              TEXT,
+  aliases            TEXT[] NOT NULL DEFAULT '{}',
+  content_date       DATE,
+  visibility         TEXT NOT NULL,
+  segmented          BOOLEAN NOT NULL DEFAULT false,
+  known_from         TIMESTAMPTZ NOT NULL,
+  known_until        TIMESTAMPTZ,
+  opening_event      BIGINT NOT NULL UNIQUE,
+  closing_event      BIGINT,
+  stale              BOOLEAN NOT NULL DEFAULT false
+);
+CREATE INDEX IF NOT EXISTS belief_text_revisions_source ON belief_text_revisions (source_id, known_from);
+CREATE INDEX IF NOT EXISTS belief_text_revisions_lifetime ON belief_text_revisions (page_lifetime, known_from);
+CREATE INDEX IF NOT EXISTS belief_text_revisions_aliases ON belief_text_revisions USING GIN (aliases);
+DO $rls$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
+    ALTER TABLE belief_text_revisions ENABLE ROW LEVEL SECURITY;
+  END IF;
+END $rls$;
+CREATE TABLE IF NOT EXISTS belief_text_chunks (
+  text_hash     BYTEA PRIMARY KEY,
+  search_vector TSVECTOR NOT NULL
+);
+CREATE INDEX IF NOT EXISTS belief_text_chunks_search ON belief_text_chunks USING GIN (search_vector);
+DO $rls$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
+    ALTER TABLE belief_text_chunks ENABLE ROW LEVEL SECURITY;
+  END IF;
+END $rls$;
+CREATE TABLE IF NOT EXISTS belief_text_revision_chunks (
+  revision_row BIGINT NOT NULL REFERENCES belief_text_revisions(id) ON DELETE CASCADE,
+  ord          INTEGER NOT NULL,
+  kind         TEXT NOT NULL CHECK (kind IN ('body', 'take')),
+  holder       TEXT,
+  take_key     TEXT,
+  text_hash    BYTEA NOT NULL,
+  PRIMARY KEY (revision_row, ord)
+);
+CREATE INDEX IF NOT EXISTS belief_text_revision_chunks_hash ON belief_text_revision_chunks (text_hash);
+DO $rls$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
+    ALTER TABLE belief_text_revision_chunks ENABLE ROW LEVEL SECURITY;
+  END IF;
+END $rls$;
+CREATE TABLE IF NOT EXISTS belief_text_index_state (
+  source_id          TEXT PRIMARY KEY,
+  source_incarnation UUID NOT NULL,
+  index_cut          TIMESTAMPTZ,
+  build_pass         SMALLINT NOT NULL DEFAULT 0,
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+DO $rls$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
+    ALTER TABLE belief_text_index_state ENABLE ROW LEVEL SECURITY;
+  END IF;
+END $rls$;
+-- END GENERATED from src/core/belief/schema.ts (BELIEF_HISTORY_INDEX_SCHEMA_SQL)

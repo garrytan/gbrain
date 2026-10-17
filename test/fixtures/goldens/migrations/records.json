@@ -1,6 +1,6 @@
 {
   "golden": {
-    "count": 251,
+    "count": 252,
     "gaps": [
       17,
       18,
@@ -65,7 +65,7 @@
       "tableRows": "906d2413b13d76a06d5910885e47ed5c544be4ff3a2266e83146715721b24270",
       "verifyProjectionStatistics": "0d231b04ecfbc5a4109d6fca9567bf4e8c9e9db6c3fbbb35212e026579ed6f67"
     },
-    "latest": 256,
+    "latest": 257,
     "records": [
       {
         "handler": {
@@ -4004,6 +4004,19 @@
         "transaction": false,
         "verify": "absent",
         "version": 256
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "belief_history_index",
+        "sql": {
+          "length": 2825,
+          "sha256": "d1bbbb3db373cc100c3d1ace6c7f0e62d23ff59b1c35e049c891123a0f3f8f17"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 257
       }
     ],
     "versions": [
@@ -4257,7 +4270,8 @@
       253,
       254,
       255,
-      256
+      256,
+      257
     ]
   },
   "normalizer": "migrations-record-v1"

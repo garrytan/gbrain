@@ -78,3 +78,19 @@ export const fieldHash = (text: string) => sha256Hex(`field:${text}`);
 /** event_key = sha256(publication_id ‖ subject_key ‖ event_type), hex for transport, BYTEA at rest. */
 export const eventKeyHex = (publicationId: string, subjectKey: string, eventType: string) =>
   sha256Hex(`${publicationId}\u0000${subjectKey}\u0000${eventType}`);
+
+/**
+ * The ledger take key of each fence take row (reservation rows excluded by the caller): rows of one claim hash
+ * (claim, kind, holder) are ordered by since date then row number, and the ordinal joins the key. No database read,
+ * so the history text index keys take rows on the write path the way `bodySubjects` keys take subjects.
+ */
+export function keyedFenceTakes<T extends { claim: string; kind: string; holder: string; sinceDate?: string | null; rowNum: number }>(lifetime: string, rows: readonly T[]): Array<{ take: T; index: number; key: string }> {
+  const byClaim = new Map<string, Array<{ take: T; index: number }>>();
+  rows.forEach((take, index) => { const h = takeClaimHash(take.claim, take.kind, take.holder); byClaim.set(h, [...byClaim.get(h) ?? [], { take, index }]); });
+  const out: Array<{ take: T; index: number; key: string }> = [];
+  for (const [hash, group] of byClaim) {
+    group.sort((a, b) => (a.take.sinceDate ?? '').localeCompare(b.take.sinceDate ?? '') || a.take.rowNum - b.take.rowNum);
+    group.forEach((g, ordinal) => out.push({ ...g, key: takeKey(lifetime, hash, ordinal) }));
+  }
+  return out;
+}

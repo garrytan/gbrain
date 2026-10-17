@@ -10,6 +10,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { OWNER_TIER_FLOOR, TRUST_TIER_RANK, isTrustTier } from '../trust/tier.ts';
 import { CARRYING_FIELDS, REDACTION_MARKER, canonicalJson, eventKeyHex, fieldHash, valueHash } from './keys.ts';
+import { maintainHistoryIndex, type AppendedEvent } from './history-index.ts';
 
 export type BeliefOrigin = 'live' | 'unmanaged' | 'baseline' | 'backfill' | 'reconcile';
 export interface BeliefEventDraft {
@@ -172,7 +173,7 @@ export async function appendBeliefEvents(tx: BrainEngine, input: BeliefEventDraf
       redacted_fields: redactions.get(d) ?? null,
     };
   });
-  const inserted = await tx.executeRaw<{ id: number }>(`INSERT INTO belief_events (event_key, source_id, source_incarnation, page_lifetime, slug, subject_kind,
+  const inserted = await tx.executeRaw<AppendedEvent>(`INSERT INTO belief_events (event_key, source_id, source_incarnation, page_lifetime, slug, subject_kind,
       subject_key, event_type, origin, trust_tier, writer_tier, tier_basis, visibility, publication_id, ord, source_time, valid_from, valid_until,
       value, value_hash, prior_hash, state_hash, cause, claim_fp, purged, redacted_fields)
     SELECT decode(r.event_key, 'hex'), r.source_id, r.source_incarnation::uuid, r.page_lifetime::uuid, r.slug, r.subject_kind, r.subject_key, r.event_type,
@@ -184,7 +185,10 @@ export async function appendBeliefEvents(tx: BrainEngine, input: BeliefEventDraf
       publication_id text, ord integer, source_time text, valid_from text, valid_until text, value text, value_hash text, prior_hash text,
       state_hash text, cause text, claim_fp text, purged boolean, redacted_fields text[])
     ORDER BY r.ord
-    ON CONFLICT (event_key) DO NOTHING RETURNING id`, [JSON.stringify(rows)]);
+    ON CONFLICT (event_key) DO NOTHING
+    RETURNING id, source_id, source_incarnation::text AS source_incarnation, page_lifetime::text AS page_lifetime, slug, subject_kind, event_type, value, visibility,
+      recorded_at, purged`, [JSON.stringify(rows)]);
+  await maintainHistoryIndex(tx, inserted, ctx.origin);
   return inserted.length;
 }
 

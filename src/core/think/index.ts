@@ -33,12 +33,14 @@ import { chat as gatewayChat, probeChatModel, isThinkingModel, type ChatResult }
 import { AIConfigError } from '../ai/errors.ts';
 import { normalizeModelId } from '../model-id.ts';
 import { hasAnthropicKey } from '../ai/anthropic-key.ts';
-import { resolveThinkWindow } from './temporal-window.ts';
+import { resolveThinkWindow, type TemporalWindow } from './temporal-window.ts';
 import { resolveThinkTemporalContext } from './temporal-context.ts';
 import { resolveExcludePrivatePages } from '../search/private-visibility.ts';
 import { deliverEvidence, effectivePlan, resolveEvidencePlan, EVIDENCE_BLOCK_CHAR_CAP, THINK_RETURN_UNIT_CONFIG_KEY, type DeliveryMeta } from '../search/evidence-delivery.ts';
 import { startThinkDecide, thinkAbstainResult, type ThinkAbstention } from './decide.ts';
 import { classifyIntent } from './intent.ts';
+import { gatherAtTime, historicalSources, historicalThinkInstant, knownAsOfHeader, stampHistoricalCitations } from './historical.ts';
+import type { KnownAsOfBlock } from '../belief/historical-search.ts';
 import { deriveTrust, derivedMaintenanceTransaction, type TaintRef } from '../trust/taint.ts';
 
 /** Anthropic Messages client interface — same shape used by subagent.ts so test stubs can be shared. */
@@ -152,6 +154,12 @@ export interface RunThinkOpts {
    * question date. Invalid or future values throw ReferenceDateError.
    */
   referenceDate?: string;
+  /**
+   * W3: recorded time. The evidence as the brain had recorded it at this ISO 8601 instant, through the historical
+   * retriever and the per-branch table (docs/architecture/historical-retrieval.md section 6). Refuses save, take and
+   * withCalibration.
+   */
+  knownAsOf?: string;
 }
 
 
@@ -178,6 +186,8 @@ export type ThinkSynthesisStatus =
   | 'llm_error';        // client.create() threw (429 / timeout / 5xx / network)
 
 export interface ThinkResult {
+  /** W3: the recorded-time disclosure of a `knownAsOf` call. */
+  known_as_of?: KnownAsOfBlock;
   question: string;
   answer: string;
   citations: ParsedCitation[];
@@ -569,6 +579,13 @@ async function renderThinkPages(engine: BrainEngine, opts: RunThinkOpts, pages: 
   return { pagesBlock: rendered.text, evidenceTruncated: rendered.truncated, evidenceDelivery: delivered.delivery };
 }
 
+/** W3: the bodies at T, already restricted and sanitized, rendered with the usual excerpt budget under the recorded-state header. */
+async function renderHistoricalPages(engine: BrainEngine, opts: RunThinkOpts, pages: SearchResult[], timeZone: string, warnings: string[], block: KnownAsOfBlock) {
+  const budget = await readThinkPagesBudget(engine, warnings);
+  const rendered = renderPagesBlockDetailed(pages, pagesBlockExcerptLen(pages.length, undefined, budget), opts.question, { timeZone });
+  return { pagesBlock: `${knownAsOfHeader(block)}\n\n${rendered.text}`, evidenceTruncated: rendered.truncated, evidenceDelivery: undefined as DeliveryMeta | undefined };
+}
+
 /**
  * The question embedding gather may use, or undefined. A brain that opted out
  * of embedding never sends the question to a provider (warning
@@ -591,6 +608,42 @@ async function embedThinkQuestion(engine: BrainEngine, opts: RunThinkOpts, warni
   }
 }
 /**
+ * The GATHER phase: the current-state streams, or under known_as_of the views bounded by T (W3, section 6), with the
+ * stream warnings and, for the current streams, each page's and take's trust tier (#5575 A6).
+ */
+async function gatherThink(engine: BrainEngine, opts: RunThinkOpts, at: Date | null, window: TemporalWindow | null, warnings: string[]) {
+  // Optional question embedding — caller decides whether to pay the embedder; an opted-out brain never does.
+  const questionEmbedding = at ? undefined : await embedThinkQuestion(engine, opts, warnings);
+  const thinkDecide = at ? undefined : await startThinkDecide(engine, opts, classifyIntent(opts.question)).catch(() => undefined); // System One S2/S4; undefined when both are off
+  const historical = at ? await gatherAtTime(engine, {
+    question: opts.question, at, anchor: opts.anchor, sources: await historicalSources(engine, opts), remote: opts.remote !== false,
+    holders: opts.remote === false ? undefined : opts.takesHoldersAllowList ?? ['world'], window,
+  }) : null;
+  const gather = historical?.gather ?? await runGather(engine, {
+    question: opts.question,
+    anchor: opts.anchor,
+    questionEmbedding,
+    ...(window ? { window } : {}),
+    takesHoldersAllowList: opts.remote === false ? opts.takesHoldersAllowList : opts.takesHoldersAllowList ?? ['world'],
+    excludePrivate: opts.excludePrivate ?? await resolveExcludePrivatePages(engine, opts.remote),
+    remote: opts.remote,
+    ...(opts.sourceId !== undefined ? { sourceId: opts.sourceId } : {}),
+    ...(opts.allowedSources !== undefined ? { sourceIds: opts.allowedSources } : {}),
+    ...(thinkDecide?.searchIntent ? { decideIntent: thinkDecide.searchIntent } : {}),
+  });
+  // D6: per-stream gather failures surface as typed codes (GATHER_*_FAILED);
+  // raw error text stays on stderr. Distinguishes an errored stream from a
+  // legitimately-empty one for MCP/remote callers.
+  for (const w of gather.warnings) warnings.push(w);
+  if (gather.diagnostics.window?.dropped) warnings.push(`WINDOW_EXCLUDED_${gather.diagnostics.window.dropped}_PAGES`);
+  if (!historical) {
+    await stampPageTrust(engine, gather.pages);
+    gather.takes = await stampRowTrust(engine, 'takes', gather.takes, t => ('take_id' in t ? t.take_id : (t as { id: number }).id));
+  }
+  return { gather, historical, thinkDecide };
+}
+
+/**
  * Run the think pipeline. Returns a ThinkResult — caller decides whether
  * to print, persist as synthesis page, or surface as MCP response.
  */
@@ -600,12 +653,13 @@ export async function runThink(
 ): Promise<ThinkResult> {
   const rounds = Math.max(1, opts.rounds ?? 1);
   const warnings: string[] = [];
+  const at = historicalThinkInstant(opts);
   // PR #5086: caller bounds are authoritative; with none, the one explicit date the question names bounds the synthesis.
   const resolvedWindow = resolveThinkWindow(opts.question, opts.since, opts.until);
   const window = resolvedWindow?.window ?? null;
   if (resolvedWindow?.source === 'question') warnings.push('WINDOW_FROM_QUESTION');
   const windowMeta = resolvedWindow ? { window_source: resolvedWindow.source } : {};
-  const temporal = await resolveThinkTemporalContext(engine, { referenceDate: opts.referenceDate });
+  const temporal = await resolveThinkTemporalContext(engine, { referenceDate: opts.referenceDate, ...(at ? { now: at } : {}) });
 
   // Resolve the model through the 6-tier chain.
   const modelUsed = await resolveModel(engine, {
@@ -630,37 +684,15 @@ export async function runThink(
     }
   }
 
-  // Optional question embedding — caller decides whether to pay the embedder; an opted-out brain never does.
-  const questionEmbedding = await embedThinkQuestion(engine, opts, warnings);
-
-  const thinkDecide = await startThinkDecide(engine, opts, classifyIntent(opts.question)).catch(() => undefined); // System One S2/S4; undefined when both are off
-  // GATHER
-  const gather = await runGather(engine, {
-    question: opts.question,
-    anchor: opts.anchor,
-    questionEmbedding,
-    ...(window ? { window } : {}),
-    takesHoldersAllowList: opts.remote === false ? opts.takesHoldersAllowList : opts.takesHoldersAllowList ?? ['world'],
-    excludePrivate: opts.excludePrivate ?? await resolveExcludePrivatePages(engine, opts.remote),
-    remote: opts.remote,
-    ...(opts.sourceId !== undefined ? { sourceId: opts.sourceId } : {}),
-    ...(opts.allowedSources !== undefined ? { sourceIds: opts.allowedSources } : {}),
-    ...(thinkDecide?.searchIntent ? { decideIntent: thinkDecide.searchIntent } : {}),
-  });
-  // D6: per-stream gather failures surface as typed codes (GATHER_*_FAILED);
-  // raw error text stays on stderr. Distinguishes an errored stream from a
-  // legitimately-empty one for MCP/remote callers.
-  for (const w of gather.warnings) warnings.push(w);
-  if (gather.diagnostics.window?.dropped) warnings.push(`WINDOW_EXCLUDED_${gather.diagnostics.window.dropped}_PAGES`);
-  // #5575 A6: every page and take reaches the prompt with its trust tier.
-  await stampPageTrust(engine, gather.pages);
-  gather.takes = await stampRowTrust(engine, 'takes', gather.takes, t => ('take_id' in t ? t.take_id : (t as { id: number }).id));
+  const { gather, historical, thinkDecide } = await gatherThink(engine, opts, at, window, warnings);
 
   // Render evidence blocks for the prompt. #4510: the per-page excerpt is
   // budget-aware — 600 chars is the FLOOR (a big gather never collapses each
   // page below it) and a small gather spreads the block budget into much
   // larger, often complete, per-page windows.
-  const { pagesBlock, evidenceTruncated, evidenceDelivery } = await renderThinkPages(engine, opts, gather.pages, temporal.timeZone, warnings);
+  const { pagesBlock, evidenceTruncated, evidenceDelivery } = historical
+    ? await renderHistoricalPages(engine, opts, gather.pages, temporal.timeZone, warnings, historical.block)
+    : await renderThinkPages(engine, opts, gather.pages, temporal.timeZone, warnings);
   const takesForPrompt = gather.takes.map(takesHitToTakeForPrompt);
   const { rendered: takesBlock, sanitizedCount } = renderTakesBlock(takesForPrompt);
   if (sanitizedCount > 0) {
@@ -711,7 +743,7 @@ export async function runThink(
   let trajectoryPointsCount = 0;
   let trajectoryExcludedCount = 0;
   const trajectoryEnabledConfig = await readThinkTrajectoryEnabled(engine);
-  if (trajectoryEnabledConfig && opts.withTrajectory !== false) { // opt defaults true
+  if (!historical && trajectoryEnabledConfig && opts.withTrajectory !== false) { // opt defaults true
     try {
       const trajIntent = thinkDecide ? await thinkDecide.trajectoryIntent(classifyIntent(opts.question)) : classifyIntent(opts.question);
       if (trajIntent === 'temporal' || trajIntent === 'knowledge_update') {
@@ -887,6 +919,7 @@ export async function runThink(
         ...(stubExtractive ? { extractive: stubExtractive } : {}),
         usage: null,         // [E2] no LLM ran — no accounting
         ...windowMeta,
+        ...(historical ? { known_as_of: historical.block } : {}),
         diagnostics: {
           pagesFromHybrid: gather.diagnostics.pagesFromHybrid,
           takesFromKeyword: gather.diagnostics.takesFromKeyword,
@@ -993,6 +1026,7 @@ export async function runThink(
     if (!gatheredSlugs.has(slug)) warnings.push(`CITATION_NOT_IN_GATHER:${slug}`);
   }
   stampCitationSources(resolved.citations, gather.pages);
+  if (historical) stampHistoricalCitations(resolved.citations, historical.pages);
 
   // Round-loop scaffolding (rounds > 1 currently re-runs without gap-driven retrieval).
   // The loop is in place so the v0.29 gap-fill heuristic doesn't change the call site.
@@ -1031,7 +1065,7 @@ export async function runThink(
     evidence_truncated: evidenceTruncated,
     feedback_evidence: gather.pages.map(pg => ({ source_id: pg.source_id ?? 'default', slug: pg.slug, content_hash: pg.content_hash ?? null })),
     taint_refs: [...gather.pages.map(pg => ({ table: 'pages' as const, sourceId: pg.source_id ?? 'default', slug: pg.slug })),
-      ...gather.takes.map(t => ({ table: 'takes' as const, id: t.take_id })), ...trajectoryFactIds.map(id => ({ table: 'facts' as const, id }))],
+      ...(historical ? [] : gather.takes.map(t => ({ table: 'takes' as const, id: t.take_id }))), ...trajectoryFactIds.map(id => ({ table: 'facts' as const, id }))],
     ...(extractive ? { extractive } : {}),
     usage, ...(evidenceDelivery ? { evidence_delivery: evidenceDelivery } : {}),
     diagnostics: {
@@ -1042,6 +1076,7 @@ export async function runThink(
     },
     temporal: { reference_date: temporal.referenceDate, time_zone: temporal.timeZone },
     ...windowMeta,
+    ...(historical ? { known_as_of: historical.block } : {}),
   };
 }
 

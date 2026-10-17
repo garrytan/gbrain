@@ -682,7 +682,7 @@ for (const engineCase of testBackends().map(beliefEngineCase)) {
         await reconcileBeliefDrift(b.engine, b.sourceId);
         const ledger = GRADUATION_INVENTORY.entries.filter(e => e.relation.startsWith('belief_'));
         expect(ledger.map(e => [e.relation, e.class]).sort()).toEqual(['belief_commit_marks', 'belief_events', 'belief_page_lifetimes', 'belief_redactions',
-          'belief_retier_manifest'].map(r => [r, 'carry']));
+          'belief_retier_manifest', 'belief_text_chunks', 'belief_text_index_state', 'belief_text_revision_chunks', 'belief_text_revisions'].map(r => [r, 'carry']));
         const keys = async (engine: BrainEngine) => (await engine.executeRaw<{ k: string }>(`SELECT encode(event_key, 'hex') AS k FROM belief_events ORDER BY id`)).map(r => r.k);
         const replay = async (engine: BrainEngine) => ({ intervals: await coverageIntervals(engine, b.sourceId), drift: (await scanBeliefDrift(engine, b.sourceId, { deep: true })).drifted,
           events: (await engine.executeRaw<Record<string, unknown>>(`SELECT id::int AS id, subject_key, event_type, value_hash, state_hash, recorded_at FROM belief_events ORDER BY id`))
