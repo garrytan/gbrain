@@ -57,6 +57,7 @@ import {
   openrouterRequiresExplicitPromptCache,
 } from './recipes/openrouter.ts';
 import { resolveModelDetailed, resolveEffectiveChatModel, resolveEffectiveExpansionModel } from '../model-config.ts';
+import { readLegacyModelPin } from './legacy-model-pin.ts';
 import { snapshotConfigReader } from '../config-snapshot.ts';
 import { clearGatewayModelSources, gatewayModelSource, setGatewayModelSource } from './gateway-model-sources.ts';
 import { parseLlmJson } from '../llm-json.ts';
@@ -572,13 +573,9 @@ async function discoverBeforeOpenAICall(modelStr: string | undefined): Promise<v
 async function resolveGatewayModels(engine: BrainEngine): Promise<AIGatewayConfig> {
   const cfg = requireConfig();
 
-  // The two resolutions below each walk a 5-tier precedence chain that reads
-  // up to 4 config keys, plus alias expansion. Against the engine that is
-  // many sequential round trips before the CLI does any work — seconds of
-  // `gbrain stats`'s wall clock on a hosted brain, for reads the server
-  // answered in microseconds. Take one snapshot of the config table and
-  // resolve every model against it. Same keys, same precedence, one round
-  // trip.
+  // Resolve every model against one config snapshot, including legacy pins
+  // and alias expansion. Per-key engine reads otherwise add seconds of
+  // sequential round trips on a hosted brain before the CLI does any work.
   const reader = await snapshotConfigReader(engine);
 
   // Resolve expansion (utility tier) and chat (reasoning tier). Embedding is
@@ -597,9 +594,8 @@ async function resolveGatewayModels(engine: BrainEngine): Promise<AIGatewayConfi
 
   // When no DB-plane override won (source = tier_default/fallback), consult
   // the RAW file-plane config through the shared effective-model resolver.
-  // The gateway's own cfg can't be used for this: the boot fold stamps
-  // DEFAULT_CHAT_MODEL into it when config.json has no pin, so by now an
-  // explicit pin and a fabricated default are indistinguishable in `cfg`.
+  // Gateway cfg conflates explicit pins, fabricated defaults and prior jobs;
+  // readLegacyModelPin fills an actual file/env miss from the config snapshot.
   // resolveEffective*Model keeps a SERVABLE pin (its provider's key is
   // present), warns once and falls to the key-aware tier default otherwise —
   // an init-era `chat_model: openai:*` pin survives reconnect when the
@@ -616,8 +612,12 @@ async function resolveGatewayModels(engine: BrainEngine): Promise<AIGatewayConfi
   const env = cfg.env ?? process.env;
   const chatEffective = needsFileCfg(chatDetailed.source) ? resolveEffectiveChatModel(fileCfg, env) : null;
   const expansionEffective = needsFileCfg(expansionDetailed.source) ? resolveEffectiveExpansionModel(fileCfg, env) : null;
-  const newChat = chatEffective?.model ?? chatDetailed.model;
-  const newExpansion = expansionEffective?.model ?? expansionDetailed.model;
+  const [dbChat, dbExpansion] = await Promise.all([
+    readLegacyModelPin(reader, 'chat_model', chatEffective, fileCfg, env),
+    readLegacyModelPin(reader, 'expansion_model', expansionEffective, fileCfg, env),
+  ]);
+  const newChat = dbChat ?? chatEffective?.model ?? chatDetailed.model;
+  const newExpansion = dbExpansion ?? expansionEffective?.model ?? expansionDetailed.model;
 
   // Resolved values are bare model ids (e.g. `claude-sonnet-4-6`) — prepend
   // the existing provider prefix from cfg so the gateway keeps routing to
@@ -627,8 +627,8 @@ async function resolveGatewayModels(engine: BrainEngine): Promise<AIGatewayConfi
   const chatFull = newChat.includes(':') ? newChat : prefixWithProviderFrom(cfg.chat_model ?? DEFAULT_CHAT_MODEL, newChat);
 
   _config = { ...cfg, expansion_model: expansionFull, chat_model: chatFull };
-  setGatewayModelSource('expansion', expansionFull, gatewayModelSource('expansion', expansionDetailed, expansionEffective));
-  setGatewayModelSource('chat', chatFull, gatewayModelSource('chat', chatDetailed, chatEffective));
+  setGatewayModelSource('expansion', expansionFull, dbExpansion ? { source: 'config_key', origin: 'expansion_model' } : gatewayModelSource('expansion', expansionDetailed, expansionEffective));
+  setGatewayModelSource('chat', chatFull, dbChat ? { source: 'config_key', origin: 'chat_model' } : gatewayModelSource('chat', chatDetailed, chatEffective));
   _modelCache.clear();
   clearQueryEmbedCache();
   _shrinkState.clear();
