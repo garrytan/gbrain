@@ -224,12 +224,16 @@ async function showSupervisorStatus(
   const maxCrashesEvent = events.filter(e => e.event === 'max_crashes_exceeded').pop() ?? null;
 
   // Niceness (issue #1815): measure live workers + the supervisor itself.
-  const workers = readWorkers().map(w => ({
-    pid: w.pid,
-    queue: w.queue,
-    nice_requested: w.nice_requested,
-    nice: w.nice_now,
-  }));
+  // null = the worker registry is unreadable, so worker liveness is unknown.
+  let workers: Array<{ pid: number; queue: string; nice_requested: number | null; nice: number | null }> | null = null;
+  try {
+    workers = readWorkers().map(w => ({
+      pid: w.pid,
+      queue: w.queue,
+      nice_requested: w.nice_requested,
+      nice: w.nice_now,
+    }));
+  } catch { /* status still reports the supervisor */ }
   const supervisorNice = pidfileRunning && supervisorPid !== null
     ? getEffectiveNiceness(supervisorPid)
     : null;
@@ -282,7 +286,8 @@ async function showSupervisorStatus(
     console.log(`  Crashes (24h):     ${summary.total} (runtime=${summary.by_cause.runtime_error} oom=${summary.by_cause.oom_or_external_kill} unknown=${summary.by_cause.unknown} legacy=${summary.by_cause.legacy})`);
     console.log(`  Clean exits (24h): ${summary.clean_exits}`);
     if (supervisorNice !== null) console.log(`  Nice (supervisor): ${formatNice(supervisorNice)}`);
-    for (const w of workers) {
+    if (workers === null) console.log('  Workers:       unknown (worker registry unreadable)');
+    for (const w of workers ?? []) {
       const req = w.nice_requested !== null && w.nice !== null && w.nice_requested !== w.nice
         ? ` (requested ${formatNice(w.nice_requested)})` : '';
       console.log(`  Worker pid ${w.pid} [${w.queue}]: nice ${w.nice !== null ? formatNice(w.nice) : '?'}${req}`);
