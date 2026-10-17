@@ -43,6 +43,10 @@ export function classifyCaptureValue(input: CaptureClaim): CaptureVerdict {
   if (framed('travel booking|hotel|flight|restaurant table|room booking|parking|wi-?fi|password reset link')) return drop('logistics');
   if (/\b(?:received|arrived|sent us|in my inbox)\b/i.test(text)
     && /\b(?:newsletter|unsubscribe|limited time|sponsored (?:email|message|post|content|offer)|promotional offer|webinar invitation|marketing email)\b/i.test(text)) return drop('spam');
+  if (/\b(?:billing|mailing) address\b/i.test(text) && /\b(?:request\w*|updat\w*|chang\w*)\b/i.test(text)) return drop('logistics');
+  if (/\b(?:cold|unsolicited)\b/i.test(text) && /\b(?:outreach|sales|acquisition|private equity)\b/i.test(text)) return drop('spam');
+  if (/\b(?:offered|promotional|marketing)\b/i.test(text) && /\bno personal guarantee\b/i.test(text)) return drop('spam');
+  if (/\b(?:pending|awaiting|waiting (?:on|for)|stalled pending)\b[^.!?]*\b(?:signature|reply|response)\b|\b(?:next action is|will reconvene)\b|\b(?:proceed|go ahead)\b[^.!?]*\bas soon as possible\b/i.test(text)) return drop('transient');
   if (/\b(?:is running late|out of office until|waiting for a reply|will send (?:it|this) tomorrow|reminder to)\b/i.test(text)) return drop('transient');
   return { verdict: 'keep', category: null, rule: 'capture.default_keep.v1' };
 }
@@ -55,7 +59,7 @@ export function routingTypes(raw: string | null | undefined, fallback: string): 
   return (raw ?? fallback).split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
 }
 export interface RoutingInput {
-  fact: string; slug: string; broadNames?: string[]; broadTypes?: string[]; specificTypes?: string[];
+  fact: string; slug: string; broadNames?: string[]; broadTypes?: string[]; specificTypes?: string[]; homeEntities?: string[];
 }
 export interface RoutingDeps {
   /** Must return live fact entities through strict identity arms only. */
@@ -68,13 +72,15 @@ export async function chooseSpecificEntity(input: RoutingInput, deps: RoutingDep
   const stay = (reason: string) => ({ slug: input.slug, rerouted: false, reason });
   if (await deps.isWithdrawn(input.slug)) return { slug: null, rerouted: false, reason: 'withdrawn_original' };
   const broad = input.broadTypes ?? ['company'];
-  const specific = input.specificTypes ?? ['person', 'project', 'deal'];
+  const home = input.homeEntities?.includes(input.slug) === true;
+  const specific = home ? ['company', 'person', 'project', 'deal'] : input.specificTypes ?? ['person', 'project', 'deal'];
+  if (home && /\b(?:comparables?|comps|competitors?|benchmarks?|positioning|valuation|our strategy|board member|reports directly|headcount|portfolio company)\b/i.test(input.fact)) return stay('home_analysis');
   if (!broad.includes((await deps.typeOf(input.slug)) ?? '')) return stay('not_broad');
   const names = [...(input.broadNames ?? []), input.slug, input.slug.split('/').pop()!.replace(/-/g, ' ')];
   const normalize = (value: string) => value.normalize('NFKC').toLowerCase()
     .replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
   const claim = ` ${normalize(input.fact)} `;
-  if (names.some(name => normalize(name) && claim.includes(` ${normalize(name)} `))) return stay('broad_mentioned');
+  if (!home && names.some(name => normalize(name) && claim.includes(` ${normalize(name)} `))) return stay('broad_mentioned');
   if (/\b(?:[\p{L}]+(?:\s+[\p{L}]+)*['’]s|her|his|their)\s+(?:company|startup|firm)\b/iu.test(input.fact)) return stay('possessive_broad');
   const candidates = [
     ...[...new Set(input.fact.match(SLUG_IN_TEXT_RE) ?? [])].map(query => ({ query, sentenceStart: false })),
@@ -89,9 +95,9 @@ export async function chooseSpecificEntity(input: RoutingInput, deps: RoutingDep
       return stay('competing_name');
     }
     if (result.arm === 'same_name') return stay('non_identity');
-    if (result.slug === input.slug) return stay('broad_mentioned');
+    if (result.slug === input.slug) { if (home) continue; return stay('broad_mentioned'); }
     const type = await deps.typeOf(result.slug);
-    if (broad.includes(type ?? '') || result.slug.startsWith('companies/')) return stay('other_broad');
+    if (!home && (broad.includes(type ?? '') || result.slug.startsWith('companies/'))) return stay('other_broad');
     const dir = result.slug.split('/')[0]!;
     const specificDirectory = specific.some(t => (t === 'person' ? 'people' : t === 'company' ? 'companies' : `${t}s`) === dir);
     if (!specific.includes(type ?? '') && !specific.includes(dir) && !specificDirectory) return stay('other_entity');

@@ -17,13 +17,15 @@ let home: string;
 const company = 'companies/acme-example';
 const person = 'people/alice-example';
 let claim = '';
+let extractedEntity = company;
 beforeAll(async () => { engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); }, 60_000);
 beforeEach(async () => {
   await disposePersistenceConsumer(engine); await resetPgliteState(engine);
+  extractedEntity = company;
   home = mkdtempSync(join(tmpdir(), 'capture-policy-test-'));
   await engine.setConfig('facts.extraction_model', 'openai:gpt-4o-mini');
   configureGateway({ env: { OPENAI_API_KEY: 'test' } });
-  __setChatTransportForTests(async () => ({ text: JSON.stringify({ facts: [{ fact: claim, entity: company, kind: 'fact', notability: 'medium', confidence: 1 }] }), blocks: [], stopReason: 'end', usage: { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 }, model: 'test:stub', providerId: 'test' }));
+  __setChatTransportForTests(async () => ({ text: JSON.stringify({ facts: [{ fact: claim, entity: extractedEntity, kind: 'fact', notability: 'medium', confidence: 1 }] }), blocks: [], stopReason: 'end', usage: { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 }, model: 'test:stub', providerId: 'test' }));
   for (const [slug, type, title] of [[company, 'company', 'Acme Example'], [person, 'person', 'Alice Example'], ['projects/sunrise', 'project', 'Project Sunrise']]) {
     await engine.putPage(slug!, { type: type!, title: title!, compiled_truth: 'Synthetic entity.' }, { sourceId: 'default' });
     if (slug === 'projects/sunrise') await engine.setPageAliases(slug, 'default', ['project sunrise']);
@@ -315,3 +317,24 @@ for (const managed of [false, true]) test(`replacement ignores invalid stored ca
     await call('Alice Example prefers monthly planning', first.id);
   });
 }, 60_000);
+
+for (const managed of [false, true]) test(`home entity setting reaches automatic capture, managed=${managed}`, async () => {
+  claim = 'Acme Example paused Project Sunrise';
+  await engine.setConfig('facts.capture_routing', 'on');
+  await engine.setConfig('facts.routing.home_entities', company);
+  const result = await run(managed);
+  expect(result.rerouted).toBe(1);
+  const [row] = await engine.executeRaw<{ entity_slug: string }>('SELECT entity_slug FROM facts WHERE id=$1', [result.fact_ids[0]]);
+  expect(row?.entity_slug).toBe('projects/sunrise');
+});
+
+for (const managed of [false, true]) test(`unresolved extraction stays unparented, managed=${managed}`, async () => {
+  claim = 'The services agreement renews annually';
+  extractedEntity = 'Example Unlisted Services Agreement';
+  const result = await run(managed);
+  expect(result.inserted).toBe(1);
+  const [row] = await engine.executeRaw<{ entity_slug: string | null; source_markdown_slug: string | null }>('SELECT entity_slug,source_markdown_slug FROM facts WHERE id=$1', [result.fact_ids[0]]);
+  expect(row?.entity_slug).toBeNull();
+  expect(row?.source_markdown_slug).toBeNull();
+  expect(await engine.getPage('example-unlisted-services-agreement', { sourceId: 'default' })).toBeNull();
+});

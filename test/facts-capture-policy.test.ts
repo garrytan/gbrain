@@ -104,3 +104,30 @@ test('punctuated broad aliases match normalized mentions anywhere', async () => 
   });
   expect(result).toMatchObject({ slug: 'companies/holding-example', reason: 'broad_mentioned', rerouted: false });
 });
+
+for (const fact of [
+  'The package is stalled pending a signature',
+  'The team will reconvene to review the checklist',
+  'The next action is to send the checklist',
+  'Please update the primary billing address',
+  'An unsolicited private equity outreach arrived',
+  'The offered credit requires no personal guarantee',
+]) test(`capture frames: ${fact}`, () => expect(classifyCaptureValue({ fact }).verdict).toBe('drop'));
+for (const fact of [
+  'The signed contract is awaiting a signature copy',
+  'The billing address change was approved by the board',
+  'The next action is to review the $5M investment',
+]) test(`substance veto: ${fact}`, () => expect(classifyCaptureValue({ fact }).verdict).toBe('keep'));
+const homeRoute = (fact: string, d = deps()) => chooseSpecificEntity({ fact, slug: broad,
+  broadNames: ['Acme Example'], homeEntities: [broad] }, d);
+test('home entity permits one live counterparty company', async () => {
+  expect(await homeRoute('Acme Example rejected Northstar Example')).toMatchObject({ slug: 'companies/northstar-example', rerouted: true });
+});
+test('home routing keeps ambiguity and withdrawal vetoes', async () => {
+  expect((await homeRoute('Acme Example rejected Northstar Example and Project Sunrise')).rerouted).toBe(false);
+  expect((await homeRoute('Acme Example rejected Blake Unknown')).rerouted).toBe(false);
+  expect((await homeRoute('Acme Example rejected Northstar Example', deps(['companies/northstar-example']))).slug).toBeNull();
+});
+for (const frame of ['comparable', 'comps', 'competitor', 'benchmark', 'positioning', 'valuation', 'our strategy', 'board member', 'reports directly', 'headcount', 'portfolio company']) {
+  test(`home analysis veto: ${frame}`, async () => expect((await homeRoute(`Acme Example uses Northstar Example for ${frame}`)).reason).toBe('home_analysis'));
+}

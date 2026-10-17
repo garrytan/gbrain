@@ -136,6 +136,19 @@ describe('writeSingleFact × resolution provenance (#4108 matrix)', () => {
     expect(row.source_markdown_slug).toBeNull();
   });
 
+  test('specific deal name remains unparented without minting a page', async () => {
+    const r = await writeSingleFact(engine, 'default', {
+      fact: 'The service agreement renews annually', provenance: 'test:unresolved-name',
+      entity: 'Example Vendor Services Agreement',
+    });
+    expect(r.status).toBe('inserted');
+    if (r.status !== 'inserted') throw new Error('expected inserted fact');
+    expect((await factRow(r.id)).entity_slug).toBeNull();
+    expect((await factRow(r.id)).source_markdown_slug).toBeNull();
+    expect(await engine.getPage('example-vendor-services-agreement', { sourceId: 'default' })).toBeNull();
+    expect(existsSync(join(brainDir, 'example-vendor-services-agreement.md'))).toBe(false);
+  });
+
   test('3. exact existing page: fence written', async () => {
     const r = await writeSingleFact(engine, 'default', {
       fact: 'Raised a seed round in 2017',

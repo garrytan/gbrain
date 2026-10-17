@@ -1463,6 +1463,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'models.chat',
   'models.brainstorm.judge',
   'models.eval.longmemeval', 'models.eval.cross_modal.slot_a', 'models.eval.cross_modal.slot_b', 'models.eval.cross_modal.slot_c', // #5872 D12 probe judge slots
+  'facts.extraction_low_rubric', // off (default) | on; expanded low-notability rubric
   'facts.extraction_model',
   'recall.question_admission', // recall `question` admission rule: reserve (default) | facts_arm (facts/question-recall.ts)
   // Brain-wide kill switch for fact extraction, read by
@@ -1504,7 +1505,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // src/core/facts/visibility.ts; explicit caller values always win.
   'facts.default_visibility',
   'facts.entity_inference', // #5836: write-time subject inference kill switch (subject-infer.ts)
-  'facts.capture_filter', 'facts.capture_routing', 'facts.routing.broad_types', 'facts.routing.specific_types',
+  'facts.capture_filter', 'facts.capture_routing', 'facts.routing.broad_types', 'facts.routing.specific_types', 'facts.routing.home_entities',
   'facts.page_cap.warn_rows', 'facts.page_cap.max_rows', // capture-policy: optional fence append limits
   'facts.candidate_fusion', // C2: 'rrf_free' (default, cosine arm) | 'interleave' (cosine + keyword; facts/single-prepare.ts)
   'facts.supersession_thresholds', // JSON {"provider:model@dims": number | "off"} (facts/supersession-threshold.ts)

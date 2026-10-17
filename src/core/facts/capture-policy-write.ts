@@ -23,6 +23,7 @@ export async function applyCapturePolicy(
   const facts: ExtractedFact[] = [];
   const broadTypes = routingTypes(await engine.getConfig('facts.routing.broad_types'), 'company');
   const specificTypes = routingTypes(await engine.getConfig('facts.routing.specific_types'), 'person,project,deal');
+  const homeEntities = (await engine.getConfig('facts.routing.home_entities') ?? '').split(',').map(s => s.trim()).filter(Boolean);
   const remote = managed ? managed.authority.remote : (ctx.operationContext?.remote ?? ctx.remote) !== false;
   const { excludesPrivateWrites } = await import('../persistence/page-visibility.ts');
   const excludePrivate = options.excludePrivate === true || managed?.authority.excludePrivate === true || await excludesPrivateWrites(engine, remote);
@@ -37,7 +38,7 @@ export async function applyCapturePolicy(
       if (original && original.source !== 'fallback_slugify') {
         const page = await engine.getPage(original.slug, { sourceId: ctx.sourceId });
         const broadAliases = await engine.getPageAliases(original.slug, { sourceId: ctx.sourceId, excludePrivate });
-        const chosen = await chooseSpecificEntity({ fact: f.fact, slug: original.slug, broadTypes, specificTypes,
+        const chosen = await chooseSpecificEntity({ fact: f.fact, slug: original.slug, broadTypes, specificTypes, homeEntities,
           broadNames: [page?.title ?? '', ...broadAliases,
             ...(Array.isArray(page?.frontmatter.aliases) ? page.frontmatter.aliases.filter((v): v is string => typeof v === 'string') : [])].filter(Boolean) }, {
           resolve: query => resolveStrictEntityReference(engine, ctx.sourceId, query, { excludePrivate }),
