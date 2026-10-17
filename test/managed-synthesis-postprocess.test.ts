@@ -13,7 +13,10 @@ import { acquireWorktree, claimWorktree, getWorktreeBinding } from '../src/core/
 import { __setMaintenanceWriteWaitForTests } from '../src/core/persistence/maintenance-wait.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { clientRequestUuid } from '../src/core/persistence/preconditions.ts';
-import { COMMITTED_OUTPUT_REQUESTS_SQL, journaledPageSlug } from '../src/core/cycle/synthesize-postprocess.ts';
+import { COMMITTED_OUTPUT_REQUESTS_SQL, journaledPageSlug, postprocessManagedSynthesis, type RetainedOutput } from '../src/core/cycle/synthesize-postprocess.ts';
+import { sha256 } from '../src/core/persistence/digest.ts';
+import { maintenancePreflight } from '../src/core/persistence/prepared-maintenance.ts';
+import { parseMarkdown } from '../src/core/markdown.ts';
 import { POSTPROCESS_PENDING_KEY } from '../src/core/cycle/synthesize-postprocess-deferral.ts';
 import { requestIndexesCheck } from '../src/commands/doctor/checks/persistence-requests.ts';
 import { PERSISTENCE_REQUEST_ID_INDEX } from '../src/core/persistence/schema.ts';
@@ -125,6 +128,93 @@ async function outputSlug(engine: BrainEngine, sourceId: string): Promise<string
   const [row] = await engine.executeRaw<{ slug: string }>("SELECT slug FROM pages WHERE source_id=$1 AND slug LIKE 'wiki/personal/reflections/session-%'", [sourceId]);
   return row.slug;
 }
+
+test.each([
+  { name: 'normalized', quote: 'a hello world example 😂', normalized: 1, exact: 0 },
+  { name: 'exact', quote: 'a hello  world example 😂', normalized: 0, exact: 1 },
+])('managed synthesis publishes $name emoji grounding once through the real journal', async ({ quote, normalized, exact }) => {
+  for (const engine of engines) {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-synth-emoji-'));
+    const root = join(dir, 'brain');
+    mkdirSync(root);
+    const sourceId = `synthesis-${randomUUID().slice(0, 8)}`;
+    try {
+      await withEnv({ GBRAIN_HOME: join(dir, 'home') }, async () => {
+        await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+        await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', [sourceId, root]);
+        await engine.setConfig('sync.write_through', 'true');
+        await claimWorktree(engine, sourceId, root);
+        await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+        const ctx = { engine, sourceId, remote: false as const, config: { engine: engine.kind, embedding_disabled: true },
+          dryRun: false, logger: { info() {}, warn() {}, error() {} } };
+        const slug = 'wiki/personal/reflections/emoji';
+        const requestId = randomUUID();
+        const child = await submitPageMutation(ctx, { operation: 'put_page', params: {
+          slug, content: `---\ntitle: Emoji evidence\ntype: note\n---\nThe user said: "${quote}".`, request_id: requestId,
+        } });
+        expect(child.state).toBe('committed');
+        const authority = (await maintenancePreflight(engine, sourceId, root))!;
+        const request = (await journal.getWriteRequest(engine, authority.writer.principal, requestId))!;
+        expect(request.state).toBe('committed');
+        expect(request.outcome?.revision).toBe(child.revision);
+        const outputs: RetainedOutput[] = [{ job_id: 1, job_key: `synthetic-${requestId}`, input_slug: slug, request }];
+        const sourceQuote = 'a hello  world example 😂';
+        const content = `User: ${sourceQuote}`;
+        const filePath = join(dir, '2026-09-20-session.txt');
+        writeFileSync(filePath, content);
+        const transcripts = [{ filePath, content, contentHash: sha256(content), basename: '2026-09-20-session', inferredDate: '2026-09-20' }];
+        const refs = [{ slug, source_id: sourceId, raw_source: filePath }];
+        const opts = { cycleDate: '2026-09-20', quoteVerify: true, sinceByTranscript: new Map<string, Date>(), committedOutputs: { outputs } };
+        const processed = await postprocessManagedSynthesis(engine, authority, refs, [], new Map([[1, filePath]]), transcripts, opts);
+        expect(processed.pending).toBe(0);
+        expect(processed.conflicts).toEqual([]);
+        expect(processed.writtenRefs).toEqual(refs);
+        expect(processed.stats.quotes_total).toBe(1);
+        expect(processed.stats.normalized_fixed).toBe(normalized);
+        expect(processed.stats.exact).toBe(exact);
+        const snapshot = (await engine.readPageSnapshot(slug, { sourceId }))!;
+        expect(snapshot.page.compiled_truth).toBe(`The user said: "${sourceQuote}".`);
+        expect(snapshot.revision).not.toBe(child.revision);
+        const grounding = { checked_at: opts.cycleDate, sources: [filePath], quotes: [{
+          text: 'a hello world example 😂', source: filePath, speaker: 'User', span: [6, content.length],
+        }] };
+        expect(snapshot.page.frontmatter.grounding).toEqual(grounding);
+        const [provenance] = grounding.quotes;
+        expect(content.slice(provenance.span[0], provenance.span[1])).toBe(sourceQuote);
+        const receipts = await engine.executeRaw<RetainedOutput['request']>('SELECT * FROM persistence_requests WHERE source_id=$1 AND slug=$2 ORDER BY sequence', [sourceId, slug]);
+        expect(receipts).toHaveLength(2);
+        const maintenance = receipts[1];
+        expect(maintenance.operation).toBe('submit_job');
+        expect(maintenance.intent?.kind).toBe('managed_maintenance_page');
+        expect(maintenance.intent?.expected_revision).toBe(child.revision);
+        expect(maintenance.state).toBe('committed');
+        expect(maintenance.outcome?.revision).toBe(snapshot.revision);
+        const admitted = maintenance.intent?.content;
+        if (typeof admitted !== 'string') throw new Error('Maintenance request has no retained content');
+        const admittedPage = parseMarkdown(admitted, slug);
+        expect(admittedPage.compiled_truth).toBe(snapshot.page.compiled_truth);
+        expect(admittedPage.frontmatter.grounding).toEqual(grounding);
+        const path = join(root, `${slug}.md`);
+        const canonical = readFileSync(path, 'utf8');
+        expect(canonical).toBe(admitted);
+        expect(parseMarkdown(canonical, slug).compiled_truth).toBe(snapshot.page.compiled_truth);
+        expect(canonical).toContain(`"${sourceQuote}"`);
+        const replay = await postprocessManagedSynthesis(engine, authority, refs, [], new Map([[1, filePath]]), transcripts, opts);
+        expect(replay.pending).toBe(0);
+        expect(replay.conflicts).toEqual([]);
+        expect(replay.writtenRefs).toEqual([]);
+        expect(replay.finalizedRefs).toEqual(refs);
+        expect((await engine.readPageSnapshot(slug, { sourceId }))!.revision).toBe(snapshot.revision);
+        expect(readFileSync(path, 'utf8')).toBe(canonical);
+        expect(await engine.executeRaw<RetainedOutput['request']>('SELECT * FROM persistence_requests WHERE source_id=$1 AND slug=$2 ORDER BY sequence', [sourceId, slug])).toEqual(receipts);
+      });
+    } finally {
+      await disposePersistenceConsumer(engine);
+      await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+}, 120_000);
 
 test('managed native synthesis quarantines interpretations around valid evidence before mirror/chunk publication', async () => {
   const supported = 'Reliable memories should survive every tool change.';
