@@ -21,6 +21,14 @@ import {
   type ExtractReceiptInput,
 } from '../../src/core/extract/receipt-writer.ts';
 import { slugifySegment } from '../../src/core/sync.ts';
+import { operationsByName, type OperationContext } from '../../src/core/operations.ts';
+import type { DoctorReport } from '../../src/commands/doctor.ts';
+import { loadActivePack } from '../../src/core/schema-pack/index.ts';
+import { extractableTypesFromPack } from '../../src/core/schema-pack/extractable.ts';
+import { withEnv } from '../helpers/with-env.ts';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const BASE_INPUT: ExtractReceiptInput = {
   kind: 'facts.conversation',
@@ -132,6 +140,52 @@ describe('writeReceipt — frontmatter D-EXTRACT-19 belt+suspenders', () => {
 
   beforeEach(async () => {
     await resetPgliteState(engine);
+  });
+
+  // Observable contract: standard extraction must not make public doctor warn
+  // about its own receipt type under the default successor pack. Removing the
+  // v2 declaration fails this integration case. Existing writer tests check
+  // receipt fields only; no production test seam is needed.
+  test('v2 public doctor accepts written receipts but still warns on custom types', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-receipt-pack-'));
+    try {
+      await withEnv({ GBRAIN_HOME: home, GBRAIN_SCHEMA_PACK: undefined }, async () => {
+        await engine.setConfig('schema_pack', 'gbrain-base-v2');
+        const ctx: OperationContext = {
+          engine, config: { engine: 'pglite' }, remote: true, sourceId: 'default', dryRun: false,
+          logger: { info() {}, warn() {}, error() {} },
+          auth: { token: 'fixture-only', clientId: 'receipt-fixture', scopes: ['admin'], allowedSources: ['default'] },
+        };
+        const check = async () => {
+          const report = await operationsByName.run_doctor.handler(ctx, {}) as DoctorReport;
+          return report.checks.find(row => row.name === 'schema_pack_consistency');
+        };
+        expect((await check())?.status).toBe('ok');
+        const { slug } = await writeReceipt(engine, { ...BASE_INPUT, kind: 'links', cost_usd: 0 });
+        const stored = await engine.getPage(slug, { sourceId: 'default' });
+        expect(stored?.type).toBe('extract_receipt');
+        expect(stored?.frontmatter?.dream_generated).toBe(true);
+        expect((await check())?.status).toBe('ok');
+
+        const pack = await loadActivePack({ cfg: null, remote: true, dbConfig: 'gbrain-base-v2' });
+        const type = pack.manifest.page_types.find(row => row.name === 'extract_receipt');
+        expect(type?.primitive).toBe('annotation');
+        expect(type?.path_prefixes).toEqual(['extracts/']);
+        expect(type?.expert_routing).toBe(false);
+        expect(extractableTypesFromPack(pack.manifest).has('extract_receipt')).toBe(false);
+
+        await engine.putPage('notes/custom-control', {
+          type: 'custom_receipt_fixture', title: 'Custom control', compiled_truth: 'Fixture content.',
+        }, { sourceId: 'default' });
+        const custom = await check();
+        expect(custom?.status).toBe('warn');
+        expect(custom?.details?.code).toBe('page_type_undeclared');
+        expect(custom?.message).toContain('custom_receipt_fixture');
+        expect(custom?.message).not.toContain("'extract_receipt'");
+      });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 
   test('stamps type:extract_receipt + dream_generated:true regardless of input', async () => {

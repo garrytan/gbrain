@@ -19,6 +19,10 @@ Seven bundled packs (`src/core/schema-pack/base/`):
   (`gbrain init`) activate this by default. See
   [`type-taxonomy.md`](./type-taxonomy.md) for the full type list and the
   upgrade path from `gbrain-base`.
+  Built-in extraction receipts (`extract_receipt`, under `extracts/`) are
+  declared annotations, excluded from extraction and expert routing. The
+  doctor accepts these operation records while still warning about
+  undeclared custom types.
 
 - **`gbrain-base`** — the built-in taxonomy, byte-for-byte identical to the
   hardcoded type inference (person, company, deal, meeting, project, place,

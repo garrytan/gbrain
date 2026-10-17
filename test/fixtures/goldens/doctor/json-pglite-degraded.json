@@ -3182,7 +3182,7 @@
         {
           "category": "meta",
           "elapsed_ms": "<volatile>",
-          "message": "Active pack gbrain-base-v2@1.4.0+1c5ba903 is current (no successor declared)",
+          "message": "Active pack gbrain-base-v2@1.4.1+cf2d7a71 is current (no successor declared)",
           "name": "pack_upgrade_available",
           "status": "ok"
         },
