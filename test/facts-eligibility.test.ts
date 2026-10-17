@@ -122,6 +122,17 @@ describe('isFactsBackstopEligible — eligible-types coverage', () => {
     });
   }
 
+  // gbrain-base-v2 canonical extractable types. `conversation` is the #6557
+  // regression pair (filed against the missing `conversation` entry in this
+  // list); `atom` and `concept` stay excluded per upstream's #5831
+  // deliberate-omission comment.
+  for (const t of ['media', 'tweet', 'analysis', 'conversation'] as PageType[]) {
+    test(`type=${t} on arbitrary slug → ok (v2 canonical)`, () => {
+      const f = fixture({ slug: 'wiki/whatever/x', type: t });
+      expect(isFactsBackstopEligible(f.slug, f.parsed)).toEqual({ ok: true });
+    });
+  }
+
   for (const t of ['person', 'company', 'deal', 'concept', 'atom', 'project', 'image', 'code'] as PageType[]) {
     test(`type=${t} on non-rescued slug → rejected with kind:${t}`, () => {
       const f = fixture({ slug: 'wiki/whatever/x', type: t });
@@ -130,6 +141,41 @@ describe('isFactsBackstopEligible — eligible-types coverage', () => {
       if (!r.ok) expect(r.reason).toBe(`kind:${t}`);
     });
   }
+});
+
+describe('isFactsBackstopEligible — #6557 conversation coverage', () => {
+  test('TYPED-ONLY: type=conversation on conversations/<thread> slug → ok (no slug rescue needed)', () => {
+    // Before the fix: returned { ok: false, reason: 'kind:conversation' }.
+    // The conversation type is declared extractable in gbrain-base-v2, so
+    // the type-only branch should accept it on any non-subagent, non-empty
+    // body — same as `meeting` or `analysis`.
+    const f = fixture({ slug: 'conversations/2026-09-30-imessage-thread', type: 'conversation' });
+    expect(isFactsBackstopEligible(f.slug, f.parsed)).toEqual({ ok: true });
+  });
+
+  test('TYPED-ONLY: type=conversation on arbitrary slug → ok', () => {
+    const f = fixture({ slug: 'wiki/whatever/x', type: 'conversation' });
+    expect(isFactsBackstopEligible(f.slug, f.parsed)).toEqual({ ok: true });
+  });
+
+  test('GUARDS still apply to conversation: subagent namespace is rejected', () => {
+    const f = fixture({ slug: 'wiki/agents/sonnet-1/scratch', type: 'conversation' });
+    expect(isFactsBackstopEligible(f.slug, f.parsed)).toEqual({ ok: false, reason: 'subagent_namespace' });
+  });
+
+  test('GUARDS still apply to conversation: dream_generated:true is rejected', () => {
+    const f = fixture({
+      slug: 'conversations/dream-output',
+      type: 'conversation',
+      frontmatter: { dream_generated: true },
+    });
+    expect(isFactsBackstopEligible(f.slug, f.parsed)).toEqual({ ok: false, reason: 'dream_generated' });
+  });
+
+  test('GUARDS still apply to conversation: too_short body is rejected', () => {
+    const f = fixture({ slug: 'conversations/short-thread', type: 'conversation', body: 'hi' });
+    expect(isFactsBackstopEligible(f.slug, f.parsed)).toEqual({ ok: false, reason: 'too_short' });
+  });
 });
 
 describe('#6232 facts_backstop opt-out', () => {

@@ -80,12 +80,21 @@ const RESCUE_SLUG_PREFIXES = ['meetings/', 'personal/', 'daily/'] as const;
 // Pack-aware async lookup via extractableTypesFromPack(pack) deferred to
 // v0.43+ once an async eligibility-check signature is feasible across all
 // call sites (operations.ts + import-file.ts + others).
+//
+// #6557: `conversation` (v0.41.11, src/core/types.ts — "imported chat/
+// transcript pages, lives under conversations/") is a first-class PageType
+// declared extractable in gbrain-base-v2. It must sit in this union
+// alongside the other v2 canonical types; omitting it made every
+// facts-absorb job silently reject conversation pages. `atom` stays
+// excluded per #5831.
 const ELIGIBLE_TYPES: PageType[] = [
   // gbrain-base (legacy) types
   'note', 'meeting', 'slack', 'email', 'calendar-event', 'source', 'writing',
   // gbrain-base-v2 canonical types declared extractable in the pack
   // (concept and atom deliberately omitted — see above)
   'media', 'tweet', 'analysis',
+  // #6557 (see header comment).
+  'conversation',
 ];
 
 const MIN_BODY_CHARS = 80;
