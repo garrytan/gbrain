@@ -577,3 +577,35 @@ describe('parseSynthV2Key', () => {
     expect(parseSynthV2Key('dream:synth-v2:default:filename:x.txt:0123456789abcdef:c1of')).toBeNull();
   });
 });
+
+describe('triage truncation keeps Unicode well-formed (#6860)', () => {
+  // An emoji is two UTF-16 code units. Put one across each length cap, so a
+  // plain slice() would keep only its high surrogate.
+  const quote = 'A'.repeat(299) + '😀' + 'Z';
+  const note = 'B'.repeat(199) + '😀' + 'Z';
+  const entity = 'C'.repeat(79) + '😀';
+
+  test('buildTriageMapBlock never emits a lone surrogate at the quote or note cap', () => {
+    const block = buildTriageMapBlock(
+      { score: 0.9, content_type: 'synthetic', segments: [{ quote, note }], entities: [] },
+      quote,
+      1,
+    );
+    expect(block).toContain('A'.repeat(299));
+    expect(block.isWellFormed()).toBe(true);
+  });
+
+  test('the judged verdict that gets cached is well-formed (JSONB accepts it)', async () => {
+    const fake = makeFakeEngine();
+    const t = makeTranscript('emoji-boundary', `${quote} and more text `.repeat(5));
+    const judge = scoredJudge(0.9, { segments: [{ quote, note }], entities: [entity] });
+    await runTriagePass(fake.engine, [t], baseCfg(judge));
+    const row = fake.rows.get(`${t.filePath}|${t.contentHash}`);
+    expect(row?.segments).toHaveLength(1);
+    const seg = row!.segments![0];
+    expect(seg.quote.isWellFormed()).toBe(true);
+    expect(seg.note?.isWellFormed()).toBe(true);
+    expect(row!.entities!.every(e => e.isWellFormed())).toBe(true);
+    expect(JSON.stringify(row).isWellFormed()).toBe(true);
+  });
+});
