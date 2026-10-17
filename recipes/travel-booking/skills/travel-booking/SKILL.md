@@ -192,7 +192,7 @@ title: Lisbon, 2026-05-14 to 2026-05-18
 date: 2026-05-14
 location: Lisbon
 attendees: [people/alice-example, people/bob-example]
-visibility: private   # local brain only; see below
+visibility: private   # gbrain CLI only; see below
 status: booked
 bookings:
   - booking_ref: JNK-ABC123
@@ -220,17 +220,19 @@ Travellers: [[people/alice-example]], [[people/bob-example]]
 
 - Who can read the page. A guest can change or cancel a booking with its
   `booking_ref` and the traveller's last name, so the page should be readable
-  only by clients that need it.
-  - On a local brain (CLI or stdio MCP), keep `visibility: private`: remote
-    clients cannot read the page, and you still can.
-  - On a brain reached over remote (OAuth) MCP, gbrain hides `visibility:
-    private` pages from every remote caller, you included, so a private trip
-    page could not be read back or updated. Leave `visibility` out there; the
-    page is then readable by every client granted this source. Before the first
-    trip page in that brain, tell the user so and suggest a source granted only
-    to this agent (gbrain's boundary for remote access). If they do not want
-    booking references stored there, record each booking's `trip_id` without
-    its `booking_ref`, and read the `booking_ref` back from `get_trip` when you
+  only by clients that need it. gbrain shows `visibility: private` pages only
+  to its local CLI: every MCP caller, over stdio or remote (OAuth), is a
+  remote caller, you included.
+  - If you call the brain through the `gbrain` CLI, keep `visibility: private`:
+    MCP clients cannot read the page, and you still can.
+  - If you call the brain over MCP (stdio or remote), a private trip page could
+    not be read back or updated. Leave `visibility` out; the page is then
+    readable by every MCP client that can read this source. Before the first
+    trip page in that brain, tell the user so. Over remote MCP, suggest a
+    source granted only to this agent (gbrain's boundary for remote access);
+    stdio connections have no per-client grants. If they do not want booking
+    references stored there, record each booking's `trip_id` without its
+    `booking_ref`, and read the `booking_ref` back from `get_trip` when you
     need it.
 - Record only these values: flight numbers, airports, times, cabin and bags;
   the hotel name, room, dates and cancellation deadline; for a rental car, the
@@ -252,9 +254,9 @@ Travellers: [[people/alice-example]], [[people/bob-example]]
   same direction gbrain uses for meeting attendees.
 - Add a timeline entry (`add_timeline_entry`: `date` = departure date,
   `summary` = "Trip to Lisbon", `source` = the trip slug) only to a traveller
-  page at least as restricted as the trip page: on a local brain, only to a
-  traveller page that is itself `visibility: private`; on a remote brain, where
-  the trip page is not private, to any traveller page you can read. A timeline
+  page at least as restricted as the trip page: when the trip page is private,
+  only to a traveller page that is itself `visibility: private`; when it is not
+  private, to any traveller page you can read. A timeline
   row on another page cannot be hidden from remote readers, so on a
   world-visible `people/` page it would publish the dates and destination of a
   private trip; gbrain skips private meetings' timeline rows for the same
@@ -279,8 +281,10 @@ Travellers: [[people/alice-example]], [[people/bob-example]]
   the page and check again. Remove it once the change has finished.
 - After the change completes, update the trip page (read, merge, write with
   `expected_revision`, as in section 4): mark the changed item as exchanged
-  (with its new segments), refunded or cancelled, with the amount returned.
-  Set the page's `status` to `cancelled` only when every item is cancelled.
+  (with its new segments), refunded (a void included) or cancelled, with the
+  amount returned. Set the page's `status` to `cancelled` once no item is still
+  active: every item is refunded or cancelled. An exchanged item is still
+  active.
 
 ## Rules that always apply
 
