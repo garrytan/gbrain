@@ -31,7 +31,7 @@ import type { OperationContext } from './contract.ts';
 import type { Link, PageReadPolicy } from '../types.ts';
 import { ALL_SOURCES } from '../source-id.ts';
 import { PageMissingError } from '../engine-errors.ts';
-import { TRAVERSE_PATH_ROW_CAP } from '../engine-constants.ts';
+import { TRAVERSE_PATH_ROW_CAP, TRAVERSE_WALK_ROW_CAP } from '../engine-constants.ts';
 // #4224: flag-gated cross-source identity union for the link read ops.
 import { unionLinksAcrossIdentity } from '../entity-identity.ts';
 import { TEMPORAL_EDGE_PARAMS, STARTER_STATUS_PARAM, STARTER_AS_OF_PARAM, resolveEdgeTemporal, filterTemporalLinks, reportTemporal } from './edge-temporal.ts';
@@ -439,10 +439,10 @@ const list_link_sources: Operation = {
 };
 
 /**
- * Hard cap on traverse_graph depth from MCP callers. Each recursive CTE iteration
- * grows a `visited` array per path; in `direction=both` the join is `OR`-based and
- * fans out exponentially. Without a cap, a remote MCP caller can pass depth=1e6
- * and burn memory/CPU on the database. 10 hops is well beyond any realistic
+ * Hard cap on traverse_graph depth from MCP callers. The walk is breadth-first
+ * and bounded by TRAVERSE_WALK_ROW_CAP pages, but each hop is one more layer of
+ * work; without a cap a remote MCP caller could pass depth=1e6. 10 hops is well
+ * beyond any realistic
  * relationship query (your OpenClaw's "people who attended meetings with Alice"
  * is 2 hops; the deepest meaningful chain in our test data is 4).
  */
@@ -450,10 +450,9 @@ const TRAVERSE_DEPTH_CAP = 10;
 
 /**
  * Default depth for the remote no-direction call. #4666 made that call
- * bidirectional, and traversePaths' `both` branch is an uncapped
- * path-enumerating recursive CTE (no LIMIT) — on an entity hub with 10^2-10^3
- * edges the legacy depth-5 default is combinatorial, on the per-agent-turn
- * path. Two hops covers the realistic relationship query ("people who
+ * bidirectional; on an entity hub a depth-5 `both` walk reaches most of the
+ * brain and returns the 5,000-row cap of edges on every agent turn. Two hops
+ * covers the realistic relationship query ("people who
  * attended meetings with Alice"); a caller that wants more passes `depth`
  * explicitly (still honored up to TRAVERSE_DEPTH_CAP).
  */
@@ -578,11 +577,12 @@ const traverse_graph: Operation = {
       return ctx.engine.traverseGraph(slug, depth, scope);
     }
     const { paths, truncated } = await ctx.engine.traversePathsDetailed(slug, { depth, linkType, direction, ...scope });
-    // Row cap hit: the walk's deepest edges were dropped. stderr-only so the
-    // GraphPath[] wire shape stays unchanged (additive contract).
+    // Cap hit: the walk stopped at TRAVERSE_WALK_ROW_CAP visited pages or the
+    // output at TRAVERSE_PATH_ROW_CAP edge rows, dropping the deepest edges.
+    // stderr-only so the GraphPath[] wire shape stays unchanged.
     if (truncated) {
       ctx.logger.warn(
-        `[gbrain] traverse_graph output truncated at ${TRAVERSE_PATH_ROW_CAP} edge rows (shallowest first). ` +
+        `[gbrain] traverse_graph output truncated (walk cap ${TRAVERSE_WALK_ROW_CAP} pages, ${TRAVERSE_PATH_ROW_CAP} edge rows; shallowest first). ` +
         `Lower depth or narrow with link_type/direction for a complete walk.`,
       );
     }

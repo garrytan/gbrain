@@ -2128,11 +2128,11 @@ describeBoth('Engine parity — traverseGraph / traversePaths (D7)', () => {
       'tg/b>tg/a:cycle-back@1',
       'tg/a>tg/b:cycle-fwd@2',
     ]);
-    // 'both' emits every touched edge in its natural direction; the cycle
-    // pair shows at depth 1 and again from b's frontier at depth 2.
+    // 'both' emits every touched edge once, in its natural direction, one
+    // hop past its shallower walked endpoint: the cycle pair at depth 1 only.
     expect(edgeShape(await pgEngine.traversePaths('tg/a', { depth: 2, direction: 'both' }))).toEqual([
       'tg/a>tg/b:cycle-fwd@1', 'tg/b>tg/a:cycle-back@1',
-      'tg/a>tg/b:cycle-fwd@2', 'tg/b>tg/a:cycle-back@2', 'tg/b>tg/c:step@2', 'tg/b>tg/x:xsrc@2',
+      'tg/b>tg/c:step@2', 'tg/b>tg/x:xsrc@2',
     ]);
   });
 

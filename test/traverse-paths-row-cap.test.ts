@@ -61,7 +61,7 @@ describe('traversePaths row cap (PGLite)', () => {
 
   test('traversePaths (the GraphPath[] projection) honours the same cap', async () => {
     const paths = await engine.traversePaths(DENSE_HUB_SLUG, { depth: 3, direction: 'both' });
-    // Pre-cap: 5,200 deduped edges (every edge at depth 2 AND depth 3).
+    // Pre-cap: 5,200 edges (every edge of the fixture, each once).
     expect(paths.length).toBeLessThanOrEqual(TRAVERSE_PATH_ROW_CAP);
     const detailed = await engine.traversePathsDetailed(DENSE_HUB_SLUG, { depth: 3, direction: 'both' });
     expect(paths).toEqual(detailed.paths);

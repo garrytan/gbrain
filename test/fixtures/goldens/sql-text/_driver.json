@@ -2747,7 +2747,7 @@
       "traverseGraph": {
         "default": [
           {
-            "paramCount": 3,
+            "paramCount": 4,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
@@ -2758,7 +2758,7 @@
         ],
         "excludePrivate": [
           {
-            "paramCount": 3,
+            "paramCount": 4,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
@@ -2769,7 +2769,7 @@
         ],
         "frontierCap": [
           {
-            "paramCount": 4,
+            "paramCount": 5,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
@@ -2780,7 +2780,7 @@
         ],
         "sourceId": [
           {
-            "paramCount": 6,
+            "paramCount": 7,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
@@ -2791,7 +2791,7 @@
         ],
         "sourceIds": [
           {
-            "paramCount": 6,
+            "paramCount": 7,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
@@ -2804,7 +2804,7 @@
       "traversePaths": {
         "default": [
           {
-            "paramCount": 10,
+            "paramCount": 7,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
@@ -2817,7 +2817,7 @@
       "traversePathsDetailed": {
         "both": [
           {
-            "paramCount": 10,
+            "paramCount": 7,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
@@ -2828,7 +2828,7 @@
         ],
         "both+sourceIds+excludePrivate": [
           {
-            "paramCount": 14,
+            "paramCount": 12,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
@@ -2839,7 +2839,7 @@
         ],
         "default": [
           {
-            "paramCount": 10,
+            "paramCount": 7,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
@@ -2850,7 +2850,7 @@
         ],
         "in": [
           {
-            "paramCount": 10,
+            "paramCount": 7,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,
@@ -2861,7 +2861,7 @@
         ],
         "out+sourceId+linkType": [
           {
-            "paramCount": 13,
+            "paramCount": 12,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,

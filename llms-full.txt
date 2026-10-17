@@ -5438,7 +5438,7 @@ RRF fusion, multi-query expansion, and 4-layer dedup are engine-agnostic. They o
 - `tsvector` + `GIN` index for full-text search with `ts_rank` weighting
 - `pgvector` HNSW index for cosine similarity vector search
 - `pg_trgm` + `GIN` for fuzzy slug resolution
-- Recursive CTEs for graph traversal
+- Recursive CTEs for graph traversal (breadth-first, each page visited once)
 - Trigger-based search_vector (spans pages + timeline_entries)
 - JSONB for frontmatter with GIN index
 - Connection pooling via Supabase Supavisor (port 6543)
@@ -6431,7 +6431,7 @@ Every method in `BrainEngine`. The full interface. No optional methods, no featu
 | Keyword search | tsvector + ts_rank | tsvector + ts_rank | Identical (real Postgres) |
 | Vector search | pgvector HNSW | pgvector HNSW | Same operators; bounded fallback/cancellation differs |
 | Fuzzy slug | pg_trgm | pg_trgm | Identical (real Postgres) |
-| Graph traversal | Recursive CTE | Recursive CTE | Same SQL |
+| Graph traversal | Breadth-first recursive CTE (one row per layer) | Breadth-first recursive CTE (one row per layer) | Same SQL |
 | Transactions | Full ACID | Full ACID | Both support this |
 | JSONB queries | GIN index | GIN index | Identical |
 | Concurrent access | Connection pooling | Single process | PGLite limitation |

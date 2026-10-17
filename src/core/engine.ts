@@ -39,22 +39,13 @@ import type {
 /**
  * Options for `traverseGraph`.
  *
- * `frontierCap`: when set, the BFS recursive term applies a parenthesized
- * `LIMIT N ORDER BY slug,id` so each iteration emits at most N rows. This
- * is the "approximately per-layer" cap discussed in the T8 plan — Postgres'
- * recursive CTE caps per ITERATION, not strictly per BFS LAYER (BFS layer
- * boundaries map to recursive iterations only when fan-out is bounded).
- * For hub-fanout graphs the cap fires early and bounds the work. Default:
- * unset = no cap (back-compat; existing callers see no change).
+ * `frontierCap`: when set, each breadth-first layer adds at most N new
+ * pages, chosen after deduplication in (slug, id) order. Default: unset = no
+ * per-layer cap (the walk is still bounded by TRAVERSE_WALK_ROW_CAP).
  *
- * NOTE: a truncation-detection signal (`onTruncation` callback) was
- * designed but the v1 algorithm had both false-positive (organic count ==
- * cap) and false-negative (LIMIT-before-DISTINCT in diamond graphs) cases
- * caught by adversarial review. The signal is deferred until a
- * dedupe-then-cap SQL rewrite + real Postgres parity coverage lands. See
- * TODOS.md → "T8 truncation signal" entry. Callers that need to detect
- * truncation can compare `result.length` against expected fanout bounds
- * as a coarse-but-honest signal in the interim.
+ * NOTE: no truncation signal is exposed yet. The per-layer cap now dedupes
+ * before it limits, which was the precondition in TODOS.md → "T8 truncation
+ * signal"; restoring the callback is still open there.
  */
 /**
  * v0.38: bare row shape returned by `BrainEngine.listAllSources()`.
@@ -1603,7 +1594,8 @@ export interface BrainEngine {
    * - direction: 'in' (follow to->from), 'out' (follow from->to), 'both'
    * - depth: max depth from root (default 5)
    * - sourceId/sourceIds: v0.34.1 source-isolation filter, see traverseGraph
-   * Uses cycle prevention (visited array in recursive CTE).
+   * Breadth-first: each page is visited once, at its shortest depth, and each
+   * qualifying edge leaving a visited page is returned once.
    */
   traversePaths(
     slug: string,

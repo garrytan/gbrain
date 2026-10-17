@@ -393,7 +393,7 @@ for (const kind of ['pglite', 'postgres'] as const) {
         const paths = await engine.traversePathsDetailed('people/root', { ...scope, direction, depth: 3 });
         expect(JSON.stringify(paths)).not.toContain(PRIVATE);
         expect(paths.paths.some(r => r.to_slug === 'people/tail' || r.to_slug === 'people/origin-target')).toBe(false);
-        expect(paths.paths).toHaveLength(direction === 'in' ? 0 : direction === 'both' ? 2 : 1);
+        expect(paths.paths).toHaveLength(direction === 'in' ? 0 : 1);
         expect(paths.paths.every(r => [r.from_slug, r.to_slug].every(slug => ['people/root', 'people/z-visible'].includes(slug)))).toBe(true);
       }
       expect(await engine.traverseGraph('people/a-private', 3, scope)).toEqual([]);
