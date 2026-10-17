@@ -6,6 +6,7 @@ import type { Action } from '../agent-output.ts';
 import { opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { publicationHold } from '../persistence/accepted-pending.ts';
+import { isWriteCapacityWait, outstandingCapacityOf } from '../persistence/admission-retry.ts';
 import { authorizeStoredRequest } from '../persistence/authority.ts';
 import { digest } from '../persistence/digest.ts';
 import { getWriteRequest } from '../persistence/journal.ts';
@@ -364,13 +365,19 @@ export function withPostprocessConflicts(conflicts: PostprocessConflict[], resul
 /**
  * A publish that is still pending after its wait (#5854) or whose admission
  * gave up on database contention without recording anything (#6051) is
- * deferred, never failed: the next cycle derives the same request id. Every
- * other error is rethrown. A contended publish writes one stderr line naming it.
+ * deferred, never failed: the next cycle derives the same request id. A known
+ * positive outstanding-request cap also defers an unadmitted publish until other writes
+ * settle. Cumulative quotas, unknown capacity and capacity errors carrying
+ * receipts still fail. Contended or capacity-blocked admissions emit one stderr line.
  */
 export function deferPublishOrThrow(error: unknown, what: string): void {
   const deferral = publicationHold(error);
-  if (!deferral) throw error;
-  if (deferral === 'contention') {
+  const capacity = isWriteCapacityWait(error) && error.writeRequest == null ? outstandingCapacityOf(error) : null;
+  const capacityWait = capacity?.scope != null && capacity.limit !== null && capacity.limit > 0;
+  if (!deferral && !capacityWait) throw error;
+  if (capacityWait) {
+    process.stderr.write(`[dream] synthesize: ${what} deferred, outstanding write capacity is busy; the next cycle admits it\n`);
+  } else if (deferral === 'contention') {
     process.stderr.write(`[dream] synthesize: ${what} deferred, write admission blocked by database contention; the next cycle admits it\n`);
   }
 }

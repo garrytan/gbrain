@@ -14,6 +14,7 @@ import { claimPersistenceEffect, publicEffectsForRequest, queueLinksReconcile } 
 import { runPersistenceEffects } from '../../src/core/persistence/effects.ts';
 import type { WriteRequest } from '../../src/core/persistence/model.ts';
 import { withEnv } from './with-env.ts';
+import { waitFor } from './wait-for.ts';
 
 /**
  * Remote mention-links effect contract (#6007), shared by the PGLite unit
@@ -76,7 +77,17 @@ export async function exerciseRemoteLinks(engine: BrainEngine, scenario: RemoteL
       };
       const runLinks = async () => {
         await engine.executeRaw("UPDATE persistence_effects SET next_attempt_at=now()+interval '1 hour' WHERE kind<>'links' AND state='queued'");
-        await runPersistenceEffects(engine, config, { hostId: localHostId() });
+        const targets = await engine.executeRaw<{ id: string }>("SELECT id::text FROM persistence_effects WHERE source_id=$1 AND kind='links'", [sourceId]);
+        // A bounded worker pass may legally skip a locked row. Wait for these
+        // exact effects, rather than treating one global pass as a source drain.
+        await waitFor(async () => {
+          await runPersistenceEffects(engine, config, { hostId: localHostId() });
+          const rows = targets.length ? await engine.executeRaw<{ state: string; error_code: string | null }>(
+            'SELECT state,error_code FROM persistence_effects WHERE id=ANY($1::bigint[])', [targets.map(row => row.id)]) : [];
+          if (rows.length !== targets.length) throw new Error('A remote-links target effect disappeared.');
+          if (rows.some(row => row.state === 'failed')) throw new Error('A remote-links target effect failed.');
+          return rows.every(row => row.state === 'committed');
+        }, { label: 'remote-links target effects committed' });
       };
       const links = (from = 'notes/example') => engine.executeRaw<{ to_slug: string; link_type: string; link_source: string }>(`SELECT t.slug AS to_slug,l.link_type,l.link_source
         FROM links l JOIN pages f ON f.id=l.from_page_id JOIN pages t ON t.id=l.to_page_id WHERE f.source_id=$1 AND f.slug=$2 ORDER BY t.slug,l.link_source`, [sourceId, from]);

@@ -115,6 +115,17 @@ for (const unexpectedFailure of [false, true]) {
   }), 30_000);
 }
 
+// Reject a broken loss-notification seam within the existing 30-second test
+// deadline so the production lock/environment/spies can unwind in finally.
+async function waitForLeaseLoss(lost: Promise<void>): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([lost, new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => reject(new Error('fixture lease-loss notification missing')), 10_000);
+    })]);
+  } finally { clearTimeout(timer); }
+}
+
 for (const mode of ['caller', 'job', 'log-ingest', 'lease', 'caller-and-lease'] as const) {
   test(`sync interruption preserves progress and bookmark (${mode})`, () => isolated(async () => {
     await reset();
@@ -123,11 +134,13 @@ for (const mode of ['caller', 'job', 'log-ingest', 'lease', 'caller-and-lease'] 
     const originalLog = engine.logIngest.bind(engine);
     const originalLock = locks.withRefreshingLock;
     let calls = 0;
+    let loseLease: (() => Promise<void>) | undefined;
     const importSpy = spyOn(importFiles, 'importFile').mockImplementation(async (...args) => {
       const result = await originalImport(...args); calls++;
       if (mode === 'lease' || mode === 'caller-and-lease') {
         if (mode === 'caller-and-lease') controller.abort();
-        await new Promise(resolve => setTimeout(resolve, 80));
+        expect(loseLease).toBeDefined();
+        await loseLease!();
       } else if (mode !== 'log-ingest') controller.abort();
       return result;
     });
@@ -136,8 +149,19 @@ for (const mode of ['caller', 'job', 'log-ingest', 'lease', 'caller-and-lease'] 
       if (mode === 'log-ingest') controller.abort();
       return result;
     });
-    const lockSpy = spyOn(locks, 'withRefreshingLock').mockImplementation((eng, key, fn, opts) =>
-      originalLock(eng, key, fn, key.startsWith('gbrain-fs:') && mode.includes('lease') ? { ...opts, ttlMinutes: 0.0005 } : opts));
+    const lockSpy = spyOn(locks, 'withRefreshingLock').mockImplementation((eng, key, fn, opts) => {
+      if (!(key.startsWith('gbrain-fs:') && mode.includes('lease'))) return originalLock(eng, key, fn, opts);
+      let observeLoss!: () => void;
+      const lost = new Promise<void>(resolve => { observeLoss = resolve; });
+      // The first import commits before ownership is lost. A tiny TTL can
+      // expire during admission/preflight and never reach that first import.
+      return originalLock(eng, key, async (signal, handle) => {
+        loseLease = async () => { await handle.release(); await waitForLeaseLoss(lost); };
+        return fn(signal, handle);
+      }, { ...opts, refreshIntervalMs: 5, onLockLost(error) {
+        opts?.onLockLost?.(error); observeLoss();
+      } });
+    });
     const sync = () => performSync(engine, { repoPath: root, sourceId: 'default', noPull: true, noEmbed: true, noExtract: true, concurrency: 1, signal: controller.signal });
     try {
       if (mode === 'job') {
@@ -159,3 +183,33 @@ for (const mode of ['caller', 'job', 'log-ingest', 'lease', 'caller-and-lease'] 
     } finally { importSpy.mockRestore(); logSpy.mockRestore(); lockSpy.mockRestore(); }
   }), 30_000);
 }
+
+// Loss before admission is a different valid boundary: nothing may import.
+test('lease lost before sync admission leaves pages and bookmark untouched', () => isolated(async () => {
+  await reset();
+  const originalLock = locks.withRefreshingLock;
+  let calls = 0;
+  const originalImport = importFiles.importFile;
+  const importSpy = spyOn(importFiles, 'importFile').mockImplementation(async (...args) => {
+    calls++; return originalImport(...args);
+  });
+  const lockSpy = spyOn(locks, 'withRefreshingLock').mockImplementation((eng, key, fn, opts) => {
+    if (!key.startsWith('gbrain-fs:')) return originalLock(eng, key, fn, opts);
+    let observeLoss!: () => void;
+    const lost = new Promise<void>(resolve => { observeLoss = resolve; });
+    return originalLock(eng, key, async (signal, handle) => {
+      await waitForLeaseLoss(lost); return fn(signal, handle);
+    }, { ...opts, ttlMinutes: 0.0005, onLockLost(error) {
+      opts?.onLockLost?.(error); observeLoss();
+    } });
+  });
+  try {
+    await expect(withSourceFilesystemLock(engine, root, () => performSync(engine, {
+      repoPath: root, sourceId: 'default', noPull: true, noEmbed: true, noExtract: true, concurrency: 1,
+    }))).rejects.toBeInstanceOf(locks.LockStolenError);
+    expect(calls).toBe(0);
+    expect(await engine.executeRaw('SELECT id FROM pages')).toHaveLength(0);
+    expect(await Bun.file(checkpoint).exists()).toBe(false);
+    expect((await engine.executeRaw<{ last_commit: string | null }>("SELECT last_commit FROM sources WHERE id = 'default'"))[0].last_commit).toBeNull();
+  } finally { importSpy.mockRestore(); lockSpy.mockRestore(); }
+}), 30_000);
