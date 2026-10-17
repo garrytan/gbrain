@@ -383,8 +383,10 @@ export async function refreshWorktree(engine: BrainEngine, sourceId: string, opt
       const synced: RefreshMemberSync[] = [], blocked: RefreshSyncBlocked[] = [];
       const { performManagedSync } = await import('./sync-run.ts');
       for (const member of plan.members) {
-        await recordUpstreamObservation(engine, member);
-        if (await lastCommit(engine, member) === plan.oldHead) { synced.push({ source_id: member, status: 'up_to_date', last_commit: plan.oldHead }); continue; }
+        if (await lastCommit(engine, member) === plan.oldHead) {
+          await recordUpstreamObservation(engine, member);
+          synced.push({ source_id: member, status: 'up_to_date', last_commit: plan.oldHead }); continue;
+        }
         try {
           const result = await performManagedSync(engine, { sourceId: member, noPull: true });
           if (result.status === 'blocked_by_failures') blocked.push({ source_id: member, code: result.managedWrite?.write_error ?? 'sync_blocked',
@@ -393,6 +395,7 @@ export async function refreshWorktree(engine: BrainEngine, sourceId: string, opt
         } catch (error) {
           blocked.push({ source_id: member, code: (error as OperationError).code ?? 'storage_error', message: (error as Error).message, resume: `gbrain sync --source ${member} --no-pull` });
         }
+        await recordUpstreamObservation(engine, member);
       }
       return { ...base, status: blocked.length ? 'sync_blocked' : 'already_current', synced, ...(blocked.length ? { sync_blocked: blocked, next: blocked.map(b => b.resume).join(' ; ') } : {}) };
     }

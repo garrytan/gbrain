@@ -1,3 +1,4 @@
+import {readControlBindings,controlPageExclusionSql} from '../atom-control-equivalence.ts';
 // v0.41.2.1 — extract_atoms cycle phase, post-fix-wave rebuild.
 //
 // Sequencing per cycle:
@@ -399,49 +400,54 @@ export async function discoverExtractablePages(
   sourceId: string,
   affectedSlugs?: string[],
   limit: number = PAGE_DISCOVERY_BUDGET,
+  signal?: AbortSignal,
 ): Promise<AtomPageInput[]> {
-  const hasFilter = Array.isArray(affectedSlugs) && affectedSlugs.length > 0;
-  const connectorExclusion = await connectorAtomExclusionSql(engine);
-  const sql = `
-    SELECT p.id, p.knowledge_revision,
-           (SELECT s.incarnation FROM sources s WHERE s.id=p.source_id) AS source_incarnation,
-           p.slug,
-           p.compiled_truth,
-           p.content_hash
-    FROM pages p
-    WHERE p.source_id = $1
-      AND p.type = ANY($2::text[])
-      AND p.deleted_at IS NULL
-      AND p.content_hash IS NOT NULL
-      AND COALESCE(p.frontmatter->>'imported_from',   '') <> 'markdown-greenfield'
-      AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
-      ${RAW_SOURCE_HOLDER_EXCLUSION_SQL}
-      AND ${minCompiledTruthChars('$3')}
-      ${MANAGED_ATOM_DISCOVERY_SQL}
-      ${PAGE_SCAN_STATE_EXCLUSION_SQL}
-      ${connectorExclusion}
-      ${hasFilter ? "AND p.slug = ANY($5::text[])" : ''}
-      AND NOT EXISTS (
-        SELECT 1
-        FROM pages atom
-        WHERE atom.type = 'atom'
-          AND atom.source_id = $1
-          AND atom.frontmatter->>'source_hash' = substring(p.content_hash from 1 for 16)
-          AND COALESCE(atom.frontmatter->>'managed_extraction', '') <> 'true'
-          AND atom.deleted_at IS NULL
-      )
-    ORDER BY p.updated_at DESC
-    LIMIT $4
-  `;
-  const params: unknown[] = [
-    sourceId,
-    await resolveExtractableTypes(),
-    MIN_PAGE_CHARS_FOR_EXTRACTION,
-    limit,
-  ];
-  if (hasFilter) params.push(affectedSlugs);
-
   try {
+    const hasFilter = Array.isArray(affectedSlugs) && affectedSlugs.length > 0;
+    const connectorExclusion = await connectorAtomExclusionSql(engine);
+    const controlBindings=await readControlBindings(engine,[sourceId],{signal});
+    const controlParameter=`$${hasFilter?6:5}`;
+    const sql = `
+      SELECT p.id, p.knowledge_revision,
+             (SELECT s.incarnation FROM sources s WHERE s.id=p.source_id) AS source_incarnation,
+             p.slug,
+             p.compiled_truth,
+             p.content_hash
+      FROM pages p
+      WHERE p.source_id = $1
+        AND p.type = ANY($2::text[])
+        AND p.deleted_at IS NULL
+        AND p.content_hash IS NOT NULL
+        AND COALESCE(p.frontmatter->>'imported_from',   '') <> 'markdown-greenfield'
+        AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
+        ${RAW_SOURCE_HOLDER_EXCLUSION_SQL}
+        AND ${minCompiledTruthChars('$3')}
+        ${MANAGED_ATOM_DISCOVERY_SQL}
+        ${controlPageExclusionSql(controlParameter)}
+        ${PAGE_SCAN_STATE_EXCLUSION_SQL}
+        ${connectorExclusion}
+        ${hasFilter ? "AND p.slug = ANY($5::text[])" : ''}
+        AND NOT EXISTS (
+          SELECT 1
+          FROM pages atom
+          WHERE atom.type = 'atom'
+            AND atom.source_id = $1
+            AND atom.frontmatter->>'source_hash' = substring(p.content_hash from 1 for 16)
+            AND COALESCE(atom.frontmatter->>'managed_extraction', '') <> 'true'
+            AND atom.deleted_at IS NULL
+        )
+      ORDER BY p.updated_at DESC
+      LIMIT $4
+    `;
+    const params: unknown[] = [
+      sourceId,
+      await resolveExtractableTypes(),
+      MIN_PAGE_CHARS_FOR_EXTRACTION,
+      limit,
+    ];
+    if (hasFilter) params.push(affectedSlugs);
+    params.push(JSON.stringify(controlBindings));
+
     const rows = await engine.executeRaw<{
       id: number;
       knowledge_revision: string;
@@ -449,7 +455,7 @@ export async function discoverExtractablePages(
       slug: string;
       compiled_truth: string;
       content_hash: string;
-    }>(sql, params);
+    }>(sql, params,{signal});
     return rows.map((r) => ({
       slug: r.slug,
       content: r.compiled_truth,
@@ -491,6 +497,8 @@ export async function countExtractAtomsBacklog(
     // brain-wide form keys the NOT EXISTS on `atom.source_id = p.source_id`.
     const scoped = sourceId !== undefined;
     const connectorExclusion = await connectorAtomExclusionSql(engine);
+    const controlBindings=await readControlBindings(engine,sourceId?[sourceId]:undefined,{signal:opts.signal});
+    const controlParameter=scoped?'$4':'$3';
     const sql = scoped
       ? `SELECT COUNT(*) AS cnt FROM pages p
          WHERE p.source_id = $1
@@ -502,6 +510,7 @@ export async function countExtractAtomsBacklog(
            ${RAW_SOURCE_HOLDER_EXCLUSION_SQL}
            AND ${minCompiledTruthChars('$3')}
            ${MANAGED_ATOM_DISCOVERY_SQL}
+           ${controlPageExclusionSql(controlParameter)}
            ${PAGE_SCAN_STATE_EXCLUSION_SQL}
            ${connectorExclusion}
            AND NOT EXISTS (
@@ -520,6 +529,7 @@ export async function countExtractAtomsBacklog(
            ${RAW_SOURCE_HOLDER_EXCLUSION_SQL}
            AND ${minCompiledTruthChars('$2')}
            ${MANAGED_ATOM_DISCOVERY_SQL}
+           ${controlPageExclusionSql(controlParameter)}
            ${PAGE_SCAN_STATE_EXCLUSION_SQL}
            ${connectorExclusion}
            AND NOT EXISTS (
@@ -533,6 +543,7 @@ export async function countExtractAtomsBacklog(
     const params = scoped
       ? [sourceId, extractableTypes, MIN_PAGE_CHARS_FOR_EXTRACTION]
       : [extractableTypes, MIN_PAGE_CHARS_FOR_EXTRACTION];
+    params.push(JSON.stringify(controlBindings));
     const rows = await engine.executeRaw<{ cnt: string | number }>(sql, params, { signal: opts.signal });
     return Number(rows[0]?.cnt ?? 0);
   } catch (err) {
@@ -757,6 +768,7 @@ export async function runPhaseExtractAtoms(
       sourceId,
       opts.affectedSlugs,
       await resolvePageDiscoveryLimit(engine),
+      opts.signal,
     );
   }
 

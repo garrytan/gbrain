@@ -567,3 +567,7 @@ src/core/belief/page-at-time.ts	livePage	field	STREAM	known_as_of read: a segmen
 src/core/ops/known-as-of.ts	intervalView	field	STREAM	known_as_of read: a segmented version or page returns body segmented with body_ref (window read via get_page version_id), never a body string; inline bodies only
 src/core/ops/known-as-of.ts	getVersionsKnownAsOf	field	STREAM	known_as_of read: a segmented version or page returns body segmented with body_ref (window read via get_page version_id), never a body string; inline bodies only
 src/core/belief/preimages.ts	preimageGaps	sql	META	size only (octet_length) to exempt large pages; segmented pages and versions are excluded by body_storage
+src/core/atom-control-equivalence.ts	oldVersionImageSql	sql	INLINE	Retained inline version image comparison only; old/current SQL excludes segmented storage and caps body plus timeline at 64 KiB and frontmatter at 16 KiB.
+src/core/atom-control-equivalence.ts	validateControlImages	call:contentHash	INLINE	Exact original full hash verification requires bounded inline body; storage checks reject segmented versions and current pages before hashing.
+src/core/atom-control-equivalence.ts	validateControlImages	field	INLINE	Pure equivalence over caller-bounded inline snapshots; storage checks reject segmented input before comparison.
+src/core/atom-control-equivalence.ts	readControlBindings	sql	INLINE	Inline-only old-version and canonical snapshot readers; identity and 64 KiB body plus timeline / 16 KiB metadata caps are part of returning SQL.

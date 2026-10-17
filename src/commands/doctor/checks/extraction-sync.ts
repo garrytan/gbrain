@@ -1,3 +1,4 @@
+import {readControlBindings,validControlRowsSql} from '../../../core/atom-control-equivalence.ts';
 /**
  * Extraction + sync-lag check cluster (incl. checkSyncFreshness) — verbatim peel from src/commands/doctor.ts (containment
  * sprint). No behavior change; doctor.ts re-exports every exported symbol
@@ -813,10 +814,11 @@ export async function computeAtomProvenanceDriftCheck(
   const MIN_DRIFTED = 25;
   const WARN_RATIO = 0.1;
   try {
+    const bindings=await readControlBindings(engine);
     const rows = await engine.executeRaw<{
       total: string | number; slug_unbound: string | number; drifted: string | number;
       source_changed: string | number; source_gone: string | number;
-      oldest_ext: string | null;
+      oldest_ext: string | null; equivalent_controls: string | number;
     }>(
       // extracted_at stays TEXT end to end (review fix): an unguarded
       // ::timestamptz cast let ONE malformed frontmatter value (hand edit,
@@ -825,19 +827,20 @@ export async function computeAtomProvenanceDriftCheck(
       // garbage from the min(); the age math happens in TS where Date
       // parsing can never throw (semantically-invalid dates become NaN →
       // metric omitted, verdict untouched).
-      `WITH atom AS (
+      `WITH valid_bridge AS MATERIALIZED (${validControlRowsSql('$1')}), atom AS (
          SELECT a.source_id,
                 -- managed atoms keep their provisional prefix for good (#5770)
-                CASE WHEN a.frontmatter->>'managed_extraction' = 'true'
+                COALESCE(substring(cb.new_hash from 1 for 16), CASE WHEN a.frontmatter->>'managed_extraction' = 'true'
                      THEN regexp_replace(a.frontmatter->>'source_hash', '^pending:', '')
-                     ELSE a.frontmatter->>'source_hash' END AS sh,
+                     ELSE a.frontmatter->>'source_hash' END) AS sh,
+                (cb.atom_id IS NOT NULL) AS equivalent_control,
                 -- NULL = slug-unbound: transcript-minted (source_path only) or
                 -- pre-binding-era. \`ss IS NULL\` is THE predicate for that
                 -- population everywhere below (#4799 / #4806).
                 NULLIF(a.frontmatter->>'source_slug', '') AS ss,
                 CASE WHEN a.frontmatter->>'extracted_at' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
                      THEN a.frontmatter->>'extracted_at' END AS ext
-           FROM pages a
+           FROM pages a LEFT JOIN valid_bridge cb ON cb.atom_id=a.id
           WHERE a.type = 'atom'
             AND a.deleted_at IS NULL
             AND a.frontmatter->>'source_hash' IS NOT NULL
@@ -864,7 +867,7 @@ export async function computeAtomProvenanceDriftCheck(
            LEFT JOIN live_hashes h ON h.source_id = atom.source_id AND h.sh = atom.sh
            LEFT JOIN live_slugs  s ON s.source_id = atom.source_id AND s.slug = atom.ss
        )
-       SELECT count(*) FILTER (WHERE ss IS NOT NULL) AS total,
+       SELECT count(*) FILTER (WHERE equivalent_control) AS equivalent_controls, count(*) FILTER (WHERE ss IS NOT NULL) AS total,
               count(*) FILTER (WHERE ss IS NULL) AS slug_unbound,
               count(*) FILTER (WHERE drifted) AS drifted,
               count(*) FILTER (WHERE drifted AND src_alive) AS source_changed,
@@ -875,7 +878,7 @@ export async function computeAtomProvenanceDriftCheck(
               -- (oldest); informational only, never verdict-bearing
               min(ext) FILTER (WHERE drifted) AS oldest_ext
          FROM drift`,
-      [],
+      [JSON.stringify(bindings)],
     );
     const r = rows?.[0];
     if (!r) return { name, status: 'warn', message: 'atom provenance query returned no rows', details: { health: 'unknown' } };
@@ -893,6 +896,7 @@ export async function computeAtomProvenanceDriftCheck(
     const ratio = total > 0 ? drifted / total : 0;
     const details = {
       total_atoms: total,
+      equivalent_control_changes: num(r.equivalent_controls),
       slug_unbound: slugUnbound,
       drifted,
       source_changed: sourceChanged,

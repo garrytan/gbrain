@@ -10,6 +10,33 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.282.0] - 2026-10-17
+
+**Successful refreshes report the final sync state, and exact control-only changes can preserve atom provenance.** A checkout already at its upstream commit may still need to import changes into its source members. Refresh now records each member's upstream observation after that import, so a successful member stops reporting an old deficit while a blocked member keeps its real deficit.
+
+An explicit, verified proof can recognize a source page whose only change was adding `facts_backstop: false`. It preserves the original extracted hash, model, date and quotation. Doctor reports these proven changes separately; discovery, backlog counts and stale-atom repair check the same evidence. Ordinary content changes still require fresh extraction.
+
+### How to use it
+
+Run `gbrain sources refresh <source>` as usual. Control-equivalence proofs are optional and never installed automatically. Ask your agent to verify the exact retained source version and successful extraction evidence before an authorized CAS edit; see [the operator guide](docs/guides/atom-control-equivalence.md).
+
+| Situation | Result |
+|---|---|
+| A pending member imports successfully | Its upstream observation reflects the stored final commit |
+| A member remains blocked | Its real behind count remains visible |
+| Only the exact supported control field changed, with complete proof | Original atom provenance is retained and equivalence counted separately |
+| Content, path, identity, extraction evidence or withdrawal history changes | The old proof grants no exemption |
+
+### Things to watch
+
+There is no schema migration, automatic proof inference, new permission or Doctor threshold change. Proof reads are bounded and fail closed; large ledger evidence gets no exemption. Existing historical audit events remain intact.
+
+### Itemized changes
+
+- Record already-current refresh observations after pending member imports and retain the already-synced shortcut.
+- Share exact control equivalence across Doctor, discovery/count and stale-atom retirement, with canonical body bounds and consuming-statement path, revision and ledger checks.
+- Add cross-engine regressions and register the PostgreSQL arm. Document the bounded inline readers and the exact consumer-module growth for review.
+
 ## [0.60.281.0] - 2026-10-17
 
 **A PGLite brain that is draining a large effects backlog answers requests sooner, and master CI is green again.** When the write owner starts on a backlog of queued embedding effects, its first tick ran the receipt compaction pass, the reservation sweep and the queue `VACUUM` back to back next to the drain, and each drain pass held the event loop for its whole reservation true-up. PGLite statements run synchronously, so a request (or a timer) waited behind all of it: about 0.3 s on a fast machine and 2.2 s on a slow CI runner, which failed `test/persistence-drain-latency.serial.test.ts` on master. Now each of those steps returns to the event loop before the next one, and a request waits behind one step at most.

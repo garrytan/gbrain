@@ -1,3 +1,4 @@
+import {readControlBindings,validControlRowsSql} from '../atom-control-equivalence.ts';
 /**
  * `gbrain repair stale-atoms` (#5770, CEO-A7, ENG-O7, DX-O4): the one-time
  * cleanup of atoms that drifted before managed re-extraction retired them.
@@ -66,6 +67,7 @@ interface ApprovedStaleAtom extends StaleAtom { selection: string[] }
 
 /** Live stale atoms of these sources, in (class, id) order; `atomId` narrows to one atom for the apply recheck. */
 async function staleAtoms(db: BrainEngine, sourceIds: string[], atomId?: number): Promise<Array<StaleAtom & { chars: number }>> {
+  const bindings=await readControlBindings(db,sourceIds);
   const rows = await db.executeRaw<StaleAtom & { chars: number }>(`
     WITH atom AS (
       SELECT a.id, a.source_id, (SELECT s.incarnation::text FROM sources s WHERE s.id=a.source_id) AS incarnation,
@@ -82,6 +84,7 @@ async function staleAtoms(db: BrainEngine, sourceIds: string[], atomId?: number)
          AND NULLIF(a.frontmatter->>'source_slug','') IS NOT NULL
          AND NULLIF(a.frontmatter->>'imported_from','') IS NULL
          AND ($2::int IS NULL OR a.id=$2::int)
+         AND NOT EXISTS (SELECT 1 FROM (${validControlRowsSql('$3')}) cb WHERE cb.atom_id=a.id)
     ), classified AS (
       SELECT atom.*, CASE
           WHEN origin_page_id IS NULL OR origin_deleted THEN 'origin_gone'
@@ -101,7 +104,7 @@ async function staleAtoms(db: BrainEngine, sourceIds: string[], atomId?: number)
            CASE WHEN class='origin_gone' THEN NULL ELSE completion END AS evidence, chars
       FROM classified
      WHERE class='origin_gone' OR (class='origin_changed' AND completion IS NOT NULL)
-     ORDER BY CASE class WHEN 'origin_gone' THEN 1 ELSE 2 END, id`, [sourceIds, atomId ?? null]);
+     ORDER BY CASE class WHEN 'origin_gone' THEN 1 ELSE 2 END, id`, [sourceIds, atomId ?? null,JSON.stringify(bindings)]);
   return rows.map(row => ({ ...row, id: Number(row.id), managed: row.managed === true,
     origin_page_id: row.origin_page_id === null ? null : Number(row.origin_page_id), chars: Number(row.chars) }));
 }

@@ -13,6 +13,7 @@
 # themselves from scripts/postgres-arm-weights.json.
 test/activation-unbound-rooted-6449.test.ts
 test/alias-source-cascade-5094.test.ts
+test/atom-control-equivalence.test.ts
 test/attribution-backfill-history.test.ts
 test/backstop-same-page-shadow-managed-6333.test.ts
 test/behavior-change-notice.test.ts

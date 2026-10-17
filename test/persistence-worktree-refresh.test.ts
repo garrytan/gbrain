@@ -15,6 +15,8 @@
  * Seams: the `hooks.boundary` callback pauses the real state machine at its
  * drained, fenced and merged points; no production behavior is replaced.
  */
+import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
+import { waitFor } from './helpers/wait-for.ts';
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -69,6 +71,76 @@ const refusedWith = async (promise: Promise<unknown>, code: string) => {
   expect(error!.code).toBe(code);
   return error!;
 };
+test('already-current checkout records upstream after its pending member sync, not before', () => each(async f => {
+  const target = f.push('alpha/two.md', page('Alpha two', 'Imported after an external fast-forward.'));
+  git(f.root, 'fetch', 'origin');
+  git(f.root, 'merge', '--ff-only', target);
+  expect(f.head()).toBe(target);
+  expect(await f.lastCommit(f.alpha)).not.toBe(target);
+  const result = await refreshWorktree(f.engine, f.alpha);
+  expect(result.status).toBe('already_current');
+  const rows = await f.engine.executeRaw<{ id: string; last_commit: string; upstream_commit: string; upstream_behind: number }>(
+    'SELECT id,last_commit,upstream_commit,upstream_behind FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [[f.alpha, f.beta]]);
+  expect(rows).toHaveLength(2);
+  for (const row of rows) {
+    expect(row.last_commit).toBe(target);
+    expect(row.upstream_commit).toBe(target);
+    expect(row.upstream_behind).toBe(0);
+  }
+}), 120_000);
+
+test('already-current refresh observes an up-to-date member and leaves a genuinely blocked member behind', () => each(async f => {
+  const keys = ['sync.holds', 'sync.write_through'];
+  const prior = await Promise.all(keys.map(key => f.engine.getConfig(key)));
+  try {
+    await f.engine.setConfig('sync.holds', 'fail');
+    await f.engine.setConfig('sync.write_through', 'false');
+    const slugs = [...await f.engine.getAllSlugs({ sourceId: f.alpha })];
+    expect(slugs).toHaveLength(1);
+    const slug = slugs[0];
+    const snapshot = (await f.engine.readPageSnapshot(slug, { sourceId: f.alpha }))!;
+    await submitPageMutation(f.ctx(f.alpha), { operation: 'put_page', params: {
+      slug, expected_revision: snapshot.revision, request_id: randomUUID(),
+      content: page('Alpha one', 'A database-only observation to preserve.'),
+    } });
+    await waitFor(async () => (await f.engine.getPage(slug, { sourceId: f.alpha }))?.compiled_truth.includes('database-only observation') === true,
+      { timeoutMs: 30_000 });
+    const target = f.push('alpha/one.md', page('Alpha one', 'A conflicting file observation.'));
+    git(f.root, 'fetch', 'origin'); git(f.root, 'merge', '--ff-only', target);
+    const result = await refreshWorktree(f.engine, f.alpha);
+    expect(result.status).toBe('sync_blocked');
+    expect(result.sync_blocked?.some(item => item.source_id === f.alpha)).toBe(true);
+    const rows = await f.engine.executeRaw<{ id: string; last_commit: string; upstream_commit: string; upstream_behind: number }>(
+      'SELECT id,last_commit,upstream_commit,upstream_behind FROM sources WHERE id=ANY($1::text[])', [[f.alpha, f.beta]]);
+    const alpha = rows.find(row => row.id === f.alpha)!;
+    const beta = rows.find(row => row.id === f.beta)!;
+    expect(alpha.last_commit).not.toBe(target);
+    expect(alpha.upstream_commit).toBe(target);
+    expect(alpha.upstream_behind).toBe(1);
+    expect(beta.last_commit).toBe(target);
+    expect(beta.upstream_behind).toBe(0);
+  } finally {
+    for (let i = 0; i < keys.length; i++) {
+      if (prior[i] == null) await f.engine.executeRaw('DELETE FROM config WHERE key=$1', [keys[i]]);
+      else await f.engine.setConfig(keys[i], prior[i]!);
+    }
+  }
+}), 120_000);
+
+test('already-synced shortcut still refreshes upstream observations for every member', () => each(async f => {
+  const result = await refreshWorktree(f.engine, f.alpha);
+  expect(result.status).toBe('already_current');
+  expect(result.synced).toHaveLength(2);
+  expect(result.synced?.every(item => item.status === 'up_to_date')).toBe(true);
+  const rows = await f.engine.executeRaw<{ upstream_commit: string; upstream_behind: number; upstream_checked_at: Date | null }>(
+    'SELECT upstream_commit,upstream_behind,upstream_checked_at FROM sources WHERE id=ANY($1::text[])', [[f.alpha, f.beta]]);
+  for (const row of rows) {
+    expect(row.upstream_commit).toBe(f.head());
+    expect(row.upstream_behind).toBe(0);
+    expect(row.upstream_checked_at).not.toBeNull();
+  }
+}), 120_000);
+
 test('refresh timer bounds reject overflow and accept the maximum delay', () => each(async f => {
   await refusedWith(refreshWorktree(f.engine, f.alpha, { fetchTimeoutMs: 2 ** 31 }), 'invalid_params');
   const drain = parseRefreshArgs([f.alpha, '--wait-drain', String((2 ** 31) / 1000), '--dry-run']).options;
