@@ -229,8 +229,8 @@ describe('verifyBody', () => {
         checked_at: '2026-10-17',
         sources: [source.path],
         quotes: [
-          { text: truthQuote, source: source.path, speaker: 'user', span: [transcript.indexOf(truthQuote), transcript.indexOf(truthQuote) + truthQuote.length] },
-          { text: timelineQuote, source: source.path, speaker: 'assistant', span: [transcript.indexOf(timelineQuote), transcript.indexOf(timelineQuote) + timelineQuote.length] },
+          { text: 'We agreed to ship the repair 😂', source: source.path, speaker: 'user', span: [transcript.indexOf(truthQuote), transcript.indexOf(truthQuote) + truthQuote.length] },
+          { text: 'The team approved the next step 𐐀', source: source.path, speaker: 'assistant', span: [transcript.indexOf(timelineQuote), transcript.indexOf(timelineQuote) + timelineQuote.length] },
         ],
       },
     });
@@ -615,6 +615,33 @@ describe('verifyAndRepairDreamPages — PGLite write-back integration', () => {
     // Quarantined text has no chunks: keyword search cannot reach it.
     const hits = await engine.searchKeyword('rewrite entire engine Rust', { limit: 5 });
     expect(hits.filter(h => h.slug === slug)).toHaveLength(0);
+  }, 60_000);
+
+  test('repaired emoji quotes persist with complete spans and survive a JSONB page payload roundtrip', async () => {
+    const transcript = 'user: hello  brave world 😂';
+    const since = await readVerifyEpoch(engine);
+    const slug = 'wiki/personal/reflections/2026-08-31-emoji-abc456';
+    await importFromContent(engine, slug, [
+      '---', 'type: note', '---', 'The user said "hello brave world 😂".',
+      '', '## Timeline', '', '- **2026-08-31** | session — Said "hello brave world 😂"',
+    ].join('\n'), { noEmbed: true, remote: false, sourceId: 'default' });
+
+    const stats = await verifyAndRepairDreamPages(engine, [{ slug, source_id: 'default', raw_source: '/t/emoji.md' }],
+      new Map([['/t/emoji.md', { content: transcript }]]), { since, checkedAt: '2026-08-31' });
+    expect(stats.errors).toBe(0);
+    expect(stats).toMatchObject({ pages_checked: 1, pages_repaired: 1, normalized_fixed: 2 });
+
+    const page = await engine.getPage(slug, { sourceId: 'default' });
+    expect(page).toBeDefined();
+    const serialized = JSON.stringify(page);
+    const [row] = await engine.executeRaw<{ payload: typeof page }>('SELECT $1::text::jsonb AS payload', [serialized]);
+    expect(row.payload).toEqual(JSON.parse(serialized));
+    expect(row.payload!.compiled_truth).toBe('The user said "hello  brave world 😂".');
+    expect(row.payload!.timeline).toContain('Said "hello  brave world 😂"');
+    expect(row.payload!.frontmatter.grounding).toMatchObject({
+      sources: ['/t/emoji.md'],
+      quotes: [{ text: 'hello brave world 😂', source: '/t/emoji.md', speaker: 'user', span: [6, transcript.length] }],
+    });
   }, 60_000);
 
   test('re-projection deletes the rows of quarantined bullets and keeps database-only timeline history (#5567)', async () => {
