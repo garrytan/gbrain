@@ -115,6 +115,11 @@ export function thinkingOffControl(modelStr: string): ThinkingOffControl | undef
   const model = rawModel.trim().toLowerCase();
   if (provider === 'anthropic' || provider === 'deepseek') return { set: { namespace: provider, options: THINKING_DISABLED }, disables: true };
   if (provider === 'openrouter') return model.startsWith('deepseek/') ? { set: { namespace: provider, options: THINKING_DISABLED }, disables: true } : undefined;
+  // Model Studio native OpenAI-compatible body, not chat_template_kwargs.
+  // https://help.aliyun.com/en/model-studio/deep-thinking (2026-10-17).
+  if (provider === 'dashscope' && model === 'qwen3.8-flash') {
+    return { set: { namespace: 'dashscope', options: { enable_thinking: false } }, disables: true };
+  }
   if (provider === 'google') return googleControl(model);
   if (provider === 'openai') return openaiControl(model);
   return undefined;

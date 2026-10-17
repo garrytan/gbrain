@@ -1,7 +1,7 @@
 import type { Recipe } from '../types.ts';
 
 /**
- * Alibaba DashScope (灵积). OpenAI-compatible /embeddings endpoint at
+ * Alibaba DashScope (灵积). OpenAI-compatible chat and /embeddings at
  * dashscope-intl.aliyuncs.com. Hosts text-embedding-v2 (older) and
  * text-embedding-v3 (current; Matryoshka-aware up to 1024 dims).
  *
@@ -30,6 +30,18 @@ export const dashscope: Recipe = {
     setup_url: 'https://help.aliyun.com/zh/model-studio/getting-started/',
   },
   touchpoints: {
+    // Text judge integration only. Other chat IDs remain user-provided: the
+    // recipe list is advisory, not a runtime model allowlist.
+    chat: {
+      models: ['qwen3.8-flash'],
+      supports_tools: false,
+      supports_subagent_loop: false,
+      supports_prompt_cache: false,
+      // Model Studio model card, checked 2026-10-17. Do not shrink the real
+      // context capability to fit a task-local spending allowance.
+      model_context_tokens: { 'qwen3.8-flash': 1_000_000 },
+      thinking_by_default: (modelId) => modelId === 'qwen3.8-flash',
+    },
     embedding: {
       models: ['text-embedding-v3', 'text-embedding-v2', 'text-embedding-v1'],
       default_dims: 1024,

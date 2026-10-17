@@ -238,6 +238,13 @@ export const CANONICAL_PRICING: Record<string, ModelPricing> = {
   'deepseek:deepseek-flash':              { input:  0.30, output:  1.20 },
   'deepseek:deepseek-v4-flash':           { input:  0.30, output:  1.20 },
   'deepseek:deepseek-v4-pro':             { input:  1.32, output:  3.96 },
+  // DashScope Qwen3.8-Flash, Model Studio card verified 2026-10-17:
+  // https://help.aliyun.com/en/model-studio/qwen3-8-flash
+  // Beijing CNY0.8/2.7; highest listed region CNY1.094/3.427 per MTok.
+  // Conservative USD MANAGEMENT estimate: planning floor5CNY/USD, rounded
+  // upward, NOT a live FX quote or supplier billing rate. Refresh before use
+  // if region/rates/conversion assumptions change. No explicit cache enabled.
+  'dashscope:qwen3.8-flash':              { input: 0.22, output: 0.69 },
   // ── Z.ai / GLM (via LiteLLM proxy) ───────────────────────────────────
   // GLM-5.2 from Z.ai: $1.40/M input, $4.40/M output (verified 2026-08-16
   // against OpenRouter provider listings — z.ai's own direct rates).
