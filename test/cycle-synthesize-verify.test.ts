@@ -13,6 +13,8 @@ import {
   extractQuoteSpans,
   groundQuote,
   verifyBody,
+  verifyDreamPage,
+  emptyQuoteVerifyStats,
   groundSource,
   unsupportedNumericClaims,
   verifyAndRepairDreamPages,
@@ -114,6 +116,27 @@ describe('groundQuote — the repair ladder', () => {
     }
   });
 
+  test.each([
+    { name: 'normalized terminal emoji', content: 'hello  world 😂', quote: 'hello world 😂', replacement: 'hello  world 😂', status: 'normalized' },
+    { name: 'normalized emoji before following text', content: 'prefix hello  world 😂 following text', quote: 'hello world 😂', replacement: 'hello  world 😂', status: 'normalized' },
+    { name: 'non-BMP lowercase at both endpoints', content: 'prefix 𐐀 HELLO  WORLD 𐐁 suffix', quote: '𐐨 hello world 𐐩', replacement: '𐐀 HELLO  WORLD 𐐁', status: 'normalized' },
+    { name: 'non-BMP lowercase at start', content: 'prefix 𐐀 HELLO  WORLD suffix', quote: '𐐨 hello world', replacement: '𐐀 HELLO  WORLD', status: 'normalized' },
+    { name: 'non-BMP lowercase at end', content: 'prefix HELLO  WORLD 𐐁 suffix', quote: 'hello world 𐐩', replacement: 'HELLO  WORLD 𐐁', status: 'normalized' },
+    { name: 'near last shared token ends in emoji', content: 'alpha beta gamma delta😂', quote: 'alpha beta gamma delta😂 extra', replacement: 'alpha beta gamma delta😂', status: 'near' },
+    { name: 'near last shared token ends in non-BMP letter', content: 'alpha beta gamma delta𐐀', quote: 'alpha beta gamma delta𐐨 extra', replacement: 'alpha beta gamma delta𐐀', status: 'near' },
+    { name: 'lowercase expansion at both endpoints', content: 'prefix İ HELLO  WORLD İ suffix', quote: 'i̇ hello world i̇', replacement: 'İ HELLO  WORLD İ', status: 'normalized' },
+    { name: 'ellipsis expansion at both endpoints', content: 'prefix … HELLO  WORLD … suffix', quote: '... hello world ...', replacement: '… HELLO  WORLD …', status: 'normalized' },
+    { name: 'exact emoji control', content: 'prefix hello world 😂 suffix', quote: 'hello world 😂', replacement: 'hello world 😂', status: 'exact' },
+    { name: 'normalized ASCII control', content: 'prefix HELLO  WORLD suffix', quote: 'hello world', replacement: 'HELLO  WORLD', status: 'normalized' },
+    { name: 'exact ASCII control', content: 'prefix hello world suffix', quote: 'hello world', replacement: 'hello world', status: 'exact' },
+  ])('$name returns the complete verbatim slice and span', ({ content, quote, replacement, status }) => {
+    const result = groundQuote(quote, groundSource('/t/unicode.txt', content));
+    const start = content.indexOf(replacement);
+    expect(result).toEqual(status === 'exact'
+      ? { status, spans: [[start, start + replacement.length]] }
+      : { status, replacement, spans: [[start, start + replacement.length]] });
+  });
+
   test('heavy paraphrase (low overlap) → none (caller quarantines)', () => {
     const g = groundQuote('our fundamental product philosophy centers customer delight above metrics', t);
     expect(g.status).toBe('none');
@@ -183,6 +206,40 @@ describe('verifyBody', () => {
       expect(p.speaker).toBe('user');
       expect(normForGrounding(transcript.slice(p.span[0], p.span[1]))).toBe(normForGrounding(p.text));
     }
+  });
+
+  test('whole-page repair preserves Unicode in both bodies, provenance and grounding units', () => {
+    const truthQuote = 'We agreed to ship  the repair 😂';
+    const timelineQuote = 'The team approved  the next step 𐐀';
+    const transcript = `user: ${truthQuote}\nassistant: ${timelineQuote}\nuser: A later turn stays separate.`;
+    const source = groundSource('/t/unicode-page.txt', transcript);
+    const stats = emptyQuoteVerifyStats();
+    const result = verifyDreamPage({
+      compiled_truth: 'The user said "we agreed to ship the repair 😂"',
+      timeline: '- The assistant said "the team approved the next step 𐐨"',
+      frontmatter: { type: 'note' },
+    }, [source], { prior: null, checkedAt: '2026-10-17' }, stats);
+    const compiled_truth = `The user said "${truthQuote}"`;
+    const timeline = `- The assistant said "${timelineQuote}"`;
+    expect(result.compiled_truth).toBe(compiled_truth);
+    expect(result.timeline).toBe(timeline);
+    expect(result.frontmatter).toEqual({
+      type: 'note',
+      grounding: {
+        checked_at: '2026-10-17',
+        sources: [source.path],
+        quotes: [
+          { text: truthQuote, source: source.path, speaker: 'user', span: [transcript.indexOf(truthQuote), transcript.indexOf(truthQuote) + truthQuote.length] },
+          { text: timelineQuote, source: source.path, speaker: 'assistant', span: [transcript.indexOf(timelineQuote), transcript.indexOf(timelineQuote) + timelineQuote.length] },
+        ],
+      },
+    });
+    expect(result.groundingUnits).toEqual([
+      { body: 'compiled_truth', text: compiled_truth },
+      { body: 'timeline', text: timeline.slice(2) },
+    ]);
+    expect(stats.normalized_fixed).toBe(2);
+    expect(stats.quarantined_claims).toBe(0);
   });
 
   test('clean body → changed=false, byte-identical', () => {
@@ -264,6 +321,21 @@ describe('speaker provenance (write-path audit C-6)', () => {
     const r = verifyBody('Summary: "Noted. The team agreed the mechanical checker beats an LLM judge.\nuser (t4): Next we discuss hiring"', [src]);
     expect(r.failures.quote_crosses_speakers + r.failures.quote_not_in_source).toBeGreaterThan(0);
     expect(r.body).not.toContain('Next we discuss hiring');
+  });
+
+  test('Unicode endpoints stay inside their speaker turn and crossing quotes are refused', () => {
+    const content = 'user: alpha  beta gamma delta😂\nassistant: epsilon zeta eta theta𐐀';
+    const source = groundSource('/t/unicode-turns.txt', content);
+    const replacement = 'alpha  beta gamma delta😂';
+    const start = content.indexOf(replacement);
+    expect(groundQuote('alpha beta gamma delta😂', source)).toEqual({
+      status: 'normalized', replacement, spans: [[start, start + replacement.length]],
+    });
+    expect(speakerAt(source.turns, start + replacement.length - 1)).toBe('user');
+    expect(groundQuote('delta😂 assistant: epsilon zeta eta theta𐐨', source)).toEqual({ status: 'none', reason: 'crosses_speakers' });
+    const result = verifyBody('The assistant said "alpha beta gamma delta😂"', [source]);
+    expect(result.quarantined.map(q => q.reason)).toEqual(['speaker_mismatch']);
+    expect(result.provenance).toEqual([]);
   });
 
   test('a real quote attributed to the wrong speaker is quarantined; the right speaker is kept', () => {
