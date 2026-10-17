@@ -277,8 +277,8 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
         for (const entry of entries) {
           if (entry.rowNum === undefined) continue;
           if (!entry.supersedes && checkPageCap(liveCap, liveRows).refuse) {
-            throw opError('revision_conflict', 'The facts cap changed after preparation.',
-              'Retry extraction with the current cap to recompute admitted and capped counts.');
+            throw factsRefusal('revision_conflict', 'The facts cap changed after preparation.', row,
+              'The live cap blocks a prepared append. Re-extraction must recompute admitted and capped counts.');
           }
           liveRows++;
         }

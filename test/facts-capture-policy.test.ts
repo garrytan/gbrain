@@ -57,6 +57,9 @@ test('bare names never route to person pages in a custom directory', async () =>
 });
 
 const falsePositives = [
+  "Acme's cold-chain sales team expanded to Europe",
+  'Acme builds flight tracking software', 'parcel tracking API',
+  'hotel check-in kiosks', 'Acme confirmed the flight test date',
   'Acme confirmed a restaurant chain as its first customer',
   "Acme's wifi chip launch is delayed",
   'Board meeting scheduled for 2026-12-03 to vote on the merger',
@@ -112,22 +115,33 @@ for (const fact of [
   'Please update the primary billing address',
   'An unsolicited private equity outreach arrived',
   'The offered credit requires no personal guarantee',
-]) test(`capture frames: ${fact}`, () => expect(classifyCaptureValue({ fact }).verdict).toBe('drop'));
+]) test(`unsupported frames stay: ${fact}`, () => expect(classifyCaptureValue({ fact }).verdict).toBe('keep'));
 for (const fact of [
   'The signed contract is awaiting a signature copy',
   'The billing address change was approved by the board',
   'The next action is to review the $5M investment',
 ]) test(`substance veto: ${fact}`, () => expect(classifyCaptureValue({ fact }).verdict).toBe('keep'));
 const homeRoute = (fact: string, d = deps()) => chooseSpecificEntity({ fact, slug: broad,
-  broadNames: ['Acme Example'], homeEntities: [broad] }, d);
+  broadNames: ['Acme Example'], homeEntities: [broad], specificTypes: ['company', 'person', 'project', 'deal'] }, d);
 test('home entity permits one live counterparty company', async () => {
-  expect(await homeRoute('Acme Example rejected Northstar Example')).toMatchObject({ slug: 'companies/northstar-example', rerouted: true });
+  expect(await homeRoute('Northstar Example supplied Acme Example')).toMatchObject({ slug: 'companies/northstar-example', rerouted: true });
 });
 test('home routing keeps ambiguity and withdrawal vetoes', async () => {
   expect((await homeRoute('Acme Example rejected Northstar Example and Project Sunrise')).rerouted).toBe(false);
   expect((await homeRoute('Acme Example rejected Blake Unknown')).rerouted).toBe(false);
-  expect((await homeRoute('Acme Example rejected Northstar Example', deps(['companies/northstar-example']))).slug).toBeNull();
+  expect((await homeRoute('Northstar Example supplied Acme Example', deps(['companies/northstar-example']))).slug).toBeNull();
 });
 for (const frame of ['comparable', 'comps', 'competitor', 'benchmark', 'positioning', 'valuation', 'our strategy', 'board member', 'reports directly', 'headcount', 'portfolio company']) {
   test(`home analysis veto: ${frame}`, async () => expect((await homeRoute(`Acme Example uses Northstar Example for ${frame}`)).reason).toBe('home_analysis'));
 }
+
+for (const verb of ['rejected', 'declined', 'chose', 'selected', 'decided against']) {
+  test(`home decision stays: ${verb}`, async () => expect(await homeRoute(`Acme Example ${verb} Northstar Example`)).toMatchObject({ rerouted: false, reason: 'home_decision' }));
+}
+test('home routing respects specific types', async () => {
+  expect(await chooseSpecificEntity({ fact: 'Northstar Example supplied Acme Example', slug: broad, broadNames: ['Acme Example'], homeEntities: [broad], specificTypes: ['person'] }, deps())).toMatchObject({ rerouted: false, reason: 'other_entity' });
+});
+test('cap diagnostic has a message without an upstream message', async () => {
+  const { writeFailureDiagnostic } = await import('../src/core/persistence/verb-errors.ts');
+  expect(writeFailureDiagnostic('facts_page_cap').message).toBeTruthy();
+});

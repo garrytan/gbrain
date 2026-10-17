@@ -38,15 +38,12 @@ export function classifyCaptureValue(input: CaptureClaim): CaptureVerdict {
   const absoluteDate = /\b(?:\d{4}-\d{2}-\d{2}|(?:january|february|april|june|july|august|september|october|november|december)\s+\d{1,2}|\d{1,2}\/\d{1,2}\/\d{2,4})\b/i.test(text);
   if (/\b(?:meeting|call|appointment|invite|reschedul\w*|attend\w*)\b/i.test(text)
     && future && (relativeTime || absoluteDate) && !past && !topic && !counterparty) return drop('scheduling');
-  const framed = (noun: string) => new RegExp(`\\b(?:${noun})\\s+(?:(?:is|was)\\s+)?(?:booked|reserved|confirmed|check-in|departs|lands|arrived|delayed|tracking)\\b|\\b(?:booked|reserved|confirmed)\\s+(?:(?:a|the|my)\\s+)?(?:${noun})\\b`, 'i').test(text);
+  // Status must be a predicate; compound nouns such as flight tracking stay.
+  const framed = (noun: string) => new RegExp(`\\b(?:${noun})\\s+(?:(?:is|was)\\s+(?:booked|reserved|confirmed|delayed|tracking)\\b|(?:booked|reserved|confirmed|departs|lands|arrived|delayed)\\b(?=\\s*(?:[.!?]|$|on\\b|at\\b|for\\b|until\\b)))`, 'i').test(text);
   if (/\btracking number is\b/i.test(text) || framed('parcel|courier|tracking number|delivery ETA|customs (?:status|clearance)|physical shipment')) return drop('shipping');
   if (framed('travel booking|hotel|flight|restaurant table|room booking|parking|wi-?fi|password reset link')) return drop('logistics');
   if (/\b(?:received|arrived|sent us|in my inbox)\b/i.test(text)
     && /\b(?:newsletter|unsubscribe|limited time|sponsored (?:email|message|post|content|offer)|promotional offer|webinar invitation|marketing email)\b/i.test(text)) return drop('spam');
-  if (/\b(?:billing|mailing) address\b/i.test(text) && /\b(?:request\w*|updat\w*|chang\w*)\b/i.test(text)) return drop('logistics');
-  if (/\b(?:cold|unsolicited)\b/i.test(text) && /\b(?:outreach|sales|acquisition|private equity)\b/i.test(text)) return drop('spam');
-  if (/\b(?:offered|promotional|marketing)\b/i.test(text) && /\bno personal guarantee\b/i.test(text)) return drop('spam');
-  if (/\b(?:pending|awaiting|waiting (?:on|for)|stalled pending)\b[^.!?]*\b(?:signature|reply|response)\b|\b(?:next action is|will reconvene)\b|\b(?:proceed|go ahead)\b[^.!?]*\bas soon as possible\b/i.test(text)) return drop('transient');
   if (/\b(?:is running late|out of office until|waiting for a reply|will send (?:it|this) tomorrow|reminder to)\b/i.test(text)) return drop('transient');
   return { verdict: 'keep', category: null, rule: 'capture.default_keep.v1' };
 }
@@ -73,13 +70,18 @@ export async function chooseSpecificEntity(input: RoutingInput, deps: RoutingDep
   if (await deps.isWithdrawn(input.slug)) return { slug: null, rerouted: false, reason: 'withdrawn_original' };
   const broad = input.broadTypes ?? ['company'];
   const home = input.homeEntities?.includes(input.slug) === true;
-  const specific = home ? ['company', 'person', 'project', 'deal'] : input.specificTypes ?? ['person', 'project', 'deal'];
+  const specific = input.specificTypes ?? ['person', 'project', 'deal'];
   if (home && /\b(?:comparables?|comps|competitors?|benchmarks?|positioning|valuation|our strategy|board member|reports directly|headcount|portfolio company)\b/i.test(input.fact)) return stay('home_analysis');
   if (!broad.includes((await deps.typeOf(input.slug)) ?? '')) return stay('not_broad');
   const names = [...(input.broadNames ?? []), input.slug, input.slug.split('/').pop()!.replace(/-/g, ' ')];
   const normalize = (value: string) => value.normalize('NFKC').toLowerCase()
     .replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
   const claim = ` ${normalize(input.fact)} `;
+  if (home && names.some(name => {
+    const subject = normalize(name);
+    return subject && input.fact.split(/[.!?]\s+/).some(sentence =>
+      new RegExp(`^${subject}\\s+(?:has\\s+|had\\s+)?(?:rejected|declined|chose|selected|decided)\\b`, 'i').test(normalize(sentence)));
+  })) return stay('home_decision');
   if (!home && names.some(name => normalize(name) && claim.includes(` ${normalize(name)} `))) return stay('broad_mentioned');
   if (/\b(?:[\p{L}]+(?:\s+[\p{L}]+)*['’]s|her|his|their)\s+(?:company|startup|firm)\b/iu.test(input.fact)) return stay('possessive_broad');
   const candidates = [

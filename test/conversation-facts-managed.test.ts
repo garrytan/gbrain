@@ -268,6 +268,23 @@ for (const backend of testBackends()) {
     }, { databaseUrl });
   }, 120_000);
 
+  test(`${backend}: low-rubric policy changes the conversation generation`, async () => {
+    await managedBrain(async brain => {
+      const { engine } = brain;
+      await putPage(brain, transcript());
+      const authority = (await maintenancePreflight(engine, 'default'))!;
+      const page = (await engine.getPage(SLUG, { sourceId: 'default' }))!;
+      const versionToken = await currentConversationVersionToken(engine, page);
+      const input = { slug: SLUG, page, versionToken, since: null, segmentLimit: 0 };
+      const off = await conversationGeneration(engine, authority, input);
+      await engine.setConfig('facts.extraction_low_rubric', 'on');
+      const on = await conversationGeneration(engine, authority, input);
+      expect(on.key).not.toBe(off.key);
+      await engine.setConfig('facts.extraction_low_rubric', 'off');
+      expect((await conversationGeneration(engine, authority, input)).key).toBe(off.key);
+    }, { databaseUrl });
+  }, 120_000);
+
   test(`${backend}: an embedding model change without a dimension change drops the stale vectors, never the batch`, async () => {
     await managedBrain(async brain => {
       const { engine } = brain;

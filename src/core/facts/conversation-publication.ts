@@ -176,6 +176,7 @@ export async function conversationGeneration(engine: BrainEngine, authority: Mai
     [sourceId, input.slug]);
   const key = digest(['conversation-facts', CONVERSATION_FACTS_PROTOCOL, authority.writer.sourceIncarnation, snapshot.page.id,
     snapshot.revision, input.versionToken, CONVERSATION_EXTRACTOR_VERSION, input.since, input.segmentLimit,
+    (await engine.getConfig('facts.extraction_low_rubric') ?? '').trim().toLowerCase() === 'on',
     base?.id == null ? null : Number(base.id)]);
   return { key, revision: snapshot.revision, pageId: snapshot.page.id };
 }

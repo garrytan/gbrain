@@ -1242,6 +1242,16 @@ More: [docs/guides/facts-drain.md#deferrals](../../docs/guides/facts-drain.md#de
 
 More: [docs/guides/facts-drain.md#deferrals](../../docs/guides/facts-drain.md#deferrals)
 
+### facts_page_cap
+
+<a id="facts_page_cap"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The facts fence append limit was reached; nothing was written. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 2 | no |
+
+More: [docs/guides/write-refusals.md#facts-page-cap](../../docs/guides/write-refusals.md#facts-page-cap)
+
 ### facts_payload_expired
 
 <a id="facts_payload_expired"></a>
