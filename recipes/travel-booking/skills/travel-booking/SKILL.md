@@ -193,8 +193,11 @@ booked or failed; mark a failed item `(failed, not booked)`.
 That way a paid booking is in the brain even if the conversation ends before
 it is confirmed.
 
+A trip starts at its earliest flight departure, hotel check-in or car pick-up,
+and ends at its latest flight arrival, check-out or drop-off.
+
 Keep one page per trip, `trips/<yyyy-mm-dd>-<destination-slug>-<trip_id>`
-(departure date, first destination, and the `trip_id` of its first booking, so
+(start date, first destination, and the `trip_id` of its first booking, so
 two separate trips on the same day to the same place never share a page).
 Filing trips is what this skill was installed for; if the user asks you not to
 record a trip, don't.
@@ -210,10 +213,10 @@ Each booked item carries its own status; the page's `status` describes the trip
 as a whole. Recompute it on every write: `cancelled` once no item is still
 active (every item is refunded, cancelled or failed, never booked), otherwise
 `booked`. An exchanged item is still active. On the same writes, including
-when a booking is added, set the title (first destination, first departure to
-last return), `date` (first departure) and `location` from the items still
-active, and keep the last ones when none is. Re-date the `attended` edge of
-each traveller whose own first departure moved: `remove_link`, then
+when a booking is added, set the title (first destination, start to end
+date), `date` (start date) and `location` from the items still active, and
+keep the last ones when none is. Re-date the `attended` edge of each
+traveller whose own start date moved: `remove_link`, then
 `add_link` with the new `valid_from`. The slug never changes.
 
 ```markdown
@@ -292,7 +295,7 @@ Travellers: [[people/alice-example]], [[people/bob-example]]
   them. For a typed edge, call `add_link`
   from each traveller's page (in your session's source, see section 1) to the
   trip page with `link_type: attended` and `valid_from` set to that
-  traveller's first departure date, the same direction gbrain uses for
+  traveller's own start date (their earliest item), the same direction gbrain uses for
   meeting attendees. `attended` records an event, and gbrain does not return
   it before that date. Once none of the items a traveller is on is still
   active (all refunded, cancelled or failed), remove that traveller's edge
