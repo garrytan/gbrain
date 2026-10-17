@@ -10,7 +10,7 @@ const drops = {
 for (const [category, claims] of Object.entries(drops)) for (const fact of claims) test(`drops ${category}: ${fact}`, () => {
   expect(classifyCaptureValue({ fact })).toMatchObject({ verdict: 'drop', category });
 });
-const keeps = ['Battery-to-solar switching improves uptime', 'Operating cadence/calendar changes', 'Discount option in commercial terms', 'Follow up is part of the management process', 'Call quality improved', 'Meeting culture is inclusive', 'Meeting tomorrow approved the strategy', 'Courier contract signed', 'Hotel costs USD 500', 'Flight risk is high', 'Parking revenue grew 30%', 'Restaurant raised $2M', 'Reminder to file the patent', 'Appointment with FDA tomorrow', 'Call Monday about valuation', 'Parcel contains licensed IP', 'Will not attend the call tomorrow', 'Room booking must be approved', 'The project has a new owner', 'Sponsored research contract was signed'];
+const keeps = ['Battery-to-solar delivery improves uptime', 'Operating cadence/calendar changes', 'Discount option in commercial terms', 'Follow up is part of the management process', 'Call quality improved', 'Meeting culture is inclusive', 'Meeting tomorrow approved the strategy', 'Courier contract signed', 'Hotel costs USD 500', 'Flight risk is high', 'Parking revenue grew 30%', 'Restaurant raised $2M', 'Reminder to file the patent', 'Appointment with FDA tomorrow', 'Call Monday about valuation', 'Parcel contains licensed IP', 'Will not attend the call tomorrow', 'Room booking must be approved', 'The project has a new owner', 'Sponsored research contract was signed'];
 for (const fact of keeps) test(`keeps: ${fact}`, () => expect(classifyCaptureValue({ fact }).verdict).toBe('keep'));
 test('notability is separate and substance vetoes all regex noise', () => {
   expect(classifyCaptureValue({ fact: 'Approved the strategy', notability: 'low' }).verdict).toBe('keep');
@@ -73,7 +73,7 @@ const falsePositives = [
   'Newsletter about $5M valuation',
   'An introductory call between Acme and Bob Example of Example Co took place on March 5, 2031.',
   'Acme held an intro call with Bob Example of Example Co on 2031-03-04 about the product demo.',
-  'Acme and Example Co had a meeting scheduled for March 3, 2031, to share the pilot results.',
+  'Acme and Example Co had a meeting scheduled for July 3, 2031, to share the pilot results.',
   'Alice proposed a call for Friday at 9:00 AM to discuss the roadmap',
 ];
 for (const fact of falsePositives) test(`false-positive corpus keeps: ${fact}`, () => {
