@@ -271,9 +271,12 @@ approval rules, and the `trips/` page format.
 
 **Optional: typed trip pages.** The `trip` page type (`trips/`) is declared in
 the `gbrain-recommended` schema pack. With the default pack, `trips/` pages are
-stored and searchable as plain pages. To get typed trip pages, ask the user
-first (it changes the active schema for the whole brain), then run
-`gbrain schema use gbrain-recommended`.
+stored and searchable as plain pages. Choosing the schema pack is a setting for
+the brain's operator, and it can apply beyond this brain (every brain that
+reads the same gbrain config). Do not change it yourself: tell the user that
+typed trip pages need `gbrain-recommended`, and leave the change to the
+operator (`gbrain schema use gbrain-recommended` on the brain's host;
+`gbrain schema active` shows the result).
 
 ### Step 4: Verify end to end
 
