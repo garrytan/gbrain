@@ -1,13 +1,26 @@
 /**
  * advisor/collect-stalled-jobs.ts — stuck background work + stale sync.
  *
- * #14: `minion_jobs` may be ABSENT on older/partial brains — the query is
- * wrapped so a missing table yields no finding (never an error). Engine-agnostic
+ * #14: `minion_jobs` may be ABSENT on older/partial brains — a missing table
+ * (or `sources.last_sync_at` column) yields no finding. Any other failure
+ * reports the check as incomplete instead of looking healthy. Engine-agnostic
  * SQL via executeRaw (works on Postgres + PGLite); timestamps compared with
  * `now()` which both engines provide. No PG-only constructs.
  */
 
 import type { AdvisorCollector, AdvisorFinding } from './types.ts';
+import { isMissingSchemaObject } from '../utils.ts';
+
+// The error itself is never reported: it may carry connection details.
+const incomplete = (check: string, what: string): AdvisorFinding => ({
+  id: `collector_incomplete_stalled-jobs:${check}`,
+  severity: 'warn',
+  title: `Advisor check "stalled-jobs" could not verify ${what}.`,
+  detail: 'This report is incomplete. Other findings remain useful; re-run the advisor before concluding the brain is healthy.',
+  fix: { command_argv: null },
+  collector: 'stalled-jobs',
+  ask_user: true,
+});
 
 export const collectStalledJobs: AdvisorCollector = {
   id: 'stalled-jobs',
@@ -38,8 +51,9 @@ export const collectStalledJobs: AdvisorCollector = {
           ask_user: true,
         });
       }
-    } catch {
-      /* minion_jobs absent / engine quirk → no stalled-jobs finding */
+    } catch (err) {
+      // minion_jobs absent on an older brain → nothing to report.
+      if (!isMissingSchemaObject(err, 'table', 'minion_jobs')) findings.push(incomplete('jobs', 'background jobs'));
     }
 
     // Stale federated sources: synced sources that haven't advanced in a week.
@@ -62,8 +76,11 @@ export const collectStalledJobs: AdvisorCollector = {
           ask_user: true,
         });
       }
-    } catch {
-      /* sources table missing last_sync_at on a very old brain → skip */
+    } catch (err) {
+      // sources table or last_sync_at missing on a very old brain → skip.
+      if (!isMissingSchemaObject(err, 'table', 'sources') && !isMissingSchemaObject(err, 'column', 'last_sync_at')) {
+        findings.push(incomplete('sources', 'source sync freshness'));
+      }
     }
 
     return findings;

@@ -13,6 +13,17 @@
 
 import type { AdvisorCollector, AdvisorFinding } from './types.ts';
 
+// The error itself is never reported: it may carry connection details.
+const incomplete = (check: string, what: string): AdvisorFinding => ({
+  id: `collector_incomplete_usage-shape:${check}`,
+  severity: 'warn',
+  title: `Advisor check "usage-shape" could not read ${what}.`,
+  detail: 'This report is incomplete. Other findings remain useful; re-run the advisor before concluding the brain is healthy.',
+  fix: { command_argv: null },
+  collector: 'usage-shape',
+  ask_user: true,
+});
+
 export const collectUsageShape: AdvisorCollector = {
   id: 'usage-shape',
   collect: async (ctx) => {
@@ -23,9 +34,9 @@ export const collectUsageShape: AdvisorCollector = {
       const stats = await ctx.engine.getStats();
       pageCount = stats.page_count;
     } catch {
-      return []; // no stats → empty brain or unreachable; nothing to advise
+      return [incomplete('stats', 'brain stats')]; // unreachable is not the same as empty
     }
-    if (pageCount === 0) return [];
+    if (pageCount === 0) return []; // genuinely empty brain: nothing to advise
 
     try {
       const health = await ctx.engine.getHealth();
@@ -63,7 +74,7 @@ export const collectUsageShape: AdvisorCollector = {
         });
       }
     } catch {
-      /* getHealth unavailable → skip the health-derived findings */
+      findings.push(incomplete('health', 'brain health (embeddings, orphans, dead links)'));
     }
 
     return findings;

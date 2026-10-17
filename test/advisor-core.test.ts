@@ -74,6 +74,20 @@ describe('runAdvisor resilience', () => {
     expect(Array.isArray(report.findings)).toBe(true);
   });
 
+  test('an unreachable engine is reported as incomplete, never as healthy', async () => {
+    const secret = 'postgres://user:hunter2@db.internal:5432/brain';
+    const fail = async () => { throw new Error(`connect ECONNREFUSED ${secret}`); };
+    const engine = { getStats: fail, getHealth: fail, getConfig: fail, executeRaw: fail };
+    const report = await runAdvisor(ctx(engine));
+    const ids = report.findings.map((f) => f.id);
+    expect(ids).toContain('collector_incomplete_usage-shape:stats');
+    expect(ids).toContain('collector_incomplete_stalled-jobs:jobs');
+    expect(ids).toContain('collector_incomplete_stalled-jobs:sources');
+    expect(report.worst).not.toBeNull();
+    expect(renderAdvisorReport(report)).not.toContain('looks healthy');
+    expect(JSON.stringify(report)).not.toContain('hunter2');
+  });
+
   test('drops workspace_dependent findings when remote', async () => {
     const wd = finding({ id: 'wd', workspace_dependent: true });
     // simulate by ranking + the remote filter logic via runAdvisor is internal;
@@ -98,6 +112,24 @@ describe('collect-usage-shape', () => {
     expect(ids).toContain('orphan_pages');
   });
 
+  test('getStats failure → incomplete warning, not an empty-brain pass', async () => {
+    const engine = { getStats: async () => { throw new Error('password authentication failed for user "x"'); } };
+    const out = await collectUsageShape.collect(ctx(engine as never));
+    expect(out.map((f) => [f.id, f.severity, f.fix.command_argv])).toEqual([
+      ['collector_incomplete_usage-shape:stats', 'warn', null],
+    ]);
+    expect(JSON.stringify(out)).not.toContain('password');
+  });
+
+  test('getHealth failure on a non-empty brain → incomplete warning', async () => {
+    const engine = {
+      getStats: async () => ({ page_count: 100, chunk_count: 0, embedded_count: 0, link_count: 0, tag_count: 0, timeline_entry_count: 0, pages_by_type: {} }),
+      getHealth: async () => { throw new Error('statement timeout'); },
+    };
+    const out = await collectUsageShape.collect(ctx(engine as never));
+    expect(out.map((f) => f.id)).toEqual(['collector_incomplete_usage-shape:health']);
+  });
+
   test('empty brain → no findings', async () => {
     const engine = { getStats: async () => ({ page_count: 0, chunk_count: 0, embedded_count: 0, link_count: 0, tag_count: 0, timeline_entry_count: 0, pages_by_type: {} }) };
     expect(await collectUsageShape.collect(ctx(engine as never))).toEqual([]);
@@ -105,9 +137,52 @@ describe('collect-usage-shape', () => {
 });
 
 describe('collect-stalled-jobs', () => {
+  // Fails only the query that reads `table`; every other query returns no rows.
+  function failingOn(table: string, err: unknown) {
+    return {
+      executeRaw: async (sql: string) => {
+        if (new RegExp(`FROM ${table}\\b`).test(sql)) throw err;
+        return [];
+      },
+    };
+  }
+
   test('absent minion_jobs table → no error, no finding', async () => {
-    const engine = { executeRaw: async () => { throw new Error('relation "minion_jobs" does not exist'); } };
+    const engine = failingOn('minion_jobs', new Error('relation "minion_jobs" does not exist'));
     expect(await collectStalledJobs.collect(ctx(engine as never))).toEqual([]);
+  });
+
+  test('old brain without sources.last_sync_at or sources → no finding', async () => {
+    const noColumn = failingOn('sources', Object.assign(new Error('column "last_sync_at" does not exist'), { code: '42703' }));
+    expect(await collectStalledJobs.collect(ctx(noColumn as never))).toEqual([]);
+    const noTable = failingOn('sources', Object.assign(new Error('relation "sources" does not exist'), { code: '42P01' }));
+    expect(await collectStalledJobs.collect(ctx(noTable as never))).toEqual([]);
+  });
+
+  test('unexpected jobs-query failure → incomplete warning without the error text', async () => {
+    const engine = failingOn('minion_jobs', Object.assign(new Error('permission denied for table minion_jobs'), { code: '42501' }));
+    const out = await collectStalledJobs.collect(ctx(engine as never));
+    expect(out.map((f) => [f.id, f.severity, f.fix.command_argv])).toEqual([
+      ['collector_incomplete_stalled-jobs:jobs', 'warn', null],
+    ]);
+    expect(JSON.stringify(out)).not.toContain('permission denied');
+  });
+
+  test('a different missing relation is not mistaken for an old brain', async () => {
+    const engine = failingOn('sources', Object.assign(new Error('relation "sources_v2" does not exist'), { code: '42P01', table_name: 'sources_v2' }));
+    const out = await collectStalledJobs.collect(ctx(engine as never));
+    expect(out.map((f) => f.id)).toEqual(['collector_incomplete_stalled-jobs:sources']);
+  });
+
+  test('a failed sources query keeps the stalled-job findings', async () => {
+    const engine = {
+      executeRaw: async (sql: string) => {
+        if (/FROM minion_jobs\b/.test(sql)) return [{ name: 'embed-backfill', n: 2 }];
+        throw new Error('canceling statement due to statement timeout');
+      },
+    };
+    const out = await collectStalledJobs.collect(ctx(engine as never));
+    expect(out.map((f) => f.id)).toEqual(['stalled_job:embed-backfill', 'collector_incomplete_stalled-jobs:sources']);
   });
 
   test('reports stalled jobs and stale sync', async () => {
