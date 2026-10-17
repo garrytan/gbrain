@@ -12,7 +12,7 @@ writes_to:
   - trips/
   - people/
 # Brain ops (MCP names). Travel tools come from the separate Jinko MCP server.
-tools: [whoami, query, get_page, recall, remember, put_page, add_link, add_timeline_entry]
+tools: [whoami, query, get_page, recall, remember, put_page, add_link, remove_link, add_timeline_entry]
 ---
 
 # Travel Booking: book with the brain's context, file what was booked
@@ -58,9 +58,12 @@ do not divide those.
 ## 1. Before searching: read the brain
 
 **One source for reads and writes.** `put_page`, `add_link` and
-`add_timeline_entry` write to your session's source. On a brain reached over
-remote (OAuth) MCP, `whoami` returns it as `source_id`; on a local brain,
-`gbrain sources current` shows it. In a brain with several sources, pass that
+`add_timeline_entry` write to your session's source. Over remote (OAuth) MCP,
+`whoami` returns it as `source_id`. Over stdio MCP, `whoami` leaves it out:
+read the `gbrain://capabilities` resource, whose `source_id` is this session's
+source (`gbrain sources current` run from your shell resolves on its own and
+can name a different one). Through the `gbrain` CLI, `gbrain sources current`
+shows it. In a brain with several sources, pass that
 `source_id` to every read in this skill (`recall`, `query`, `get_page`): an
 unscoped `query` spans every source you can read, so it can return a trip page
 that lives elsewhere and that you cannot update. The trip page, its links and
@@ -185,7 +188,9 @@ record a trip, don't.
   read again and merge again.
 
 Each booked item carries its own status; the page's `status` describes the trip
-as a whole.
+as a whole. Recompute it on every write: `cancelled` once no item is still
+active (every item is refunded, cancelled or failed, never booked), otherwise
+`booked`. An exchanged item is still active.
 
 ```markdown
 ---
@@ -251,8 +256,11 @@ Travellers: [[people/alice-example]], [[people/bob-example]]
   `untrusted-quoted` fence, as gbrain's ingestion skills do.
 - The `[[people/…]]` wikilinks in the body become mention links to existing
   pages; no typed edge is inferred from them. For a typed edge, call `add_link`
-  from each traveller's page to the trip page with `link_type: attended`, the
-  same direction gbrain uses for meeting attendees.
+  from each traveller's page to the trip page with `link_type: attended` and
+  `valid_from` set to the departure date, the same direction gbrain uses for
+  meeting attendees. `attended` records an event, and gbrain does not return
+  it before that date. When the trip page's `status` becomes `cancelled`,
+  remove these edges with `remove_link` (`link_type: attended`).
 - Add a timeline entry (`add_timeline_entry`: `date` = departure date,
   `summary` = "Trip to Lisbon", `source` = the trip slug) only to a traveller
   page at least as restricted as the trip page: when the trip page is private,
@@ -283,9 +291,7 @@ Travellers: [[people/alice-example]], [[people/bob-example]]
 - After the change completes, update the trip page (read, merge, write with
   `expected_revision`, as in section 4): mark the changed item as exchanged
   (with its new segments), refunded (a void included) or cancelled, with the
-  amount returned. Set the page's `status` to `cancelled` once no item is still
-  active: every item is refunded, cancelled or failed (never booked). An
-  exchanged item is still active.
+  amount returned, and recompute the page's `status` (section 4).
 
 ## Rules that always apply
 
