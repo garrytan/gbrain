@@ -120,8 +120,30 @@ function parseFlags(args: string[]): ParsedFlags {
   let rawBudget: string | undefined;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
-    if (a === '--since') { out.since = parseSinceParam(args[++i] ?? ''); continue; }
-    if (a === '--session' || a === '--session-id') { out.sessionId = args[++i] ?? null; continue; }
+    if (a === '--since') {
+      const raw = args[++i];
+      const since = raw !== undefined && !raw.startsWith('--') ? parseSinceParam(raw) : null;
+      if (!since || !Number.isFinite(since.getTime())) {
+        throw usageError('--since requires a valid date or relative duration.',
+          'Pass a date or duration, e.g. --since "8 hours ago".', {
+            why: 'An invalid explicit time bound must not silently recall an unbounded window.',
+            fix: { argv: ['gbrain', 'recall', '--help'], consent: [], actor: 'agent', why: 'Review accepted recall bounds before retrying.', requires_exclusive: false },
+          });
+      }
+      out.since = since;
+      continue;
+    }
+    if (a === '--session' || a === '--session-id') {
+      const raw = args[++i];
+      if (raw === undefined || raw.trim().length === 0 || raw.startsWith('--')) {
+        throw usageError(`${a} requires a session ID.`, 'Pass the intended session ID after the flag.', {
+          why: 'A missing explicit session bound must not silently recall every session.',
+          fix: { argv: ['gbrain', 'recall', '--help'], consent: [], actor: 'agent', why: 'Review accepted recall bounds before retrying.', requires_exclusive: false },
+        });
+      }
+      out.sessionId = raw;
+      continue;
+    }
     if (a === '--grep') { out.grep = (args[++i] ?? '').toLowerCase(); continue; }
     if (a === '--today') { out.today = true; continue; }
     if (a === '--supersessions') { out.supersessions = true; continue; }
