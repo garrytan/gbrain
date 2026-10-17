@@ -191,7 +191,12 @@ File the trip as soon as `payment_attempt.payment_status` is `authorized` or
 `(booking in progress)` and update the page when `get_trip` shows each one
 booked or failed; mark a failed item `(failed, not booked)`.
 That way a paid booking is in the brain even if the conversation ends before
-it is confirmed.
+it is confirmed. While the payment is `authorized`, write the amount under
+`## Paid` as `(authorized, not yet charged)`; drop that note once it is
+`captured`, or record the authorization as released if it never is. If a
+later conversation brings up a booking that has no trip page (the user paid
+in the browser and left), look it up with `get_booking` or `get_trip` and
+file it then.
 
 A trip starts at its earliest flight departure, hotel check-in or car pick-up,
 and ends at its latest flight arrival, check-out or drop-off.
@@ -299,9 +304,8 @@ Travellers: [[people/alice-example]], [[people/bob-example]]
   meeting attendees. `attended` records an event, and gbrain does not return
   it before that date. Once none of the items a traveller is on is still
   active (all refunded, cancelled or failed), remove that traveller's edge
-  with `remove_link` (`link_type: attended`) and take them off `attendees`
-  and the Travellers line; when the trip's `status` becomes `cancelled`, that
-  is every traveller. If `add_link` refuses `attended` because the active
+  with `remove_link` (`link_type: attended`), and keep them on the page; when
+  the trip's `status` becomes `cancelled`, that is every traveller. If `add_link` refuses `attended` because the active
   schema pack does not declare it, skip these edges and tell the user that
   the travellers are named on the trip page but not linked to it.
 - Do not add timeline entries for a trip to traveller pages: gbrain cannot
