@@ -8,7 +8,7 @@ install_kind: copy-into-host-repo
 requires: []
 secrets:
   - name: JINKO_API_KEY
-    description: Jinko API key (jnk_t_…). The agent mints it itself in Step 1; a user who already has a Jinko account can paste a key instead.
+    description: Jinko API key (jnk_t_…). The agent mints it itself in Step 1; a user who already has a Jinko account saves a key from the dashboard to ~/.jinko/api-key instead (Step 1).
     where: Minted by the agent through agent registration (Step 1), or created at https://dashboard.gojinko.com/developers/keys
 health_checks:
   - type: env_exists
@@ -59,7 +59,7 @@ Jinko travel MCP  https://mcp.builders.gojinko.com/mcp
   └── manage:   get_booking → flight_refund / flight_exchange / hotel_cancel / car_cancel
   ↓
 Agent writes the brain (put_page / add_link / add_timeline_entry)
-  └── trips/<yyyy-mm-dd>-<destination>.md, linked to each traveller's page
+  └── trips/<yyyy-mm-dd>-<destination>-<trip_id>, linked to each traveller's page
 ```
 
 gbrain never calls Jinko. The agent calls both: the brain for context and the
@@ -197,8 +197,17 @@ curl -s -o /dev/null -w '%{http_code}\n' -H "X-API-Key: $KEY" \
 key was accepted. The REST API takes the key as `X-API-Key`; the MCP server
 takes the same key as `Authorization: Bearer`.
 
-**If the user already has a Jinko account**, skip 1a and 1b: ask them for a key
-from https://dashboard.gojinko.com/developers/keys and continue at 1c.
+**If the user already has a Jinko account**, skip 1a and 1b. Do not ask for
+the key in the conversation: a key pasted there stays in the transcript. Ask
+the user to create one at https://dashboard.gojinko.com/developers/keys and
+save it themselves, in their own terminal, with:
+
+```bash
+mkdir -p "$HOME/.jinko" && chmod 700 "$HOME/.jinko"
+(umask 077; printf 'Jinko API key: '; read -rs K; printf '%s' "$K" > "$HOME/.jinko/api-key"); echo
+```
+
+Then continue at 1c.
 
 **STOP until the key validates.**
 
@@ -335,7 +344,7 @@ claim a second one: use a key from their existing organization instead (Step 1,
 - **`claim_required` from `get_api_key`:** this Jinko environment requires the
   organization to be claimed before it issues keys. Do Step 5 first, then
   re-run 1b.
-- **`401` from the travel MCP:** the key is wrong, revoked, or was pasted with
+- **`401` from the travel MCP:** the key is wrong, revoked, or was saved with
   whitespace. Mint or create a new one.
 - **`402`:** the account has no allowance left. Tell the user and do not
   retry; the key stays valid.

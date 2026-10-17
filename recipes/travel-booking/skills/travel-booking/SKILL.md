@@ -166,7 +166,8 @@ show the alternatives it returns and let the user choose.
 
 File the trip as soon as `payment_attempt.payment_status` is `authorized` or
 `captured`, even if some items are still being booked: mark those items
-`(booking in progress)` and update the page when `get_trip` shows them done.
+`(booking in progress)` and update the page when `get_trip` shows each one
+booked or failed; mark a failed item `(failed, not booked)`.
 That way a paid booking is in the brain even if the conversation ends before
 it is confirmed.
 
@@ -283,8 +284,8 @@ Travellers: [[people/alice-example]], [[people/bob-example]]
   `expected_revision`, as in section 4): mark the changed item as exchanged
   (with its new segments), refunded (a void included) or cancelled, with the
   amount returned. Set the page's `status` to `cancelled` once no item is still
-  active: every item is refunded or cancelled. An exchanged item is still
-  active.
+  active: every item is refunded, cancelled or failed (never booked). An
+  exchanged item is still active.
 
 ## Rules that always apply
 
