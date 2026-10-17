@@ -127,10 +127,9 @@ export async function computeQueueHealthCheck(
     // Read the live-worker registry unconditionally (was: only when old
     // embed-backfill rows existed) — the structured `details.worker_alive`
     // below needs it on every run. Cheap: one directory enumeration.
-    const workers = opts.readWorkers
-      ? opts.readWorkers()
-      : (await import('../../../core/minions/worker-registry.ts')).readWorkers();
-    const liveWorkerQueues = new Set(workers.map((w) => w.queue));
+    // An unreadable registry means liveness is unknown (null), never "no
+    // worker" — the same rule wedged_queue applies below.
+    const liveWorkerQueues = await readLiveWorkerQueues(opts.readWorkers);
 
     // Minions-visibility wave: structured details so machine callers stop
     // parsing prose. depth = total waiting jobs; oldest_age_seconds = age of
@@ -164,7 +163,7 @@ export async function computeQueueHealthCheck(
         },
         null,
       ),
-      worker_alive: waitingByQueue.every((r) => liveWorkerQueues.has(r.queue)),
+      worker_alive: liveWorkerQueues === null ? null : waitingByQueue.every((r) => liveWorkerQueues.has(r.queue)),
     };
 
     const problems: string[] = [];
@@ -187,8 +186,15 @@ export async function computeQueueHealthCheck(
       );
     }
     for (const row of oldWaitingRows) {
-      if (liveWorkerQueues.has(row.queue)) continue;
+      if (liveWorkerQueues?.has(row.queue)) continue;
       const hours = Math.max(1, Math.round(Number(row.oldest_age_seconds ?? 0) / 3600));
+      if (liveWorkerQueues === null) {
+        problems.push(
+          `${row.depth} ${row.name} job(s) have waited on queue '${row.queue}' for up to ${hours}h; ` +
+          `the worker registry is unreadable, so worker liveness is unknown.`
+        );
+        continue;
+      }
       problems.push(
         `${row.depth} ${row.name} job(s) have waited on queue '${row.queue}' for up to ${hours}h ` +
         `and no live worker is registered for that queue. ` +
@@ -289,7 +295,9 @@ export async function computeQueueHealthCheck(
         details,
       };
     }
-    const noWorkerQueue = oldWaitingRows.find(r => !liveWorkerQueues.has(r.queue))?.queue;
+    const noWorkerQueue = liveWorkerQueues === null
+      ? undefined
+      : oldWaitingRows.find(r => !liveWorkerQueues.has(r.queue))?.queue;
     return {
       name: 'queue_health',
       status: 'warn',
@@ -301,6 +309,18 @@ export async function computeQueueHealthCheck(
     };
   } catch (e) {
     return checkError('queue_health', 'scan queue health', e);
+  }
+}
+
+/** Queues with a live registered worker, or null when the registry cannot be read. */
+async function readLiveWorkerQueues(readWorkers?: () => Array<{ queue: string }>): Promise<Set<string> | null> {
+  try {
+    const workers = readWorkers
+      ? readWorkers()
+      : (await import('../../../core/minions/worker-registry.ts')).readWorkers();
+    return new Set(workers.map((w) => w.queue));
+  } catch {
+    return null;
   }
 }
 
