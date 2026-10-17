@@ -14,6 +14,8 @@ import { derivedWriteTrust } from './taint.ts';
 import { storedTrustTier, type TaintInput, type TrustTier } from './tier.ts';
 import { derivedGateConfig, derivedGateInput, recordTimelineFlag, timelineRowAllowed } from './derived-gate.ts';
 import { assessTimelineForGate } from '../write-gate.ts';
+import { RetryAbortError } from '../retry.ts';
+import { throwIfAborted } from '../abort-check.ts';
 
 const CHANNEL = 'derive:timeline';
 
@@ -50,21 +52,52 @@ export async function addProjectedTimelineBatch(engine: BrainEngine, rows: Timel
       const count = await tx.addTimelineEntriesBatch(kept.map(r => r.row), opts);
       for (const r of kept) await recordTimelineFlag(tx, r.assessment, r.row);
       return count;
-    }, trust);
+    }, trust, { signal: opts?.signal });
   }
   return inserted;
 }
 
+/** A cancellation unwinds to the caller; it is never a refused row. */
+const cancelled = (err: unknown, signal?: AbortSignal) => !!signal?.aborted || err instanceof RetryAbortError;
+
+/**
+ * One page's own timeline rows as one projected batch, so a page costs a fixed
+ * number of round trips whatever its timeline length. A batch the database
+ * refuses (one bad row fails the whole statement) is retried row by row, so the
+ * page's other rows still land. `opts.signal` cancels the batch and the row
+ * retry alike: an aborted signal rethrows instead of starting or continuing the
+ * row retry, and each row write carries it. Returns the rows inserted.
+ */
+export async function addProjectedTimelinePage(engine: BrainEngine, rows: TimelineBatchInput[], opts?: BatchOpts): Promise<number> {
+  const signal = opts?.signal;
+  try {
+    return await addProjectedTimelineBatch(engine, rows, opts);
+  } catch (err) {
+    if (cancelled(err, signal)) throw err;
+    let inserted = 0;
+    for (const { slug, source_id, date, source, summary, detail } of rows) {
+      throwIfAborted(signal, 'timeline row retry');
+      try {
+        if (await addProjectedTimelineEntry(engine, slug, { date, source, summary, detail }, { sourceId: source_id ?? 'default', signal })) inserted++;
+      } catch (rowErr) {
+        if (cancelled(rowErr, signal)) throw rowErr;
+        /* the refused row */
+      }
+    }
+    return inserted;
+  }
+}
+
 /** addTimelineEntry for one row of `slug`'s own timeline, stamped with the page's tier. */
 export async function addProjectedTimelineEntry(engine: BrainEngine, slug: string,
-  entry: TimelineInput, opts?: { sourceId?: string }): Promise<boolean> {
+  entry: TimelineInput, opts?: { sourceId?: string; signal?: AbortSignal }): Promise<boolean> {
   const input = (await pageInputs(engine, [{ source_id: opts?.sourceId ?? 'default', slug }])).get(`${opts?.sourceId ?? 'default'}:${slug}`);
   const trust = derivedWriteTrust({ channel: CHANNEL, inputs: input ? [input] : [], projection: true });
   const assessment = assessTimelineForGate(entry, derivedGateInput(trust), await derivedGateConfig(engine));
   if (!timelineRowAllowed(assessment)) return false;
   return maintenanceTransaction(engine, async tx => {
-    const added = await tx.addTimelineEntry(slug, entry, opts); // gbrain-allow-direct-insert: gbrain extract single-row fallback for timeline entries, stamped with the page tier
+    const added = await tx.addTimelineEntry(slug, entry, { sourceId: opts?.sourceId }); // gbrain-allow-direct-insert: gbrain extract single-row fallback for timeline entries, stamped with the page tier
     if (added) await recordTimelineFlag(tx, assessment, { slug, source_id: opts?.sourceId, date: entry.date, summary: entry.summary, source: entry.source });
     return added;
-  }, trust);
+  }, trust, { signal: opts?.signal });
 }

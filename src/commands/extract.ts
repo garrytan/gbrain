@@ -72,7 +72,7 @@ import { PageRegexBudget } from '../core/schema-pack/redos-guard.ts';
 export { extractTimelineFromContent, type ExtractedTimelineEntry } from '../core/timeline-extract.ts';
 import { extractTimelineFromContent, pruneTimelineOrphans, retractRemovedTimelineEntries, segmentedTimelineText, type ExtractedTimelineEntry } from '../core/timeline-extract.ts';
 import { managedPersistenceEnabled } from '../core/persistence/ownership.ts';
-import { addProjectedTimelineBatch, addProjectedTimelineEntry } from '../core/trust/timeline-projection.ts';
+import { addProjectedTimelineBatch, addProjectedTimelinePage } from '../core/trust/timeline-projection.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import { pathToSlug, slugifyPath, slugifySegment, pruneDir, isSyncable } from '../core/sync.ts';
@@ -1771,10 +1771,6 @@ export async function extractTimelineForSlugs(
   // Real-path resolution, same as extractLinksForSlugs. Both halves come off
   // one `links_extracted_at` stamp, so both must agree on what was read.
   const slugToPath = buildSlugPathIndex(walkMarkdownFiles(repoPath));
-  // v0.18.0+ multi-source: source-qualify so timeline rows don't fan out
-  // across every source containing the slug (the addTimelineEntry's
-  // INSERT...SELECT-from-pages fan-out was Data R1's HIGH 2).
-  const entryOpts = opts?.sourceId ? { sourceId: opts.sourceId } : undefined;
   const quarantined = await quarantinedSlugs(engine, opts?.sourceId ?? 'default');
   let created = 0;
   const processed: string[] = [];
@@ -1789,9 +1785,8 @@ export async function extractTimelineForSlugs(
       const entries = extractTimelineFromContent(content, slug);
       await retractRemovedTimelineEntries(engine, slug, opts?.sourceId ?? 'default', content);
       processed.push(slug);
-      for (const entry of entries) {
-        try { await addProjectedTimelineEntry(engine, entry.slug, { date: entry.date, source: entry.source, summary: entry.summary, detail: entry.detail }, entryOpts); created++; } catch { /* skip */ }
-      }
+      // Source-qualified so the rows land on this source's page only (Data R1's HIGH 2).
+      created += await addProjectedTimelinePage(engine, entries.map(e => ({ ...e, source_id: opts?.sourceId ?? 'default' })), { auditSite: 'extract.timeline_inc' });
     } catch (e) { errors.push({ slug, error: e instanceof Error ? e.message : String(e) }); }
   }
   return { created, processed, ...(errors.length ? { errors } : {}) };
