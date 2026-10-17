@@ -20,6 +20,7 @@ import type { TrustTier } from '../trust/tier.ts';
 import { EXTERNAL_DATA_RULE, needsDataEnvelope, trustAttributes } from '../eligibility/labels.ts';
 import { hybridSearch } from '../search/hybrid.ts';
 import { INTERNAL_BREADTH_SEARCH_OPTS } from '../search/internal-breadth.ts';
+import { resolveHardExcludes } from '../search/source-boost.ts';
 import { boundedProjectedPrefix } from '../page-window/document.ts';
 import { overlaidBoundedRows, pageLeadSource } from '../page-window/bounded-lead.ts';
 import type { Page, SearchResult } from '../types.ts';
@@ -178,6 +179,7 @@ export async function runGather(
       ...(window.startMs !== null ? { effective_after: new Date(window.startMs).toISOString() } : {}),
       ...(window.endMs !== null ? { effective_before: new Date(window.endMs).toISOString() } : {}),
       limit: 50, ...pageScope,
+      excludeSlugPrefixes: resolveHardExcludes(),
     }).then(async pages => {
       const leads = await visibleLeads(pages);
       return pages.map((page, rank) => toSearchResult(page, rank, leads[rank]!));
