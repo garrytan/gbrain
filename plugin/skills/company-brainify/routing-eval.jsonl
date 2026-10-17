@@ -1,0 +1,15 @@
+// Routing eval fixtures for skills/company-brainify. Each positive intent
+// contains at least one trigger substring from the frontmatter.
+{"intent": "stand up a company brain from my personal brain for the whole team", "expected_skill": "company-brainify"}
+{"intent": "sanitize the brain so I can onboard new teammates to the repo", "expected_skill": "company-brainify"}
+{"intent": "scrub employee data — comp, ratings, performance notes — before we share it", "expected_skill": "company-brainify"}
+{"intent": "brainify this into a team brain the engineers can mount", "expected_skill": "company-brainify"}
+{"intent": "audit the shared brain for sensitive content that shouldn't be in there", "expected_skill": "company-brainify"}
+// Ambiguous case vs the nearest skill: whole-brain team sharing routes here,
+// but "share" language overlaps publish's per-page triggers.
+{"intent": "can you share my brain with the team so they can mount it", "expected_skill": "company-brainify", "ambiguous_with": ["publish"]}
+// Negative cases: per-page outbound sharing is publish, not brainify; a bare
+// destructive intent with no sanitization workflow routes to data-loss-gate.
+{"intent": "share this page as a password-protected link", "expected_skill": "publish"}
+{"intent": "purge the old media cache to free up space", "expected_skill": "data-loss-gate"}
+{"intent": "what's on my calendar for tomorrow", "expected_skill": null}

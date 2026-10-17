@@ -1,0 +1,15 @@
+// Routing eval fixtures for skills/book-mirror. Each intent contains
+// at least one trigger string as substring (structural matcher
+// requirement) while still paraphrasing real user phrasing.
+// Adversarial cases at the bottom guard the media-ingest <-> book-mirror
+// routing regression flagged by R1 + R2 (IRON RULE).
+{"intent":"Please make a personalized version of this book using the brain context","expected_skill":"book-mirror"}
+{"intent":"Mirror this book — left column the chapters, right column my actual life","expected_skill":"book-mirror"}
+{"intent":"Run a two-column book analysis with brain context","expected_skill":"book-mirror"}
+{"intent":"Apply this book to my life — chapter-by-chapter mapping to the brain","expected_skill":"book-mirror"}
+{"intent":"How does this book apply to me — produce a personalized version","expected_skill":"book-mirror"}
+// Adversarial: phrasing that pattern-matches media-ingest. IRON RULE:
+// book-mirror should NOT win on these — they're generic ingest.
+{"intent":"Process this book and ingest it into my brain","expected_skill":"media-ingest","ambiguous_with":["book-mirror"]}
+{"intent":"Ingest this PDF book and extract the entities","expected_skill":"media-ingest","ambiguous_with":["book-mirror"]}
+{"intent":"Just summarize this book — I don't need it personalized to me","expected_skill":"media-ingest","ambiguous_with":["book-mirror"]}

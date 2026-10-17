@@ -1,0 +1,10 @@
+// Routing eval fixtures for skills/idea-lineage. Positive cases exercise
+// single-idea conceptual lineage. Negative cases protect adjacent
+// concept-synthesis and trajectory surfaces.
+{"intent":"Run idea lineage on founder-led sales and show the earliest version","expected_skill":"idea-lineage"}
+{"intent":"Show how my thinking about compounding trust changed over time","expected_skill":"idea-lineage"}
+{"intent":"What is my current version of the invisible college idea?","expected_skill":"idea-lineage"}
+{"intent":"Where did this idea come from in my notes, and what did I abandon?","expected_skill":"idea-lineage"}
+{"intent":"Show reversals in my thinking about founder-led sales","expected_skill":"idea-lineage"}
+{"intent":"How has acme-example MRR trended since January?","expected_skill":null}
+{"intent":"Build my intellectual map across all my recurring frameworks","expected_skill":"concept-synthesis"}

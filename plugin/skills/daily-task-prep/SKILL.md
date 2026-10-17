@@ -1,0 +1,69 @@
+---
+name: daily-task-prep
+version: 1.0.0
+description: |
+  Morning preparation. Calendar lookahead, meeting context loading, open threads
+  from yesterday, active task review. Extends briefing with actionable prep.
+triggers:
+  - "morning prep"
+  - "prepare for today"
+  - "what's on my plate"
+  - "day prep"
+tools:
+  - search
+  - query
+  - get_page
+  - list_pages
+  - get_timeline
+mutating: false
+when_to_use: "Use when the user asks: \"morning prep\", \"prepare for today\", \"what's on my plate\", \"day prep\"."
+---
+
+# Daily Task Prep
+
+## Contract
+
+This skill guarantees:
+- Calendar/meetings for today are loaded with brain context per attendee
+- Open threads from yesterday are surfaced
+- Active tasks reviewed with priority ordering
+- Prep briefing is actionable (not just informational)
+
+## Phases
+
+1. **Load calendar.** Check today's meetings. For each: load attendee brain pages, recent timeline, open threads.
+2. **Check yesterday's threads.** When google sources exist, `gbrain waiting --json` is the real data source for open threads and unanswered items — prefer it over prose heuristics (it carries loop rows with counterparty, due date, and evidence; see `skills/google-loops/SKILL.md`). Otherwise, search brain for yesterday's timeline entries. Flag anything unresolved.
+3. **Review active tasks.** Load `ops/tasks` from brain. Surface P0 and P1 items.
+4. **Compile prep briefing.** Per-meeting context cards + open threads + task priorities.
+
+## Output Format
+
+```
+Morning Prep — {date}
+======================
+Meetings today: {N}
+
+## {Meeting 1 title} at {time}
+Attendees: {names with brain context}
+Context: {recent interactions, open threads}
+Prep: {what to know before this meeting}
+
+## Open Threads
+- {thread from yesterday, with context}
+
+## Tasks (P0-P1)
+- {task with priority}
+```
+
+## When it fails
+
+Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) for any gbrain error `code`, exit code, `[AGENT]` block or notice block. Specific to this skill:
+
+- `gbrain waiting` refuses on stale data: run (or ask the user to run) the sync it names, then retry; do not prep from stale mail.
+- Meeting-context searches return nothing with a degraded notice: say the brain is searching keywords only right now, instead of "no prior context".
+
+## Anti-Patterns
+
+- Listing meetings without loading attendee context from brain
+- Ignoring yesterday's unresolved threads
+- Presenting tasks without priority ordering

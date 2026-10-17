@@ -1,0 +1,10 @@
+// Routing eval fixtures for skills/postgres-adopt. Each intent
+// includes at least one trigger string as substring.
+{"intent":"which gbrain engine is this brain running on","expected_skill":"postgres-adopt"}
+{"intent":"is my brain pglite or postgres right now","expected_skill":"postgres-adopt"}
+{"intent":"show me gbrain engine status for this machine","expected_skill":"postgres-adopt"}
+{"intent":"I want to upgrade to postgres for the brain","expected_skill":"postgres-adopt"}
+{"intent":"switch gbrain to postgres, we have three agents now","expected_skill":"postgres-adopt"}
+{"intent":"install postgres for gbrain on this box","expected_skill":"postgres-adopt"}
+{"intent":"move my brain to supabase, it hit 5000 pages","expected_skill":"postgres-adopt"}
+{"intent":"set up postgres for the brain instead of the local file engine","expected_skill":"postgres-adopt"}
