@@ -1,3 +1,5 @@
+import { isValidSourceId } from '../core/source-id.ts';
+import { opError } from '../core/ops/contract.ts';
 /**
  * gbrain sources — manage multi-source brain configuration (v0.18.0).
  *
@@ -77,13 +79,11 @@ import { pullStrategyOf } from '../core/git-remote.ts';
 
 // ── Validation ──────────────────────────────────────────────
 
-// Shared with source-resolver.ts — canonical shape.
-const SOURCE_ID_RE = /^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/;
-
 function validateSourceId(id: string): void {
-  if (!SOURCE_ID_RE.test(id)) {
-    throw new Error(
-      `Invalid source id "${id}". Must be 1-32 lowercase alnum chars with optional interior hyphens (e.g. "wiki", "yc-media").`,
+  if (!isValidSourceId(id)) {
+    throw opError(
+      'invalid_params', `Invalid source id "${id}".`,
+      'Use 1–32 lowercase alphanumeric characters with optional interior hyphens; for example: gbrain sources attach example-source.',
     );
   }
 }
