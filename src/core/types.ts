@@ -349,6 +349,8 @@ export interface PageFilters {
    * queries to a tier directory without loading every page into memory.
    */
   slugPrefix?: string;
+  /** Literal slug prefixes to omit before ordering/pagination. Opt-in: ordinary listings remain unrestricted. */
+  excludeSlugPrefixes?: string[];
   /**
    * v0.26.5: include soft-deleted pages (rows with `deleted_at IS NOT NULL`).
    * Default false: hides soft-deleted pages from `list_pages` so agents see the
