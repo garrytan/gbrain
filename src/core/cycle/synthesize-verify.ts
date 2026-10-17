@@ -700,6 +700,10 @@ export function groundQuote(inner: string, t: GroundedTranscript): GroundResult 
   return groundQuoteSpan(inner, t, true);
 }
 
+function sourceCodePointEnd(content: string, lastStart: number): number {
+  return lastStart + (content.codePointAt(lastStart)! > 0xffff ? 2 : 1);
+}
+
 function groundQuoteSpan(inner: string, t: GroundedTranscript, near: boolean): GroundResult {
   let crossed = false;
 
@@ -722,8 +726,9 @@ function groundQuoteSpan(inner: string, t: GroundedTranscript, near: boolean): G
     const endIdx = t.map[pos + q.norm.length - 1];
     // Defensive: a map hole must never become a "verbatim" repair.
     if (start === undefined || endIdx === undefined) continue;
-    if (crossesTurn(t.turns, start, endIdx + 1)) crossed = true;
-    else normalized.push([start, endIdx + 1]);
+    const end = sourceCodePointEnd(t.content, endIdx);
+    if (crossesTurn(t.turns, start, end)) crossed = true;
+    else normalized.push([start, end]);
   }
   if (normalized.length) {
     const [start, end] = normalized[0];
@@ -798,7 +803,7 @@ function groundQuoteSpan(inner: string, t: GroundedTranscript, near: boolean): G
   const oFirst = t.map[tokens[0].start];
   const oLast = t.map[tokens[tokens.length - 1].end - 1];
   if (oFirst === undefined || oLast === undefined) return none;
-  let a = oFirst, b = oLast + 1;
+  let a = oFirst, b = sourceCodePointEnd(t.content, oLast);
   const innerTrim = inner.trim();
   if (!PUNCT_EDGE.test(innerTrim[0] ?? '')) while (a < b && PUNCT_EDGE.test(t.content[a])) a++;
   if (!PUNCT_EDGE.test(innerTrim[innerTrim.length - 1] ?? '')) while (b > a && PUNCT_EDGE.test(t.content[b - 1])) b--;
