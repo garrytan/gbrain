@@ -459,11 +459,18 @@ export async function listFactsKeyset(
   exec: LegacyUnscopedRead,
   source_id: string,
   after: { createdAt: string; id: number | null } | null,
-  opts?: FactListOpts,
+  opts?: FactListOpts & { entitySlug?: string; sessionId?: string },
 ): Promise<FactRow[]> {
   const limit = clampSearchLimit(opts?.limit, 50, MAX_SEARCH_LIMIT);
   const activeOnly = opts?.activeOnly !== false;
   const visibility = (opts?.visibility && opts.visibility.length > 0) ? opts.visibility : null;
+  // `recall --since-last-run` pages its cursor through this keyset, so it
+  // needs the same pre-LIMIT filters as its listFactsSince arms. All opt-in:
+  // delta passes none of them and its query is unchanged.
+  const entitySlug = opts?.entitySlug ?? null;
+  const sessionId = opts?.sessionId ?? null;
+  const excludeAuditRows = opts?.excludeAuditRows === true;
+  const grepPat = grepPattern(opts);
   const afterCondition = after === null
     ? sqlFragment``
     : after.id === null
@@ -475,8 +482,12 @@ export async function listFactsKeyset(
     FROM facts
     WHERE source_id = ${source_id}
       ${afterCondition}
+      ${entitySlug ? sqlFragment`AND entity_slug = ${entitySlug}` : sqlFragment``}
+      ${sessionId ? sqlFragment`AND source_session = ${sessionId}` : sqlFragment``}
       ${activeOnly ? sqlFragment`AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now())` : sqlFragment``}
-      ${visibility ? sqlFragment`AND visibility = ANY(${visibility}::text[])` : sqlFragment``}${privacyClause(opts)}${eligibilityClause(opts)}
+      ${visibility ? sqlFragment`AND visibility = ANY(${visibility}::text[])` : sqlFragment``}${privacyClause(opts)}
+      ${excludeAuditRows ? sqlFragment`AND source != ALL(${AUDIT_ROW_SOURCES}::text[])` : sqlFragment``}
+      ${grepPat ? sqlFragment`AND fact ILIKE ${grepPat} ESCAPE '\\'` : sqlFragment``}${eligibilityClause(opts)}
     ORDER BY created_at ASC, id ASC
     LIMIT ${limit}
   `)).rows;

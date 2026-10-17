@@ -2265,7 +2265,7 @@ export class PostgresEngine implements BrainEngine {
   async listFactsKeyset(
     source_id: string,
     after: { createdAt: string; id: number | null } | null,
-    opts?: FactListOpts,
+    opts?: FactListOpts & { entitySlug?: string; sessionId?: string },
   ): Promise<FactRow[]> {
     return factsImpl.listFactsKeyset(unscopedExecutor(this.engineSql, 'facts: unscoped on master (EO4 inventory)'), source_id, after, opts);
   }
