@@ -235,7 +235,9 @@ Home routing is experimental: an earlier broader home-company variant misrouted
 and inspect examples before enabling it. Add `company` to specific_types only
 if company counterparties should qualify. A home name may be mentioned, but a
 home-subject decision (`rejected`, `declined`, `chose`, `selected`, `decided`,
-optionally after `has`/`had`) stays on the home page. Analysis tokens
+optionally after `has`/`had`) stays on the home page. This includes
+possessive board/team subjects (`Acme Example’s board rejected …`) and
+first-person decisions (`We rejected/declined/chose …`) on home pages. Analysis tokens
 (comparable/comparables, comps, competitor/competitors, benchmark/benchmarks,
 positioning, valuation, our strategy, board member, reports directly, headcount,
 portfolio company) also veto routing. All other ambiguity, identity, visibility

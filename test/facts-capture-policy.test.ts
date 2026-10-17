@@ -117,9 +117,9 @@ for (const fact of [
   'The offered credit requires no personal guarantee',
 ]) test(`unsupported frames stay: ${fact}`, () => expect(classifyCaptureValue({ fact }).verdict).toBe('keep'));
 for (const fact of [
-  'The signed contract is awaiting a signature copy',
-  'The billing address change was approved by the board',
-  'The next action is to review the $5M investment',
+  'The courier is delayed for the signed contract',
+  'The flight is booked for the approved project',
+  'Reminder to send the $5M investment',
 ]) test(`substance veto: ${fact}`, () => expect(classifyCaptureValue({ fact }).verdict).toBe('keep'));
 const homeRoute = (fact: string, d = deps()) => chooseSpecificEntity({ fact, slug: broad,
   broadNames: ['Acme Example'], homeEntities: [broad], specificTypes: ['company', 'person', 'project', 'deal'] }, d);
@@ -145,3 +145,11 @@ test('cap diagnostic has a message without an upstream message', async () => {
   const { writeFailureDiagnostic } = await import('../src/core/persistence/verb-errors.ts');
   expect(writeFailureDiagnostic('facts_page_cap').message).toBeTruthy();
 });
+
+for (const subject of ["Acme Example's board", "Acme Example’s team", 'We']) {
+  for (const verb of ['rejected', 'declined', 'chose']) {
+    test(`home decision subject stays: ${subject} ${verb}`, async () => {
+      expect(await homeRoute(`${subject} ${verb} Northstar Example`)).toMatchObject({ rerouted: false, reason: 'home_decision' });
+    });
+  }
+}

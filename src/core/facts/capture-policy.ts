@@ -77,11 +77,13 @@ export async function chooseSpecificEntity(input: RoutingInput, deps: RoutingDep
   const normalize = (value: string) => value.normalize('NFKC').toLowerCase()
     .replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
   const claim = ` ${normalize(input.fact)} `;
-  if (home && names.some(name => {
+  const decision = /^(?:we)\s+(?:have\s+|had\s+)?(?:rejected|declined|chose|selected|decided)\b/i;
+  const sentences = input.fact.split(/[.!?]\s+/).map(normalize);
+  if (home && (sentences.some(sentence => decision.test(sentence)) || names.some(name => {
     const subject = normalize(name);
-    return subject && input.fact.split(/[.!?]\s+/).some(sentence =>
-      new RegExp(`^${subject}\\s+(?:has\\s+|had\\s+)?(?:rejected|declined|chose|selected|decided)\\b`, 'i').test(normalize(sentence)));
-  })) return stay('home_decision');
+    return subject && sentences.some(sentence =>
+      new RegExp(`^${subject}\\s+(?:s\\s+(?:board|team)\\s+)?(?:has\\s+|had\\s+)?(?:rejected|declined|chose|selected|decided)\\b`, 'i').test(sentence));
+  }))) return stay('home_decision');
   if (!home && names.some(name => normalize(name) && claim.includes(` ${normalize(name)} `))) return stay('broad_mentioned');
   if (/\b(?:[\p{L}]+(?:\s+[\p{L}]+)*['’]s|her|his|their)\s+(?:company|startup|firm)\b/iu.test(input.fact)) return stay('possessive_broad');
   const candidates = [

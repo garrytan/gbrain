@@ -839,15 +839,15 @@ other operations to get around it.
   real credential reached the brain, rotate it, then follow
   ["If a secret reached the brain"](../../SECURITY.md#if-a-secret-reached-the-brain).
 
+<a id="facts-page-cap"></a>
+
+## Facts page cap
+
+`facts_page_cap` is a terminal append refusal. Inspect the named page, archive rows or increase `facts.page_cap.max_rows`, then retry with a new request id. Automatic extraction counts capped appends without creating DB-only copies.
+
 ## Related
 
 - [Concurrent writes and durable receipts](concurrent-writes.md) — receipt states, retries, capacity limits
 - [Repair residual damage](repair.md) — `gbrain repair` for history, visibility and safe-chunk damage
 - [Multi-source brains](multi-source-brains.md) — sources, slug-root mode and write-through
 - [Topologies](../architecture/topologies.md) — the writer administration procedure behind self-transfer
-
-<a id="facts-page-cap"></a>
-
-### Facts page cap
-
-`facts_page_cap` is a terminal append refusal. Inspect the named page, archive rows or increase `facts.page_cap.max_rows`, then retry with a new request id. Automatic extraction counts capped appends without creating DB-only copies.
