@@ -1,6 +1,7 @@
 import type { GBrainConfig } from '../core/config.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { loadConfig, loadConfigWithEngine } from '../core/config.ts';
+import { warnLegacyModelPin } from './config/model-pin-warning.ts';
 import {
   getEmbeddingColumnRegistry,
   validateColumnKey,
@@ -1437,10 +1438,9 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     }
 
     await setConfigWithDecideHooks(engine, key, value, forceFlag);
-    // v0.36.x #892: redact sensitive values in confirmation output. API
-    // keys / tokens / passwords are commonly set from terminals with
-    // scrollback; echoing the raw value to stderr leaks the secret.
+    // #892: keep credentials out of confirmation output and scrollback.
     console.log(`Set ${key} = ${redactConfigValue(key, value)}`);
+    warnLegacyModelPin(key);
     if (key === 'facts.default_visibility') await restampVisibilityPosture(value);
 
     // v0.40.3.0 (D3 + Phase 2B): mode-switch UX. Fires only on
