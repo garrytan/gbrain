@@ -73,6 +73,7 @@ function stamps(version: string): Record<string, string> {
     'openclaw.plugin.json': json('openclaw-fixture'),
     '.codex-plugin/plugin.json': json('codex-fixture'),
     '.claude-plugin/plugin.json': json('claude-fixture'),
+    '.cursor-plugin/plugin.json': json('cursor-fixture'),
     'BOOTSTRAP_FOR_AGENTS.md': `<!-- gbrain-runbook-stamp: ${version} -->\n# Bootstrap\n`,
   };
 }

@@ -70,7 +70,7 @@ describe('every stdio registration path builds from REGISTRATION_SURFACE', () =>
       const ok = spawnSync('bun', ['run', join(ROOT, 'scripts/generate-plugin-tree.ts'), '--out', join(out, 'plugin')], { encoding: 'utf8', timeout: 60_000 });
       expect(ok.status, ok.stderr).toBe(0);
       expect(readFileSync(join(out, 'plugin', 'README.md'), 'utf8')).toContain(`gbrain serve --surface ${REGISTRATION_SURFACE}`);
-      for (const file of ['.codex-plugin/mcp.json', '.claude-plugin/plugin.json']) {
+      for (const file of ['.codex-plugin/mcp.json', '.claude-plugin/plugin.json', '.cursor-plugin/plugin.json']) {
         const args = (JSON.parse(readFileSync(join(ROOT, file), 'utf8')) as { mcpServers: { gbrain: { args: string[] } } }).mcpServers.gbrain.args;
         expect(args[args.indexOf('--surface') + 1]).toBe(REGISTRATION_SURFACE);
       }
@@ -85,11 +85,14 @@ describe('every stdio registration path builds from REGISTRATION_SURFACE', () =>
       writeFileSync(join(root, 'skills', 'manifest.json'), JSON.stringify({ skills: [{ name: 'alpha' }] }));
       writeFileSync(join(root, 'skills', 'plugin-lanes.json'), JSON.stringify({ starter_policy: 'x', additions: {}, base_exclusions: {}, not_added: {}, starter_gaps: {} }));
       writeFileSync(join(root, '.codex-plugin', 'mcp.json'), JSON.stringify({ mcpServers: { gbrain: { command: 'x', args: ['serve', '--surface', 'starter'] } } }));
+      mkdirSync(join(root, '.cursor-plugin'), { recursive: true });
+      writeFileSync(join(root, '.cursor-plugin', 'plugin.json'), JSON.stringify({ name: 'fixture', mcpServers: { gbrain: { command: 'x', args: ['serve', '--surface', 'verbs'] } } }));
       const bad = spawnSync('bun', ['run', join(ROOT, 'scripts/generate-plugin-tree.ts'), '--out', join(root, 'out')], {
         encoding: 'utf8', timeout: 60_000, env: { ...process.env, GBRAIN_PLUGIN_TREE_ROOT: root },
       });
       expect(bad.status).toBe(1);
       expect(bad.stderr).toContain(`.codex-plugin/mcp.json pins --surface starter; plugin lanes serve the registration surface '${REGISTRATION_SURFACE}'`);
+      expect(bad.stderr).toContain(`.cursor-plugin/plugin.json pins --surface verbs; plugin lanes serve the registration surface '${REGISTRATION_SURFACE}'`);
     } finally {
       rmSync(out, { recursive: true, force: true });
     }
@@ -121,7 +124,7 @@ describe('S0: README, docs/mcp, INSTALL, BOOTSTRAP, push-context and the manifes
   });
 
   test('the plugin manifests pin the registration surface; the OpenClaw bundle runs a bare serve, whose default is the same value', () => {
-    for (const file of ['.codex-plugin/mcp.json', '.claude-plugin/plugin.json']) {
+    for (const file of ['.codex-plugin/mcp.json', '.claude-plugin/plugin.json', '.cursor-plugin/plugin.json']) {
       const args = (JSON.parse(readFileSync(join(ROOT, file), 'utf8')) as { mcpServers: { gbrain: { args: string[] } } }).mcpServers.gbrain.args;
       expect({ file, surface: args[args.indexOf('--surface') + 1] }).toEqual({ file, surface: REGISTRATION_SURFACE });
     }
