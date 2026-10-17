@@ -58,7 +58,7 @@ Jinko travel MCP  https://mcp.builders.gojinko.com/mcp
   ├── book:     trip → checkout → user pays at checkout_url (or submit_agent_payment)
   └── manage:   get_booking → flight_refund / flight_exchange / hotel_cancel / car_cancel
   ↓
-Agent writes the brain (put_page / add_link / add_timeline_entry)
+Agent writes the brain (put_page / add_link / remove_link)
   └── trips/<yyyy-mm-dd>-<destination>-<trip_id>, linked to each traveller's page
 ```
 
@@ -276,6 +276,11 @@ first (it changes the active schema for the whole brain), then run
 `gbrain schema use gbrain-recommended`.
 
 ### Step 4: Verify end to end
+
+Run these checks in a new conversation, after restarting the harness if it
+loads `AGENTS.md`, `RESOLVER.md` or skills only at startup. This conversation
+has already read this recipe, so a check run here can pass without the
+installed skill being picked up.
 
 1. Ask the agent: "What do flights from <home airport> to Lisbon cost next
    month?" It should read the brain for the home airport, call
