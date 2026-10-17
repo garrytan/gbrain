@@ -96,6 +96,17 @@ export function restrict(schedule: Schedule, keep?: Set<string>): Schedule {
   return { ...schedule, ops, groups: schedule.groups.map(g => g.filter(id => kept.has(id))).filter(g => g.length > 1) };
 }
 
+/** Plan productive claim epochs only: the optional idle claim after the last prepared row may not recur.
+ * The preparation counter deduplicates writeId and includes the final fresh-write probe. Keep slots 1..N for N rows;
+ * an explicitly replayed unreachable fault still fails through runFailed, without any allowlist.
+ */
+function plannedSeams(counts: Record<string, number> = {}): [FaultPoint, number][] {
+  return (Object.entries(counts) as [FaultPoint, number][])
+    .map(([point, count]): [FaultPoint, number] => [point, point === 'consumer:claiming'
+      ? Math.min(count, counts['consumer:preparing'] ?? 0) : count])
+    .filter(([, count]) => count > 0);
+}
+
 export async function runRobotPhase(o: RobotOptions) {
   const started = performance.now();
   const runs: RobotRun[] = [];
@@ -180,7 +191,7 @@ export async function runRobotPhase(o: RobotOptions) {
   const skipped = new Set<string>();
   for (const schedule of fixed) {
     const counted = await execute(schedule, 'count'); record(counted);
-    for (const [point, count] of Object.entries(counted.counts ?? {}) as [FaultPoint, number][]) {
+    for (const [point, count] of plannedSeams(counted.counts)) {
       if (skipLease && leaseBoundSeam(point)) { skipped.add(point); continue; }
       plan.push({ schedule, point, count });
     }
@@ -208,7 +219,7 @@ export async function runRobotPhase(o: RobotOptions) {
   for (let i = 0; !over(); i++) {
     const schedule = randomSchedule(ROBOT_TOPOLOGY, (o.seed + 1 + i) >>> 0, 24);
     const counted = await execute(schedule, 'count'); record(counted);
-    const points = (Object.entries(counted.counts ?? {}) as [FaultPoint, number][]).filter(([point]) => !(skipLease && leaseBoundSeam(point)));
+    const points = (plannedSeams(counted.counts)).filter(([point]) => !(skipLease && leaseBoundSeam(point)));
     if (!points.length || over()) continue;
     const [point, count] = points[Math.floor(rand() * points.length)];
     record(await execute(schedule, 'run', { fault: { point, nth: 1 + Math.floor(rand() * count) } }));

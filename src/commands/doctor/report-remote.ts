@@ -453,7 +453,7 @@ export async function doctorReportRemote(
   //   - Per-source lag, embed coverage, failed-job rate.
   //   - Single-source brain short-circuits to ok.
   //   - Three-state: ok / warn / fail.
-  checks.push(await checkFederationHealth(engine));
+  checks.push(await checkFederationHealth(engine, { sourceIds: opts.sourceIds }));
 
   // 13. v0.42 self_upgrade_health: mode, whether behind, recent failures.
   // File-plane only (no engine) — works on thin clients too. Then #5836 unlinked_facts inside the caller's grant.

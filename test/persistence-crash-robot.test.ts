@@ -483,3 +483,70 @@ await faultPoint('effect:git:mid', { requestId: 'r1', signal: cyclic as never })
     } finally { rmSync(dir, { recursive: true, force: true }); }
   }, 180_000);
 });
+
+describe('productive claim planner', () => {
+  async function generatedClaims(counts: Record<string, number>, seed = 4): Promise<number[]> {
+    const scratch = mkdtempSync(join(tmpdir(), 'gbrain-claim-plan-'));
+    const spawn = ((path: string, _home: string, _mode: string, [role]: string[]) => {
+      const config = JSON.parse(readFileSync(path, 'utf8'));
+      const result = { violations: [], deferred: [], ...(role === 'count' ? { counts } : {}) };
+      return { child: { pid: 0 }, failureDiagnostics: () => [], async kill() {},
+        done: async () => ({ event: 'done', result }),
+        event: (name: string) => name === 'fault' && role === 'run' && config.fault
+          ? Promise.resolve({ event: 'fault', ...config.fault })
+          : name === 'done' ? Promise.resolve({ event: 'done', result }) : new Promise<never>(() => {}) };
+    }) as unknown as typeof spawnWorker;
+    try {
+      const robot = await runRobotPhase({ engine: 'pglite', seed, seconds: 0, scratch, home: scratch,
+        databases: [], spawn, track: () => {}, log: () => {} });
+      expect(robot.failing_runs).toEqual([]);
+      return robot.runs.filter(run => run.fault?.point === 'consumer:claiming').map(run => run.fault!.nth);
+    } finally { rmSync(scratch, { recursive: true, force: true }); }
+  }
+
+  test('does not plan the optional fifth claim after four productive preparations', async () => {
+    // Seed 4 selects the last counted slot: before the repair this selects the idle fifth claim.
+    expect(await generatedClaims({ 'consumer:claiming': 5, 'consumer:preparing': 4 })).toEqual([4]);
+  });
+
+  test('keeps the last real fifth productive claim rather than imposing a flat four-slot cap', async () => {
+    expect(await generatedClaims({ 'consumer:claiming': 6, 'consumer:preparing': 5 })).toEqual([5]);
+  });
+
+  test('keeps the first productive claim and does not invent one for an empty schedule', async () => {
+    expect(await generatedClaims({ 'consumer:claiming': 1, 'consumer:preparing': 1 })).toEqual([1]);
+    expect(await generatedClaims({ 'consumer:claiming': 1 })).toEqual([]);
+  });
+
+  test('tail presence and repeated or grouped preparations select the same productive bound', async () => {
+    const { seamCounter } = await import('../scripts/persistence/crash-robot.ts');
+    function count(tail: boolean) {
+      const counter = seamCounter(), counts: Record<string, number> = {};
+      const emit = (point: FaultPoint, detail: FaultDetail = {}) => {
+        const advanced = counter(point, detail); if (advanced) counts[point] = (counts[point] ?? 0) + advanced;
+      };
+      emit('consumer:claiming');
+      for (const writeId of ['w1', 'w1', 'w2']) emit('consumer:preparing', { requestId: 'shared', writeId });
+      emit('consumer:claiming');
+      emit('consumer:preparing', { requestId: 'shared', writeId: 'w3' });
+      if (tail) emit('consumer:claiming');
+      return counts;
+    }
+    expect(count(false)['consumer:preparing']).toBe(3);
+    expect(count(true)['consumer:claiming']).toBe(4);
+    expect(await generatedClaims(count(false))).toEqual([3]);
+    expect(await generatedClaims(count(true))).toEqual([3]);
+  });
+
+  test('preserves every productive target from one through five', async () => {
+    // A one-slot counter proves the first target; the highest seeded draw proves every upper endpoint.
+    for (let n = 1; n <= 5; n++) {
+      expect(await generatedClaims({ 'consumer:claiming': n + 1, 'consumer:preparing': n })).toEqual([n]);
+    }
+    const targets = new Set<number>();
+    for (let seed = 0; seed < 32; seed++) {
+      for (const nth of await generatedClaims({ 'consumer:claiming': 6, 'consumer:preparing': 5 }, seed)) targets.add(nth);
+    }
+    expect([...targets].sort()).toEqual([1, 2, 3, 4, 5]);
+  });
+});

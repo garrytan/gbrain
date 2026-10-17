@@ -101,11 +101,18 @@ export async function checkSourceRoutingHealth(engine: BrainEngine): Promise<Che
  * Single-source brain short-circuits to ok (no federation to check).
  * Each warning carries a paste-ready remediation hint.
  */
-export async function checkFederationHealth(engine: BrainEngine): Promise<Check> {
+export async function checkFederationHealth(
+  engine: BrainEngine,
+  opts: { sourceIds?: string[] } = {},
+): Promise<Check> {
   try {
     const { loadAllSources } = await import('../../../core/sources-load.ts');
     const { computeAllSourceMetrics } = await import('../../../core/source-health.ts');
-    const sources = await loadAllSources(engine, { includeArchived: false });
+    // The remote doctor's resolved grant bounds identifiers, metrics and counts.
+    // An empty grant must remain empty; only undefined means host-wide.
+    const allowed = opts.sourceIds === undefined ? undefined : new Set(opts.sourceIds);
+    const sources = (await loadAllSources(engine, { includeArchived: false }))
+      .filter(source => allowed === undefined || allowed.has(source.id));
     if (sources.length <= 1) {
       return {
         name: 'federation_health',

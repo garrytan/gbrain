@@ -94,7 +94,11 @@ carries the routing-seam picture):
   (accepts `30s`, `2m`, `500ms`, plain ms). Default `null` = per-command
   default (30s for most ops, 180s for `think`). `parseTimeout(s)` exported
   helper.
-- `src/core/doctor-remote.ts` — `gbrain remote doctor` includes the
+- `src/commands/remote.ts` — `gbrain remote doctor` invokes the host's
+  `run_doctor` operation. Its `federation_health` diagnostic keeps source names,
+  health metrics and source counts within the caller's resolved read grant.
+  Unscoped host CLI diagnostics retain the full source view.
+- `src/core/doctor-remote.ts` — the thin-client connectivity collector includes the
   `oauth_client_scopes_probe` check. Probes the read tier via
   `get_brain_identity` and the admin tier via `get_health`; reports per-tier
   status with pinpoint remediation when admin is missing. `buildScopeCheck`

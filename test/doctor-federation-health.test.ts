@@ -53,6 +53,17 @@ beforeEach(async () => {
 });
 
 describe('checkFederationHealth', () => {
+  test('an explicit empty source set never falls back to a brain-wide check', async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, config, last_sync_at)
+       VALUES ('excluded-empty-grant', 'excluded-empty-grant', '{"federated":true}', NOW() - INTERVAL '48 hours')`,
+    );
+    const scoped = await checkFederationHealth(engine, { sourceIds: [] });
+    expect(scoped.status).toBe('ok');
+    expect(JSON.stringify(scoped)).not.toContain('excluded-empty-grant');
+    expect((await checkFederationHealth(engine)).status).toBe('fail');
+  });
+
   test('single-source brain → ok with "no federation to check"', async () => {
     const check = await checkFederationHealth(engine);
     expect(check.name).toBe('federation_health');

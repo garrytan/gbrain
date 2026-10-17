@@ -10,6 +10,12 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+### Fixed
+
+- Remote doctor federation health now respects the caller's resolved source grant. Excluded sources no longer affect its identities, counts or health verdict; host-wide checks remain unchanged.
+
 ## [0.60.292.0] - 2026-10-17
 
 **Writes on a brain whose schema is behind are refused up front, `repair ghost-pages` works on a source with a shared skillpack, and large fact batches no longer stall a managed brain.** Fix wave 19 (#6910, #6904, #6898, #6906, plus two test-infra flakes).

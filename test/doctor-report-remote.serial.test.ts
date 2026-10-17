@@ -219,6 +219,88 @@ describe('doctorReportRemote — source scope (#4592)', () => {
   });
 });
 
+describe('run_doctor — federation source grant', () => {
+  const visible = 'federation-visible';
+  const secondVisible = 'federation-second-visible';
+  const excluded = 'federation-excluded';
+  const context = (overrides: Partial<OperationContext> = {}) => ({
+    engine, remote: true, sourceId: visible,
+    ...overrides,
+  } as OperationContext);
+  const federation = async (ctx: OperationContext) => {
+    const report = await operationsByName.run_doctor.handler(ctx, {}) as DoctorReport;
+    return report.checks.find(check => check.name === 'federation_health')!;
+  };
+
+  beforeAll(async () => {
+    await engine.executeRaw(
+      `INSERT INTO sources (id, name, config, last_sync_at)
+       VALUES ($1, $1, '{"federated":true}', now()),
+              ($2, $2, '{"federated":true}', now() - interval '48 hours'),
+              ($3, $3, '{"federated":true}', now())`,
+      [visible, excluded, secondVisible],
+    );
+  });
+  afterAll(async () => {
+    await engine.executeRaw('DELETE FROM sources WHERE id = ANY($1::text[])', [[visible, excluded, secondVisible]]);
+  });
+
+  test('scalar and federated bindings hide excluded source identities and counts', async () => {
+    const scalar = await federation(context());
+    expect(scalar.status).toBe('ok');
+    expect(scalar.message).toBe('Single-source brain (no federation to check)');
+    const grantWins = await federation(context({
+      sourceId: excluded,
+      auth: { token: 't', clientId: 'fixture', scopes: ['admin'], allowedSources: [visible] },
+    }));
+    expect(grantWins).toEqual(scalar);
+    expect(JSON.stringify(grantWins)).not.toContain(excluded);
+
+    const both = await federation(context({
+      auth: { token: 't', clientId: 'fixture', scopes: ['admin'], allowedSources: [visible, excluded] },
+    }));
+    expect(both.status).toBe('fail');
+    expect(both.message).toContain(excluded);
+    const local = await federation(context({ remote: false, sourceId: undefined }));
+    expect(local.status).toBe('fail');
+    expect(local.message).toContain(excluded);
+  });
+
+  test('an empty federated read grant remains denied', async () => {
+    await expect(operationsByName.run_doctor.handler(context({
+      sourceId: undefined,
+      auth: { token: 't', clientId: 'fixture', scopes: ['admin'], allowedSources: [] },
+    }), {})).rejects.toMatchObject({ code: 'permission_denied' });
+  });
+
+  test('a two-source grant confines the metrics path and its source count', async () => {
+    const check = await federation(context({
+      sourceId: excluded,
+      auth: { token: 't', clientId: 'fixture', scopes: ['admin'], allowedSources: [visible, secondVisible] },
+    }));
+    expect(check.status).toBe('ok');
+    expect(check.message).toBe('2 source(s) healthy (parallel sync, async embed)');
+    expect(JSON.stringify(check)).not.toContain(excluded);
+  });
+
+  test('excluded freshness and roster changes cannot change the scoped diagnostic', async () => {
+    const before = await federation(context());
+    try {
+      await engine.executeRaw('UPDATE sources SET last_sync_at = now() WHERE id = $1', [excluded]);
+      expect(await federation(context())).toEqual(before);
+      await engine.executeRaw('DELETE FROM sources WHERE id = $1', [excluded]);
+      expect(await federation(context())).toEqual(before);
+    } finally {
+      await engine.executeRaw(
+        `INSERT INTO sources (id, name, config, last_sync_at)
+         VALUES ($1, $1, '{"federated":true}', now() - interval '48 hours')
+         ON CONFLICT (id) DO UPDATE SET last_sync_at = EXCLUDED.last_sync_at`,
+        [excluded],
+      );
+    }
+  });
+});
+
 describe('doctorReportRemote — managed drift advice (#5477)', () => {
   test('a managed brain is told --no-pull without --include-gitignored; unmanaged wording is unchanged', async () => {
     const root = mkdtempSync(join(tmpdir(), 'gbrain-doctor-drift-'));
