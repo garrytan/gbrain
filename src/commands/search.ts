@@ -21,7 +21,9 @@
  *   gbrain search tune [--apply] [--json]
  *     Recommendation engine. Reads stats + brain size + model tier and
  *     prints structured recommendations. --apply mutates config (each
- *     change logged loud + paste-ready revert command at the end).
+ *     change logged loud + paste-ready revert command at the end). Only
+ *     confirmed writes are reported as applied; a failed write stops the
+ *     batch, reports what already landed, and exits non-zero.
  *
  * The report builders live in core (src/core/search/modes-report.ts,
  * tune-recommendations.ts, telemetry.ts) and are shared with the
@@ -328,6 +330,10 @@ async function runTuneSubcommand(engine: BrainEngine, args: string[]): Promise<v
   }
 
   if (json) {
+    // Apply BEFORE printing so `applied` lists only confirmed writes.
+    const outcomes = apply ? await applyRecommendations(engine, recs) : [];
+    const landed = outcomes.filter(o => o.status === 'applied').map(o => o.rec);
+    const failure = outcomes.find(o => o.status === 'failed');
     console.log(JSON.stringify({
       schema_version: 2,
       status: report.status,
@@ -336,7 +342,12 @@ async function runTuneSubcommand(engine: BrainEngine, args: string[]): Promise<v
       active_mode: report.active_mode,
       coverage: report.coverage,
       recommendations: recs,
-      applied: apply ? recs.map(r => r.apply_command) : [],
+      applied: landed.map(r => r.apply_command),
+      ...(apply ? {
+        not_applied: outcomes.filter(o => o.status !== 'applied').map(o => o.rec.apply_command),
+        revert_commands: landed.map(buildRevertCommand),
+        ...(failure ? { apply_error: { command: failure.rec.apply_command, message: errorMessage(failure.error) } } : {}),
+      } : {}),
       _meta: {
         metric_glossary: {
           cache_hit_rate: 'cache_hits / (cache_hits + cache_misses)',
@@ -344,11 +355,7 @@ async function runTuneSubcommand(engine: BrainEngine, args: string[]): Promise<v
         },
       },
     }, null, 2));
-    if (apply) {
-      for (const r of recs) {
-        await maybeApplyRecommendation(engine, r);
-      }
-    }
+    if (failure) throw failure.error;
     return;
   }
 
@@ -371,31 +378,72 @@ async function runTuneSubcommand(engine: BrainEngine, args: string[]): Promise<v
 
   if (apply) {
     console.log('Applying recommendations:');
-    const reverts: string[] = [];
-    for (const r of recs) {
-      await maybeApplyRecommendation(engine, r);
-      console.log(`  ✓ ${r.apply_command}`);
-      reverts.push(buildRevertCommand(r));
+    const outcomes = await applyRecommendations(engine, recs);
+    for (const o of outcomes) {
+      if (o.status === 'applied') console.log(`  ✓ ${o.rec.apply_command}`);
+      else if (o.status === 'failed') console.log(`  ✗ ${o.rec.apply_command}  (failed: ${errorMessage(o.error)})`);
+      else if (o.status === 'unsupported') console.log(`  ✗ ${o.rec.apply_command}  (not applied: unrecognized command shape)`);
+      else console.log(`  - ${o.rec.apply_command}  (not attempted: an earlier change failed)`);
     }
-    console.log('');
-    console.log('To revert these changes:');
-    for (const cmd of reverts) console.log(`  ${cmd}`);
+    const reverts = outcomes.filter(o => o.status === 'applied').map(o => buildRevertCommand(o.rec));
+    if (reverts.length > 0) {
+      console.log('');
+      console.log('To revert these changes:');
+      for (const cmd of reverts) console.log(`  ${cmd}`);
+    }
+    const failure = outcomes.find(o => o.status === 'failed');
+    if (failure) throw failure.error;
   } else {
     console.log('Run `gbrain search tune --apply` to apply these changes automatically.');
   }
 }
 
-async function maybeApplyRecommendation(engine: BrainEngine, r: TuneRecommendation): Promise<void> {
+interface ApplyOutcome {
+  rec: TuneRecommendation;
+  status: 'applied' | 'unsupported' | 'failed' | 'not_attempted';
+  error?: unknown;
+}
+
+// Applies in order and stops at the first failed write; earlier writes stay
+// in place (no rollback) and are reported so the caller can revert them.
+async function applyRecommendations(engine: BrainEngine, recs: TuneRecommendation[]): Promise<ApplyOutcome[]> {
+  const outcomes: ApplyOutcome[] = [];
+  let failed = false;
+  for (const rec of recs) {
+    if (failed) {
+      outcomes.push({ rec, status: 'not_attempted' });
+      continue;
+    }
+    try {
+      const wrote = await maybeApplyRecommendation(engine, rec);
+      outcomes.push({ rec, status: wrote ? 'applied' : 'unsupported' });
+    } catch (error) {
+      outcomes.push({ rec, status: 'failed', error });
+      failed = true;
+    }
+  }
+  return outcomes;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** Returns true when a config write ran; false for an unrecognized command shape. */
+async function maybeApplyRecommendation(engine: BrainEngine, r: TuneRecommendation): Promise<boolean> {
   // The apply command is the canonical paste-ready string; here we
   // re-parse it to call setConfig / unsetConfig directly so the call
   // happens in-process.
   const parts = r.apply_command.split(/\s+/);
-  if (parts[0] !== 'gbrain' || parts[1] !== 'config') return;
+  if (parts[0] !== 'gbrain' || parts[1] !== 'config') return false;
   if (parts[2] === 'set' && parts.length === 5) {
     await engine.setConfig(parts[3], parts[4]);
+    return true;
   } else if (parts[2] === 'unset' && parts.length === 4) {
     await engine.unsetConfig(parts[3]);
+    return true;
   }
+  return false;
 }
 
 function buildRevertCommand(r: TuneRecommendation): string {
