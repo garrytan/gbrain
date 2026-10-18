@@ -313,8 +313,9 @@ Travellers: [[people/alice-example]], [[people/bob-example]]
   `untrusted-quoted` fence, as gbrain's ingestion skills do.
 - The `[[people/…]]` wikilinks in the body become mention links to existing
   pages when the brain's auto-linking is on; no typed edge is inferred from
-  them. For a typed edge, call `add_link`
-  from each traveller's page (in your session's source, see section 1) to the
+  them. For a typed edge, once at least one item a traveller is on is booked
+  (not still `(booking in progress)`), call `add_link`
+  from that traveller's page (in your session's source, see section 1) to the
   trip page with `link_type: attended` and `valid_from` set to that
   traveller's own start date (their earliest item), the same direction gbrain uses for
   meeting attendees. `attended` records an event, and gbrain does not return
