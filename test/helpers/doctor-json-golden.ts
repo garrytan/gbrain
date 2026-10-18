@@ -27,7 +27,7 @@ import { delimiter, join } from 'node:path';
 import { defineNormalizer, mapStrings, scrubKeys, scrubPaths, scrubTimestamps } from './golden.ts';
 import { PROVIDER_ENV_KEYS } from './provider-env.ts';
 import { MIGRATIONS } from '../../src/core/schema-migrations/registry.generated.ts';
-import { SEGMENTED_WRITER_FLOOR } from '../../src/core/persistence/writer-versions.ts';
+import { SEGMENTED_WRITER_FLOOR } from '../../src/core/page-body/writer-floor.ts';
 
 const REPO_ROOT = join(import.meta.dir, '..', '..');
 const CLI = join(REPO_ROOT, 'src', 'cli.ts');
@@ -87,6 +87,18 @@ export interface GbrainRun {
 }
 
 /** Spawn `bun src/cli.ts <args>` in the hermetic doctor env. */
+/**
+ * eval_drift diffs this checkout against HEAD with a 5 s limit. A freshly copied checkout (a CI VM) has a racy
+ * index, so the first diff can run out of time and report "could not probe" while the next one answers; refresh
+ * the index once before the first capture so every capture sees the same settled tree.
+ */
+let indexSettled = false;
+function settleRepoIndex(): void {
+  if (indexSettled) return;
+  indexSettled = true;
+  Bun.spawnSync(['git', 'update-index', '-q', '--refresh'], { cwd: REPO_ROOT, stdout: 'ignore', stderr: 'ignore' });
+}
+
 export async function runGbrain(h: DoctorHome, args: string[], env: Record<string, string | undefined> = {}, timeoutMs = 120_000): Promise<GbrainRun> {
   const childEnv: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) if (v !== undefined) childEnv[k] = v;
@@ -110,6 +122,7 @@ export async function runGbrain(h: DoctorHome, args: string[], env: Record<strin
     if (v === undefined) delete childEnv[k];
     else childEnv[k] = v;
   }
+  settleRepoIndex();
   const proc = Bun.spawn([process.execPath, '--no-env-file', '--preload', PRELOAD, '--preload', CLOCK_PRELOAD, CLI, ...args], {
     cwd: h.work,
     env: childEnv,

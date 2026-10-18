@@ -126,15 +126,16 @@ describe('capability handshake across releases', () => {
     'company_brain_resume', 'writer_reconcile_preview', 'writer_reconcile_apply', 'writer_reconcile_audit', 'writer_reconcile_backups',
     'trust_read', 'trust_preview', 'trust_apply'];
 
-  test('a new owner keeps the frozen list and advertises writer_failures as an extension', async () => {
+  test('a new owner keeps the frozen list and advertises writer_failures and writer_transfer_cancel as extensions', async () => {
     expect([...PERSISTENCE_ADMIN_OPERATIONS as readonly string[]].sort()).toEqual([...FROZEN].sort());
     const path = socketPath();
     const binding = await startPersistenceIpcServer(path, { brainId: BRAIN, dispatch: async () => ({}), administer: async () => ({}) });
     bindings.push(binding!);
     const capability = await requestPersistenceCapabilities(path);
     expect((capability.administration ?? []).every(op => FROZEN.includes(op))).toBe(true);
-    expect(capability.administration_extensions).toEqual(['writer_failures']);
+    expect(capability.administration_extensions).toEqual(['writer_failures', 'writer_transfer_cancel']);
     expect(ownerAdministers(capability, 'writer_failures')).toBe(true);
+    expect(ownerAdministers(capability, 'writer_transfer_cancel')).toBe(true);
     expect(ownerAdministers(capability, 'writer_status')).toBe(true);
   });
 

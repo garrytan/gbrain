@@ -1,6 +1,6 @@
 import type { TimelineBatchInput } from './engine.ts';
 export type PageRef = { slug: string; source_id: string };
-export function pageRefKey(r: PageRef): string { return `${r.source_id}\u0000${r.slug}`; }
+export function pageRefKey(r: PageRef): string { return `${r.source_id}\0${r.slug}`; }
 export interface ExtractBatchFailure {
   /** Which write was lost: a link batch, a timeline batch, or the `--stale` sweep's own stamp. */
   kind: 'links' | 'timeline' | 'stamp';
@@ -13,8 +13,9 @@ export interface ExtractBatchFailure {
 
 /**
  * One or more link/timeline/stamp writes failed after the engine's own
- * retries. Thrown AFTER safe pages were stamped, so a cycle maps it to phase
- * `fail` and the affected pages (left unstamped) stay due.
+ * retries. Thrown AFTER safe pages were stamped; the affected pages (left
+ * unstamped) stay due, and the cycle extract phase maps it to `warn` and lets
+ * its stale drain retry them.
  */
 export class ExtractBatchWriteError extends Error {
   readonly code = 'EXTRACT_BATCH_WRITE_FAILED';

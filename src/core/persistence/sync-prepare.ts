@@ -60,6 +60,7 @@ import { describeFixes } from '../fence-repair/report.ts';
 import { fenceFixesWire } from '../fence-repair/tier1.ts';
 import type { FenceFix } from '../fence-repair/types.ts';
 import { VERSION } from '../../version.ts';
+import { bindOrigin } from './origin-guard.ts';
 
 /** The options that select a managed sync cursor (its key), recorded so a refusal can print the exact retry. */
 export interface SyncCursorOptions { full: boolean; workingTree: boolean; srcSubpath: string | null; exclude: string[]; includeHidden: string[]; strategy: string | null }
@@ -766,7 +767,7 @@ export async function prepareManagedSyncMutation(unbounded: BrainEngine, row: Wr
       // A moved page is versioned from its own (rename source) read.
       const installed = await applied.apply(tx, renamed ? undefined : preimage);
       // Hash no-ops still repair a missing physical origin under the same guard (a page write records it itself).
-      if (applied.noop) await tx.executeRaw('UPDATE pages SET source_path=$3 WHERE source_id=$1 AND slug=$2 AND source_path IS DISTINCT FROM $3', [row.source_id, row.slug, p.sourcePath]);
+      if (applied.noop && p.sourcePath) await bindOrigin(tx, { sourceId: row.source_id, slug: row.slug, sourcePath: p.sourcePath, scope: originScope });
       // #6536: the page now records this file as its origin, so it is no longer a #5254 database-only page.
       await tx.executeRaw("UPDATE pages SET database_only_reason=NULL WHERE source_id=$1 AND slug=$2 AND database_only_reason='unbound_source'", [row.source_id, row.slug]);
       // #5984: the one read of the page after its last page write (the projections

@@ -24,6 +24,7 @@ import type { Action } from '../agent-output.ts';
 import { hostFix, invalidParam, opTransport, paramUse, readFix } from './op-fix.ts';
 import { resolveRequestedScope, sourceScopeOpts } from './context.ts';
 import { validateSourceId } from '../utils.ts';
+import { isGmailHoldKey } from '../google/types.ts';
 import { closedLoopWithActiveFact, retireLoopFact } from '../persistence/loop-fact-retirement.ts';
 import {
   addSuppression,
@@ -124,7 +125,8 @@ async function heldCoverage(ctx: OperationContext, sources: GoogleSourceFreshnes
     const now = Date.now();
     const held: HeldItemView[] = [];
     for (const entry of await readAllSourceHolds(ctx.engine, { sourceIds: sources.map((s) => s.id) })) {
-      for (const record of entry.held) {
+      // Contacts and Calendar holds (GBRA-130 A-3) say nothing about mail coverage.
+      for (const record of entry.held.filter((held) => isGmailHoldKey(held.key))) {
         const at = record.meta.upstream_at ? Date.parse(record.meta.upstream_at) : NaN;
         if (Number.isFinite(at) && now - at > HELD_WINDOW_MS) continue;
         held.push({ source_id: entry.sourceId, key: record.key, sender: record.meta.sender, ...(trusted ? { subject: record.meta.subject } : {}),

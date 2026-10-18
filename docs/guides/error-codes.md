@@ -740,6 +740,18 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 
 More: [docs/guides/troubleshooting.md#consumers-without-heartbeat](../../docs/guides/troubleshooting.md#consumers-without-heartbeat)
 
+### content_receipt_stale
+
+<a id="content_receipt_stale"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A gbrain-owned content source's shared-skills content receipt names another root than the source and its owner binding, so doctor sync_freshness cannot exempt it and sync does not apply. | A writer transfer or relocation an older release ran (or a sources set-path still to run after a transfer accept) moved the canonical root but left the receipt (config shared_skills.content.v1.<source>.<incarnation>) on the old one. Current accepts and set-paths rebind it in their own transaction. | Preview gbrain repair content-receipt-root --source <id> on the owner host and apply it with the hash it prints, or do what it names first (sources set-path, or a self-transfer). Run: gbrain repair content-receipt-root --source '{source_id}' | agent | `gbrain doctor --json` | 1 | no |
+
+Reasons: `receipt_root_moved`.
+
+More: [docs/guides/repair.md#content-receipt-root](../../docs/guides/repair.md#content-receipt-root)
+
 ### content_rejected
 
 <a id="content_rejected"></a>
@@ -1998,6 +2010,14 @@ More: [docs/guides/company-brain-ingestion.md#resume-and-verify](../../docs/guid
 
 More: [docs/guides/troubleshooting.md#ipc-path-too-long](../../docs/guides/troubleshooting.md#ipc-path-too-long)
 
+### item_failures_systemic
+
+<a id="item_failures_systemic"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Most items of one per-item loop failed (or many failed with one code, or none succeeded), so the failure is systemic and no item was held; the unit stopped instead of skipping every item. | A per-item loop holds a bad item and continues (GBRA-130), but a run where most items fail points at a shared cause, and holding every item would hide it. | Fix the shared cause the first failures name, then rerun the same command; run gbrain doctor --json if the cause is unclear. Run: gbrain doctor --json | agent | `gbrain doctor --json` | 1 | no |
+
 ### keyword_candidates_incomplete
 
 <a id="keyword_candidates_incomplete"></a>
@@ -2057,6 +2077,18 @@ More: [docs/guides/repair.md#legacy-job-selection-invalid](../../docs/guides/rep
 | Legacy jobs are still active. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/repair.md#legacy-jobs-active](../../docs/guides/repair.md#legacy-jobs-active)
+
+### legacy_lock_removal_refused
+
+<a id="legacy_lock_removal_refused"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| `gbrain pglite-repair --legacy-lock` refused to move a legacy PGLite lock aside: a process on this host still uses the data dir, the data dir is on a network or shared filesystem, or gbrain could not confirm the filesystem is local. | The evidence the repair reads (kill -0, the process command, an open-file scan) covers only this host and PID namespace. A process that still holds the data dir, or a filesystem other hosts can mount or whose locality cannot be confirmed (neither Linux nor macOS, a failed probe, an unrecognised type, a macOS mount without the local flag), means the old owner may still be writing, and removing its lock would let two writers corrupt the brain. | Stop the process the message names (on a shared filesystem: every gbrain on every host that mounts it), then preview again with gbrain pglite-repair --legacy-lock --dry-run. For filesystem_unverified, run the repair on a Linux or macOS host where the folder is on a local disk; elsewhere only the user can confirm no gbrain on any computer reaches the folder and move the lock folder aside. | host_admin | `gbrain doctor --json` | 1 | no |
+
+Reasons: `live_holder`, `network_filesystem`, `filesystem_unverified`.
+
+More: [docs/ENGINES.md#legacy-pglite-lock](../../docs/ENGINES.md#legacy-pglite-lock)
 
 ### local_conflict
 
@@ -2380,6 +2412,16 @@ Reasons: `not_owner_host`, `not_applicable`.
 
 More: [docs/guides/repair.md#ghost-pages](../../docs/guides/repair.md#ghost-pages)
 
+### origin_twin_mass_merge_refused
+
+<a id="origin_twin_mass_merge_refused"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain repair origin-twins refused to merge duplicate-origin twins amounting to more than half of a source's file-backed pages; nothing was changed. | The sync mass-delete valve (#2828) applied to origin twins (#6948): that many twins at once almost always means a re-import under other slugs or the wrong checkout, not a backlog. | Check the source and its checkout first. If merging these pages is genuinely intended, ask the user, then rerun the same apply command with GBRAIN_ALLOW_MASS_RECONCILE=1. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/repair.md#origin-twins](../../docs/guides/repair.md#origin-twins)
+
 ### overlapping_path
 
 <a id="overlapping_path"></a>
@@ -2394,7 +2436,7 @@ More: [docs/guides/repair.md#ghost-pages](../../docs/guides/repair.md#ghost-page
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The source's canonical owner cannot run this write or maintenance step right now; `reason` says which condition. | A managed source publishes only through the host that owns its checkout. `host_mismatch`: another host id owns it (two GBRAIN_HOME identity files on one machine look the same; both ids are printed, and a retry on this host cannot help). `transfer_in_progress`: the worktree is draining for a writer transfer; `clone_in_progress`: a topology clone is recovering it; both clear by themselves. `binding_missing`, `incarnation_changed`, `local_path_missing` and `coordination_path_missing` name an incomplete or outdated registration. `not_sent` / `outcome_unknown`: the local owner's IPC lane did not take the write, or lost its acknowledgment. `detail: unbound_source`: on Postgres the source has a checkout but no canonical owner, a configuration state rather than a transient one (not retryable); in classic mode the write path is the file, a commit and `gbrain sync`. | Read gbrain sources writer status --source <id> --json on the brain host. A transfer or clone in progress: wait and retry. host_mismatch: run the step on the owner host, or give the worker and the shell one GBRAIN_HOME; never copy or regenerate host.json. Nothing claims or transfers ownership to run maintenance. | agent | `repeat the read that failed` | 1 | yes |
+| The source's canonical owner cannot run this write or maintenance step right now; `reason` says which condition. | A managed source publishes only through the host that owns its checkout. `host_mismatch`: another host id owns it (two GBRAIN_HOME identity files on one machine look the same; both ids are printed, and a retry on this host cannot help). `transfer_in_progress`: the worktree is draining for a writer transfer, which ends when the successor accepts it or the owner host runs `gbrain sources writer transfer cancel`; a drain prepared over 30 minutes ago asks the user which (`ask_user`) instead of waiting. `clone_in_progress`: a topology clone is recovering it and clears by itself. `binding_missing`, `incarnation_changed`, `local_path_missing` and `coordination_path_missing` name an incomplete or outdated registration. `not_sent` / `outcome_unknown`: the local owner's IPC lane did not take the write, or lost its acknowledgment. `detail: unbound_source`: on Postgres the source has a checkout but no canonical owner, a configuration state rather than a transient one (not retryable); in classic mode the write path is the file, a commit and `gbrain sync`. | Read gbrain sources writer status --source <id> --json on the brain host. A transfer or clone in progress: wait and retry. host_mismatch: run the step on the owner host, or give the worker and the shell one GBRAIN_HOME; never copy or regenerate host.json. Nothing claims or transfers ownership to run maintenance. | agent | `repeat the read that failed` | 1 | yes |
 
 Reasons: `host_mismatch`, `transfer_in_progress`, `clone_in_progress`, `binding_missing`, `incarnation_changed`, `coordination_path_missing`, `local_path_missing`, `not_sent`, `outcome_unknown`.
 
@@ -2628,9 +2670,13 @@ More: [docs/ENGINES.md#pg-statement-build-failed](../../docs/ENGINES.md#pg-state
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| Another gbrain process holds this PGLite brain's single-writer lock. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait for the current command or server to close, then retry. Do not remove a live lock. | agent | `repeat the read that failed` | 1 | yes |
+| Another gbrain process holds this PGLite brain's single-writer lock. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait for the current command or server to close, then retry. Do not remove a live lock. Reason legacy_owner_unverified is different: a lock folder from an older release whose owner cannot be proven dead never frees itself, so ask the user and run the read-only preview in fix (gbrain pglite-repair --legacy-lock --dry-run). | agent | `repeat the read that failed` | 1 | yes |
 
-Reasons: `timeout`, `live_serve`.
+Reasons: `timeout`, `live_serve`, `legacy_owner_unverified`.
+
+Override: reason `legacy_owner_unverified`: consent, exit 3, not retryable.
+
+More: [docs/ENGINES.md#legacy-pglite-lock](../../docs/ENGINES.md#legacy-pglite-lock)
 
 ### pglite_vector_index_too_large
 
@@ -2739,6 +2785,16 @@ More: [docs/guides/repair.md#projection-owner-resident](../../docs/guides/repair
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | The catalog adoption is accepted but not fully committed. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 1 | yes |
+
+### pull_blocked_local_changes
+
+<a id="pull_blocked_local_changes"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A gbrain-owned clone (sources add --url) has local changes in its checkout, so git pull --ff-only cannot fast-forward it and every sync of the source stops at the pull. | Older gbrain releases appended ## Facts fence rows to clone files on unmanaged brains (#6946); a local change to a file the upstream also changed blocks every fast-forward. Current releases keep facts about a clone database-only. | Ask the user, then preview the repair: gbrain repair url-clone-fences --source <id>. It proves which files differ from HEAD only by gbrain fence rows and restores those after keeping their facts database-only; a file with any other edit is named and left for the user. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/repair.md#url-clone-fences](../../docs/guides/repair.md#url-clone-fences)
 
 ### purge_blocked_pending_recovery
 
@@ -2885,6 +2941,16 @@ More: [docs/guides/company-brain-ingestion.md#agent-and-ci-use](../../docs/guide
 | A Git listing the managed-sync reconcile reads (`ls-tree`, `ls-files`, `diff-tree`) did not finish cleanly: Git exited non-zero, was killed by a signal or its time or size cap, or its output did not end at a record boundary. | A partial listing would make files look deleted or new, so the level is refused rather than classified. In PR 4a only the read-only convergence shadow reads it, and it reports `status: unavailable` with this code. | Check the checkout with git -C <dir> status, then rerun the read-only status; report it with gbrain doctor --json if it repeats. Run: gbrain sync status --source '{source_id}' --detail --json | agent | `gbrain doctor --json` | 1 | no |
 
 More: [docs/guides/sync-unblock-runbook.md#dry-run-convergence-classes](../../docs/guides/sync-unblock-runbook.md#dry-run-convergence-classes)
+
+### recovery_prior_stage_unavailable
+
+<a id="recovery_prior_stage_unavailable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain repair stuck-recovery cannot apply that --keep choice to a page recovery over the single-string ceiling, because the staged copy of its prior file is missing, does not match its recorded SHA-256, or is not a regular file; nothing was changed. | A prior file over 24 MiB is not embedded in its recovery record: the record names a staged copy beside the file by path and SHA-256, and only that copy can put the prior bytes back. Without it --keep prior has nothing safe to restore, so the remaining exit is --keep disk, which the user must agree to. | Stop and ask the user; re-run only with the authorization the message names. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/repair.md#recovery-prior-stage-unavailable](../../docs/guides/repair.md#recovery-prior-stage-unavailable)
 
 ### recovery_required
 
@@ -3822,6 +3888,22 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 |---|---|---|---|---|---|---|
 | Withdrawal capacity. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### withdrawal_mirror_failed
+
+<a id="withdrawal_mirror_failed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A page's Git or embedding work is withheld because its withdrawal mirror failed before rewriting the page's file; the file may still hold the withdrawn text. | A withdrawal's Git and embedding effects touch only the pages whose file its mirror recorded rewriting (GBRA-130 A-12); Git never commits a page the mirror passed without rewriting its file. Retrying the request's effects reruns the mirror for this page; once the mirror commits, the withheld work is re-armed automatically. | Read the parked effects with gbrain doctor --only parked_effects, fix the cause the mirror recorded, then preview gbrain sources writer retry-effects <source> --request-id <id> --dry-run and run it without --dry-run. | agent | `gbrain doctor --json` | 1 | no |
+
+### withdrawal_mirror_pending
+
+<a id="withdrawal_mirror_pending"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A page's Git or embedding work is waiting because its withdrawal mirror is queued or running again (for example after retry-effects). | Git and embedding work behind a withdrawal mirror touches only the pages the mirror recorded rewriting (GBRA-130 A-12); while the mirror runs, the effect worker releases the work and picks it up once the mirror settles. | Nothing needs resubmitting; read the effects with gbrain sources writer status <source> --json and wait for the mirror to finish. | agent | `repeat the read that failed` | 1 | yes |
+
 ### withdrawal_provenance
 
 <a id="withdrawal_provenance"></a>
@@ -3887,6 +3969,16 @@ Reasons: `override`, `standing_instruction`, `exfiltration`, `credential`, `dete
 | The write gate held this content for the owner's review instead of saving it as memory. | Content from an untrusted source read like an instruction to an agent, so it was quarantined in the write-gate holding table. It is not searchable or recalled until the owner releases it; retrying the same write only re-opens the same hold. | Do not retry. Tell the user what was held and give them the release command from the fix; releasing is their decision. | user | `repeat the read that failed` | 3 | no |
 
 Reasons: `override`, `standing_instruction`, `exfiltration`, `credential`, `detector_error`.
+
+### write_interrupted
+
+<a id="write_interrupted"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The database ended this managed write's statements (SQLSTATE 57014, a statement timeout or cancel) persistence.max_preparation_attempts times (default 2), so the owner finished it failed instead of preparing it again; nothing was published. | Each cancelled statement throws the write's preparation away, and a write whose work outlasts the bound every time (a large page publishing under a 5 s statement bound on a loaded host) used to be released as database_contention and prepared again, its whole body streamed again, without limit. These cancellations now count with cut-off preparations. Contention with other transactions (lock timeout, serialization failure, deadlock), a dropped connection and a restarting database are never counted. The receipt names the attempts, the limit and the SQLSTATE. | Inspect the owner with gbrain sources writer status --source <id> --json (read-only), then submit the write again with a new request_id once the database is less loaded; a held sync file needs gbrain sources retry-held <id> and the same sync. If the same write ends this way again, report its request id with gbrain doctor --json. Run: gbrain sources writer status --source '{source_id}' --json | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#write_interrupted](../../docs/guides/write-refusals.md#write_interrupted)
 
 ### write_outcome_unknown
 

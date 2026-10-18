@@ -14,6 +14,7 @@ import { linkStreamSlugs } from './page-purge.ts';
 import { identityDowngradePurgeHold } from '../sync-identity-downgrades.ts';
 import { writerOnboardingPreflight } from './onboarding.ts';
 import { clearPurgePark, notePurgeSourceWriter, PURGE_PARK_LIMIT, purgeParkKey, prunePurgeParks, readPurgeParks, recordPurgeFailure, type PurgePark } from './purge-parks.ts';
+import { ItemRun, type ItemFailure } from '../item-failure.ts';
 
 /** A tombstone that moved under a concurrent writer; the next run retries it. */
 const DEFERRAL_CODES = new Set(['revision_conflict', 'page_not_found', 'page_identity_changed']);
@@ -21,11 +22,11 @@ const DEFERRAL_CODES = new Set(['revision_conflict', 'page_not_found', 'page_ide
 export interface DeletedPagePurge {
   slugs: string[];
   count: number;
-  /** Every expired tombstone not purged this run, with its reason. Empty on an unmanaged brain. */
+  /** Every expired tombstone not purged this run, with its reason. On an unmanaged brain: the belief-ledger expiry's failed and parked tombstones. */
   blocked: Array<{ source_id: string; slug: string; reason: string; code: string | null; binding_state?: string }>;
   /** Tombstones restored, changed or removed by a concurrent writer; retried next run. */
   deferred: number;
-  /** Operational failures (owner, binding, storage, protocol). */
+  /** Operational failures (owner, binding, storage, protocol); on an unmanaged brain, recorded tombstones whose delete failed (retried next run). */
   failed: number;
   /** #6741 C: tombstones not submitted because their source's writer is not active (in `blocked`, code `writer_not_active`). */
   inactive: number;
@@ -71,31 +72,81 @@ export async function consentedPurgeDeletedPages(engine: BrainEngine, olderThanH
   return { status: result.failed ? 'partial' : 'purged', count: result.count, slugs: result.slugs, ...(result.blocked.length ? { blocked: result.blocked } : {}) };
 }
 
+/** An expired tombstone of a source the belief ledger records (unmanaged brain), in scan order, with its live failure record. */
+interface RecordedTombstone { id: number; source_id: string; slug: string; deleted_us: string; key: string; park?: PurgePark }
+
+async function recordedTombstones(engine: BrainEngine, hours: string): Promise<RecordedTombstone[]> {
+  const rows = await engine.executeRaw<{ id: number; source_id: string; slug: string; deleted_us: string }>(`SELECT p.id, p.source_id, p.slug,
+      floor(extract(epoch FROM p.deleted_at)*1000000)::bigint::text AS deleted_us FROM pages p
+    WHERE p.deleted_at IS NOT NULL AND p.deleted_at < now() - ($1 || ' hours')::interval AND ${identityDowngradePurgeHold('p')}
+      AND EXISTS (SELECT 1 FROM belief_events e WHERE e.source_id = p.source_id AND e.subject_kind = 'coverage')
+    ORDER BY p.deleted_at ASC, p.source_id ASC, p.slug ASC`, [hours]);
+  const parks = rows.length ? await readPurgeParks(engine) : new Map<string, PurgePark>();
+  return rows.map(row => {
+    const key = purgeParkKey(row.source_id, row.slug, row.deleted_us);
+    const park = parks.get(key);
+    return { ...row, id: Number(row.id), key, ...(park ? { park } : {}) };
+  });
+}
+
+const parkedReason = (park: PurgePark) =>
+  `Parked after ${park.failures} failed purges (last: ${park.code ?? 'error'}: ${park.reason}); retry once with gbrain pages purge-deleted --retry-parked.`;
+
+interface RecordedExpiry { slugs: string[]; exclude: number[]; blocked: DeletedPagePurge['blocked']; failed: number; parked: number }
+
 /**
  * W1 (BELIEF_LEDGER.md 6.5): on an unmanaged brain, each expired tombstone of a source the belief ledger records is
  * removed under its page key inside a belief batch, which appends `page.expired` (retention, never a purge: no
  * tombstone, nothing redacted) and a `link.retracted` for each link the delete cascades away, in its own stream. The bulk delete then takes the rest.
+ *
+ * GBRA-130 A-49: each tombstone is its own transaction and its own item. A failure stops the run only when it is
+ * run-scoped or ItemRun's breaker finds it systemic; otherwise the tombstone is reported and kept out of the bulk
+ * delete (`exclude`). A content failure counts toward the shared purge park (purge-parks.ts), so after
+ * PURGE_PARK_LIMIT failures it is parked and skipped, like the managed purge's; a transient one is retried next run.
  */
-async function expireRecordedTombstones(engine: BrainEngine, olderThanHours: number): Promise<string[]> {
+async function expireRecordedTombstones(engine: BrainEngine, olderThanHours: number, retryParked: boolean): Promise<RecordedExpiry> {
   const hours = String(Math.max(0, Math.floor(olderThanHours)));
-  const rows = await engine.executeRaw<{ id: number; source_id: string; slug: string }>(`SELECT p.id, p.source_id, p.slug FROM pages p
-    WHERE p.deleted_at IS NOT NULL AND p.deleted_at < now() - ($1 || ' hours')::interval AND ${identityDowngradePurgeHold('p')}
-      AND EXISTS (SELECT 1 FROM belief_events e WHERE e.source_id = p.source_id AND e.subject_kind = 'coverage')
-    ORDER BY p.deleted_at ASC, p.source_id ASC, p.slug ASC`, [hours]);
-  const slugs: string[] = [];
-  for (const row of rows) {
-    const publicationId = randomUUID(), report = { appended: 0 };
-    const deleted = await engine.transaction(async tx => {
-      const slugs = [...new Set([row.slug, ...await linkStreamSlugs(tx, row.source_id, row.id)])].sort();
-      await tx.lockPageKeys(slugs.map(slug => ({ sourceId: row.source_id, slug })));
-      return withBeliefBatch(tx, { sourceId: row.source_id, slugs, publicationId, op: 'purge_deleted_pages', hardDeleteEvent: 'page.expired', report },
-        async () => (await tx.executeRaw(`DELETE FROM pages WHERE id = $1 AND deleted_at IS NOT NULL AND deleted_at < now() - ($2 || ' hours')::interval AND ${identityDowngradePurgeHold('pages')} RETURNING id`,
-          [row.id, hours])).length > 0);
-    });
-    if (report.appended) await markBeliefCommits(engine, [publicationId]).catch(() => undefined);
-    if (deleted) slugs.push(row.slug);
+  await prunePurgeParks(engine);
+  const run = new ItemRun('purge.recorded_tombstones');
+  const out: RecordedExpiry = { slugs: [], exclude: [], blocked: [], failed: 0, parked: 0 };
+  const failures: Array<{ row: RecordedTombstone; failure: ItemFailure }> = [];
+  for (const row of await recordedTombstones(engine, hours)) {
+    if (row.park && row.park.failures >= PURGE_PARK_LIMIT && !retryParked) {
+      out.parked++;
+      out.exclude.push(row.id);
+      out.blocked.push({ source_id: row.source_id, slug: row.slug, code: 'purge_parked', reason: parkedReason(row.park) });
+      continue;
+    }
+    try {
+      const publicationId = randomUUID(), report = { appended: 0 };
+      const deleted = await engine.transaction(async tx => {
+        const slugs = [...new Set([row.slug, ...await linkStreamSlugs(tx, row.source_id, row.id)])].sort();
+        await tx.lockPageKeys(slugs.map(slug => ({ sourceId: row.source_id, slug })));
+        return withBeliefBatch(tx, { sourceId: row.source_id, slugs, publicationId, op: 'purge_deleted_pages', hardDeleteEvent: 'page.expired', report },
+          async () => (await tx.executeRaw(`DELETE FROM pages WHERE id = $1 AND deleted_at IS NOT NULL AND deleted_at < now() - ($2 || ' hours')::interval AND ${identityDowngradePurgeHold('pages')} RETURNING id`,
+            [row.id, hours])).length > 0);
+      });
+      run.succeed();
+      if (report.appended) await markBeliefCommits(engine, [publicationId]).catch(() => undefined);
+      if (deleted) out.slugs.push(row.slug);
+      if (row.park) await clearPurgePark(engine, row.key);
+    } catch (error) {
+      const failure = run.fail(`${row.source_id}/${row.slug}`, error);
+      failures.push({ row, failure });
+      out.failed++;
+      out.exclude.push(row.id);
+      out.blocked.push({ source_id: row.source_id, slug: row.slug, code: failure.code,
+        reason: `${failure.message}; ${failure.class === 'content'
+          ? `parked after ${PURGE_PARK_LIMIT} failed purges (gbrain doctor: purge_parked_pages), then retried once with gbrain pages purge-deleted --retry-parked`
+          : 'retried on the next run'}` });
+    }
   }
-  return slugs;
+  if (!run.systemic()) {
+    for (const { row, failure } of failures) {
+      if (failure.class === 'content') await recordPurgeFailure(engine, { source_id: row.source_id, slug: row.slug, deleted_us: row.deleted_us, code: failure.code, reason: failure.message });
+    }
+  }
+  return out;
 }
 
 /** One expired tombstone a managed purge submits, in scan order; `park` is its live failure record, if any. */
@@ -126,8 +177,13 @@ export interface PurgeSelection {
 
 export async function selectPurgeCandidates(engine: BrainEngine, olderThanHours: number, opts: { retryParked?: boolean } = {}): Promise<PurgeSelection> {
   if (!await managedPersistenceEnabled(engine)) {
-    const preview = await engine.purgeDeletedPages(olderThanHours, { dryRun: true });
-    return { managed: false, count: preview.count, slugs: preview.slugs, pages: preview.pages, candidates: [], blocked: [], parked: [], inactive: 0, writers: {} };
+    const parked = (await recordedTombstones(engine, String(Math.max(0, Math.floor(olderThanHours)))))
+      .filter((row): row is RecordedTombstone & { park: PurgePark } => !!row.park && row.park.failures >= PURGE_PARK_LIMIT);
+    const preview = await engine.purgeDeletedPages(olderThanHours, { dryRun: true, ...(opts.retryParked ? {} : { excludeIds: parked.map(row => row.id) }) });
+    return { managed: false, count: preview.count, slugs: preview.slugs, pages: preview.pages, candidates: [],
+      blocked: opts.retryParked ? [] : parked.map(row => ({ source_id: row.source_id, slug: row.slug, code: 'purge_parked', reason: parkedReason(row.park) })),
+      parked: parked.map(row => ({ source_id: row.source_id, slug: row.slug, failures: row.park.failures, code: row.park.code, retried: opts.retryParked === true })),
+      inactive: 0, writers: {} };
   }
   const hours = Math.max(0, Math.floor(olderThanHours));
   const rows = await engine.executeRaw<{ source_id: string; slug: string; cutoff: string; deleted_us: string }>(
@@ -155,8 +211,7 @@ export async function selectPurgeCandidates(engine: BrainEngine, olderThanHours:
     if (park && park.failures >= PURGE_PARK_LIMIT) {
       selection.parked.push({ source_id: row.source_id, slug: row.slug, failures: park.failures, code: park.code, retried: opts.retryParked === true });
       if (!opts.retryParked) {
-        selection.blocked.push({ source_id: row.source_id, slug: row.slug, code: 'purge_parked',
-          reason: `Parked after ${park.failures} failed purges (last: ${park.code ?? 'error'}: ${park.reason}); retry once with gbrain pages purge-deleted --retry-parked.` });
+        selection.blocked.push({ source_id: row.source_id, slug: row.slug, code: 'purge_parked', reason: parkedReason(park) });
         continue;
       }
     }
@@ -167,14 +222,18 @@ export async function selectPurgeCandidates(engine: BrainEngine, olderThanHours:
   return selection;
 }
 
-/** #6741 C: the cycle purge phase's status: a coordinator failure fails it; a source in recovery, a parked page or a capacity deferral (#6884) warns. */
+/**
+ * #6741 C: the cycle purge phase's status: a coordinator failure fails it; a source in recovery, a parked page or a capacity deferral (#6884) warns,
+ * and so does an unmanaged recorded tombstone whose delete failed (GBRA-130 A-49: `failed` without `error`).
+ */
 export function purgePhaseStatus(result: DeletedPagePurge): 'ok' | 'warn' | 'fail' {
-  return result.error ? 'fail' : result.inactive || result.parked || result.capacity_deferred ? 'warn' : 'ok';
+  return result.error ? 'fail' : result.inactive || result.parked || result.capacity_deferred || result.failed ? 'warn' : 'ok';
 }
 
 /** The purge phase summary's note on the pages it did not submit (empty when there are none). */
 export function purgePhaseNote(result: DeletedPagePurge): string {
-  const parts = [result.inactive ? `${result.inactive} waiting on a writer in recovery` : '', result.parked ? `${result.parked} parked (gbrain doctor: purge_parked_pages)` : '',
+  const parts = [result.inactive ? `${result.inactive} waiting on a writer in recovery` : '', !result.error && result.failed ? `${result.failed} failed (see details)` : '',
+    result.parked ? `${result.parked} parked (gbrain doctor: purge_parked_pages)` : '',
     result.capacity_deferred ? `${result.capacity_deferred} deferred to the next run (write capacity in use)` : ''].filter(Boolean);
   return parts.length ? ` (${parts.join(', ')})` : '';
 }
@@ -200,9 +259,10 @@ export function purgePhaseNote(result: DeletedPagePurge): string {
  */
 export async function purgeDeletedPagesCoordinated(engine: BrainEngine, olderThanHours: number, opts: { retryParked?: boolean } = {}): Promise<DeletedPagePurge> {
   if (!await managedPersistenceEnabled(engine)) {
-    const recorded = await expireRecordedTombstones(engine, olderThanHours);
-    const result = await engine.purgeDeletedPages(olderThanHours);
-    return { slugs: [...recorded, ...result.slugs], count: recorded.length + result.count, blocked: [], deferred: 0, failed: 0, inactive: 0, parked: 0, capacity_deferred: 0 };
+    const recorded = await expireRecordedTombstones(engine, olderThanHours, opts.retryParked === true);
+    const result = await engine.purgeDeletedPages(olderThanHours, recorded.exclude.length ? { excludeIds: recorded.exclude } : undefined);
+    return { slugs: [...recorded.slugs, ...result.slugs], count: recorded.slugs.length + result.count, blocked: recorded.blocked, deferred: 0,
+      failed: recorded.failed, inactive: 0, parked: recorded.parked, capacity_deferred: 0 };
   }
   const selection = await selectPurgeCandidates(engine, olderThanHours, opts);
   for (const [sourceId, active] of Object.entries(selection.writers)) await notePurgeSourceWriter(engine, sourceId, active);

@@ -103,6 +103,8 @@ async function startServer(opts: {
   secretOverride?: string;
   boundSourceId?: string;
   onRequest?: (req: TurnContextRequest) => void;
+  /** Answer only after this long, so the serve's backstop answers first. */
+  hangMs?: number;
 }): Promise<void> {
   mkdirSync(opts.dataDir, { recursive: true });
   const secret = opts.secretOverride ?? ensureIpcSecret(opts.dataDir);
@@ -113,6 +115,7 @@ async function startServer(opts: {
       resolve: async () => null,
       turn_context: async (req) => {
         opts.onRequest?.(req);
+        if (opts.hangMs) await new Promise((r) => setTimeout(r, opts.hangMs));
         if (opts.blockText == null) return null;
         return { text: opts.blockText, pointers: [], factsCount: 0 };
       },
@@ -195,6 +198,19 @@ describe('user-prompt source routing (#5941)', () => {
     expect(out.get()).not.toContain('OTHER-SOURCE-CONTEXT');
     expect((await lastHeartbeat())?.reason).toBe('source_mismatch');
   });
+});
+
+describe('serve backstop (GBRA-95 row)', () => {
+  test('a turn_context cut short by the serve backstop records a degraded server_budget heartbeat, never a silent ok', async () => {
+    const dataDir = join(tmp, 'data');
+    writePgliteConfig(dataDir);
+    await startServer({ dataDir, blockText: 'LATE-CONTEXT', hangMs: 3000 });
+    const out = collectStdout();
+    await runHook(['user-prompt', '--harness', 'codex'], { ...out.io, userPromptDeadlineMs: 2000, stdin: JSON.stringify({ prompt: 'hello Acme', cwd: tmp }) });
+    expect(out.get()).not.toContain('LATE-CONTEXT');
+    const hb = await lastHeartbeat();
+    expect({ outcome: hb?.outcome, reason: hb?.reason }).toEqual({ outcome: 'degraded', reason: 'server_budget' });
+  }, 10_000);
 });
 
 describe('dispatch', () => {

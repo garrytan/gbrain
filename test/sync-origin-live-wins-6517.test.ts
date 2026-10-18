@@ -20,6 +20,7 @@ import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
 import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
+import { dropOriginIndex } from './helpers/origin-index.ts';
 
 describe('#6517 selectOriginClaimant, the one origin rule', () => {
   const live = (id: number) => ({ id, deleted_at: null });
@@ -55,7 +56,9 @@ for (const backend of testBackends()) describe(`[${backend}] #6517 assertSyncPag
     for (const state of states) {
       const slug = `origin-rule/${++n}`;
       await engine.transaction(tx => withCoordinatedWrite(tx, [sourceId], async () => {
-        await tx.putPage(slug, { type: 'note', title: slug, compiled_truth: `Page ${n}.`, timeline: '', frontmatter: {}, content_hash: `h-${n}`, source_path: origin }, { sourceId });
+        await tx.putPage(slug, { type: 'note', title: slug, compiled_truth: `Page ${n}.`, timeline: '', frontmatter: {}, content_hash: `h-${n}` }, { sourceId });
+        // #6948: a second live claimant only exists as legacy data now, so the origin is set directly.
+        await tx.executeRaw('UPDATE pages SET source_path=$3 WHERE source_id=$1 AND slug=$2', [sourceId, slug, origin]);
         if (state === 'gone') await tx.executeRaw('UPDATE pages SET deleted_at=now() WHERE source_id=$1 AND slug=$2', [sourceId, slug]);
       }, TEST_WRITE_ATTRIBUTION));
       ids.push(Number((await engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id=$1 AND slug=$2', [sourceId, slug]))[0]!.id));
@@ -67,6 +70,7 @@ for (const backend of testBackends()) describe(`[${backend}] #6517 assertSyncPag
   beforeAll(async () => {
     if (backend === 'pglite') { engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); }
     else { const pg = await isolatedPersistencePostgres(process.env.DATABASE_URL!); engine = pg.engine; closePostgres = pg.close; }
+    await dropOriginIndex(engine);
   }, 120_000);
   afterAll(async () => { await engine.disconnect(); await closePostgres?.(); }, 60_000);
 

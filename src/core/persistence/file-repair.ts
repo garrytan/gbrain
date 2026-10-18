@@ -77,6 +77,7 @@ import type { PreparedMutation } from './coordinator.ts';
 import { contentRepairCommit, fenceRepairCommit } from './effect-model.ts';
 import { recordSlugLineAlias } from '../page-state/rename-alias.ts';
 import type { WriteRequest } from './model.ts';
+import { bindOrigin } from './origin-guard.ts';
 
 export interface ManagedFileRepairIntent extends Record<string, unknown> {
   kind: 'managed_file_repair';
@@ -398,7 +399,7 @@ export async function prepareManagedFileRepairMutation(engine: BrainEngine, row:
       }
       published = applied;
       const installed = await applied.apply(tx);
-      await tx.executeRaw('UPDATE pages SET source_path=$3 WHERE source_id=$1 AND slug=$2 AND source_path IS DISTINCT FROM $3', [row.source_id, row.slug, p.sourcePath]);
+      await bindOrigin(tx, { sourceId: row.source_id, slug: row.slug, sourcePath: p.sourcePath });
       // A body stored in segments was sealed by its import's apply when complete (sealSegmentedPage); the inline text seal reads the whole timeline.
       if (!applied.noop) { await project(tx); if (!installed?.segmented) await sealPageTextProjection(tx, row.slug, row.source_id); }
       const holdCleared = await clearGitHold(tx, { sourceId: row.source_id, incarnation: row.source_incarnation, path: p.path, observedAt: p.holdObservedAt ?? new Date().toISOString() });

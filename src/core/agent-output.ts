@@ -433,8 +433,8 @@ export function buildEnvelope(p: EnvelopeParts, ctx: RenderContext): AgentEnvelo
     ...(p.why !== undefined ? { why: p.why } : {}),
     ...(fix ? { fix } : {}),
     docs_cmd: ['gbrain', 'errors', p.code],
-    class: codeClass(p.code),
-    retryable: p.retryable ?? codeRetryable(p.code),
+    class: codeClass(p.code, p.reason),
+    retryable: p.retryable ?? codeRetryable(p.code, p.reason),
     ...(notices ? { notices } : {}),
     contract_version: CONTRACT_VERSION,
   };
@@ -850,7 +850,7 @@ export function projectionConflictLine(e: unknown, command: string): string | nu
 /** Pure: callers write the strings. TTY order: `Error [code]: msg` / `Fix:` / `Why:` / `Docs:`. */
 export function renderCliError(e: unknown, opts: { json: boolean; command: string; tty: boolean }): CliErrorRender {
   const env = toAgentError(e, { transport: 'cli', command: opts.command, render: cliRenderContext() });
-  const exitCode = exitCodeForCode(env.code);
+  const exitCode = exitCodeForCode(env.code, env.reason);
   if (opts.json) return { stdout: `${JSON.stringify(env, null, 2)}\n`, exitCode };
   const lines = [`Error [${env.code}]: ${env.message}`];
   const relay = env.fix && !env.fix.command && env.fix.mcp ? `call ${env.fix.mcp.tool} over MCP with ${JSON.stringify(env.fix.mcp.arguments)}` : undefined;

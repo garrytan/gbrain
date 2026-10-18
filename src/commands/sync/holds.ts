@@ -31,6 +31,7 @@ import {
 import { DEFAULT_SOURCE_ID, hasMalformedPathSegment, isCodeFilePath, resolveSlugForPath, sanitizePathForDisplay, slugifyPath } from '../../core/sync.ts';
 import type { SyncActivePack } from './sync-run.ts';
 import { isPathContained } from '../../core/path-confine.ts';
+import { bindOrigin } from '../../core/persistence/origin-guard.ts';
 
 /** The file at a repo-relative path from git or a hold row, or null when it is missing or resolves outside the source root. */
 function fileUnderRoot(root: string, path: string): string | null {
@@ -356,7 +357,7 @@ export async function moveHeldRenames(engine: BrainEngine, holds: LegacyHolds | 
       const slug = resolveSlugForPath(record.path);
       await maintenanceBeliefTransaction(engine, { sourceId: holds.sourceId, slugs: [origin.slug, slug], op: 'sync_rename' }, async tx => {
         if (await tx.updateSlug(origin.slug, slug, { sourceId: holds.sourceId }) === 0) return;
-        await tx.executeRaw('UPDATE pages SET source_path=$1 WHERE id=$2 AND source_id=$3', [record.path, origin.pageId, holds.sourceId]);
+        await bindOrigin(tx, { sourceId: holds.sourceId, pageId: origin.pageId, sourcePath: record.path });
       });
     } catch { /* the walk imports the file as an ordinary add; the old page stays until a full walk proves it gone */ }
   }

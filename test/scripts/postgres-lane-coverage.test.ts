@@ -32,6 +32,7 @@ const PG_ENV = '        env:\n          DATABASE_URL: postgres://gbrain_test:gbr
 describe('check-postgres-lane-coverage.ts', () => {
   test.each([
     ['a testBackends() loop', "for (const backend of testBackends()) describe(backend, () => {});\n"],
+    ['a pathologicalArms() loop', "for (const arm of pathologicalArms()) describe(arm.backend, () => {});\n"],
     ['a skipIf on DATABASE_URL', "test.skipIf(!process.env.DATABASE_URL)('postgres arm', () => {});\n"],
     ['a variable holding DATABASE_URL', "const url = process.env.DATABASE_URL;\ndescribe.skipIf(!url)('postgres arm', () => {});\n"],
     ['an if-gated connection', "beforeAll(async () => { if (process.env.DATABASE_URL) await isolatedPersistencePostgres(process.env.DATABASE_URL); });\n"],

@@ -187,6 +187,27 @@ describe('context_pack over IPC', () => {
     expect(resp.degradedReason).toBe('server_budget');
   }, 10_000);
 
+  test('a pack assembled before the backstop is returned with server_budget when later handler work runs past it', async () => {
+    const dataDir = join(tmp, 'data');
+    mkdirSync(dataDir, { recursive: true });
+    const secret = ensureIpcSecret(dataDir);
+    const server = await startResolveIpcServer(
+      resolveSocketPath(dataDir),
+      {
+        resolve: async () => null,
+        context_pack: async (_req, progress) => {
+          if (progress) progress.assembled = { text: 'ASSEMBLED-PACK', pointers: [], factsCount: 0 };
+          await new Promise((r) => setTimeout(r, 60_000));
+          return { text: 'late', pointers: [], factsCount: 0 };
+        },
+      },
+      { secret },
+    );
+    servers.push(server!);
+    const resp = await requestContextPack(resolveSocketPath(dataDir), { secret }, { timeoutMs: 5000 }) as ContextPackResponse;
+    expect({ ok: resp.ok, text: resp.block?.text, degradedReason: resp.degradedReason }).toEqual({ ok: true, text: 'ASSEMBLED-PACK', degradedReason: 'server_budget' });
+  }, 10_000);
+
   test('handler throw → ok:false error, connection survives', async () => {
     const dataDir = join(tmp, 'data');
     mkdirSync(dataDir, { recursive: true });

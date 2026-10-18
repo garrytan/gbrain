@@ -475,7 +475,7 @@ Content to chunk but not embed.
     const content = head + body + 'x'.repeat(PAGE_MAX_BYTES - head.length - body.length);
     expect(Buffer.byteLength(content, 'utf-8')).toBe(PAGE_MAX_BYTES);
 
-    const engine = mockEngine();
+    const engine = mockEngine({ getConfig: (key: string) => Promise.resolve(key === 'pages.segmented_storage' ? 'off' : null) });
     const result = await importFromContent(engine, 'borderline-slug', content, { noEmbed: true });
 
     expect(result.status).toBe('imported');

@@ -138,6 +138,7 @@
     "check:pg-url-redaction": "bash scripts/check-pg-url-redaction.sh",
     "check:source-scope-onboard": "bash scripts/check-source-scope-onboard.sh",
     "check:getpage-scope": "node scripts/check-getpage-scoped-write.mjs",
+    "check:origin-assignment": "node scripts/check-origin-assignment.mjs",
     "postinstall": "bun run scripts/postinstall.ts",
     "prepublish:clawhub": "bun run build:all",
     "publish:clawhub": "clawhub package publish . --family bundle-plugin",
@@ -154,6 +155,7 @@
     "check:module-size": "bash scripts/check-module-size.sh",
     "check:core-guard-coverage": "node scripts/check-core-guard-coverage.mjs",
     "check:function-size": "bun scripts/check-function-size.ts",
+    "check:item-allowlist-catches": "bun scripts/check-item-allowlist-catches.ts",
     "check:layering": "bun scripts/check-layering.ts",
     "check:ai-sdk-importers": "bun scripts/check-ai-sdk-importers.ts",
     "check:durable-flush": "bun scripts/check-durable-flush.ts",
@@ -238,7 +240,7 @@
     "bun": ">=1.4.0"
   },
   "license": "MIT",
-  "version": "0.60.295.0",
+  "version": "0.60.300.0",
   "overrides": {
     "@ai-sdk/provider-utils": "4.0.56",
     "@hono/node-server": "^2.0.5",

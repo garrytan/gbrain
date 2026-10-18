@@ -63,6 +63,7 @@ import { materializedSnapshot, segmentedOverCeiling } from '../persistence/segme
 import { pageBodyOverCeilingError } from '../page-body/page-shape.ts';
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairPlan, type RepairScope } from './core.ts';
 import { gitChildEnv } from '../git-env.ts';
+import { bindOrigin, originConflictMessage, pickCanonicalOrigin } from '../persistence/origin-guard.ts';
 
 type Mode = 'managed' | 'legacy';
 type RepairClass = 'safe' | 'interpretive';
@@ -224,10 +225,13 @@ function markdownFiles(root: string): string[] {
 
 interface PageRow { id: number; slug: string; source_path: string; revision: string; title: string; head: string }
 
-async function pagesByOrigin(engine: BrainEngine, sourceId: string): Promise<Map<string, PageRow>> {
+/** Each recorded origin's canonical live page (#6948: twins resolve to the page whose slug the file derives, else stay ambiguous). */
+async function pagesByOrigin(engine: BrainEngine, sourceId: string): Promise<Map<string, PageRow | { ambiguous: string[] }>> {
   const rows = await engine.executeRaw<PageRow>(`SELECT id, slug, source_path, knowledge_revision::text AS revision, title, left(compiled_truth, 400) AS head
-    FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND source_path IS NOT NULL`, [sourceId]);
-  return new Map(rows.map(row => [row.source_path, { ...row, id: Number(row.id) }]));
+    FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND source_path IS NOT NULL ORDER BY slug`, [sourceId]);
+  const grouped = new Map<string, PageRow[]>();
+  for (const row of rows) grouped.set(row.source_path, [...grouped.get(row.source_path) ?? [], { ...row, id: Number(row.id) }]);
+  return new Map([...grouped].map(([path, pages]) => [path, pickCanonicalOrigin(pages, path)!]));
 }
 
 /**
@@ -289,7 +293,7 @@ interface Analysis {
   review?: NeedsReview;
 }
 
-interface FileContext { engine: BrainEngine; src: SourceRoot; includeAmbiguous: boolean; pages: Map<string, PageRow> }
+interface FileContext { engine: BrainEngine; src: SourceRoot; includeAmbiguous: boolean; pages: Map<string, PageRow | { ambiguous: string[] }> }
 
 /** One file's proposal, pending interpretation, or manual fix; null when it needs nothing. */
 async function analyzeFile(ctx: FileContext, path: string, hold: GitHoldRecord | undefined): Promise<Analysis | null> {
@@ -308,6 +312,7 @@ async function analyzeFile(ctx: FileContext, path: string, hold: GitHoldRecord |
   if (!Buffer.from(content, 'utf8').equals(bytes)) return review(hold?.code ?? 'invalid_frontmatter', `${path} is not valid UTF-8, so gbrain will not rewrite it; re-save it as UTF-8, then preview again.`);
   const sourcePath = hold?.source_path ?? path;
   const page = ctx.pages.get(sourcePath);
+  if (page && 'ambiguous' in page) return review('origin_conflict', originConflictMessage(src.sourceId, sourcePath, page.ambiguous));
   const slugCtx: SlugContext = { expectedSlug: resolveSlugForPath(sourcePath), slugExempt: declared => page?.source_path === sourcePath && declared === page.slug };
   const found = inspect(content, path, slugCtx, size);
   const heldBefore = hold && hold.page_id !== null && ['ambiguous_protected_key', 'ambiguous_identity_key'].includes(hold.meta.reason ?? '')
@@ -358,6 +363,7 @@ async function bindProposal(ctx: FileContext, path: string, hold: GitHoldRecord 
   const { engine, src } = ctx;
   const sourcePath = hold?.source_path ?? path;
   const page = ctx.pages.get(sourcePath);
+  if (page && 'ambiguous' in page) return { source_id: src.sourceId, path, code: 'origin_conflict', resolution: originConflictMessage(src.sourceId, sourcePath, page.ambiguous) };
   const slug = page?.slug ?? (proposal.rename_from ? resolveSlugForPath(sourcePath) : hold?.slug ?? resolveSlugForPath(sourcePath));
   const snapshot = await engine.readPageSnapshot(slug, { sourceId: src.sourceId, includeDeleted: true });
   // Wave B decision #1: the re-import compares the stored body whole, which a page stored in segments allows up to 24 MiB.
@@ -567,7 +573,7 @@ async function applyRepair(ctx: OperationContext, repair: ApprovedRepair, select
     const from = repair.rename_from;
     await maintenanceTransaction(ctx.engine, async tx => {
       if (await tx.updateSlug(from.slug, repair.slug, { sourceId: repair.source_id }) === 1) {
-        await tx.executeRaw('UPDATE pages SET source_path=$1 WHERE id=$2 AND source_id=$3', [repair.source_path, from.pageId, repair.source_id]);
+        await bindOrigin(tx, { sourceId: repair.source_id, pageId: from.pageId, sourcePath: repair.source_path });
       }
     });
   }

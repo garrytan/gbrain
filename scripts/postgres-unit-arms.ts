@@ -24,7 +24,7 @@ import { loadWeights, partition } from './sharding.ts';
 export const ARMS_LIST = 'test/postgres-unit-arms.txt';
 export const ARM_WEIGHTS = 'scripts/postgres-arm-weights.json';
 /** persistence-validation's unit-postgres-arms matrix size; test/scripts/postgres-unit-arms.test.ts pins the workflow to it. */
-export const ARM_SHARDS = 14;
+export const ARM_SHARDS = 16;
 /** The workflow step's `timeout-minutes: 20`: a shard whose files run longer is cut off mid-list. */
 export const ARM_STEP_TIMEOUT_MS = 20 * 60 * 1000;
 /**

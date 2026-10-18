@@ -7,7 +7,7 @@ import { opError, OperationError } from '../ops/contract.ts';
 import { sha256 } from './digest.ts';
 import type { BrainEngine } from '../engine.ts';
 import { readJournalLimits } from './limits.ts';
-import { beforeStageCopyPath, hashDescriptor, validateBeforeStagePath } from './large-file.ts';
+import { beforeStageCopyPath, hashDescriptor, streamingStagePath, validateBeforeStagePath } from './large-file.ts';
 import { declarePersistenceProtocol } from './protocol.ts';
 
 export interface RecoveryStagingFile { path: string; hash: string; bytes: number }
@@ -99,6 +99,7 @@ function removeUnread(path: string): void {
  */
 export function cleanupRecoveryStaging(record: StagedRecovery, opts: { keepBefore?: boolean; priorIntact?: boolean } = {}): void {
   const before = record.staging?.before;
+  discardStreamingStage(record);
   for (const stage of stages(record)) {
     if (stage === before) {
       removeUnread(beforeStageCopyPath(stage.path));
@@ -127,10 +128,31 @@ export function restoreBeforeStage(record: StagedRecovery & { mode: number | nul
   boundary?.('directory_flushed');
 }
 
+/**
+ * Removes, unread, a publication stage's stream still under its in-progress name (`streamingStagePath`): a stream a crash
+ * cut short. It was never renamed to the stage's name, so it was never published and holds no bytes recovery needs.
+ */
+export function discardStreamingStage(record: StagedRecovery): void {
+  const publication = record.staging?.publication;
+  if (publication && stages(record).includes(publication)) removeUnread(streamingStagePath(publication.path));
+}
+
+/**
+ * A version 2 mirror record's forward publication (effect-recovery.ts): its verified publication stage, streamed from
+ * the page's segments, is renamed over the canonical path. A missing stage refuses (`unexpected_staging_bytes`).
+ */
+export function publishStreamedStage(record: StagedRecovery): void {
+  const stage = record.staging?.publication;
+  if (!stage || !stages(record).includes(stage)) throw blocked();
+  if (!withVerifiedStage(stage, () => renameSync(stage.path, record.path))) throw blocked();
+  flushDirectory(dirname(record.path));
+}
+
 /** The final accounting fence also protects direct terminal-cleanup callers. */
 export function assertRecoveryStagingAbsent(record: StagedRecovery): void {
   for (const stage of stages(record)) {
-    if (statIfPresent(stage.path) || (stage === record.staging?.before && statIfPresent(beforeStageCopyPath(stage.path)))) throw blocked();
+    if (statIfPresent(stage.path) || (stage === record.staging?.before && statIfPresent(beforeStageCopyPath(stage.path)))
+      || (stage === record.staging?.publication && statIfPresent(streamingStagePath(stage.path)))) throw blocked();
     flushParent(stage.path);
   }
 }

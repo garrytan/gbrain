@@ -27,7 +27,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { Action } from '../agent-output.ts';
 import { managedSyncResumeArgs } from '../sync-reconcile.ts';
 import { readManagedSyncFailures, type ManagedSyncFailure } from './sync-failures.ts';
-import { fenceAutoRepairFor, gitHoldFix, holdEscalation, noteHoldEdit, readGitSourceHolds, recordHoldAttempt, requestGitHoldRetry, type GitHoldRecord } from './sync-holds.ts';
+import { outOfAttemptsHold, fenceAutoRepairFor, gitHoldFix, holdEscalation, noteHoldEdit, readGitSourceHolds, recordHoldAttempt, requestGitHoldRetry, type GitHoldRecord } from './sync-holds.ts';
 import type { FenceAutoRepair } from '../fence-repair/hold-fix.ts';
 import { classifySyncFault, HOLD_ATTEMPTS_NEEDS_HUMAN, type SyncFaultVerdict } from './sync-fault-class.ts';
 import { CONTENT_REPAIR_KINDS, contentHoldDisposition, runContentLane, type ContentHoldDisposition } from '../repair/content-lane.ts';
@@ -209,6 +209,7 @@ async function retiredCursorStands(engine: BrainEngine, sourceId: string, incarn
 export function holdVerdict(record: GitHoldRecord, auto: FenceAutoRepair | undefined, now = Date.now()): SyncFaultVerdict {
   const escalation = holdEscalation(record, now);
   const content = record.meta.content_repair ? { content_repair: { ...record.meta.content_repair, path: record.path, slug: record.slug } } : {};
+  if (record.code === 'origin_conflict' && record.meta.reason) return classifySyncFault({ code: record.code, detail: 'origin_conflict_decision', ...escalation });
   const disposition = contentHoldDisposition(record, auto);
   if (disposition.action !== 'listed' || disposition.state === 'owner') return classifySyncFault({ code: record.code, ...escalation, ...content });
   const verdict = classifySyncFault({ code: record.code, ...escalation, detail: disposition.reason, ...content });
@@ -547,7 +548,7 @@ export async function unblockSync(engine: BrainEngine, sourceId: string, opts: U
       applied.push({ path: hold.path, slug: hold.slug, code: hold.code, action: 'retry_when_clean', detail: `committed at HEAD as blob ${committed.oid.slice(0, 12)}; scheduled for a re-screen` });
       continue;
     }
-    if (hold.code === 'preparation_stalled') {
+    if (outOfAttemptsHold(hold.code)) {
       applied.push({ path: hold.path, slug: hold.slug, code: hold.code, action: 'retry', detail: `attempt ${(hold.meta.attempts ?? 1) + 1} of ${HOLD_ATTEMPTS_NEEDS_HUMAN}; scheduled for a re-screen` });
       continue;
     }

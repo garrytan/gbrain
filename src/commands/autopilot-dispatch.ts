@@ -127,6 +127,13 @@ export async function dispatchAutopilotTick(
         } catch (e) {
           if (jsonMode) process.stderr.write(JSON.stringify({ event: 'global_maintenance_dispatch_failed', error: e instanceof Error ? e.message : String(e) }) + '\n');
         }
+        // GBRA-130 C-6: the verdict `autopilot --status` reads without the database.
+        try {
+          const { recordGlobalMaintenanceStallStatus } = await import('../core/minions/global-maintenance-stall.ts');
+          await recordGlobalMaintenanceStallStatus(engine);
+        } catch (e) {
+          if (jsonMode) process.stderr.write(JSON.stringify({ event: 'global_maintenance_verdict_failed', error: e instanceof Error ? e.message : String(e) }) + '\n');
+        }
       }
       // Opt-in scheduled chat-connector sync (OV#4). Credential-gated +
       // auto_sync-gated: fires for nobody who hasn't explicitly enabled it.

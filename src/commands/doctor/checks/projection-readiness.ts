@@ -6,6 +6,7 @@ import { projectionBacklog, type ProjectionBacklog } from '../../../core/page-st
 import { projectionDrainLimit } from '../../../core/page-state/image-seal.ts';
 import type { PersistenceProjectionStatus } from '../../../core/persistence/ipc.ts';
 import { isMultimodalEnabled } from '../../../core/sync.ts';
+import { readCredentialResealHolds } from '../../../core/page-state/credential-reseal.ts';
 import type { Check } from '../../doctor.ts';
 import type { DoctorContext, DoctorEntry } from '../context.ts';
 
@@ -84,25 +85,33 @@ export async function checkProjectionReadiness(engine: BrainEngine, scope: PageR
     WHERE deleted_at IS NULL AND body_storage='segmented' AND text_projection_revision IS DISTINCT FROM knowledge_revision`).catch(() => []))[0]?.n ?? 0) : 0;
   const segmentedNote = segmented ? ` ${segmented} page(s) stored in segments are not searchable yet; ${opts.resident
     ? 'the resident builds them too.' : '`gbrain projections drain` builds them as well.'}` : '';
-  const details = { readiness: readiness.status, ready: readiness.ready, ...classDetails(backlog), ...(segmented ? { segmented_pending: segmented } : {}) };
+  // GBRA-130 A-27: pages the v0.60.31 credential re-chunk held; remote callers get the count only.
+  const held = await readCredentialResealHolds(engine, scope.sourceIds ?? (scope.sourceId ? [scope.sourceId] : undefined)).catch(() => []);
+  const details = { readiness: readiness.status, ready: readiness.ready, ...classDetails(backlog), ...(segmented ? { segmented_pending: segmented } : {}),
+    ...(held.length ? { credential_reseal_held: held.length, ...(opts.remote ? {} : { held_pages: held.slice(0, 20).map(hold => ({ source_id: hold.source_id, slug: hold.slug,
+      code: hold.code, attempts: hold.attempts, fix: hold.fix.argv })) }) } : {}) };
   const work = backlog.pending + backlog.sealable + backlog.reimport;
-  if (work === 0 && readiness.status !== 'projection_pending') {
+  if (work === 0 && readiness.status !== 'projection_pending' && !held.length) {
     const byDesign = classSentences(backlog, false);
     return byDesign.length
       ? { name: 'text_projection_readiness', status: 'ok', severity: 'info', fix_unavailable_reason: 'operator_judgement', details,
         message: `No queued projection needs work. ${byDesign.join(' ')}` }
       : { name: 'text_projection_readiness', status: 'ok', message: 'Visible text projections match their canonical revisions.', details };
   }
-  const text = backlog.pending || work === 0
+  const heldText = held.length ? `${held.length} page(s) holding a private key failed their credential-safe re-chunk and stay withheld from search${opts.remote ? '' : ` (${held.slice(0, 3)
+    .map(hold => `${hold.source_id}:${hold.slug} ${hold.code}`).join(', ')}${held.length > 3 ? ', ...' : ''})`}; retry them with ${[...new Set(held.map(hold => `\`${hold.fix.argv!.join(' ')}\``))].join(', ')}.` : '';
+  const text = backlog.pending || (work === 0 && readiness.status === 'projection_pending')
     ? `Visible pages have missing or stale text projections${backlog.pending ? ` (${backlog.pending} queued Markdown/code page(s)${backlog.failed ? `, ${backlog.failed} last failed` : ''})` : ''}; search and code results may be incomplete. ${opts.resident
       ? 'The resident gbrain process that holds this PGLite brain is rebuilding queued Markdown and code projections (up to 100 pages per pass, fewer while writes wait). On the brain host, `gbrain doctor --only text_projection_readiness --json` shows the counts and how to drain faster.'
       : 'Run `gbrain projections drain` to rebuild queued Markdown and code projections now; it is safe while `gbrain serve` runs on Postgres.'}${segmentedNote} ${CODE_REPAIR}`
     : '';
-  const { fix, blocked } = opts.resident ? {} : projectionFix(backlog, opts);
+  const projection = opts.resident ? {} : projectionFix(backlog, opts);
+  const blocked = projection.blocked;
+  const fix = projection.fix ?? (held.length && !opts.resident ? { ...held[0]!.fix, actor: opts.remote ? 'host_admin' as const : 'agent' as const } : undefined);
   const unavailable = blocked ? ` Re-importing images needs multimodal embeddings, which are off (set ${blocked}=true on the brain host, then preview with \`gbrain embed --stale --images --dry-run\`).` : '';
   return {
     name: 'text_projection_readiness', status: 'warn',
-    message: [text, ...classSentences(backlog, opts.resident === true)].filter(Boolean).join(' ') + unavailable + ` ${UNCHANGED}`,
+    message: [text, heldText, ...classSentences(backlog, opts.resident === true)].filter(Boolean).join(' ') + unavailable + ` ${UNCHANGED}`,
     details: blocked ? { ...details, reimport_blocked_by: blocked } : details,
     ...(fix ? { fix } : { fix_unavailable_reason: 'operator_judgement' as const }),
   };

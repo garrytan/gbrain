@@ -1,7 +1,21 @@
 import { lstatSync, readdirSync, realpathSync, statSync, type BigIntStats } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { OperationError } from '../ops/contract.ts';
+import { OperationError, opError } from '../ops/contract.ts';
 import { catalogueError } from '../error-catalogue.ts';
+
+/** The longest file or directory name, in bytes, the supported file systems store (NAME_MAX). */
+const NATIVE_NAME_MAX_BYTES = 255;
+
+/**
+ * A name the file system cannot store (over NAME_MAX bytes, or ENAMETOOLONG):
+ * the slug is the problem, so it is a caller error with the move as its fix,
+ * never a storage failure an agent retries.
+ */
+function fileNameTooLong(): OperationError {
+  return opError('invalid_params', 'The canonical file name is longer than the file system allows.',
+    'Write the page under a slug whose segments are at most 240 bytes each (put_page refuses new longer ones and names one), then delete_page the old slug.',
+    { detail: 'file_name_too_long', why: `A slug segment becomes a file or directory name, and file systems store at most ${NATIVE_NAME_MAX_BYTES} bytes per name.` });
+}
 
 export function nativeFileTarget(root: string, target: string, code?: string): string {
   const unsafe = () => new OperationError(code ?? 'source_changed', 'The canonical file target has no unambiguous native identity.',
@@ -16,6 +30,7 @@ export function nativeFileTarget(root: string, target: string, code?: string): s
     const rootInfo = statSync(physicalRoot, { bigint: true });
     if (!rootInfo.isDirectory()) throw unsafe();
     const segments = path.split(sep);
+    if (segments.some(segment => Buffer.byteLength(segment) > NATIVE_NAME_MAX_BYTES)) throw fileNameTooLong();
     const names: string[] = [];
     let parent = physicalRoot;
     for (let i = 0; i < segments.length; i++) {
@@ -23,6 +38,7 @@ export function nativeFileTarget(root: string, target: string, code?: string): s
       let info: BigIntStats;
       try { info = lstatSync(join(parent, name), { bigint: true }); }
       catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENAMETOOLONG') throw fileNameTooLong();
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
         names.push(...segments.slice(i));
         break;

@@ -26,6 +26,7 @@ export const WRITER_HELP = `Usage:
   gbrain sources writer deactivate [--admin-intent writer_deactivate --expected-state <admin_state>] [--dry-run] [--json]
   gbrain sources writer transfer prepare <source> [--self-transfer [--confirm-relocated-root]] [administration options] [--dry-run] [--json]
   gbrain sources writer transfer accept <source> --path <worktree-root> --expected-epoch <n> --manifest <sha256> [--self-transfer [--confirm-relocated-root]] [administration options] [--dry-run] [--json]
+  gbrain sources writer transfer cancel <source> --expected-epoch <n> [administration options] [--dry-run] [--json]
   gbrain sources writer lock [--json]
   gbrain sources writer unlock [--json]
 
@@ -46,12 +47,15 @@ git-durability records whether this owner commits (and pushes) page writes throu
 its Git effect; --enable runs a read-only push probe first and re-queues the Git
 effects skipped while it was off, --pat-file wires a repo-scoped push credential
 (same keys as sources harden) and retries this worktree's parked pushes.
-Non-dry-run changes require --admin-intent <writer_claim|writer_activate|writer_deactivate|writer_transfer_prepare|writer_transfer_accept|writer_git_durability>
+Non-dry-run changes require --admin-intent <writer_claim|writer_activate|writer_deactivate|writer_transfer_prepare|writer_transfer_accept|writer_transfer_cancel|writer_git_durability>
 matching the action and --expected-state <admin_state from reviewed status>.
 These checks also apply to interactive terminals; --yes is not a substitute.
 Explicit noninteractive administration is supported. Stale state is rejected.
 Use --brain <id> to select a database. Prepare drains the current owner and records
 an exact manifest; accept requires that epoch and matching bytes on the successor.
+Cancel, on the owner host, returns a prepared transfer nobody accepted to active at
+the same epoch and clears its manifest (pages and files untouched); an accept with
+that epoch then refuses. --dry-run shows whether the transfer is cancellable.
 Before activation, upgrade and stop older writers on every host, claim every
 filesystem source, and inspect/release remaining legacy locks. A claim alone
 fences legacy sync, sources push and lint --fix for that checkout; claim output
@@ -91,7 +95,7 @@ git-durability --pat-file retries every parked push of the worktree; requests re
 on their own are listed in parked_pushes.refused, the result is status partial, and it exits 1.
 lock sets an opt-in, brain-level writer admin lock (config key persistence.writer_admin_lock)
 and unlock clears it; both are local-only, idempotent and print the resulting state.
-While locked, writer claim, activate and transfer (prepare and accept) are refused with
+While locked, writer claim, activate and transfer (prepare, accept and cancel) are refused with
 writer_admin_locked for every caller; ordinary writes continue. lock refuses while a transfer
 is prepared and not yet accepted. There is no --force: the escape hatch is the local unlock
 (operator workflow: unlock, administer, lock). The lock guards against routine or accidental
@@ -189,9 +193,9 @@ export function parsePersistenceAdminArgs(group: Group, args: string[]): {
     else if (verb === 'unlock') operation = 'writer_unlock';
     else if (verb === 'transfer') {
       const phase = positional.shift();
-      if (phase !== 'prepare' && phase !== 'accept') throw invalid(group, 'Transfer requires prepare or accept.',
-        'Run gbrain sources writer transfer prepare on the current owner host first, then gbrain sources writer transfer accept on the successor with the epoch and manifest prepare printed.');
-      operation = phase === 'prepare' ? 'writer_transfer_prepare' : 'writer_transfer_accept';
+      if (phase !== 'prepare' && phase !== 'accept' && phase !== 'cancel') throw invalid(group, 'Transfer requires prepare or accept (or cancel, which ends a prepared transfer).',
+        'Run gbrain sources writer transfer prepare on the current owner host first, then gbrain sources writer transfer accept on the successor with the epoch and manifest prepare printed; gbrain sources writer transfer cancel <source> --expected-epoch <n> on the owner host ends a transfer nobody will accept.');
+      operation = phase === 'prepare' ? 'writer_transfer_prepare' : phase === 'accept' ? 'writer_transfer_accept' : 'writer_transfer_cancel';
     } else throw invalid(group, 'Writer administration requires status, failures, movement, retry-effects, git-durability, claim, activate, deactivate, transfer, lock, or unlock.',
       `Name the action after gbrain sources writer${verb ? ` instead of ${verb}` : ''}; start with gbrain sources writer status --json, which changes nothing.`);
     const source = positional.shift();

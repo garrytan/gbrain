@@ -191,8 +191,11 @@ function batchRequestId(sourceIncarnation: string, pages: ReadonlyArray<Pick<Con
 interface GenerationHistory {
   /** An admitted batch that has not settled yet. */
   pending: { id: string; attempt: number } | null;
-  /** Failed batches holding this generation: their row id, error code and the member's attempt. */
-  failed: Array<{ id: string; requestId: string; code: string; attempt: number }>;
+  /**
+   * Failed batches holding this generation: their row id, error code, the member's attempt, and whether the batch held
+   * this generation alone (GBRA-130 A-51: only then is a deterministic code this page's own).
+   */
+  failed: Array<{ id: string; requestId: string; code: string; attempt: number; alone: boolean }>;
 }
 
 /**
@@ -220,7 +223,7 @@ export async function loadGenerationIndex(engine: BrainEngine, authority: Mainte
     for (const [generation, attempt] of attempts) {
       const history = index.get(generation) ?? { pending: null, failed: [] };
       if (!isTerminal(row as unknown as WriteRequest)) history.pending = { id: row.id, attempt };
-      else history.failed.push({ id: row.id, requestId: row.request_id, code: row.error_code ?? row.state, attempt });
+      else history.failed.push({ id: row.id, requestId: row.request_id, code: row.error_code ?? row.state, attempt, alone: attempts.size === 1 });
       index.set(generation, history);
     }
   }
@@ -657,10 +660,11 @@ export async function startManagedPage(state: ManagedRunState, snapshot: PageSna
       bookPage(state, result);
       return done;
     }
-    if (row.state !== 'committed') history.failed.push({ id: row.id, requestId: row.request_id, code: row.error_code ?? row.state, attempt: history.pending.attempt });
+    if (row.state !== 'committed') history.failed.push({ id: row.id, requestId: row.request_id, code: row.error_code ?? row.state, attempt: history.pending.attempt,
+      alone: new Set(((row.intent as ConversationFactsIntent | null)?.pages ?? []).map(entry => entry.generation)).size === 1 });
     history.pending = null;
   }
-  const deterministic = history.failed.find(f => DETERMINISTIC_CODES.has(f.code));
+  const deterministic = history.failed.find(f => f.alone && DETERMINISTIC_CODES.has(f.code));
   if (deterministic || history.failed.length >= MAX_GENERATION_ATTEMPTS) {
     const last = deterministic ?? history.failed.at(-1)!;
     state.result.pages_blocked = (state.result.pages_blocked ?? 0) + 1;
@@ -754,6 +758,14 @@ export async function flushManagedBatch(state: ManagedRunState, opts: { afterErr
   });
   const pages = m.batch.splice(0);
   m.bytes = 0;
+  await publishBatch(state, m, pages);
+}
+
+/**
+ * One batch request. GBRA-130 A-51: a deterministic failure of more than one page is re-published in halves, so the
+ * code is booked only against the page that fails alone and its batch-mates still commit in this run.
+ */
+async function publishBatch(state: ManagedRunState, m: ManagedConversationPublisher, pages: ConversationPageEntry[]): Promise<void> {
   try {
     const receipt = await submitConversationPages(m.engine, (await readyPublisher(m)).authority, pages);
     for (const result of receipt.pages as ConversationPageResult[]) bookPage(state, result);
@@ -766,8 +778,15 @@ export async function flushManagedBatch(state: ManagedRunState, opts: { afterErr
       log(`batch request ${requestId ?? ''} with ${pages.length} page(s) is accepted and still pending; rerun to confirm (the rerun replays it, no model call)`);
       return;
     }
+    if (DETERMINISTIC_CODES.has(error.code) && pages.length > 1) {
+      log(`batch request ${requestId ?? ''} with ${pages.length} page(s) failed (${error.code}); re-publishing it in halves so the code lands only on the page that fails alone`);
+      const half = Math.ceil(pages.length / 2);
+      await publishBatch(state, m, pages.slice(0, half));
+      await publishBatch(state, m, pages.slice(half));
+      return;
+    }
     state.result.pages_failed += pages.length;
-    log(`batch request ${requestId ?? ''} with ${pages.length} page(s) failed (${error.code}): ${error.message}; the next run ${DETERMINISTIC_CODES.has(error.code) ? 'blocks them until they change' : 'resubmits their stored entries without model calls'}`);
+    log(`batch request ${requestId ?? ''} with ${pages.length} page(s) failed (${error.code}): ${error.message}; the next run ${DETERMINISTIC_CODES.has(error.code) ? 'blocks it until it changes' : 'resubmits their stored entries without model calls'}`);
   }
 }
 /** Managed admission backpressure and exhausted request ids stop the whole run, not one page. */

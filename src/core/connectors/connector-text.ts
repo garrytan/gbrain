@@ -28,10 +28,15 @@ const cleanIdentity = (value: string) => value.isWellFormed() && !value.includes
  * changes prose only.
  */
 export function connectorRender(markdown: string, identity: Record<string, string | readonly string[] | null | undefined>): string {
+  assertConnectorIdentity(identity);
+  return sanitizeForJsonb(markdown);
+}
+
+/** Refuses an identity field carrying a NUL or a lone surrogate (`invalid_connector_text`), before it reaches a lookup or a page. */
+export function assertConnectorIdentity(identity: Record<string, string | readonly string[] | null | undefined>): void {
   for (const [field, value] of Object.entries(identity)) {
     for (const item of value == null ? [] : typeof value === 'string' ? [value] : value) {
       if (!cleanIdentity(item)) throw invalidConnectorText(field);
     }
   }
-  return sanitizeForJsonb(markdown);
 }

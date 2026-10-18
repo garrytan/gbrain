@@ -52,6 +52,7 @@ import { performFullSync } from './full.ts';
 import { applyHoldsToManifest, planHoldRescreen, wouldHoldFields, type LegacyHolds } from './holds.ts';
 import { sweepOrphanedRenameSentinels } from './rename-reconcile.ts';
 import type { SyncPlan, SyncActivePack } from './sync-run.ts';
+import { formatUrlClonePullBlock, urlClonePullBlock } from '../../core/url-clone.ts';
 
 export type PreflightOutcome = { readonly done: SyncResult } | { readonly plan: SyncPlan };
 
@@ -636,6 +637,9 @@ async function pullAndResolveHead(
       } else {
         serr(`Warning: git pull failed: ${msg.slice(0, 200)}`); // #1315 stderr-first
       }
+      // #6946: an owned clone's own checkout blocks it; name the files and the preview-first repair.
+      const block = opts.sourceId ? await urlClonePullBlock(engine, opts.sourceId) : null;
+      if (block) serr(formatUrlClonePullBlock(block));
     } finally {
       shutdown.release();
     }

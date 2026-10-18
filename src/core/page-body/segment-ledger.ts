@@ -30,7 +30,8 @@ export function ledgerApplies(ledger: BodyLedger): boolean {
  * The segment's text after the page's withdrawal overlay. A fence block a
  * forced cut splits cannot be overlaid from one segment: with a ledger that
  * applies, the read view omits its runs here (`view: 'read'`, fail closed) and
- * a trusted body read refuses with `page_projection_stale`.
+ * a trusted body read refuses with `page_projection_stale` (read-range.ts
+ * `trustedSegments` joins such a block's segments before overlaying them).
  */
 export async function overlaySegmentText(engine: Pick<BrainEngine, 'executeRaw'>, ledger: BodyLedger,
   segment: { sourceId: string; byteStart: number; entryState: unknown }, raw: string, view: 'read' | 'trusted'): Promise<string> {

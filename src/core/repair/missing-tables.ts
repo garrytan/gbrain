@@ -18,6 +18,7 @@ import { relationExists } from '../persistence/rebuildable-cache.ts';
 import { isLockTimeoutError } from '../retry-matcher.ts';
 import { readMissingTables, recreateStep } from '../schema-missing-tables.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairPlan } from './core.ts';
+import { classifyOriginUniqueViolation } from '../persistence/origin-guard.ts';
 
 const PREVIEW = 'gbrain repair missing-tables';
 const DOCS = 'docs/guides/repair.md#missing-tables';
@@ -71,7 +72,7 @@ export const missingTablesRepair: RepairHandler = {
           throw new OperationError('schema_owner_required', `This database role may not create ${item.slug}, so nothing was recreated.`,
             `Connect as the role that owns the brain tables (the one apply-migrations uses) and run: ${PREVIEW} --apply --expect ${opts?.expect ?? '<preview-hash>'}`, DOCS);
         }
-        if ((code === '23505' || code === '42P07') && await relationExists(ctx.engine, item.slug)) return { applied: false, outcome: 'already_present' };
+        if ((code === '23505' && !classifyOriginUniqueViolation(error) || code === '42P07') && await relationExists(ctx.engine, item.slug)) return { applied: false, outcome: 'already_present' };
         if (ctx.engine.kind === 'postgres' && isLockTimeoutError(error)) {
           throw schemaLockBlockedError({ step: `repair missing-tables (${item.slug})`, timeoutMs: resolveSchemaLockTimeoutMs(), sessions: null, sampledDuringWait: false });
         }

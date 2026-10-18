@@ -88,6 +88,7 @@ export { withRetry };
 export type { WithRetryOpts } from '../core/retry.ts';
 import { buildGazetteer, findMentionedEntities, hashGazetteer } from '../core/by-mention.ts';
 import { pageMentions, runMentionPass, type MentionPassResult } from '../core/mentions/pass.ts';
+import type { LinkExtractionFailure, LinkExtractionSystemic } from '../core/persistence/links-maintenance.ts';
 import { formatMentionSummary, linkPhaseDeadline, mentionJsonFields, previewMentionPass } from '../core/mentions/stale.ts';
 // #4611: the cross-source link fallback follows the configured
 // `sources.default` (validated shape) instead of the literal 'default'.
@@ -189,7 +190,7 @@ export async function stampExtracted(
  * (GREATEST(updated_at, versionTs) — same rule as extractStaleFromDB, so an
  * old page can't be stamped below the version clause and loop forever).
  *
- * Returns a map keyed `${source_id}\u0000${slug}`. Refs with no live pages
+ * Returns a map keyed `${source_id}\^@${slug}`. Refs with no live pages
  * row at snapshot time are ABSENT — callers must skip stamping them (a row
  * created mid-run was never read; it stays stale and is swept later).
  */
@@ -213,7 +214,7 @@ async function snapshotStampTimes(
     );
     for (const r of rows) {
       const iso = Date.parse(r.updated_at_iso) >= versionMs ? r.updated_at_iso : versionTs;
-      out.set(`${r.source_id}\u0000${r.slug}`, iso);
+      out.set(`${r.source_id}\^@${r.slug}`, iso);
     }
   }
   return out;
@@ -226,7 +227,7 @@ function refsWithSnapshotStamps(
 ): Array<{ slug: string; source_id: string; extractedAt: string }> {
   const out: Array<{ slug: string; source_id: string; extractedAt: string }> = [];
   for (const r of refs) {
-    const at = stamps.get(`${r.source_id}\u0000${r.slug}`);
+    const at = stamps.get(`${r.source_id}\^@${r.slug}`);
     if (at) out.push({ slug: r.slug, source_id: r.source_id, extractedAt: at });
   }
   return out;
@@ -888,12 +889,15 @@ Extraction:
 Incremental sweep:
 ${ATTENDANCE_REPAIR_HELP}
   gbrain extract --stale [--source-id <id>] [--include-frontmatter]
-                         [--catch-up] [--dry-run] [--json]
+                         [--catch-up] [--retry-held] [--dry-run] [--json]
       Re-extract links + timeline for stale pages, then the mention pass (entity
       aliases and title subjects; link_source='mentions'; off: gbrain config set
       mentions.auto_link false). DB-source; safe to cron; 30 min per run, the next
       resumes; --catch-up runs until none remain. Scope with --source-id (--source
       is fs|db). Done when --dry-run --json reports actionable 0 and mention_due 0.
+      On a managed brain a page whose extraction fails is reported and skipped;
+      after 3 runs failing it the same way it is held until it is edited, the
+      extractor changes, or --retry-held clears the holds and retries it now.
 
 Inspection:
   gbrain extract mentions --explain <name|slug> [--page <slug>] [--source-id <id>] [--json]
@@ -984,6 +988,7 @@ export async function runExtract(engine: BrainEngine, args: string[], authority?
       includeFrontmatter: args.includes('--include-frontmatter') || undefined,
       sourceIdFilter: staleSourceId,
       catchUp: args.includes('--catch-up'),
+      retryHeld: args.includes('--retry-held'),
     });
     return;
   }
@@ -2120,8 +2125,10 @@ export async function extractStaleFromDB(
      * explicit `gbrain extract --stale` command. Ignored when catchUp.
      */
     timeBudgetMs?: number;
+    /** GBRA-130 A-1 (managed brains): clear held link-extraction failures first. */ retryHeld?: boolean;
   },
-): Promise<{ linksCreated: number; timelineCreated: number; pagesProcessed: number; staleRemaining: number; skippedMissingTarget?: number; skippedCrossSource?: number; skippedAttendanceIncomplete?: number; skippedChanged?: number; skippedConcurrentWrite?: number; mentions?: MentionPassResult }> {
+): Promise<{ linksCreated: number; timelineCreated: number; pagesProcessed: number; staleRemaining: number; skippedMissingTarget?: number; skippedCrossSource?: number; skippedAttendanceIncomplete?: number; skippedChanged?: number; skippedConcurrentWrite?: number; mentions?: MentionPassResult;
+  linkFailed?: number; linkFailures?: LinkExtractionFailure[]; linkSystemic?: LinkExtractionSystemic[] }> {
   const { dryRun, jsonMode, sourceIdFilter, catchUp } = opts;
   const includeFrontmatter = opts.includeFrontmatter ?? await resolveIncludeFrontmatter(engine);
   const log = opts.quiet ? (..._args: unknown[]) => {} : console.log;
@@ -2145,11 +2152,12 @@ export async function extractStaleFromDB(
   // (the mention pass runs inside it).
   if (await managedPersistenceEnabled(engine)) {
     const { runManagedStaleExtraction, formatManagedStaleExtraction } = await import('../core/persistence/links-maintenance.ts');
-    const r = await runManagedStaleExtraction(engine, { sourceId: sourceIdFilter, catchUp, timeBudgetMs, counts: !opts.quiet });
+    const r = await runManagedStaleExtraction(engine, { sourceId: sourceIdFilter, catchUp, timeBudgetMs, counts: !opts.quiet, retryHeld: opts.retryHeld });
     if (!jsonMode) log(formatManagedStaleExtraction(r, false, false));
     else if (!opts.quiet) process.stdout.write(formatManagedStaleExtraction(r, false, true) + '\n');
     return { linksCreated: r.created, timelineCreated: r.timeline, pagesProcessed: r.pages, staleRemaining: r.remaining + (r.mentions?.remaining ?? 0),
-      ...(r.skipped ? { skippedChanged: r.skipped } : {}), ...(r.mentions ? { mentions: r.mentions } : {}) };
+      ...(r.skipped ? { skippedChanged: r.skipped } : {}), ...(r.mentions ? { mentions: r.mentions } : {}),
+      ...(r.failed ? { linkFailed: r.failed, linkFailures: r.failures } : {}), ...(r.systemic?.length ? { linkSystemic: r.systemic } : {}) };
   }
 
   // Resolver + cross-source resolution map built ONCE before the loop (the
@@ -2225,11 +2233,11 @@ export async function extractStaleFromDB(
     const attendanceBlocked: Array<{ slug: string; source_id: string; revision: string }> = [];
     const flushBatch = async () => {
       for (let i = 0; i < timelineRows.length; i += BATCH_SIZE) {
-        timelineCreated += await extractionWrite('timeline', timelineRows.slice(i, i + BATCH_SIZE).length, timelineSnapshotRefs(timelineRows.slice(i, i + BATCH_SIZE)), () => addProjectedTimelineBatch(engine, timelineRows.slice(i, i + BATCH_SIZE), { auditSite: 'extract.stale' }));
+        timelineCreated += await addProjectedTimelineBatch(engine, timelineRows.slice(i, i + BATCH_SIZE), { auditSite: 'extract.stale' });
       }
       // Stamp LAST, directly (not the swallowing stampExtracted) so a stamp
       // failure surfaces instead of looping forever.
-      await extractionWrite('stamp', processedRefs.length, processedRefs, () => engine.markPagesExtractedBatch(processedRefs, new Date().toISOString()));
+      await engine.markPagesExtractedBatch(processedRefs, new Date().toISOString());
       await engine.markPagesAttendanceBlocked(attendanceBlocked);
     };
 
@@ -2283,13 +2291,13 @@ export async function extractStaleFromDB(
           wanted: { producers: includeFrontmatter ? ['body', 'frontmatter'] as const : ['body'] as const, rows: wanted },
           ...(extracted.temporalBody ? { temporalBody: extracted.temporalBody } : {}) };
         const stampIso = page.updated_at.getTime() >= Date.parse(versionTs) ? page.updated_at_iso : versionTs;
-        const written = await extractionWrite('links', linkRows.length, [{ slug: page.slug, source_id: page.source_id }], () => replaceDerivedLinksDeferringConflicts(engine, origin, linkRows, linkOpts));
+        const written = await replaceDerivedLinksDeferringConflicts(engine, origin, linkRows, linkOpts);
         // Settings moved, or a concurrent writer moved the page or an endpoint (#6272): not stamped, re-extracts next run.
         if (written === 'settings_changed') { skippedChanged++; continue; }
         if (written === 'concurrent_write') { skippedConcurrentWrite++; continue; }
         linksCreated += written.created;
         const timelineText = fullContent ?? await segmentedTimelineText(engine, snapshot.page);
-        await extractionWrite('timeline', 0, [{ slug: page.slug, source_id: page.source_id }], () => retractRemovedTimelineEntries(engine, page.slug, page.source_id, timelineText));
+        await retractRemovedTimelineEntries(engine, page.slug, page.source_id, timelineText);
         for (const entry of typeof timelineText === 'string' ? parseTimelineEntries(timelineText) : timelineText.entries) {
           // #3957: carry the parsed source label — omitting it wrote source=''
           // while the FS path wrote the split label, so the same bullet
@@ -2321,10 +2329,7 @@ export async function extractStaleFromDB(
       // S4 (#6228): links and timeline both ran for every page in
       // processedRefs, so keep them before rethrowing; the next run resumes at
       // the failing page instead of redoing (and re-failing) the whole batch.
-      try { await flushBatch(); } catch (flushError) {
-        // A partial-drain read error must not hide a second, failed write.
-        if ((flushError as { code?: unknown })?.code === 'EXTRACT_BATCH_WRITE_FAILED') throw flushError;
-      }
+      await flushBatch().catch(() => { /* the original error is the one to report */ });
       throw error;
     }
     await flushBatch();

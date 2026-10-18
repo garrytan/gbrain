@@ -9,9 +9,10 @@
  *    so the overlaid file digests equal the stored digests of the same body
  *    (also with a fence across a 1 MiB read boundary and a withdrawn row), and
  *    a file edited on disk to add a fence is refused as drift (source_changed,
- *    the refusal an inline page gets), not as page_body_segmented. A fence
- *    block longer than BLOCK_MAX_BYTES (one the stored side holds split across
- *    forced cuts) still refuses page_body_segmented (fail closed).
+ *    the refusal an inline page gets), not as page_body_segmented, also when
+ *    the fence is longer than 8 MiB. A fence block longer than FENCE_MAX_BYTES
+ *    still refuses page_body_segmented (fail closed), before the file's digest
+ *    holds more than the bound and one read (`bodyDigestWork.largestHeld`).
  * 2. Fails when: the check refuses every fenced file whenever the source has
  *    any withdrawal (page_body_segmented), or the file overlay differs from the
  *    stored overlay.
@@ -27,8 +28,8 @@ import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { OperationContext } from '../../src/core/operations.ts';
 import { parseMarkdown } from '../../src/core/markdown.ts';
-import { SEGMENT_MAX_BYTES } from '../../src/core/page-body/limits.ts';
-import { fileBodyDigests, overlaidFileBodyDigests, storedBodyDigests } from '../../src/core/page-body/body-digests.ts';
+import { FENCE_MAX_BYTES, SEGMENT_MAX_BYTES } from '../../src/core/page-body/limits.ts';
+import { bodyDigestWork, fileBodyDigests, overlaidFileBodyDigests, storedBodyDigests } from '../../src/core/page-body/body-digests.ts';
 import { readBodyLedger } from '../../src/core/page-body/segment-ledger.ts';
 import { overlayCanonicalBodies } from '../../src/core/page-state/snapshot.ts';
 import { PAGE_MAX_BYTES } from '../../src/core/page-size-policy.ts';
@@ -93,8 +94,16 @@ async function importHuge(engine: BrainEngine, f: Fixture, slug: string): Promis
 
 const revisionOf = async (engine: BrainEngine, f: Fixture, slug: string) => (await engine.readPageSnapshot(slug, { sourceId: f.sourceId, includeDeleted: true }))!.revision;
 
+/** One write to its settled outcome: a reply past the bounded wait is `write_pending`, and the same request is replayed, as a caller does. */
 async function submit(engine: BrainEngine, f: Fixture, operation: 'delete_page' | 'restore_page', slug: string, extra: Record<string, unknown> = {}) {
-  return submitPageMutation(f.ctx, { operation, params: { slug, expected_revision: await revisionOf(engine, f, slug), request_id: randomUUID(), ...extra } }) as Promise<Record<string, any>>;
+  const params = { slug, expected_revision: await revisionOf(engine, f, slug), request_id: randomUUID(), ...extra };
+  for (let replay = 0; ; replay++) {
+    try {
+      return await submitPageMutation(f.ctx, { operation, params }) as Record<string, any>;
+    } catch (error) {
+      if ((error as { code?: string }).code !== 'write_pending' || replay >= 20) throw error;
+    }
+  }
 }
 
 async function refusal(p: Promise<unknown>): Promise<{ code?: string; message: string }> {
@@ -175,13 +184,23 @@ test('under a source withdrawal, a fence added on disk is drift and a fence too 
       expect(await refusal(submit(engine, f, 'delete_page', 'notes/huge'))).toEqual(inline);
       expect(await refusal(submit(engine, f, 'delete_page', 'notes/huge', { purge: true }))).toEqual(inline);
 
-      const rows = Array.from({ length: 90_000 }, (_, i) => ROW(i + 1, `Routine note number ${i + 1} about the weekly planning meeting`));
-      const long = FENCE(rows);
+      // A fence longer than a segment run is overlaid whole up to FENCE_MAX_BYTES (the bound withdrawal discovery and
+      // the purge rewrite read a fence within), so a 9 MiB fence added on disk is drift like any other.
+      const rows = (n: number) => Array.from({ length: n }, (_, i) => ROW(i + 1, `Routine note number ${i + 1} about the weekly planning meeting`));
+      const long = FENCE(rows(90_000));
       expect(Buffer.byteLength(long)).toBeGreaterThan(8 * 1024 * 1024);
       writeFileSync(file, huge.replace('midpointmarker', `midpointmarker\n\n${long}\n`));
+      expect(await refusal(submit(engine, f, 'delete_page', 'notes/huge'))).toEqual(inline);
+      // Over FENCE_MAX_BYTES the file's digest refuses before it holds more of the fence than the bound and one read.
+      const longer = FENCE(rows(Math.ceil(FENCE_MAX_BYTES / ROW(1, 'x').length)));
+      expect(Buffer.byteLength(longer)).toBeGreaterThan(FENCE_MAX_BYTES);
+      writeFileSync(file, huge.replace('midpointmarker', `midpointmarker\n\n${longer}\n`));
+      bodyDigestWork.largestHeld = 0;
       const refused = await refusal(submit(engine, f, 'delete_page', 'notes/huge'));
       expect(refused.code).toBe('page_body_segmented');
-      expect(refused.message).toContain('longer than a block');
+      expect(refused.message).toContain(`over the ${FENCE_MAX_BYTES}-byte bound`);
+      expect(bodyDigestWork.largestHeld).toBeGreaterThan(FENCE_MAX_BYTES - SEGMENT_MAX_BYTES);
+      expect(bodyDigestWork.largestHeld).toBeLessThanOrEqual(FENCE_MAX_BYTES + 2 * SEGMENT_MAX_BYTES);
       expect(readFileSync(file, 'utf8').includes('Routine note number 90000')).toBe(true);
     } finally {
       await disposePersistenceConsumer(engine);

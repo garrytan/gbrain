@@ -25,6 +25,7 @@ import { currentCompanyBrainSync } from '../company-brain/profile.ts';
 import type { CompanyBrainPlan } from '../company-brain/types.ts';
 import { assertDistinctSyncOrigins, legacySyncOrigin, sameSyncOrigin, selectOriginClaimant, sharedOriginExit, syncOriginPath, type SyncOriginScope } from './sync-origin.ts';
 import { assertManagedSyncActive } from './sync-authority.ts';
+import { decideOriginTwins, readOriginClaimants, slugPathOccupied, type OriginConflict } from './origin-twins.ts';
 import { isReservedSkillBundlePath } from '../skill-reserved-paths.ts';
 import { holdBasisMoved, holdRescreenDue, readGitHoldRetryPaths, readGitSourceHolds, readSyncImportProvenances } from './sync-holds.ts';
 import { readBlobContents, readTreeBlobs, SYNC_READ_BOUND } from './sync-blobs.ts';
@@ -51,7 +52,9 @@ export interface SyncEntry { path: string; sourcePath: string; action: 'import' 
   /** #6727: live pages with no recorded origin whose slugs fold to this file's slug, several or one the importer cannot write; the freeze holds it `legacy_slug_conflict`. */
   legacySlugs?: string[];
   /** #6729 x #6727: the one legacy page carries an explicit frontmatter id that differs from the file's, so it is another document; held `legacy_slug_conflict` (`explicit_id_conflict`). */
-  legacyIdVeto?: true; }
+  legacyIdVeto?: true;
+  /** #6948: several live pages record this file as their origin; the freeze holds it `origin_conflict` (sync.holds=fail refuses). */
+  originConflict?: OriginConflict; }
 /** Files that map to a slug another origin keeps; they are left out of the manifest until one is renamed. */
 export interface SyncSlugCollision { slug: string; kept: string; skipped: string[]; }
 /** #5032: a file sync skipped on this host with a named refusal, without failing the run. */
@@ -506,7 +509,13 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
       ...(legacy ? byPath.get(legacy) ?? [] : []).filter(page => sameSyncOrigin(page.source_path!, entry.sourcePath, originScope, page.slug))];
     // #6517: one origin rule (sync-origin.ts): a live page wins over tombstones; several live pages, or several tombstones, refuse.
     const { winner: origin, ambiguous } = selectOriginClaimant(claimants);
-    if (ambiguous) throw ambiguousOriginRefusal(sourceId, entry.sourcePath, ambiguous === 'several_live' ? claimants.filter(page => page.deleted_at == null) : claimants, ambiguous);
+    if (ambiguous === 'several_live') {
+      // #6948: twin claimants hold this file (`origin_conflict`) instead of refusing the source; the freeze holds it, the heal resolves the safe case.
+      entry.originConflict = await originConflictOf(engine, discovered, entry, claimants.filter(page => page.deleted_at == null));
+      Object.assign(entry, { slug: entry.originConflict.canonical, pageId: null, revision: null });
+      continue;
+    }
+    if (ambiguous) throw ambiguousOriginRefusal(sourceId, entry.sourcePath, claimants, ambiguous);
     let slug = entry.slug ?? origin?.slug ?? resolveSlugForPath(entry.sourcePath);
     if (!slug && entry.action === 'import') slug = parseMarkdown(readSyncContent(discovered, entry), '').slug;
     if (!slug) throw opError('invalid_params', 'The imported file has no usable page slug.',
@@ -608,7 +617,7 @@ const legacyByFold = new WeakMap<LegacyIdentity[], Promise<Map<string, string[]>
 async function foldLegacyPages(engine: BrainEngine, identities: LegacyIdentity[]): Promise<Map<string, string[]>> {
   const candidates = identities.filter(page => page.deleted_at == null && page.source_path == null && slugifyPath(page.slug) !== page.slug);
   const databaseOnly = new Set(candidates.length ? (await engine.executeRaw<{ id: number }>(
-    `SELECT p.id FROM pages p WHERE p.id=ANY($1::bigint[]) AND ${databaseOnlyPageSql('p')}`, [candidates.map(page => Number(page.id))])).map(row => Number(row.id)) : []);
+    `SELECT p.id FROM pages p WHERE p.id=ANY($1::bigint[]) AND (${databaseOnlyPageSql('p')} OR p.database_only_reason IS NOT DISTINCT FROM 'origin_twin')`, [candidates.map(page => Number(page.id))])).map(row => Number(row.id)) : []);
   return candidates.filter(page => !databaseOnly.has(Number(page.id)))
     .reduce((map, page) => map.set(slugifyPath(page.slug), [...map.get(slugifyPath(page.slug)) ?? [], page.slug]), new Map<string, string[]>());
 }
@@ -651,11 +660,27 @@ function assertTakeoverIdentity(discovery: SyncDiscovery, winner: SyncEntry, hol
     + `Give the file the page's id if it is the same document, or rename it so its slug differs, commit, then run gbrain sync --no-pull --source ${discovery.sourceId}.`,
     { detail: 'rename_identity_conflict' });
 }
+/** #6948: the frontmatter id of the file an entry imports (null: none), or undefined when it cannot be read: unreadable is never agreement. */
+function readableId(discovery: SyncDiscovery, entry: SyncEntry): string | null | undefined {
+  try { return frontmatterIdentity(readSyncContent(discovery, entry)).id; } catch { return undefined; }
+}
 /** #6729: the frontmatter id of the file an entry imports (null when it has none or cannot be read). */
 function incomingId(discovery: SyncDiscovery, entry: SyncEntry): string | null {
   try { return frontmatterIdentity(readSyncContent(discovery, entry)).id; } catch { return null; }
 }
-/** #6517: several live pages (the soft-delete exit is named) or several tombstones record one imported origin. */
+/**
+ * #6948: the conflict record of an entry several live pages claim: the claimants (with the verdict inputs, read only on
+ * this path) and the shared verdict (origin-twins.ts), which the freeze turns into an
+ * `origin_conflict` hold of this file alone.
+ */
+async function originConflictOf(engine: BrainEngine, discovery: SyncDiscovery, entry: SyncEntry, live: Array<{ id: number }>): Promise<OriginConflict> {
+  const claimants = await readOriginClaimants(engine, discovery.sourceId, live.map(page => Number(page.id)));
+  const verdict = decideOriginTwins({ sourcePath: entry.sourcePath, claimants, fileId: entry.action === 'import' ? readableId(discovery, entry) : undefined,
+    slugPathOccupied: slugPathOccupied(discovery) });
+  return { canonical: verdict.canonical, claimants: verdict.verdict === 'resolve' ? [verdict.survivor, ...verdict.twins] : verdict.claimants,
+    ...(verdict.verdict === 'hold' ? { reason: verdict.reason } : {}) };
+}
+/** #6517: several tombstones record one imported origin (several live pages are an `origin_conflict` hold, #6948). */
 function ambiguousOriginRefusal(sourceId: string, sourcePath: string, named: Array<{ slug: string }>, ambiguous: 'several_live' | 'several_tombstones'): OperationError {
   return opError('page_identity_changed', 'Several pages claim the same imported origin.',
     `Pages ${named.map(page => page.slug).join(', ')} in ${sourceId} all record ${sourcePath} as their origin; nothing was written. `

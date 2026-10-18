@@ -69,7 +69,7 @@ export function makeContextPackIpcHandler(
   engine: BrainEngine,
   defaultSource: string,
 ): ContextPackHandler {
-  return async (req) => {
+  return async (req, progress) => {
     const startedAt = Date.now();
     const sessionId =
       typeof req.sessionId === 'string' && req.sessionId.trim() ? req.sessionId : null;
@@ -201,6 +201,8 @@ export function makeContextPackIpcHandler(
         ? { checkpointLinks: (await getCheckpointManifest(engine, sessionSource, null, sessionId)) ?? [] }
         : {}),
     });
+    // The transport's backstop returns this pack if the work below runs past it (core lands on it when it arrives).
+    if (progress) progress.assembled = result;
     const core = typeof req.trigger === 'string' && req.trigger.startsWith('session-start') ? await coreForSession(engine, sessionSource) : null;
     if (core) result.core = core;
     if (sessionId) {

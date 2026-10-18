@@ -9,6 +9,7 @@ import { assertLegacyEngineMigration, assertUnmanagedCanonicalWriter } from '../
  */
 
 import { opError } from '../core/ops/contract.ts';
+import { ItemRun } from '../core/item-failure.ts';
 import { createEngine } from '../core/engine-factory.ts';
 import { loadConfig, saveConfig, toEngineConfig, gbrainPath, effectiveEnvDatabaseUrl, type GBrainConfig } from '../core/config.ts';
 import type { BrainEngine } from '../core/engine.ts';
@@ -247,7 +248,8 @@ async function factsColumns(engine: BrainEngine): Promise<string[]> {
  */
 export interface MigrateSimpleTableResult {
   copied: number;
-  failed: number;
+  /** Rows the target refused, with the classified code and the database's reason; any of them blocks the engine switch. */
+  failed: Array<{ id: string; code: string; reason: string }>;
   table_missing: boolean;
 }
 
@@ -270,9 +272,9 @@ export async function copyMigrationSimpleTable(
     }
   };
   const sourceCols = await colsOf(source);
-  if (sourceCols.length === 0) return { copied: 0, failed: 0, table_missing: true };
+  if (sourceCols.length === 0) return { copied: 0, failed: [], table_missing: true };
   const targetColSet = new Set(await colsOf(target));
-  if (targetColSet.size === 0) return { copied: 0, failed: 0, table_missing: true };
+  if (targetColSet.size === 0) return { copied: 0, failed: [], table_missing: true };
   const cols = sourceCols.filter((c) => targetColSet.has(c));
 
   const rows = await source.executeRaw<Record<string, unknown>>(
@@ -281,14 +283,19 @@ export async function copyMigrationSimpleTable(
   await target.executeRaw(`DELETE FROM ${table}`);
   const insertSql = `INSERT INTO ${table} (${cols.map((c) => `"${c}"`).join(', ')})
     VALUES (${cols.map((c, i) => (c === 'evidence' ? `$${i + 1}::text::jsonb` : `$${i + 1}`)).join(', ')})`;
-  const result: MigrateSimpleTableResult = { copied: 0, failed: 0, table_missing: false };
+  const result: MigrateSimpleTableResult = { copied: 0, failed: [], table_missing: false };
+  // GBRA-130 A-31: a refused row is recorded with its reason (it blocks the switch); a run-scoped failure (lost
+  // connection, failed transaction) or a systemic run (most rows refused) stops the copy instead.
+  const run = new ItemRun('migrate_engine.loop_rows');
   for (const raw of rows) {
     const row = nullifyUndefinedColumns(raw);
     try {
       await target.executeRaw(insertSql, cols.map((c) => row[c]));
       result.copied++;
-    } catch {
-      result.failed++;
+      run.succeed();
+    } catch (error) {
+      const failure = run.fail(`${table}:${String(row.id)}`, error);
+      result.failed.push({ id: String(row.id), code: failure.code, reason: failure.message });
     }
     onRow?.();
   }
@@ -888,6 +895,19 @@ export async function assertWindowsGraduationPlatform(sourceEngine: BrainEngine,
   }
 }
 
+/** GBRA-130 A-31: prints the open-loop rows the target refused (each blocks the engine switch), sets the exit verdict, and returns how many. */
+function reportLoopRowFailures(tables: Record<string, MigrateSimpleTableResult>, opts: Pick<MigrateOpts, 'targetEngine' | 'targetPath' | 'targetUrl'>): number {
+  const failures = Object.entries(tables).flatMap(([table, r]) => r.failed.map(f => ({ table, ...f })));
+  if (failures.length === 0) return 0;
+  console.error(`\n${failures.length} open-loop row(s) FAILED to copy:`);
+  for (const f of failures.slice(0, 20)) console.error(`  - ${f.table} id ${f.id} (${f.code}): ${f.reason}`);
+  if (failures.length > 20) console.error(`  ... and ${failures.length - 20} more`);
+  const retry = ['gbrain', 'migrate', '--to', opts.targetEngine, ...(opts.targetPath ? ['--path', opts.targetPath] : []), ...(opts.targetUrl ? ['--url', '<the same connection string>'] : [])];
+  console.error(`The active engine was NOT switched. Fix the cause each reason names on the target, then re-run: ${retry.join(' ')}`);
+  setCliExitVerdict(1);
+  return failures.length;
+}
+
 export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]): Promise<void> {
   const opts = parseArgs(args);
   await assertWindowsGraduationPlatform(sourceEngine, opts);
@@ -1068,8 +1088,9 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
   const rowCounts: PageCopyCounts = { chunks: 0, tags: 0, timeline_entries: 0, raw_data: 0 };
   let linksCopied = 0;
   let factsResult: MigrateFactsResult = { copied: 0, failed: [], embeddings_dropped: 0, table_missing: false };
-  let openLoopsResult: MigrateSimpleTableResult = { copied: 0, failed: 0, table_missing: true };
-  let loopSuppressionsResult: MigrateSimpleTableResult = { copied: 0, failed: 0, table_missing: true };
+  let openLoopsResult: MigrateSimpleTableResult = { copied: 0, failed: [], table_missing: true };
+  let loopSuppressionsResult: MigrateSimpleTableResult = { copied: 0, failed: [], table_missing: true };
+  let loopRowsFailed = 0;
   let configResult: { copied: number; skipped: string[] } = { copied: 0, skipped: [] };
   try {
     sourcesCopied = await copyMigrationSources(sourceEngine, targetEngine);
@@ -1134,6 +1155,7 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
     openLoopsResult = await copyMigrationSimpleTable(sourceEngine, targetEngine, 'open_loops', () => progress.tick(1));
     loopSuppressionsResult = await copyMigrationSimpleTable(sourceEngine, targetEngine, 'loop_suppressions', () => progress.tick(1));
     progress.finish();
+    loopRowsFailed = reportLoopRowFailures({ open_loops: openLoopsResult, loop_suppressions: loopSuppressionsResult }, opts);
     if (factsResult.failed.length > 0) {
       console.error(`\n${factsResult.failed.length} fact row(s) FAILED to copy:`);
       for (const f of factsResult.failed.slice(0, 10)) {
@@ -1176,7 +1198,7 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
     // calls), before the flip and while autopilot is paused, so the new active brain starts sealed and its first sync
     // does not replace chunks. A page whose rebuild fails blocks the flip like a page that failed to copy.
     let projectionsFailed = 0;
-    if (failures.length === 0 && factsResult.failed.length === 0) {
+    if (failures.length === 0 && factsResult.failed.length === 0 && loopRowsFailed === 0) {
       console.log('Rebuilding text projections on the target...');
       const drained = await drainProjections(targetEngine, { reasons: MIGRATION_PROJECTION_REASONS });
       projectionsFailed = drained.failed.length;
@@ -1187,7 +1209,7 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
         setCliExitVerdict(1);
       }
     }
-    if (failures.length === 0 && factsResult.failed.length === 0 && projectionsFailed === 0) {
+    if (failures.length === 0 && factsResult.failed.length === 0 && loopRowsFailed === 0 && projectionsFailed === 0) {
       const existingFile = (await import('../core/config.ts')).loadConfigFileOnly() ?? ({} as GBrainConfig);
       const newConfig: GBrainConfig = {
         ...existingFile,
@@ -1239,18 +1261,19 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
   const loopsRow = (label: string, r: MigrateSimpleTableResult) =>
     summaryRow(label, r.table_missing
       ? '0 (source schema predates the open-loop tables)'
-      : r.failed > 0 ? `${r.copied} (${r.failed} FAILED)` : String(r.copied));
+      : r.failed.length > 0 ? `${r.copied} (${r.failed.length} FAILED)` : String(r.copied));
   loopsRow('open loops', openLoopsResult);
   loopsRow('loop suppressions', loopSuppressionsResult);
   summaryRow('config rows', configResult.skipped.length > 0
     ? `${configResult.copied} (skipped engine-local: ${configResult.skipped.join(', ')})`
     : String(configResult.copied));
 
-  const cleanRun = failures.length === 0 && factsResult.failed.length === 0;
+  const cleanRun = failures.length === 0 && factsResult.failed.length === 0 && loopRowsFailed === 0;
   if (!cleanRun) {
     const parts = [
       failures.length > 0 ? `${migrated} of ${pagesToMigrate.length} pages copied, ${failures.length} failed (${completedSet.size} already done from a prior run)` : '',
       factsResult.failed.length > 0 ? `${factsResult.failed.length} fact row(s) failed` : '',
+      loopRowsFailed > 0 ? `${loopRowsFailed} open-loop row(s) failed` : '',
     ].filter(Boolean).join('; ');
     console.log(`\nMigration completed with errors. ${parts}. See failure list above.`);
     console.log(`Config NOT switched — still using engine: ${config.engine}. Re-run \`gbrain migrate --to ${opts.targetEngine}\` to retry; already-copied pages resume via the manifest.`);

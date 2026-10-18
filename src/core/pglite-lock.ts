@@ -7,17 +7,40 @@ import { readProcessCommand, type ProcessCommandProbeDeps } from './autopilot-lo
 import { setTimeout as delay } from 'node:timers/promises';
 import { parseGlobalFlags } from './cli-options.ts';
 import { tryAcquireNativeLock, type NativeLockHandle } from './persistence/native-lock.ts';
+import type { Action } from './agent-output.ts';
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
+/** How long an unverifiable legacy owner may stay unverifiable before the typed refusal (covers a legacy writer between mkdir and its metadata write). */
+const LEGACY_UNVERIFIED_GRACE_MS = 1_000;
 const LOCK_FILE = 'lock';
 // A dropped engine reference must never let GC release a still-open datastore.
 const retainedOwners = new Set<LockHandle>();
 
 export class PgliteBusyError extends Error {
   readonly code = 'pglite_busy';
-  readonly retryable = true;
-  constructor(message: string, public reason: 'timeout' | 'live_serve' = 'timeout') {
+  readonly retryable: boolean = true;
+  constructor(message: string, public reason: 'timeout' | 'live_serve' | 'legacy_owner_unverified' = 'timeout') {
     super(message); this.name = 'PgliteBusyError';
+  }
+}
+/**
+ * A legacy (pre-kernel) `.gbrain-lock/` whose owner cannot be proven dead: torn
+ * or missing metadata, no recorded PID, or (Linux) no matching pid_ns+boot_id.
+ * Waiting never changes that, so it is not retryable: the fix asks the user
+ * and starts with the read-only `gbrain pglite-repair --legacy-lock` preview.
+ */
+export class LegacyOwnerUnverifiedError extends PgliteBusyError {
+  override readonly retryable = false;
+  readonly fix: Action;
+  constructor(readonly dataDir: string, readonly legacyPid: number | null, readonly why: string) {
+    super(`GBrain: the PGLite data dir ${dataDir} still has a lock folder (.gbrain-lock) from an older gbrain${legacyPid === null ? '' : ` (PID ${legacyPid})`}, and ${why}, so gbrain cannot prove that process has stopped and will not open the brain. Waiting does not change this. Never remove a live holder's lock.`, 'legacy_owner_unverified');
+    this.name = 'LegacyOwnerUnverifiedError';
+    this.fix = {
+      argv: ['gbrain', 'pglite-repair', '--legacy-lock', '--path', dataDir, '--dry-run', '--json'], ask_user: true, consent: [], actor: 'agent', requires_exclusive: false,
+      why: 'Read-only: names the legacy PID, whether it still runs and which processes on this host have the data dir open, and prints the plan_hash an approved removal binds.',
+      user_message: `Your gbrain brain at ${dataDir} still carries a lock left by an older gbrain version, and gbrain cannot prove that process has stopped, so it will not open the brain. `
+        + 'If no older gbrain is still running on this computer or on any other computer that shares this folder, I can check what is still using it (read-only) and then, with your OK, move the stale lock aside. Should I?',
+    };
   }
 }
 export class LiveServeLockError extends PgliteBusyError {
@@ -45,7 +68,7 @@ export interface LockHandle {
   acquiredAt?: number;
 }
 
-interface LockMetadata {
+export interface LockMetadata {
   pid?: number;
   acquired_at?: number;
   refreshed_at?: number;
@@ -58,6 +81,8 @@ interface LockMetadata {
   boot_id?: string | null;
 }
 const protocol = 'kernel-v1';
+/** The protocol the kernel-v1 marker (`<data-dir>.gbrain-owner.json`) and current metadata record. */
+export const PGLITE_LOCK_PROTOCOL = protocol;
 function tokenOf(metadata: LockMetadata): string {
   return metadata.owner_token ?? `${metadata.pid}:${metadata.acquired_at}`;
 }
@@ -66,7 +91,7 @@ function isServeCommand(metadata: LockMetadata): boolean {
   const parts = typeof metadata.command === 'string' ? metadata.command.trim().split(/\s+/) : [];
   return parts[0] === 'serve' || parts[1] === 'serve';
 }
-function readMetadata(lockDir: string): LockMetadata | null {
+export function readMetadata(lockDir: string): LockMetadata | null {
   try { return JSON.parse(readFileSync(join(lockDir, LOCK_FILE), 'utf8')); } catch { return null; }
 }
 export function readPidNs(): string | null {
@@ -114,7 +139,7 @@ export function isProcessAlive(pid: number): boolean {
 }
 
 /** Compatibility process diagnostics; never an ownership or takeover authority. */
-function readProcessArgs(pid: number, deps?: ProcessCommandProbeDeps): string | null {
+export function readProcessArgs(pid: number, deps?: ProcessCommandProbeDeps): string | null {
   if ((deps?.platform ?? process.platform) === 'win32') return readProcessCommand(pid, deps);
   const exec = deps?.execFile ?? execFileSync;
   try {
@@ -265,6 +290,27 @@ function busy(lockDir: string): PgliteBusyError {
 }
 
 /**
+ * Why a legacy owner cannot be proven dead, or null when its PID is
+ * comparable. Legacy death requires matching namespace evidence on Linux:
+ * ESRCH from another container's PID namespace, or after a reboot, proves
+ * nothing.
+ */
+export function legacyOwnerUnverified(metadata: LockMetadata | null, lockDir: string): LegacyUnverifiedReason | null {
+  if (!metadata) return existsSync(join(lockDir, LOCK_FILE)) ? 'metadata_unreadable' : 'metadata_missing';
+  if (!Number.isInteger(metadata.pid) || metadata.pid! <= 0) return 'no_pid';
+  if (process.platform !== 'linux') return null;
+  const comparable = metadata.pid_ns != null && metadata.boot_id != null && metadata.pid_ns === readPidNs() && metadata.boot_id === readBootId();
+  return comparable ? null : 'namespace_unverified';
+}
+export type LegacyUnverifiedReason = 'metadata_unreadable' | 'metadata_missing' | 'no_pid' | 'namespace_unverified';
+export const LEGACY_UNVERIFIED_WHY: Readonly<Record<LegacyUnverifiedReason, string>> = {
+  metadata_unreadable: 'its lock metadata is unreadable',
+  metadata_missing: 'its lock metadata is missing',
+  no_pid: 'its lock metadata records no process id',
+  namespace_unverified: 'its lock metadata does not prove the process ran in this PID namespace since the last boot',
+};
+
+/**
  * First kernel acquisition also claims the legacy mkdir lock. A live or
  * unreadable legacy holder blocks migration. After migration, pid/mtime/
  * metadata corruption cannot authorize or prevent native ownership.
@@ -279,6 +325,7 @@ export async function acquireLock(dataDir: string | undefined, opts: { timeoutMs
   const markerPath = `${canonical}.gbrain-owner.json`;
   const lockDir = getLockDir(canonical);
   const deadline = performance.now() + timeoutMs;
+  let refusal: PgliteBusyError = busy(lockDir), unverifiedSince: number | undefined;
   for (;;) {
     opts.signal?.throwIfAborted();
     const nativeLock = await tryAcquireNativeLock(kernelPath);
@@ -294,11 +341,12 @@ export async function acquireLock(dataDir: string | undefined, opts: { timeoutMs
           if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
           const metadata = readMetadata(lockDir);
           if (!migrated || (metadata && metadata.protocol !== protocol)) {
-            // Legacy death requires matching namespace evidence on Linux;
-            // ESRCH from another container's PID namespace proves nothing.
-            const comparable = process.platform !== 'linux' || (metadata?.pid_ns === readPidNs()
-              && metadata?.boot_id === readBootId() && metadata?.pid_ns != null && metadata?.boot_id != null);
-            if (!metadata || !comparable || isProcessAlive(metadata.pid!)) throw busy(lockDir);
+            const unverified = legacyOwnerUnverified(metadata, lockDir);
+            if (unverified) {
+              const error = busy(lockDir);
+              throw error instanceof LiveServeLockError ? error : new LegacyOwnerUnverifiedError(canonical, typeof metadata?.pid === 'number' ? metadata.pid : null, LEGACY_UNVERIFIED_WHY[unverified]);
+            }
+            if (isProcessAlive(metadata!.pid!)) throw busy(lockDir);
             reaped = true;
           }
         }
@@ -315,12 +363,15 @@ export async function acquireLock(dataDir: string | undefined, opts: { timeoutMs
         return result;
       } catch (error) {
         if (!(error instanceof PgliteBusyError) || error instanceof LiveServeLockError || performance.now() >= deadline) throw error;
+        if (error instanceof LegacyOwnerUnverifiedError && performance.now() - (unverifiedSince ??= performance.now()) >= LEGACY_UNVERIFIED_GRACE_MS) throw error;
+        refusal = error;
       } finally { if (!accepted) await nativeLock.release(); }
     } else {
       const error = busy(lockDir);
       if (error instanceof LiveServeLockError) throw error;
+      refusal = error;
     }
-    if (performance.now() >= deadline) throw busy(lockDir);
+    if (performance.now() >= deadline) throw refusal;
     await delay(Math.min(25, deadline - performance.now()), undefined, { signal: opts.signal });
   }
 }

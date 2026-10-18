@@ -3,6 +3,14 @@ import { validateSlug } from '../utils.ts';
 import type { PageKey } from './types.ts';
 import { pipelined } from './transactions.ts';
 
+/** A missing source refuses every write; bulk derived work may defer that origin. */
+export class PageSourceMissingError extends Error {
+  constructor(readonly sourceId: string) {
+    super(`Page source does not exist: ${sourceId}`);
+    this.name = 'PageSourceMissingError';
+  }
+}
+
 /**
  * Source locks precede auth/request locks in callers; repeat held locks safely.
  * #5984: the guard statements are pipelined in the sorted key order. Keys that
@@ -22,7 +30,7 @@ export async function lockPageKeys(engine: Pick<BrainEngine, 'executeRaw'> & { k
   for (const { sourceId, incarnation } of ordered) if (incarnation && (expected.get(sourceId) ?? incarnation) === incarnation) expected.set(sourceId, incarnation);
   const hinted = ordered.every(key => key.incarnation && expected.get(key.sourceId) === key.incarnation);
   const readSource = (sourceId: string) => engine.executeRaw<{ incarnation: string }>('SELECT incarnation FROM sources WHERE id=$1 FOR SHARE', [sourceId]).then(rows => {
-    if (!rows.length) throw new Error(`Page source does not exist: ${sourceId}`);
+    if (!rows.length) throw new PageSourceMissingError(sourceId);
     if (hinted && rows[0]!.incarnation !== expected.get(sourceId)) throw new Error(`Page source was recreated: ${sourceId}`);
     return rows[0]!.incarnation;
   });
@@ -33,7 +41,7 @@ export async function lockPageKeys(engine: Pick<BrainEngine, 'executeRaw'> & { k
     await pipelined({ kind: engine.kind ?? '' }, [
       async () => {
         const rows = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation FROM sources WHERE id=$1 FOR SHARE', [key.sourceId]);
-        if (!rows.length) throw new Error(`Page source does not exist: ${key.sourceId}`);
+        if (!rows.length) throw new PageSourceMissingError(key.sourceId);
       },
       () => engine.executeRaw('INSERT INTO page_write_guards(source_incarnation,slug) SELECT incarnation,$2 FROM sources WHERE id=$1 ON CONFLICT DO NOTHING', [key.sourceId, key.slug]),
       () => engine.executeRaw('SELECT g.slug FROM page_write_guards g JOIN sources s ON s.incarnation=g.source_incarnation WHERE s.id=$1 AND g.slug=$2 FOR UPDATE OF g', [key.sourceId, key.slug]),

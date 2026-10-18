@@ -18,6 +18,7 @@ import { OperationError, opError } from '../ops/contract.ts';
 import { assertManagedFilesystemWrite } from './filesystem-guard.ts';
 import { sha256 } from './digest.ts';
 import type { RecoveryStagingFile } from './staging.ts';
+import { faultPoint } from './fault-points.ts';
 
 /** A canonical file of more bytes than this is read, hashed, copied and written in pieces. */
 export const LARGE_FILE_MIN_BYTES = PAGE_MAX_BYTES;
@@ -26,9 +27,10 @@ const PIECE_BYTES = SEGMENT_MAX_BYTES;
 /**
  * @internal Work the large-file path does, for the memory-bound tests: bytes read from canonical or staged files
  * (`bytesRead`), streamed into a staging file (`bytesWritten`) or copied by the kernel into a before stage
- * (`bytesCopied`), and the largest single piece held (`largestPiece`, at most a segment). Counts, not time.
+ * (`bytesCopied`), produced to measure a streamed file (`bytesMeasured`, also counted in `bytesRead`), and the largest
+ * single piece held (`largestPiece`, at most a segment). Counts, not time.
  */
-export const largeFileWork = { bytesRead: 0, bytesWritten: 0, bytesCopied: 0, largestPiece: 0 };
+export const largeFileWork = { bytesRead: 0, bytesWritten: 0, bytesCopied: 0, bytesMeasured: 0, largestPiece: 0 };
 
 function counted(bytes: number, field: 'bytesRead' | 'bytesWritten'): void {
   largeFileWork[field] += bytes;
@@ -100,7 +102,7 @@ export class StreamedFileContent {
   static async measure(engine: BrainEngine, produce: (engine: BrainEngine) => AsyncIterable<string | Uint8Array>): Promise<StreamedFileContent> {
     const hash = createHash('sha256');
     let bytes = 0;
-    for await (const piece of pieces(produce(engine))) { counted(piece.length, 'bytesRead'); hash.update(piece); bytes += piece.length; }
+    for await (const piece of pieces(produce(engine))) { counted(piece.length, 'bytesRead'); largeFileWork.bytesMeasured += piece.length; hash.update(piece); bytes += piece.length; }
     return new StreamedFileContent(bytes, hash.digest('hex'), produce);
   }
   pieces(engine: BrainEngine): AsyncIterable<Uint8Array> { return pieces(this.produce(engine)); }
@@ -147,31 +149,46 @@ function removeOwnStage(path: string): void {
 }
 
 /**
- * Writes `content` into its reserved staging file (created exclusively with `mode`, else 0644 under the umask), one
- * piece at a time, fsynced. Bytes that are not the measured ones (the page changed since preparation) remove the
- * stage and refuse as `revision_conflict`, so the request is prepared again.
+ * Where `stageStreamedContent` streams a stage before renaming it to the stage's name, so a stream a crash cut short is
+ * never at the stage's name. Recovery removes it unread (staging.ts): the rename is the commit point, so a file still
+ * under this name was never published and its bytes can always be produced again.
+ */
+export function streamingStagePath(stagePath: string): string { return `${stagePath}.streaming`; }
+
+/**
+ * Writes `content` into its reserved staging file one piece at a time: streamed into `streamingStagePath` (created
+ * exclusively with `mode`, else 0644 under the umask), checked to hold the measured bytes, fsynced, and only then renamed
+ * to the stage's name, so a stage under that name is always whole. Bytes that are not the measured ones (the page
+ * changed since preparation) remove the stream and refuse as `revision_conflict`, so the request is prepared again.
+ * Seam `large_file:stage_streaming` after each piece is written (a crash mid-stream).
  */
 export async function stageStreamedContent(engine: BrainEngine, path: string, content: StreamedFileContent, stage: RecoveryStagingFile, mode: number | null): Promise<void> {
   assertManagedFilesystemWrite(path);
   validateAtomicStagingPath(path, stage.path);
-  const fd = openSync(stage.path, 'wx', mode ?? 0o644);
+  const streaming = streamingStagePath(stage.path);
+  const fd = openSync(streaming, 'wx', mode ?? 0o644);
   let staged = false;
   try {
-    if (mode !== null) fchmodSync(fd, mode);
-    const hash = createHash('sha256');
-    let bytes = 0;
-    for await (const piece of content.pieces(engine)) {
-      writeAll(fd, piece);
-      counted(piece.length, 'bytesWritten');
-      hash.update(piece);
-      bytes += piece.length;
-    }
-    if (bytes !== stage.bytes || hash.digest('hex') !== stage.hash) throw new OperationError('revision_conflict', 'The page changed during preparation.', 'Read its current revision and submit the updated intent with a new request_id.');
-    fsyncSync(fd);
+    try {
+      if (mode !== null) fchmodSync(fd, mode);
+      const hash = createHash('sha256');
+      let bytes = 0;
+      for await (const piece of content.pieces(engine)) {
+        writeAll(fd, piece);
+        counted(piece.length, 'bytesWritten');
+        hash.update(piece);
+        bytes += piece.length;
+        await faultPoint('large_file:stage_streaming', { path: streaming });
+      }
+      if (bytes !== stage.bytes || hash.digest('hex') !== stage.hash) throw new OperationError('revision_conflict', 'The page changed during preparation.', 'Read its current revision and submit the updated intent with a new request_id.');
+      fsyncSync(fd);
+    } finally { closeSync(fd); }
+    if (existsAt(stage.path)) throw opError('unexpected_staging_bytes', 'A file already holds the reserved stage name.',
+      'A recovery staging file changed outside gbrain. Inspect the pending recovery in writer status and tell the user; never delete or edit staging files by hand.');
+    renameSync(streaming, stage.path);
     staged = true;
   } finally {
-    closeSync(fd);
-    if (!staged) removeOwnStage(stage.path);
+    if (!staged) removeOwnStage(streaming);
   }
   flushDirectory(dirname(stage.path));
 }
@@ -212,6 +229,6 @@ export async function stageBeforeCopy(path: string, stage: RecoveryStagingFile, 
   flushDirectory(dirname(stage.path));
   return true;
 }
-function existsAt(path: string): boolean {
+export function existsAt(path: string): boolean {
   try { lstatSync(path); return true; } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; }
 }

@@ -103,6 +103,24 @@ export async function finish(world: World, model: ReferenceModel, label: string,
     { slug: `notes/probe-${randomUUID().slice(0, 8)}`, content: pageBody('notes/probe', 'mk-probe0') });
   const seen = await executeOp(world, probe);
   if (seen.status !== 'committed') model.violate({ class: 'wedge', detail: `${label}: a fresh write after the schedule ended ${seen.status}/${seen.code}` });
+  await awaitClaimPass(world);
+}
+
+/**
+ * #6957: wait for a consumer claim pass after the probe was prepared. The consumer makes one after every write it
+ * finishes, but a worker that returned at once stopped it first, unless timing let the pass in: a CI count role saw
+ * that pass as claim epoch 5 of caller_bound_replay, every replay of the run exited before making it, and its fault
+ * at consumer:claiming#5 went unreached. Waiting makes the last claim epoch part of every counted and run schedule.
+ * Only a worker whose fault hook counts claim passes (`world.claimPasses`) waits.
+ */
+async function awaitClaimPass(world: World): Promise<void> {
+  if (world.claimPasses === undefined) return;
+  const before = world.claimPasses;
+  const deadline = Date.now() + 30_000;
+  while (world.claimPasses === before && Date.now() < deadline) {
+    startPersistenceConsumer(world.engine, world.config).wake();
+    await Bun.sleep(50);
+  }
 }
 
 export async function runSchedule(world: World, schedule: Schedule): Promise<ScheduleResult> {
@@ -183,7 +201,8 @@ const PER_REQUEST_SEAMS: ReadonlySet<FaultPoint> = new Set<FaultPoint>(['consume
  * saw 19, the run made fewer and its fault at #19 went unreached). It counts in claim epochs instead: the number of
  * distinct write request rows that have reached `consumer:preparing`. The first pass at epoch e or later advances
  * the count to e + 1, so slot n is the first claim attempt after n - 1 requests were prepared; requests of one root
- * are claimed one after another, so every slot the count role saw comes again in the run.
+ * are claimed one after another, and `finish` waits for a claim pass after its probe, the last request (#6957), so
+ * every slot the count role saw comes again in the run.
  */
 /** How far this pass advances the seam's count: 1, 0 for a repeat of the same request at a per-request seam, the epochs passed at the claim seam. */
 export function seamCounter(): (point: FaultPoint, detail: FaultDetail) => number {
@@ -390,8 +409,12 @@ export async function robotWorker(role: 'count' | 'run' | 'recover', config: Rob
     installLockOrderTrace();
     const counts: Record<string, number> = {};
     const counted = seamCounter();
-    if (role === 'count') installFaultHook((point, detail) => { const advanced = counted(point, detail); if (advanced) counts[point] = (counts[point] ?? 0) + advanced; });
-    if (role === 'run' && config.fault) installFaultHook(robotFaultHook(config.fault));
+    const hook = role === 'count' ? (point: FaultPoint, detail: FaultDetail) => { const advanced = counted(point, detail); if (advanced) counts[point] = (counts[point] ?? 0) + advanced; }
+      : role === 'run' && config.fault ? robotFaultHook(config.fault) : undefined;
+    if (hook) {
+      world.claimPasses = 0;
+      installFaultHook((point, detail) => { if (point === 'consumer:claiming') world.claimPasses!++; hook(point, detail); });
+    }
     if (role === 'run') {
       let next = 0; let inFlight: string[] = [];
       world.onSubmit = () => writeState(config, world, model, checkouts, next, inFlight);

@@ -214,7 +214,9 @@ for (const kind of testBackends()) {
           await engine.stageSegmentTexts(sourceId, Array.from({ length: 1000 }, (_, i) => segmentText(`text ${filler + i} of ${sourceId}\n`)));
         }
         await engine.executeRaw("UPDATE page_segment_texts SET created_at = now() + interval '1 hour' WHERE source_id = $1", [sourceId]);
-        await engine.executeRaw('ANALYZE page_segment_texts, page_body_manifest, page_body_stagings, page_body_staging_texts, pages, persistence_requests, content_chunks, page_versions');
+        // VACUUM too: a table an earlier test emptied (content_chunks) keeps its dead pages until vacuumed, and autovacuum
+        // truncating it between rounds flips the orphaned-chunk DELETE to drive from the page's manifest (+3 page-sized rows).
+        await engine.executeRaw('VACUUM ANALYZE page_segment_texts, page_body_manifest, page_body_stagings, page_body_staging_texts, pages, persistence_requests, content_chunks, page_versions');
       };
       /** Rows each table scan returned or filtered out. Joins, aggregates, sorts and locks pass the same rows on, and how many of
        *  them a plan stacks depends on the strategy the planner picks, not on the source's size. A bitmap index scan names no

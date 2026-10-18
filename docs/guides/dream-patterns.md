@@ -67,6 +67,40 @@ deprecated and will be removed two releases after this one; read
 The agent reads the phase result (`gbrain dream --phase patterns --json` on a
 direct run) and reports `quote_verify.timeline_appends`.
 
+## A page that fails quote grounding
+
+After a completed child, every pattern page it wrote and every pattern page an
+earlier run left without `quote_verified_at` is grounded and written back. One
+page whose write-back is refused does not fail the run:
+
+- It is listed in `grounding_failed` with its error code and the command that
+  retries it, gets no provenance stamp and does not count in
+  `patterns_written`. The other pages still ground, the evidence watermark is
+  stamped (so no new child is paid for the same evidence) and the phase warns.
+- A leftover page refused with the same content error on 3 runs, while its
+  content and the gbrain version stay the same, is held: it leaves the
+  leftover list and appears in `grounding_held`, and the phase keeps warning.
+  Editing the page or upgrading gbrain retries it on the next run;
+  `gbrain config unset dream.patterns.grounding_holds.<source>` followed by
+  `gbrain dream --phase patterns --once --source <source>` retries every held
+  page now.
+- A page the child only appended timeline entries to is different: those
+  entries exist in that run alone. When its write-back is refused, the entries
+  and the reflections they are checked against are saved in
+  `dream.patterns.grounding_appends.<source>` before the evidence watermark is
+  stamped. Every later run retries them first, before the evidence check and
+  before any paid child, and reports the retry in `timeline_append_retry`. A
+  retry that fails warns (even when the run otherwise skips). After 3 content
+  refusals at the same page content and gbrain version the page's entries are
+  held: they stay saved, are listed in `grounding_held` with
+  `timeline_appends`, and editing the page or upgrading gbrain retries them.
+  Don't unset that key: it is the only copy of the entries still to check.
+- A lost database connection, a cancelled run, or most pages failing at once
+  still fails the phase and holds nothing.
+
+**Say to your agent:** *"Which pattern pages failed quote grounding, and why?"*
+The agent reads `grounding_failed` and `grounding_held` from the phase result.
+
 ## Cadence
 
 Every maintenance pass writes new reflections, so the evidence check alone

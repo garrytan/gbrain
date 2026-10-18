@@ -43,6 +43,20 @@ export function ensureWellFormed(s: string): string {
   return s.isWellFormed() ? s : s.toWellFormed();
 }
 
+/**
+ * `ensureWellFormed` over every string (and object key) inside a JSON-shaped
+ * value, for payloads written to JSONB columns: one lone surrogate anywhere in
+ * the value makes Postgres reject the whole write (22P02, #6860).
+ */
+export function wellFormedJson<T>(value: T): T {
+  if (typeof value === 'string') return ensureWellFormed(value) as T;
+  if (Array.isArray(value)) return value.map(wellFormedJson) as T;
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [ensureWellFormed(key), wellFormedJson(item)])) as T;
+  }
+  return value;
+}
+
 function isHighSurrogate(code: number): boolean {
   return code >= 0xd800 && code <= 0xdbff;
 }

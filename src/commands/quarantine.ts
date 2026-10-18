@@ -25,6 +25,8 @@ import { managedPersistenceEnabled } from '../core/persistence/ownership.ts';
 import { submitPageMutation } from '../core/persistence/page-mutations.ts';
 import { resolveCliWriteWaitMs } from '../core/persistence/write-wait.ts';
 import { QUARANTINE_OVERRIDE_KEY, quarantineOverrideFor } from '../core/quarantine-override.ts';
+import { ownerSourceGateInput } from '../core/trust/channel.ts';
+import { compareTrust, OWNER_TIER_FLOOR } from '../core/trust/tier.ts';
 import { reportPersistenceCliError } from './persistence-delegate.ts';
 import type { PageType } from '../core/types.ts';
 import { isSegmentedPage } from '../core/page-body/page-shape.ts';
@@ -283,8 +285,13 @@ async function runClear(engine: BrainEngine, args: string[]): Promise<void> {
     flagReason = result.flag_reason;
   }
 
+  // #6919: a sync of the page's file carries the override only at the owner tier (wave 13); a page whose own
+  // frontmatter lowers that tier loses it on the next sync and the write gate assesses it again.
+  const syncTier = force && page.source_path ? (await ownerSourceGateInput(engine, page.source_id, fm)).tier : null;
+  const syncDrops = syncTier !== null && compareTrust(syncTier, OWNER_TIER_FLOOR) < 0;
   if (json) {
-    console.log(JSON.stringify({ slug, cleared: !reQuarantined, re_quarantined: reQuarantined, flagged, forced: force }, null, 2));
+    console.log(JSON.stringify({ slug, cleared: !reQuarantined, re_quarantined: reQuarantined, flagged, forced: force,
+      ...(force ? { override_survives_sync: !syncDrops } : {}) }, null, 2));
     return;
   }
   if (reQuarantined) {
@@ -296,7 +303,10 @@ async function runClear(engine: BrainEngine, args: string[]): Promise<void> {
   }
   console.log(
     `Cleared "${slug}".` +
-    (force ? ' It stays cleared until its title, type or body changes.' : '') +
+    (force && !syncDrops ? ' It stays cleared until its title, type or body changes.' : '') +
+    (syncDrops ? ` Its frontmatter lowers a sync of its file to ${syncTier}, below the owner tier, so the next sync of its file drops this override `
+      + 'and the write gate assesses the page again. To keep it cleared, remove the provenance marker that lowers it (trust_tier, source_kind, '
+      + 'ingested_via, captured_via) from the file.' : '') +
     (flagged ? ` (now flagged: ${flagReason} — searchable, agent warned.)` : '') +
     (noEmbed ? ' Embedding skipped (--no-embed); run `gbrain embed --stale` to make it searchable.' : ''),
   );

@@ -35,6 +35,7 @@ import { loadFenceChunkOverlay } from '../eligibility/fence-overlay.ts';
 import { withdrawalFenceBlocks } from '../facts/withdrawal-overlay.ts';
 import { overlaySegmentText, readBodyLedger, type BodyLedger } from './segment-ledger.ts';
 import { assertGenerationTiles } from './body-tiling.ts';
+import { hasStaleChunks } from './projection.ts';
 
 const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 
@@ -89,6 +90,11 @@ export interface PreparedSegmentedBody {
   retireChunkOccurrences: number[];
   /** Occurrences of the new generation that have no chunk rows after staging (a create without `createChunks`: all, chunked after publication). */
   unchunked: number;
+  /**
+   * The live generation stores chunk rows it does not hold (an earlier write's deferred retirement), so the publication
+   * leaves the page unsealed. Read here, not in the publication transaction: the probe walks every occurrence of the page.
+   */
+  priorStale: boolean;
   body: SegmentedBodyColumns;
   /** No manifest row changed: the write changes metadata only. */
   bodyUnchanged: boolean;
@@ -321,7 +327,7 @@ async function stageBody(engine: BrainEngine, input: SegmentedBodyInput, staging
     if (createChunks) await stageOccurrenceChunks(engine, { pageId: 0, sourceId: input.sourceId, slug: input.slug, generation: newGeneration, occurrences: rows,
       title: input.title, frontmatter: input.frontmatter, flags: body.body_flags, chunking: input.chunking, retiredOccurrences: [], hold: createChunks.chunks });
     return { stagingId, expectedGeneration, newGeneration, createRows: rows, createChunks, closeOccurrences: [], retireChunkOccurrences: [],
-      unchunked: createChunks ? 0 : rows.length, body, bodyUnchanged: false, rows: { texts, manifest: rows.length, chunks: createChunks?.chunks.length ?? 0 }, stagedChunkIndexes: [] };
+      unchunked: createChunks ? 0 : rows.length, priorStale: false, body, bodyUnchanged: false, rows: { texts, manifest: rows.length, chunks: createChunks?.chunks.length ?? 0 }, stagedChunkIndexes: [] };
   }
   if (changed.length) await writes(exec => exec.stageManifestRows(changed));
   await faultPoint('segmented:manifest_staged', { sourceId: input.sourceId });
@@ -332,8 +338,9 @@ async function stageBody(engine: BrainEngine, input: SegmentedBodyInput, staging
   await faultPoint('segmented:chunks_staged', { sourceId: input.sourceId });
   const kept = new Set(rows.filter((_, i) => matched[i]).map(row => row.occurrenceId));
   retireChunkOccurrences.push(...chunkable.filter(row => kept.has(row.occurrenceId)).map(row => row.occurrenceId));
+  const priorStale = !!live && await hasStaleChunks(engine, live.id, expectedGeneration, liveRows.map(row => Number(row.occurrenceId)));
   return { stagingId, expectedGeneration, newGeneration, createRows: null, createChunks: null, closeOccurrences, retireChunkOccurrences,
-    unchunked: input.chunking.quarantined ? 0 : chunkable.length - chunks.occurrences, body,
+    unchunked: input.chunking.quarantined ? 0 : chunkable.length - chunks.occurrences, priorStale, body,
     bodyUnchanged: changed.length === 0 && retireChunkOccurrences.length === 0, rows: { texts, manifest: changed.length, chunks: chunks.rows },
     stagedChunkIndexes: chunks.indexes };
 }
@@ -375,8 +382,9 @@ export async function stageOccurrenceChunks(engine: BrainEngine, input: { pageId
   guarded?: boolean;
   /** A create's preparation: the chunks are collected here (its page row does not exist yet) and inserted by the publication. */
   hold?: SegmentChunkInput[];
-  /** Guarded: runs in each batch's transaction (the projection renews its claim on the page's queue row). */
-  renew?: (tx: BrainEngine) => Promise<unknown> }): Promise<{ rows: number; occurrences: number; indexes: number[] }> {
+  /** Guarded: runs in each batch's transaction before its insert (the projection renews its claim on the page's queue row);
+   *  false when the caller lost its claim: that batch inserts nothing and the staging stops. */
+  renew?: (tx: BrainEngine) => Promise<boolean> }): Promise<{ rows: number; occurrences: number; indexes: number[] }> {
   if (input.chunking.quarantined || !input.occurrences.length) return { rows: 0, occurrences: 0, indexes: [] };
   const batchBytes = STAGE_BATCH_BYTES[engine.kind];
   const fenceBudget = newFenceChunkBudget();
@@ -388,6 +396,7 @@ export async function stageOccurrenceChunks(engine: BrainEngine, input: { pageId
     while (end < input.occurrences.length && (end === start || bytes + input.occurrences[end]!.byteLen <= batchBytes)) bytes += input.occurrences[end++]!.byteLen;
     const batch = input.occurrences.slice(start, end);
     start = end;
+    if (input.guarded) await faultPoint('segmented:projection_batch', { sourceId: input.sourceId, slug: input.slug });
     const texts = await engine.readSegmentTexts(input.sourceId, batch.map(row => row.sha256));
     ledger ??= await readBodyLedger(engine, input.sourceId, input.slug);
     const segments = [];
@@ -414,19 +423,19 @@ export async function stageOccurrenceChunks(engine: BrainEngine, input: { pageId
     segmentChunkWork.chunks += chunks.length;
     if (input.hold) input.hold.push(...chunks);
     else if (chunks.length && !input.guarded) indexes.push(...await engine.stageSegmentChunks(input.pageId, input.generation, chunks));
-    let moved = false;
+    let moved = false, lost = false;
     if (chunks.length && input.guarded) rows -= chunks.length - await engine.transaction(async tx => {
       await tx.lockPageKeys([{ sourceId: input.sourceId, slug: input.slug }]);
       const [page] = await tx.executeRaw<{ body_generation: number | string }>('SELECT body_generation FROM pages WHERE id=$1', [input.pageId]);
       if (Number(page?.body_generation) !== input.generation) { moved = true; return 0; }
+      if (input.renew && !await input.renew(tx)) { lost = true; return 0; }
       const open = new Set((await occurrencesWithoutChunks(tx, input.pageId, input.generation, batch)).map(row => row.occurrenceId));
       const still = chunks.filter(chunk => open.has(chunk.occurrence_id));
-      await input.renew?.(tx);
       if (still.length) await tx.stageSegmentChunks(input.pageId, input.generation, still);
       return still.length;
     });
     rows += chunks.length;
-    if (moved) break;
+    if (moved || lost) break;
     done += batch.length;
     collectBatchGarbage();
     if (engine.kind === 'pglite') await new Promise(resolve => setImmediate(resolve));

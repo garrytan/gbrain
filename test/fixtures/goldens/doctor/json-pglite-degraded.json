@@ -1422,46 +1422,15 @@
             "blockers": [],
             "configured": "unset",
             "docs": "docs/guides/memory-boundaries.md#segmented-page-storage",
-            "effective": "off",
+            "effective": "on",
             "floor": "<segmented-writer-floor>",
-            "max_bytes": 25165824,
+            "max_bytes": 134217728,
             "truncated": false,
             "window_days": 7
           },
           "elapsed_ms": "<volatile>",
-          "fix": {
-            "actor": "user",
-            "argv": [
-              "gbrain",
-              "config",
-              "set",
-              "pages.segmented_storage",
-              "on",
-              "--brain",
-              "host"
-            ],
-            "command": "gbrain config set pages.segmented_storage on --brain host",
-            "consent": [],
-            "docs": "https://github.com/garrytan/gbrain/blob/master/docs/guides/memory-boundaries.md#segmented-page-storage",
-            "next": "tell_user_to_run",
-            "requires_exclusive": false,
-            "verify": {
-              "argv": [
-                "gbrain",
-                "doctor",
-                "--only",
-                "segmented_storage",
-                "--json",
-                "--brain",
-                "host"
-              ]
-            },
-            "why": "Turns segmented storage on: pages over 1 MiB are stored in segments, up to the engine ceiling."
-          },
-          "message": "Segmented page storage is off by default in this release (pages.segmented_storage unset): pages over 1 MiB are stored inline up to 24 MiB; pages already stored in segments stay readable.",
+          "message": "Segmented page storage is on: pages over 1 MiB are stored in segments, up to 134217728 bytes on this PGLite brain.",
           "name": "segmented_storage",
-          "readiness_state": "disabled_by_choice",
-          "severity": "info",
           "status": "ok"
         },
         {
@@ -1870,6 +1839,26 @@
           "elapsed_ms": "<volatile>",
           "message": "Brain-wide maintenance jobs are finishing within their deadline.",
           "name": "global_maintenance_timeouts",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
+            "age_minutes": null,
+            "code": "global_maintenance_stalled",
+            "docs": "docs/guides/troubleshooting.md#global-maintenance-stalled",
+            "fail_after_minutes": 10080,
+            "failed_jobs_since": 0,
+            "last_failed_job": null,
+            "last_global_at": null,
+            "phases": [],
+            "reason": "fresh",
+            "resume_phase": null,
+            "warn_after_minutes": 180
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "Brain-wide maintenance has not run yet.",
+          "name": "global_maintenance_stalled",
           "status": "ok"
         },
         {
@@ -2756,6 +2745,17 @@
           "elapsed_ms": "<volatile>",
           "message": "No live page is missing its canonical file (0 page(s) inspected).",
           "name": "ghost_pages",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "docs": "docs/guides/repair.md#origin-twins",
+            "index": "present"
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "pages_live_origin_key is present: no two live pages can record one file.",
+          "name": "origin_twins",
           "status": "ok"
         },
         {

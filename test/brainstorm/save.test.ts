@@ -142,6 +142,14 @@ describe('formatSaveOutcome (pure)', () => {
     expect(m.stdout).toContain('not a directory');
   });
 
+  test('db only, url_clone (#6946) → exit 0, names the clone instead of an error', () => {
+    const o: SaveOutcome = { dbSaved: true, writeThrough: { written: false, skipped: 'url_clone' } };
+    const m = formatSaveOutcome(o, ctx);
+    expect(m.exitCode).toBe(0);
+    expect(m.stdout).toContain('kept database-only');
+    expect(m.stdout).not.toContain('file NOT written');
+  });
+
   test('db saved but file errored → exit 0, warns on stderr', () => {
     const o: SaveOutcome = { dbSaved: true, writeThrough: { written: false, error: 'EACCES' } };
     const m = formatSaveOutcome(o, ctx);

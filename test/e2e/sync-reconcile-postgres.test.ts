@@ -15,6 +15,7 @@
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { setupDB, teardownDB, hasDatabase } from './helpers.ts';
+import { dropOriginIndex } from '../helpers/origin-index.ts';
 import { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { execSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -99,6 +100,13 @@ describeIfDB('#3583: rename reconcile on PostgreSQL', () => {
     await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
     expect(await engine.getPage('people/beta')).not.toBeNull();
 
+    // A NEW unrelated file at the old path. It imports before the legacy
+    // bookkeeping below names that path again: no writer records a held
+    // origin on a second page any more (#6948).
+    writeFileSync(join(repo, 'people/alpha.md'), personMd('Alpha Two', 'A different Alpha.'));
+    execSync('git add -A && git commit -m "new alpha"', { cwd: repo, stdio: 'pipe' });
+    await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+
     // Put the row into the stale-bookkeeping state deliberately. The cheap
     // rename above repairs source_path, so this shape is not what a rename
     // leaves behind TODAY — it is what a row renamed before that repair
@@ -107,6 +115,8 @@ describeIfDB('#3583: rename reconcile on PostgreSQL', () => {
     // produce it: without this the row is not even a candidate, and the
     // live-row assertion below passes with liveness protection disabled
     // (adversarial review).
+    // Only a brain whose pages_live_origin_key index is pending can hold this shape (#6948).
+    await dropOriginIndex(engine);
     await engine.executeRaw(
       `UPDATE pages SET source_path = 'people/alpha.md'
         WHERE source_id = 'default' AND slug = 'people/beta'`,
@@ -116,11 +126,6 @@ describeIfDB('#3583: rename reconcile on PostgreSQL', () => {
     );
     expect(betaRows).toHaveLength(1);
     expect(betaRows[0].source_path).toBe('people/alpha.md');
-
-    // A NEW unrelated file at the old path…
-    writeFileSync(join(repo, 'people/alpha.md'), personMd('Alpha Two', 'A different Alpha.'));
-    execSync('git add -A && git commit -m "new alpha"', { cwd: repo, stdio: 'pipe' });
-    await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
 
     // …renamed into an OCCUPIED destination (gamma pre-exists), forcing the
     // fallback-to-add + reconcile path.

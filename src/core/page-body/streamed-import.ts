@@ -102,6 +102,8 @@ type StreamedImportOptions = {
    * runs in the coordinator's publication transaction.
    */
   coordinated?: { snapshot: PageSnapshot | null; owner: SegmentedStagingOwner; sha256: string;
+    /** The admitted page (a managed sync's `row.slug`): the page that records the file as its origin, which may differ from the path's slug. */
+    slug?: string;
     /** A managed sync rename: `snapshot` is the page at its old slug, which the publication moves here first; an implicit type follows the new path. */
     moved?: boolean;
     prepare(prepared: StreamedPreparedImport): Promise<ImportResult> };
@@ -340,6 +342,7 @@ async function importScanned(engine: BrainEngine, input: { file: FileHandle; bom
     slug = parsed.slug;
     logSlugFallback(slug, relativePath, expectedSlug ? 'normalization-equivalent identity restore' : 'path slugified empty');
   }
+  slug = opts.coordinated?.slug ?? slug;
   if (hasGuardrails()) return hold(slug, size, 'a registered guardrail reads the whole payload');
   if (scan.bodyFlags.has_nul) return hold(slug, size, 'NUL bytes change the stored size the content gate measures');
   const drift = { changed: false };

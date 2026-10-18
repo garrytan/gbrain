@@ -52,6 +52,7 @@ import { legacyCommitStep, recordUncommittedFenceRepair } from './uncommitted.ts
 import type { FenceRepairReceipt } from './receipt.ts';
 import type { FenceCtx, FencePage } from './types.ts';
 import { gitChildEnv } from '../git-env.ts';
+import { canonicalOriginPage, originConflictMessage } from '../persistence/origin-guard.ts';
 
 export type FenceRepairMode = 'managed' | 'legacy' | 'db' | 'mirror';
 
@@ -128,7 +129,7 @@ export function pageSha(page: FencePage): string {
   return sha256(`${page.compiled_truth ?? ''}\u0000${page.timeline ?? ''}`);
 }
 
-export type TargetRead = { ok: true; target: FenceTarget } | { ok: false; reason: 'gone' | 'not_utf8' | 'unsafe_path' };
+export type TargetRead = { ok: true; target: FenceTarget } | { ok: false; reason: 'gone' | 'not_utf8' | 'unsafe_path' } | { ok: false; reason: 'origin_conflict'; message: string };
 
 /** Reads a candidate as it is now. A held or walked file is read from the checkout; anything else is read from the page store. */
 export async function readFenceTarget(engine: BrainEngine, src: FenceSource, cand: { key: string; path: string | null }): Promise<TargetRead> {
@@ -145,7 +146,8 @@ export async function readFenceTarget(engine: BrainEngine, src: FenceSource, can
       const content = bytes.toString('utf8');
       if (!Buffer.from(content, 'utf8').equals(bytes)) return { ok: false, reason: 'not_utf8' };
       const sourcePath = hold?.source_path ?? cand.path;
-      const [byOrigin] = await engine.executeRaw<{ slug: string }>('SELECT slug FROM pages WHERE source_id=$1 AND source_path=$2 AND deleted_at IS NULL LIMIT 1', [src.id, sourcePath]);
+      const byOrigin = await canonicalOriginPage(engine, src.id, sourcePath);
+      if (byOrigin && 'ambiguous' in byOrigin) return { ok: false, reason: 'origin_conflict', message: originConflictMessage(src.id, sourcePath, byOrigin.ambiguous) };
       const slug = byOrigin?.slug ?? holdSlug ?? resolveSlugForPath(sourcePath);
       const dbOnly = src.managed && isSourceDbOnlySlug(src.root, slug, 'not_db_only');
       if (!dbOnly) {

@@ -19,6 +19,8 @@ import { OperationError } from './ops/contract.ts';
 import { waitForCapacity } from './backoff.ts';
 import { quarantineMarkers } from './extraction-review.ts';
 import { SLUG_WORD_CHARS, SLUG_VARIATION_SELECTORS_RE } from './cjk.ts';
+import { createHash } from 'node:crypto';
+import { portableSegment, RESERVED_DEVICE_NAME, segmentByteBudget, truncateUtf8 } from './portable-slug.ts';
 // #3994: created stubs route through serializeMarkdown + importFromContent
 // (the same parse→chunk→embed pipeline put_page uses) instead of a bare
 // engine.putPage, so fresh entity pages land in the retrieval surface
@@ -29,6 +31,7 @@ import { isAvailable } from './ai/gateway.ts';
 // #4222: shared generic-token reject list — same list gates the by-mention
 // gazetteer and drives the junk_entity_hubs doctor check.
 import { isJunkEntityName } from './entity-name-quality.ts';
+import { followRetirement } from './entities/resolve.ts';
 import { maintenanceTransaction } from './persistence/attribution.ts';
 import { managedPersistenceEnabled } from './persistence/ownership.ts';
 import { deriveTrust, derivedMaintenanceTransaction, lowerDerivedPage, lowerDerivedPageIn } from './trust/taint.ts';
@@ -75,6 +78,11 @@ export interface EnrichmentResult {
   action: 'created' | 'updated' | 'skipped';
   /** True when the created stub landed in the quarantine lane (issue #160). */
   quarantined?: boolean;
+  /**
+   * Why nothing was written: the page is retired and its superseded_by / merged_into chain has no live target (B-9),
+   * or both this entity's slug and its hash-tagged slug hold pages that name another entity.
+   */
+  skipped_reason?: 'retired_page_unfollowable' | 'entity_slug_taken';
   tier: 1 | 2 | 3;
   backlinkCreated: boolean;
   timelineAdded: boolean;
@@ -101,10 +109,21 @@ const SLUGIFY_ENTITY_KEEP_RE = new RegExp(`[^${SLUG_WORD_CHARS}]`, 'gu');
  * '-', producing empty or colliding people/companies slugs. Now mirrors
  * sync.ts:slugifySegment's Unicode-aware keep-set: strip Latin accents to
  * their base letter (fold, don't drop), keep every script's own letters
- * as-is (Cyrillic, CJK, Devanagari, …).
+ * as-is (Cyrillic, CJK, Devanagari, …). A name that slugifies to a Windows
+ * reserved device name gets the entity type as a suffix (`Con` →
+ * `people/con-person`) and an over-long one is cut to the file-name budget
+ * and tagged with a hash of its full slug (portable-slug.ts), so a stub is
+ * always a page export and write-through can store and two long names sharing
+ * a prefix keep separate pages; a page an older brain created as `people/con`
+ * is still found through the legacy-slug lookup in enrichEntity.
  */
 export function slugifyEntity(name: string, type: 'person' | 'company'): string {
-  const slug = name
+  return `${type === 'person' ? 'people' : 'companies'}/${entitySegment(entitySlugBase(name), type, false)}`;
+}
+
+/** The full slug segment a name maps to before portability escaping: the identity two names share when it is equal. */
+function entitySlugBase(name: string): string {
+  return name
     .replace(/['‘’]/g, '')
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
@@ -114,9 +133,19 @@ export function slugifyEntity(name: string, type: 'person' | 'company'): string 
     .replace(SLUGIFY_ENTITY_KEEP_RE, '-')
     .replace(/-+/g, '-')
     .replace(/^-+|-+$/g, '');
+}
 
-  const prefix = type === 'person' ? 'people' : 'companies';
-  return `${prefix}/${slug}`;
+/**
+ * The portable file name for a slug base: a reserved name gets the entity type
+ * as a suffix, and a name over the budget (or any name when `tagged`) ends in
+ * the first 8 hex digits of the base's SHA-256, cut to fit before the tag.
+ */
+function entitySegment(base: string, type: 'person' | 'company', tagged: boolean): string {
+  const renamed = base.replace(RESERVED_DEVICE_NAME, name => `${name}-${type}`);
+  const budget = segmentByteBudget(true);
+  if (!tagged && Buffer.byteLength(renamed) <= budget) return renamed;
+  const tag = createHash('sha256').update(base).digest('hex').slice(0, 8);
+  return `${truncateUtf8(renamed, budget - tag.length - 1).replace(/[-._:]+$/, '')}-${tag}`;
 }
 
 /**
@@ -153,7 +182,9 @@ export async function enrichEntity(
   request: EnrichmentRequest,
   opts?: EnrichmentTrustOptions,
 ): Promise<EnrichmentResult> {
-  const candidateSlug = slugifyEntity(request.entityName, request.entityType);
+  const base = entitySlugBase(request.entityName);
+  const prefix = request.entityType === 'person' ? 'people' : 'companies';
+  const candidateSlug = `${prefix}/${entitySegment(base, request.entityType, false)}`;
   const sourceId = opts?.sourceId ?? 'default';
   let slug = await engine.resolveSlugWithAlias(candidateSlug, sourceId);
   // Fail-closed: only an explicit `trusted: true` writes authoritative pages.
@@ -179,16 +210,52 @@ export async function enrichEntity(
 
   // 3. Check if entity page exists
   let existingPage = await engine.getPage(slug, scope);
-  if (!existingPage) {
+  // F8: a page whose title maps to this slug base names this entity; any other page at the slug may name another one.
+  const namesEntity = (title: string | undefined) => entitySlugBase(title ?? '') === base;
+  if (!existingPage || !namesEntity(existingPage.title)) {
     // A page an older brain created under the ASCII-only slug is the same entity.
     const legacy = legacyAsciiEntitySlug(request.entityName, request.entityType);
+    let legacyFound = false;
     if (legacy !== candidateSlug && !/^(people|companies)\/$/.test(legacy)) {
       const legacySlug = await engine.resolveSlugWithAlias(legacy, sourceId);
       const legacyPage = await engine.getPage(legacySlug, { sourceId });
       // The legacy slug is lossy (José -> people/jos), so only reuse a page that names this entity.
       const same = (t: string) => t.normalize('NFC').trim().toLowerCase();
-      if (legacyPage && same(legacyPage.title ?? '') === same(request.entityName)) { slug = legacySlug; existingPage = legacyPage; }
+      if (legacyPage && same(legacyPage.title ?? '') === same(request.entityName)) { slug = legacySlug; existingPage = legacyPage; legacyFound = true; }
     }
+    // An over-budget name an older gbrain minted at its cut slug with no hash tag; that slug is shared by every name with the same prefix.
+    const untagged = `${prefix}/${portableSegment(base, true, request.entityType)}`;
+    if (!legacyFound && !existingPage && untagged !== candidateSlug) {
+      const untaggedSlug = await engine.resolveSlugWithAlias(untagged, sourceId);
+      const untaggedPage = await engine.getPage(untaggedSlug, scope);
+      if (untaggedPage && namesEntity(untaggedPage.title)) { slug = untaggedSlug; existingPage = untaggedPage; legacyFound = true; }
+    }
+    // An escaped slug (Aux -> companies/aux-company) can be another entity's natural slug, and a natural slug can be
+    // the escaped slug another entity was minted at (Prn Company's companies/prn-company held by Prn): either way the
+    // page names another entity, so this one takes its hash-tagged slug. A page a person titled differently at this
+    // entity's natural slug stays this entity's page.
+    const heldByOther = !legacyFound && existingPage !== null &&
+      (candidateSlug !== `${prefix}/${base}` || slugifyEntity(existingPage.title ?? '', request.entityType) === candidateSlug);
+    if (heldByOther) {
+      const tagged = `${prefix}/${entitySegment(base, request.entityType, true)}`;
+      const taggedSlug = tagged === candidateSlug ? null : await engine.resolveSlugWithAlias(tagged, sourceId);
+      const taggedPage = taggedSlug === null ? null : await engine.getPage(taggedSlug, scope);
+      if (taggedSlug === null || (taggedPage && !namesEntity(taggedPage.title))) {
+        return { slug, action: 'skipped', skipped_reason: 'entity_slug_taken', tier, backlinkCreated: false, timelineAdded: false,
+          mentionCount, mentionSources, suggestedTier, tierEscalated };
+      }
+      slug = taggedSlug;
+      existingPage = taggedPage;
+    }
+  }
+  // B-9: a retired page (canonical: false, superseded_by) answers through its canonical page, as fact resolution does (#6898).
+  if (existingPage) {
+    const live = await followRetirement(engine, sourceId, slug);
+    if (!live) {
+      return { slug, action: 'skipped', skipped_reason: 'retired_page_unfollowable', tier, backlinkCreated: false, timelineAdded: false,
+        mentionCount, mentionSources, suggestedTier, tierEscalated };
+    }
+    if (live.slug !== slug) { slug = live.slug; existingPage = await engine.getPage(slug, { sourceId }); }
   }
   let action: 'created' | 'updated' | 'skipped';
 

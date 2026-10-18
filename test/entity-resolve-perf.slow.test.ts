@@ -25,6 +25,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { interleavedMedians } from './helpers/interleaved-timing.ts';
 
 let engine: PGLiteEngine;
 
@@ -33,7 +34,7 @@ let engine: PGLiteEngine;
 const PAGES = 5_000;
 const LINKS = 50_000;
 const CHUNKS = 25_000;
-const RUNS = 5; // median of 5 runs per shape
+const RUNS = 5; // median of 5 interleaved runs per shape
 
 beforeAll(async () => {
   engine = new PGLiteEngine();
@@ -185,25 +186,16 @@ async function timeQuery(sql: string): Promise<number> {
   return elapsed;
 }
 
-function median(xs: number[]): number {
-  const sorted = [...xs].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
-}
-
 describe('tryPrefixExpansion perf regression — NEW shape >= 5x faster than OLD', () => {
   it('correlated subqueries beat derived-table aggregation by 5x or more', async () => {
     // Warm both shapes once so the planner caches its plan, then measure.
     await timeQuery(OLD_SQL);
     await timeQuery(NEW_SQL);
 
-    const oldTimes: number[] = [];
-    const newTimes: number[] = [];
-    for (let i = 0; i < RUNS; i++) oldTimes.push(await timeQuery(OLD_SQL));
-    for (let i = 0; i < RUNS; i++) newTimes.push(await timeQuery(NEW_SQL));
-
-    const oldMedian = median(oldTimes);
-    const newMedian = median(newTimes);
+    // Alternate the shapes: the NEW block is only ~5ms long, so timed as a
+    // block one runner stall covers all of its samples (see interleaved-timing.ts).
+    const { first: oldMedian, second: newMedian } = await interleavedMedians(RUNS,
+      () => timeQuery(OLD_SQL), () => timeQuery(NEW_SQL));
     const speedup = oldMedian / newMedian;
 
     // Emit timing data to stderr so a regression review can see the actual

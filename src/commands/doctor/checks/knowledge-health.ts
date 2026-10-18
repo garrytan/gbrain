@@ -320,6 +320,20 @@ async function runFactsExtraction(ctx: DoctorContext): Promise<Check[]> {
             user_message: `Facts extraction for ${newestDead.slug ?? 'a page'} failed and its job is dead. Retrying job ${newestDead.id} makes one paid model call. Should I retry it?` });
       }
     }
+    // C-9: the dead page-write facts-absorb retry set, whatever the 24 h window holds.
+    const { readDeadFactsAbsorbRetry, factsRetryDeadCommand } = await import('../../../core/facts/dead-absorb-retry.ts');
+    const retry = await readDeadFactsAbsorbRetry(engine).catch(() => null);
+    if (check && retry && (retry.pending || retry.exhausted.length || retry.not_retryable.length)) {
+      check.message = `${check.message} Dead facts-absorb retry set: ${retry.pending} pending (the next maintenance pass re-submits them once extraction is servable), ` +
+        `${retry.exhausted.length} exhausted after ${retry.max_resubmits} re-submit(s), ${retry.not_retryable.length} not retryable (a deterministic failure; fix its cause, then gbrain jobs retry <id>). ` +
+        `See ${factsRetryDeadCommand('--list')}${retry.exhausted[0] ? `; re-enable one with ${factsRetryDeadCommand('--reset', retry.exhausted[0].key)}` : ''}.`;
+      check.details = { ...(check.details ?? {}), facts_absorb_retry: retry };
+      if (retry.exhausted.length) {
+        check.status = 'warn';
+        check.fix ??= agentFix(['gbrain', 'facts', 'retry-dead', '--list', '--json'],
+          'Read-only: lists the dead facts-absorb jobs the maintenance pass stopped re-submitting, each with its reset command.', 'facts_extraction_health');
+      }
+    }
     const note = await conversationPipelineNote(engine);
     if (note && check) {
       check.message = `${check.message} ${note.message}`;

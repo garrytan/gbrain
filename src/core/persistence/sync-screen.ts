@@ -157,18 +157,21 @@ export function preparationStallMeta(receipt: Pick<WriteRequest, 'request_id' | 
 /**
  * #6278: the hold a `managed_sync_import` or `managed_sync_delete` member earns
  * when its owner finished it `failed` with `preparation_stalled` (the
- * preparation never settled within its attempts). The file is not the
+ * preparation never settled within its attempts) or, flip lane C,
+ * `write_interrupted` (the database ended its statements every attempt). The file is not the
  * problem, so the hold carries the receipt's step and wait cause and routes
  * to writer status, then `sources retry-held` and the same sync. A delete
  * hold has no content (`upstream_version` null) and is marked `deleted`, so
  * discovery leaves it alone until a retry or a gbrain change.
  */
 export function preparationStalledHold(entry: Pick<SyncEntry, 'path' | 'sourcePath' | 'working' | 'renameFrom' | 'renameHeld' | 'action'>, slug: string, pageId: number | null,
-  receipt: Pick<WriteRequest, 'request_id' | 'error_detail'>, content: string | null, blobOid: string | null | undefined, syncArgv: string[]): HeldEntry {
+  receipt: Pick<WriteRequest, 'request_id' | 'error_code' | 'error_detail'>, content: string | null, blobOid: string | null | undefined, syncArgv: string[]): HeldEntry {
   const stall = preparationStallMeta(receipt, syncArgv);
   const where = stall.step ? ` at step ${stall.step}` : '';
-  const held = heldEntry(entry, slug, pageId, { code: 'preparation_stalled',
-    message: `${entry.path}: its ${entry.action === 'delete' ? 'deletion' : 'import'} could not finish preparing${where} (request ${receipt.request_id}), so it is held and the rest of the source synced. `
+  const kind = entry.action === 'delete' ? 'deletion' : 'import';
+  const interrupted = receipt.error_code === 'write_interrupted';
+  const held = heldEntry(entry, slug, pageId, { code: interrupted ? 'write_interrupted' : 'preparation_stalled',
+    message: `${entry.path}: ${interrupted ? `the database ended its ${kind}'s statements before they finished every time` : `its ${kind} could not finish preparing${where}`} (request ${receipt.request_id}), so it is held and the rest of the source synced. `
       + `Inspect the writer with gbrain sources writer status, then gbrain sources retry-held and the same sync.` }, content, blobOid ? { oid: blobOid } : null);
   return { ...held, meta: { ...held.meta, stall, ...(entry.action === 'delete' ? { deleted: true as const } : {}) } };
 }
@@ -184,6 +187,22 @@ export function preparationStalledHold(entry: Pick<SyncEntry, 'path' | 'sourcePa
 export function managedImageHold(entry: Pick<SyncEntry, 'path' | 'sourcePath' | 'working' | 'renameFrom' | 'renameHeld' | 'slug' | 'pageId'>, content: string | null, blob: TreeBlob | null | undefined): HeldEntry {
   return heldEntry(entry, entry.slug!, entry.pageId ?? null, { code: 'managed_image_sync_unsupported',
     message: `${entry.path} is an image, and managed sync imports images only with GBRAIN_EMBEDDING_MULTIMODAL=true (multimodal embedding is off on this install); the rest of the source synced.` }, content, blob);
+}
+
+/**
+ * #6948: the hold of a file (an import or a deletion) several live pages record as their origin. Only this file waits:
+ * the rest of the source syncs. With no `reason` the pages are verified duplicates and the sync-time heal resolves them;
+ * a reason is a decision for a person. Re-screened on every sync, so the file imports once one page records it.
+ */
+export function originConflictHold(entry: Pick<SyncEntry, 'path' | 'sourcePath' | 'working' | 'renameFrom' | 'renameHeld' | 'action' | 'originConflict'>): HeldEntry {
+  const conflict = entry.originConflict!;
+  const named = conflict.claimants.map(page => page.slug).join(', ');
+  const why = conflict.reason ? `sync cannot prove they are one document (${conflict.reason}), so a person decides which page keeps it`
+    : `they hold the same body and ${conflict.canonical} is the page its path names, so the sync-time heal keeps ${conflict.canonical} and soft-deletes the others (the file stays)`;
+  const held = heldEntry(entry, conflict.canonical, null, { code: 'origin_conflict', ...(conflict.reason ? { reason: conflict.reason } : {}),
+    message: `Pages ${named} all record ${entry.path} as their origin; ${why}. Only this file is held; the rest of the source synced.` }, null, null);
+  return { ...held, meta: { ...held.meta, origin_claimants: conflict.claimants.map(({ id, slug, revision }) => ({ id, slug, revision })), canonical_slug: conflict.canonical,
+    ...(entry.action === 'delete' ? { deleted: true as const } : {}) } };
 }
 
 /** #5988: the hold of a file over the sync read bound, whose content is never read (#6529: shared with the image freeze). */

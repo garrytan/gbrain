@@ -18,6 +18,8 @@
 import { createHash } from 'node:crypto';
 import type { Action } from '../agent-output.ts';
 import type { BrainEngine, DreamVerdict, DreamVerdictInput } from '../engine.ts';
+import { throwIfAborted } from '../abort-check.ts';
+import { ItemRun } from '../item-failure.ts';
 
 export const TRIAGE_UNRELIABLE_CONTENT_TYPE = 'triage_unreliable';
 export const TRIAGE_UNRELIABLE_BACKOFF = 'triage_unreliable_backoff';
@@ -25,7 +27,8 @@ export const TRIAGE_UNRELIABLE_BACKOFF = 'triage_unreliable_backoff';
 const HOUR_MS = 3_600_000;
 const MAX_BACKOFF_MS = 7 * 24 * HOUR_MS;
 
-export type UnreliableKind = 'truncated' | 'refusal' | 'unparseable';
+/** `uncacheable`: a verdict the database refused to store for that transcript (GBRA-130 B-6). */
+export type UnreliableKind = 'truncated' | 'refusal' | 'unparseable' | 'uncacheable';
 
 /** What a log line may say about an unreliable judge response. */
 export interface TriageDiagnostic {
@@ -107,7 +110,7 @@ export async function recordUnreliableTriage(
 }
 
 export const TRIAGE_BACKOFF_WHY =
-  'The judge returned a truncated, refused or unparseable verdict for this transcript, so it is not judged again until its backoff ends (24h, doubling per repeat, at most 7 days); that keeps an input the model cannot score from being paid for every cycle.';
+  'The judge returned a truncated, refused or unparseable verdict for this transcript, or one the database refused to store, so it is not judged again until its backoff ends (24h, doubling per repeat, at most 7 days); that keeps an input the model cannot score from being paid for every cycle.';
 
 export const TRIAGE_BACKOFF_FIX: Action = {
   argv: ['gbrain', 'dream', 'retriage', '--force'],
@@ -121,4 +124,44 @@ export const TRIAGE_BACKOFF_FIX: Action = {
 /** `details.triage.unreliable_backoff` when any file was held by a backoff marker. */
 export function triageBackoffDetails(files: number): { unreliable_backoff?: { files: number; code: string; why: string; fix: Action } } {
   return files > 0 ? { unreliable_backoff: { files, code: TRIAGE_UNRELIABLE_BACKOFF, why: TRIAGE_BACKOFF_WHY, fix: TRIAGE_BACKOFF_FIX } } : {};
+}
+
+/** One judged verdict whose dream_verdicts write failed for that transcript alone (GBRA-130 B-6). */
+export interface VerdictCacheFailure { file: string; code: string; message: string; fix: Action }
+
+type TriageTarget = { filePath: string; contentHash: string; basename: string };
+
+/**
+ * GBRA-130 B-6: a triage pass's verdict cache writes (ItemRun site
+ * `synthesize.triage_verdict_cache`). A write the database refuses for one
+ * transcript is listed in `failures` and its verdict still decides the pass; a
+ * content-class refusal (a JSONB 22P02/22P05) gets a backoff marker from
+ * `backOff` once the pass ends, so the next cycles do not pay to judge it
+ * again. Run-scoped errors and a tripped breaker propagate out of `put`, so a
+ * pass that throws never reaches `backOff` and writes no marker.
+ */
+export class VerdictCacheWrites {
+  readonly failures: VerdictCacheFailure[] = [];
+  private readonly run = new ItemRun('synthesize.triage_verdict_cache');
+  private readonly uncacheable: Array<{ t: TriageTarget; existing: DreamVerdict | null; keepExisting: boolean }> = [];
+
+  async put(engine: BrainEngine, t: TriageTarget, verdict: DreamVerdictInput,
+    prior: { existing: DreamVerdict | null; keepExisting: boolean; signal?: AbortSignal }): Promise<void> {
+    try {
+      await engine.putDreamVerdict(t.filePath, t.contentHash, verdict);
+      this.run.succeed();
+    } catch (error) {
+      throwIfAborted(prior.signal, '[dream] significance judge');
+      const failure = this.run.fail(t.filePath, error);
+      this.failures.push({ file: t.filePath, code: failure.code, message: failure.message, fix: TRIAGE_BACKOFF_FIX });
+      if (failure.class === 'content') this.uncacheable.push({ t, existing: prior.existing, keepExisting: prior.keepExisting });
+      process.stderr.write(`[dream] triage verdict for ${t.basename} was not cached (${failure.code}); it decides this pass only\n`);
+    }
+  }
+
+  async backOff(engine: BrainEngine, opts: { model: string; triageVersion: number; aborted: boolean }): Promise<void> {
+    for (const { t, existing, keepExisting } of this.uncacheable) {
+      await recordUnreliableTriage(engine, t, 'uncacheable', undefined, { existing, keepExisting, ...opts });
+    }
+  }
 }

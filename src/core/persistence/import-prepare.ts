@@ -36,6 +36,7 @@ import type { WriteRequest } from './model.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { readFix, trustedCliRequired } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';
+import { bindOrigin } from './origin-guard.ts';
 
 export type ImportPack = { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string>; aliases?: ReadonlyArray<string> }> };
 /** A Markdown file over the single-string ceiling, journaled by reference: the preparer streams and verifies it (Wave B). */
@@ -275,7 +276,7 @@ export async function prepareManagedImportMutation(engine: BrainEngine, row: Wri
     file: { root, path, content: rendered, expectedBeforeHash: p.targetHash },
     apply: async tx => {
       const applied = await ready.apply(tx);
-      await tx.executeRaw('UPDATE pages SET source_path=$3 WHERE source_id=$1 AND slug=$2 AND source_path IS DISTINCT FROM $3', [row.source_id, row.slug, p.sourcePath]);
+      await bindOrigin(tx, { sourceId: row.source_id, slug: row.slug, sourcePath: p.sourcePath });
       if (project) {
         // The coordinator proved the base revision under its page guard (importFromContent `coordinated`); this is the
         // one read of the page after its last page write (the projections and the seal leave its revision unchanged):

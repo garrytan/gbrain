@@ -76,7 +76,7 @@ export type OnlineIndexOutcome = 'present' | 'created' | 'rebuilt' | 'building';
  * `CREATE INDEX IF NOT EXISTS`. Postgres leaves a valid index alone, reports
  * one another session is still building, drops an INVALID leftover of an
  * interrupted concurrent build, then runs `CREATE INDEX CONCURRENTLY IF NOT
- * EXISTS` on a dedicated connection under the session's startup timeouts, then
+ * EXISTS` (`CREATE UNIQUE INDEX CONCURRENTLY` for a unique one) on a dedicated connection under the session's startup timeouts, then
  * confirms the index is valid. Callers build one index at a time;
  * a lock timeout leaves an INVALID index that the next call drops and rebuilds.
  * After a create or rebuild, `analyzeAfterIndexBuild` refreshes the table's
@@ -110,7 +110,7 @@ export async function buildIndexOnline(
   // No session SET: a reservation can fall back to a transaction-pooled connection, where a SET or RESET
   // reaches another client's backend. The build runs under the session's startup timeouts; one that times
   // out leaves an INVALID index, which the next call drops and rebuilds.
-  await engine.withReservedConnection(conn => conn.executeRaw(index.sql.replace('CREATE INDEX', 'CREATE INDEX CONCURRENTLY')), { selfContained: true });
+  await engine.withReservedConnection(conn => conn.executeRaw(index.sql.replace(/CREATE (UNIQUE )?INDEX/, 'CREATE $1INDEX CONCURRENTLY')), { selfContained: true });
   // IF NOT EXISTS also skips an INVALID index a concurrent caller's failed build left behind.
   const [built] = await engine.executeRaw<{ valid: boolean }>('SELECT indisvalid AS valid FROM pg_index WHERE indexrelid = to_regclass($1)', [index.name]);
   if (!built?.valid) {

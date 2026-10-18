@@ -270,7 +270,11 @@ export interface ContextPackResponse {
 
 export type ResolveHandler = (req: ResolveRequest) => Promise<PointerBlock | null>;
 export type TurnContextHandler = (req: TurnContextRequest) => Promise<TurnContextResult | null>;
-export type ContextPackHandler = (req: ContextPackRequest) => Promise<TurnContextResult | null>;
+/**
+ * `progress.assembled` is set by a handler once its pack is assembled; the transport's backstop returns that pack
+ * (marked `server_budget`) instead of nothing when the handler's later work (core, session state, brief) runs past it.
+ */
+export type ContextPackHandler = (req: ContextPackRequest, progress?: { assembled?: TurnContextResult | null }) => Promise<TurnContextResult | null>;
 
 export type SyncStartIpcHandler = (req: SyncStartRequest) => SyncStartResponse | Promise<SyncStartResponse>;
 export type SyncStatusIpcHandler = (req: SyncStatusRequest) => SyncStatusResponse | Promise<SyncStatusResponse>;
@@ -1006,9 +1010,10 @@ async function handleContextPack(
       const t = setTimeout(() => r('__budget__'), CONTEXT_PACK_SERVER_BUDGET_MS + 200);
       t.unref?.();
     });
-    const result = await Promise.race([handlers.context_pack(req), budget]);
+    const progress: { assembled?: TurnContextResult | null } = {};
+    const result = await Promise.race([handlers.context_pack(req, progress), budget]);
     if (result === '__budget__') {
-      return { ok: true, protocol: 2, block: null, degradedReason: 'server_budget' };
+      return { ok: true, protocol: 2, block: progress.assembled ?? null, degradedReason: 'server_budget' };
     }
     return {
       ok: true,

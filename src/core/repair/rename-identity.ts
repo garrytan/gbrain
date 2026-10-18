@@ -45,6 +45,7 @@ import { purgedSlug } from '../../commands/sync/rename-collision.ts';
 import { IDENTITY_DOWNGRADE_OP, IDENTITY_HOLD_RELEASE, MANAGED_REMEDY_UNAVAILABLE, identityDowngradeReasonText, identityRemedyParts, identityRestoreArgv, listIdentityDowngrades,
   renameIdentityPreviewArgv, settleIdentityDowngrade, withIdentityRemedies, type IdentityDowngrade, type IdentityRemedyDisposition, type IdentityRemedyParts } from '../sync-identity-downgrades.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairPlanOptions } from './core.ts';
+import { assertOriginUnclaimed } from '../persistence/origin-guard.ts';
 
 const DOCS = 'docs/guides/repair.md#rename-identity';
 /** The restore alternative, named only where the source admits a restore (an unbound Postgres source with a checkout does not). */
@@ -254,8 +255,11 @@ async function carryIdentity(engine: BrainEngine, record: IdentityDowngrade, has
             expired_at = n.expired_at, source = n.source, confidence = n.confidence, claim_metric = n.claim_metric, claim_value = n.claim_value, claim_unit = n.claim_unit,
             claim_period = n.claim_period, event_type = n.event_type, attributed_to = n.attributed_to FROM facts n WHERE o.id = $1 AND n.id = $2`, [check.old_id, check.new_id]);
       }
+      // origin-guard-ok: retires the provisional page to a tombstone, which claims no origin
       await tx.executeRaw('UPDATE pages SET slug = $1, deleted_at = now(), updated_at = now() WHERE id = $2 AND source_id = $3', [retired, provisionalId, sourceId]);
       if (await tx.updateSlug(oldSlug, newSlug, { sourceId }) !== 1) throw changedSincePreview(record, `page ${oldSlug} could not move to ${newSlug}`);
+      await assertOriginUnclaimed(tx, { sourceId, pageId: oldId, sourcePath: record.to, revive: true });
+      // origin-guard-ok: assertOriginUnclaimed above revives and assigns in the same transaction
       await tx.executeRaw('UPDATE pages SET deleted_at = NULL, source_path = $1, updated_at = now() WHERE id = $2', [record.to, oldId]);
       await movePageIdReferences(tx, provisionalId, oldId);
     });

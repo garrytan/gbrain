@@ -767,6 +767,18 @@
               "string",
               "string",
               "string",
+              "string"
+            ],
+            "sql": "WITH m AS ( SELECT f.id, f.expired_at, $1::text AS e, $2::text AS s, f.dimension, f.value_hash, f.valid_from FROM facts f WHERE f.source_id = $3 AND f.dimension IS NOT NULL AND f.source_markdown_slug = $4 AND f.expired_at IS NULL), cand AS ( SELECT m.id, m.expired_at, m.e, m.s, m.dimension, m.value_hash, m.valid_from, 1 AS moving FROM m UNION ALL SELECT t.id, t.expired_at, t.entity_slug, t.source_markdown_slug, t.dimension, t.value_hash, t.valid_from, 0 FROM facts t WHERE t.source_id = $5 AND t.dimension IS NOT NULL AND NOT EXISTS (SELECT 1 FROM m WHERE m.id = t.id) AND EXISTS (SELECT 1 FROM m WHERE m.e = t.entity_slug AND m.s = t.source_markdown_slug AND m.dimension = t.dimension AND m.value_hash = t.value_hash AND m.valid_from = t.valid_from)), ranked AS ( SELECT id, row_number() OVER w AS rn, first_value(id) OVER w AS keep FROM cand WHERE e IS NOT NULL AND s IS NOT NULL AND value_hash IS NOT NULL AND valid_from IS NOT NULL WINDOW w AS (PARTITION BY e, s, dimension, value_hash, valid_from ORDER BY (expired_at IS NULL) DESC, moving, id)) SELECT id, keep FROM ranked WHERE rn > 1",
+            "textSha256": "03857c46ad04ed51ba3d619da17d5407884e857d4fa987b11ef870ca2f7b97a0"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "string",
+              "string",
+              "string",
+              "string",
               "string",
               "string"
             ],

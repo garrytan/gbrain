@@ -13,6 +13,7 @@ import { recordedPathFromFileUri, scannerSlugRootMode, scannerSourcePath } from 
 import { absentCanonicalPath, findLiveFileClaimants, recordedReconcilePath, type FileClaimTarget } from './file-claims.ts';
 import { wholeBodySnapshot } from './segmented-apply.ts';
 import { sharedOriginExit } from './sync-origin.ts';
+import { originTwinsPreviewArgv } from './origin-twins.ts';
 export { fileClaimCandidatesQuery } from './file-claims.ts';
 import { localHostId } from './identity.ts';
 import { isDatabaseOnlyPage, slugDerivedOrigin } from './unbound-pages.ts';
@@ -135,7 +136,10 @@ async function assertSoleFileClaim(engine: BrainEngine, target: FileClaimTarget)
   const [claimant] = await findLiveFileClaimants(engine, target);
   if (claimant) throw opError('source_changed', 'Several pages claim the recorded canonical file.',
     `Nothing changed. Pages ${target.slug} and ${claimant.slug} in '${target.sourceId}' both record the same file, so reconcile cannot tell which owns it; decide with the user which page owns the file before reconciling either. `
-    + sharedOriginExit(target.sourceId, [target.slug, claimant.slug]) + ' Then preview again.');
+    + sharedOriginExit(target.sourceId, [target.slug, claimant.slug]) + ' Then preview again.',
+    // #6948 (B-15): the read-only group listing names the page that keeps the file and the exact command for each other one.
+    { detail: 'shared_origin', fix: readFix(`Lists the duplicate-origin group of ${target.slug} and ${claimant.slug} with the page its path names and the command that resolves each other page; writes nothing.`,
+      { argv: originTwinsPreviewArgv(target.sourceId) }) });
 }
 /**
  * #6394: `adoptSlugPath` lets a live page with no recorded origin and no database-only marker reconcile against the file

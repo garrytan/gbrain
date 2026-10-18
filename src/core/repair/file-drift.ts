@@ -68,6 +68,7 @@ import { ghostPageNow, scanGhostSource, type GhostOwner, type GhostPage } from '
 import { MASS_RECONCILE_MIN_PAGES, MASS_RECONCILE_RATIO, massReconcileAllowed } from '../sync-reconcile.ts';
 import { GHOST_PURGE_FUSE_HOURS, GHOST_REPAIR_LIMIT, ghostScanRefusal, massGhosts, massRefusal, retireGhost } from './ghost-pages.ts';
 import { prepareReconcileResult } from '../persistence/reconcile-prepare.ts';
+import { canonicalOriginPage, originConflictMessage, originTwinsFix } from '../persistence/origin-guard.ts';
 import { assertReconcileOutputPath, assertReconcileSize } from '../persistence/reconcile-backup.ts';
 import { authorizeReconcile, runReconcileApply } from '../persistence/reconcile.ts';
 import { acceptedPendingReceipt } from '../persistence/accepted-pending.ts';
@@ -277,6 +278,16 @@ async function survey(engine: BrainEngine, scope: RepairScope, opts: Pick<Repair
     next_actions: next.length ? [...next.map(command => `Preview: ${command} (or --prefer database)`), 'Or preview single pages with --slug <slug>.'] : [] } };
 }
 
+/** #6948: a page is repaired from a file only when it is that file's canonical page; a twin (or an ambiguous file) is refused `origin_conflict`. */
+async function refuseForeignOrigin(engine: BrainEngine, sourceId: string, slug: string, origin: string): Promise<void> {
+  const owner = await canonicalOriginPage(engine, sourceId, origin);
+  if (!owner || !('ambiguous' in owner) && owner.slug === slug) return;
+  throw opError('page_identity_changed', `Another live page of source ${sourceId} owns ${origin}, so ${slug} is not repaired from it.`,
+    'ambiguous' in owner ? originConflictMessage(sourceId, origin, owner.ambiguous)
+      : `Page ${owner.slug} is the canonical page of ${origin}; repair it with --slug ${owner.slug}, or preview gbrain repair origin-twins --source ${sourceId} to merge ${slug} into it.`,
+    { detail: 'origin_conflict', fix: originTwinsFix(sourceId) });
+}
+
 /**
  * One drifted page resolved with `prefer` winning, as a ready reconcile preview: the preferred side's decisions over
  * reconcile's protections, the size check, and the exceptions. Throws `invalid_params` when a path still needs a
@@ -285,10 +296,12 @@ async function survey(engine: BrainEngine, scope: RepairScope, opts: Pick<Repair
 export async function prepareDriftPage(engine: BrainEngine, sourceId: string, slug: string, prefer: DriftSide, assessmentAt: string,
   opts: { fileGone?: boolean } = {}): Promise<ArtifactPage> {
   const snapshotRow = await engine.readPageSnapshot(slug, { sourceId });
+  if (snapshotRow?.page.source_path) await refuseForeignOrigin(engine, sourceId, slug, snapshotRow.page.source_path);
   const adopt = !opts.fileGone && !!snapshotRow && !snapshotRow.page.source_path && !snapshotRow.page.source_uri;
   const state = await readReconcileState(engine, sourceId, slug, assessmentAt, { adoptSlugPath: adopt, ...(opts.fileGone ? { fileGone: true } : {}) });
   if (opts.fileGone && state.pins.raw_file_hash !== ABSENT_FILE_HASH) throw opError('source_changed', 'The canonical file reappeared during the preview.',
     `Nothing was written. The canonical file of ${slug} in '${sourceId}' exists again; preview the page again.`);
+  if (adopt && state.originSourcePath) await refuseForeignOrigin(engine, sourceId, slug, state.originSourcePath);
   const database = reconcileCanonical(state.snapshot.page, state.snapshot.tags);
   const file = reconcileCanonical(state.file, state.file.tags);
   const decisions = preferSideDecisions(state.file, database, prefer);

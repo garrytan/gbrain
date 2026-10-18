@@ -566,6 +566,7 @@ async function hookSessionStart(io: HookIo): Promise<number> {
         serveNotReady = res.serveNotReady;
         const pack = res.pack;
         if (pack && !pack.ok && pack.error === 'source_mismatch' && outcome === 'ok') { outcome = 'degraded'; reason = 'source_mismatch'; } // #5941
+        if (pack?.ok && pack.degradedReason === 'server_budget' && outcome === 'ok') { outcome = 'degraded'; reason = 'server_budget'; }
         if (pack?.ok && pack.block?.text) out.push(pack.block.text);
         if (pack?.ok && pack.block?.core && process.env.GBRAIN_CORE !== '0') coreBox.core = pack.block.core;
         else if (pack?.ok && !pack.block?.core) coreBox.reason = 'stale_serve_no_core';
@@ -1212,7 +1213,7 @@ async function hookUserPrompt(io: HookIo): Promise<number> {
     // Context-pressure notice (pressure.ts) leads the block so the cap loop never trims it.
     const pressure = transcriptPath && io.harness !== 'codex' ? claudeCodePressure(resp.block?.pressure, transcriptPath, sessionId) : null;
     const text = [pressure?.notice, resp.block?.text].filter(Boolean).join('\n\n');
-    if (!text) return { outcome: 'ok', reason: 'empty_block', turns: turns.length };
+    if (!text) return resp.degradedReason === 'server_budget' ? { outcome: 'degraded', reason: 'server_budget', turns: turns.length } : { outcome: 'ok', reason: 'empty_block', turns: turns.length };
 
     // [ENG-1] The 10000-char harness cap applies to the WHOLE stdout payload;
     // the block is budgeted ≤8KB server-side, but JSON escaping inflates, so

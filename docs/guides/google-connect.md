@@ -349,6 +349,21 @@ skipped silently:
 - for Gmail, `gbrain waiting` returns `completeness: "partial"` and names each
   held thread from the last 14 days (or with an unknown date).
 
+Contacts and Calendar items are held the same way, keyed
+`contact:<resource name>` and `event:<calendar id>:<event id>`. One failing
+contact or event no longer stops its sweep: the other contacts and events, and
+the Gmail sweep, still land. Only a failure that repeats until the item changes
+(for example a contact email or event attendee carrying text the brain cannot
+store, `invalid_connector_text`) counts toward a hold; a transient failure is
+retried on the next sync and never held. While the failing item is not held,
+that service's sync token stays where it is, so the next sync lists the item
+again; once it is held, the token moves past it. On a managed brain a failed
+coordinator write still ends the run, as before, and `--retry-failed`
+re-admits it. Because a sync token never lists an
+unchanged item again, `gbrain sources retry-held` re-fetches a held contact or
+event by its id on the next sync. Contacts and Calendar holds do not change the
+coverage `gbrain waiting` reports, which is about mail.
+
 A held item does not block the source's freshness stamp. To re-attempt:
 
 ```bash

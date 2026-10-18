@@ -141,6 +141,7 @@ CHECKS=(
   "check:fixture-privacy"
   "check:source-scope-onboard"
   "check:getpage-scope"
+  "check:origin-assignment"
   "check:no-double-retry"
   "check:batch-audit-site"
   "check:engine-dynamic-import"
@@ -162,6 +163,9 @@ CHECKS=(
   # W5 (refactor wave 1): per-function line ratchet over src/**/*.ts (TS AST,
   # ~1.5s); baseline scripts/function-size-baseline.tsv.
   "check:function-size"
+  # GBRA-130: per-item catches that test an error code against a list and
+  # rethrow the rest only shrink; baseline scripts/item-allowlist-catches-baseline.tsv.
+  "check:item-allowlist-catches"
   # EO10 (refactor wave 1): engine-sql/ and schema-migrations/ never import
   # back up into the engine façades or migrate.ts (ESM TDZ cycles).
   "check:layering"

@@ -35,9 +35,12 @@ import { TIMELINE_SEPARATOR } from '../page-window/document.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { credentialSafeProjection } from '../credential-projection.ts';
 import { loadFenceChunkOverlay, markFenceChunk, renderFenceLowTier, type FenceChunkOverlay, type FenceLowTierRow } from '../eligibility/fence-overlay.ts';
-import { withdrawalFenceBlocks } from '../facts/withdrawal-overlay.ts';
+import { partialFenceRuns, withdrawalFenceBlocks } from '../facts/withdrawal-overlay.ts';
+import { FACTS_FENCE_BEGIN, FACTS_FENCE_END } from '../facts-fence.ts';
 import { assertRowsTile, generationBodyBytes } from './body-tiling.ts';
-import { readBodyLedger, overlaySegmentText, type BodyLedger } from './segment-ledger.ts';
+import { readEntryState } from './entry-state.ts';
+import { FENCE_MAX_BYTES, SEGMENT_MAX_BYTES } from './limits.ts';
+import { ledgerApplies, readBodyLedger, overlaySegmentText, type BodyLedger } from './segment-ledger.ts';
 import { regionTrust, SEGMENTER_VERSION, type FactsSlot, type OutlineHeading, type StoredRegion } from './segmenter.ts';
 import { overlaidPieces, projectionStaleError, projectSegment, type ProjectedPiece, type SegmentProjection } from './segment-projection.ts';
 import type { BodyRegion, JsonObject } from './types.ts';
@@ -373,15 +376,101 @@ export interface TrustedSegment {
   pieces: ProjectedPiece[];
 }
 
+/** The longest run of segments joined across forced cuts that a pass holds as one string. */
+export const BLOCK_MAX_BYTES = 8 * SEGMENT_MAX_BYTES;
+
+/** `page_body_segmented`: a run a derived pass must read whole is over BLOCK_MAX_BYTES. */
+export function blockTooLargeError(slug: string, sourceId: string, bytes: number) {
+  return opError('page_body_segmented',
+    `Page ${slug} (source ${sourceId}) has a ${bytes}-byte run a derived pass must read whole (a line or fence longer than a segment), over its ${BLOCK_MAX_BYTES}-byte bound. Nothing was derived from it.`,
+    'Break the long line or fence into shorter lines and write the page again.');
+}
+
+/** `page_body_segmented`: a facts fence a withdrawal must read whole is longer than FENCE_MAX_BYTES (limits.ts). */
+export function fenceTooLargeError(slug: string, sourceId: string, bytes: number) {
+  return opError('page_body_segmented',
+    `Page ${slug} (source ${sourceId}) has a facts fence of at least ${bytes} bytes, over the ${FENCE_MAX_BYTES}-byte bound a withdrawal reads a fence whole within. Nothing was read from it.`,
+    'Split the facts fence into fences under the bound and write the page again.');
+}
+
+const MARKER_CARRY_MAX = Math.max(FACTS_FENCE_BEGIN.length, FACTS_FENCE_END.length) - 1;
+/** The end of `text` that begins a facts marker without completing it: the bytes of a marker a forced cut splits. */
+export function markerCarry(text: string): string {
+  for (let k = Math.min(text.length, MARKER_CARRY_MAX); k > 0; k--) {
+    const tail = text.slice(-k);
+    if (FACTS_FENCE_BEGIN.startsWith(tail) || FACTS_FENCE_END.startsWith(tail)) return tail;
+  }
+  return '';
+}
+
+/**
+ * The stored text of the facts fence a forced cut splits that begins at stored byte `openStart` of `region` (its slots'
+ * `open_start`): read from the live segments one at a time, from the one holding its opener (one that records no slot
+ * of it when the cut fell inside the opener) through its end marker, or to the region's end for a fence that never
+ * closes. A fence longer than FENCE_MAX_BYTES, counted from its begin marker, refuses before more is read.
+ */
+export async function readStoredFence(engine: Pick<BrainEngine, 'readManifest' | 'readSegmentTexts'>, page: { id: number; slug: string; sourceId: string }, region: BodyRegion, openStart: number): Promise<string> {
+  const end = Buffer.from(FACTS_FENCE_END, 'utf8');
+  const parts: Buffer[] = [];
+  let bytes = 0;
+  for (const row of await engine.readManifest(page.id, { region })) {
+    if (row.byteStart + row.byteLen <= openStart) continue;
+    const sha = Buffer.from(row.sha256).toString('hex');
+    const text = (await engine.readSegmentTexts(page.sourceId, [row.sha256])).get(sha);
+    if (!text) throw new Error(`Segment text ${sha} of page ${page.id} is missing.`);
+    const part = Buffer.from(text).subarray(Math.max(0, openStart - row.byteStart));
+    const seam = Buffer.concat([...parts.slice(-1).map(p => p.subarray(Math.max(0, p.length - end.length + 1))), part]);
+    const at = seam.indexOf(end);
+    const seamStart = bytes - (seam.length - part.length);
+    parts.push(part);
+    bytes += part.length;
+    const fenceBytes = at === -1 ? bytes : seamStart + at + end.length;
+    if (fenceBytes > FENCE_MAX_BYTES) throw fenceTooLargeError(page.slug, page.sourceId, fenceBytes);
+    if (at !== -1) return Buffer.concat(parts).subarray(0, fenceBytes).toString('utf8');
+  }
+  return Buffer.concat(parts).toString('utf8');
+}
+
 /**
  * The trusted body of `rows` (rows of `body`, in order), one segment at a time: what readBodyRange's trusted stored read
- * cuts. `stop` is called before each segment text is read; it throws to end the read there.
+ * cuts. Under a ledger that applies, a facts fence block cannot be overlaid in pieces, so the segments a block spans,
+ * and a segment that ends inside a facts marker (a marker a forced cut splits) with the next one, are joined, overlaid
+ * whole and yielded as one segment covering their rows, as withdrawal discovery and rewriteLiveSegmentedFences join
+ * them. A fence longer than FENCE_MAX_BYTES, counted from its begin marker through its end marker, refuses with
+ * `page_body_segmented`; a read that starts inside a block (a range after its start) refuses with `page_projection_stale`.
+ * `stop` is called before each segment text is read; it throws to end the read there.
  */
 export async function* trustedSegments(engine: BrainEngine, body: SegmentedBody, rows: readonly BodyRow[], stop?: () => void): AsyncIterable<TrustedSegment> {
-  for await (const seg of loadSegments(engine, body, rows, stop)) {
-    const raw = utf8.decode(seg.bytes);
-    yield { row: seg.row, raw: seg.bytes, entryState: seg.entryState, pieces: overlaidPieces(raw, await overlaidText(engine, body, seg, raw, 'trusted')) };
+  const emit = async (segs: LoadedSegment[]): Promise<TrustedSegment> => {
+    const first = segs[0]!;
+    const bytes = segs.length === 1 ? first.bytes : Buffer.concat(segs.map(seg => seg.bytes));
+    const row = segs.length === 1 ? first.row : { ...first.row, byteLen: bytes.length, lineCount: segs.reduce((n, seg) => n + seg.row.lineCount, 0) };
+    const raw = utf8.decode(bytes);
+    return { row, raw: bytes, entryState: first.entryState, pieces: overlaidPieces(raw, await overlaidText(engine, body, { ...first, row }, raw, 'trusted')) };
+  };
+  if (!ledgerApplies(body.ledger)) {
+    for await (const seg of loadSegments(engine, body, rows, stop)) yield await emit([seg]);
+    return;
   }
+  const bound = (bytes: number) => { if (bytes > FENCE_MAX_BYTES) throw fenceTooLargeError(body.slug, body.sourceId, bytes); };
+  let held: LoadedSegment[] = [];
+  // After the held segments: whether a fence block is open, the marker bytes they end with, and where the open block begins.
+  let open = false, carry = '', openAt = 0;
+  for await (const seg of loadSegments(engine, body, rows, stop)) {
+    if (held.length && !open && !carry) { yield await emit(held); held = []; }
+    if (!held.length) { open = readEntryState(seg.entryState)?.withdrawal.open === true; carry = ''; openAt = seg.row.byteStart; }
+    held.push(seg);
+    const text = carry + utf8.decode(seg.bytes);
+    const base = seg.row.byteStart - Buffer.byteLength(carry, 'utf8');
+    const { head, tail } = partialFenceRuns(text, open);
+    if (open && head > 0) bound(base + Buffer.byteLength(text.slice(0, head), 'utf8') - openAt);
+    const carried = open && head === 0;
+    open = tail < text.length;
+    if (open && !carried) openAt = base + Buffer.byteLength(text.slice(0, tail), 'utf8');
+    if (open) bound(seg.row.byteStart + seg.row.byteLen - openAt);
+    carry = markerCarry(text);
+  }
+  if (held.length) yield await emit(held);
 }
 
 export async function* readBodyRange(engine: BrainEngine, req: BodyRangeRequest): AsyncIterable<BodyRangePiece> {

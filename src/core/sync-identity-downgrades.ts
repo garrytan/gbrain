@@ -20,6 +20,7 @@ import { getWorktreeBinding } from './persistence/ownership.ts';
 import { readDatabaseOnlyActivatedSources } from './persistence/unbound-source.ts';
 import { readManagedMode } from './persistence/managed-mode.ts';
 import { previewHash } from './persistence/preview-approval.ts';
+import { canonicalOriginPage, pickCanonicalOrigin } from './persistence/origin-guard.ts';
 import { resolveSlugForPath, type DowngradedRename, type RenameDowngradeReason } from './sync.ts';
 
 export const IDENTITY_DOWNGRADE_OP = 'sync-identity-downgrade';
@@ -85,8 +86,8 @@ export async function recordIdentityDowngrades(engine: BrainEngine, sourceId: st
         AND (source_path = $2 OR (source_path IS NULL AND slug = $3)) ORDER BY deleted_at DESC LIMIT 1`,
       [sourceId, pair.from, resolveSlugForPath(pair.from)]);
     if (!old) continue;
-    const [fresh] = await engine.executeRaw<{ slug: string }>(
-      'SELECT slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND source_path = $2 LIMIT 1', [sourceId, pair.to]);
+    const owner = await canonicalOriginPage(engine, sourceId, pair.to);
+    const fresh = owner && !('ambiguous' in owner) ? owner : null;
     const [counts] = await engine.executeRaw<{ facts: number | string; links: number | string; aliases: number | string }>(`SELECT
         (SELECT count(*) FROM facts WHERE source_id = $1 AND entity_slug = $2) AS facts,
         (SELECT count(*) FROM links WHERE from_page_id = $3 OR to_page_id = $3) AS links,
@@ -109,13 +110,17 @@ export async function recordIdentityDowngrades(engine: BrainEngine, sourceId: st
  * `new_slug` is read live: the live page at the new path now (a held new file that was fixed later counts once it imports).
  */
 export async function listIdentityDowngrades(engine: RestoreProbeEngine, sourceIds?: readonly string[]): Promise<IdentityDowngrade[]> {
-  const rows = await engine.executeRaw<{ record: IdentityDowngrade | string; new_slug: string | null }>(
-    `SELECT dg.completed_keys->0 AS record, np.slug AS new_slug FROM op_checkpoints dg JOIN pages p ON p.id::text = dg.fingerprint
-      LEFT JOIN LATERAL (SELECT slug FROM pages WHERE source_id = p.source_id AND deleted_at IS NULL AND source_path = dg.completed_keys->0->>'to' LIMIT 1) np ON true
+  const rows = await engine.executeRaw<{ record: IdentityDowngrade | string; new_slugs: string[] | null }>(
+    `SELECT dg.completed_keys->0 AS record, np.slugs AS new_slugs FROM op_checkpoints dg JOIN pages p ON p.id::text = dg.fingerprint
+      LEFT JOIN LATERAL (SELECT array_agg(slug ORDER BY slug) AS slugs FROM pages WHERE source_id = p.source_id AND deleted_at IS NULL AND source_path = dg.completed_keys->0->>'to') np ON true
       WHERE dg.op = $1 AND p.deleted_at IS NOT NULL AND ${identityDowngradeOpen('p')}
         AND p.source_id = dg.completed_keys->0->>'source_id' AND ($2::text[] IS NULL OR p.source_id = ANY($2::text[]))
       ORDER BY dg.completed_keys->0->>'recorded_at', dg.fingerprint`, [IDENTITY_DOWNGRADE_OP, sourceIds ? [...sourceIds] : null]);
-  const records = rows.map(row => ({ ...(typeof row.record === 'string' ? JSON.parse(row.record) as IdentityDowngrade : row.record), new_slug: row.new_slug }));
+  const records = rows.map(row => {
+    const record = typeof row.record === 'string' ? JSON.parse(row.record) as IdentityDowngrade : row.record;
+    const owner = pickCanonicalOrigin((row.new_slugs ?? []).map(slug => ({ slug })), record.to);
+    return { ...record, new_slug: owner && !('ambiguous' in owner) ? owner.slug : null };
+  });
   const restorable = new Map<string, boolean>();
   for (const sourceId of new Set(records.map(record => record.source_id))) restorable.set(sourceId, await identityRestoreAvailable(engine, sourceId));
   return records.map(record => ({ ...record, restore_available: restorable.get(record.source_id)! }));

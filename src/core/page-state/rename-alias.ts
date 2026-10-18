@@ -1,6 +1,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { isMissingSchemaObject } from '../utils.ts';
 import { MOVE_WITHDRAWAL_SUBJECT_SQL } from '../facts/withdrawal-schema.ts';
+import { dropRekeyDuplicates } from '../facts/ontology-rekey.ts';
 
 /**
  * Record `old -> new` in slug_aliases when a page is renamed, inside the
@@ -57,8 +58,10 @@ export async function recordSlugLineAlias(tx: Pick<BrainEngine, 'transaction'>, 
  * its fact withdrawals (a forgotten claim stays forgotten). Runs inside the
  * caller's rename transaction. The new slug is free (the page UPDATE
  * succeeded), so fence rows or aliases still keyed to it belong to a purged
- * page and yield to the moved ones. A brain whose schema predates the facts or
- * alias tables skips them inside a savepoint.
+ * page and yield to the moved ones. An ontology observation the new slug
+ * already holds is dropped before its key moves (B-10, dropRekeyDuplicates).
+ * A brain whose schema predates the facts or alias tables skips them inside a
+ * savepoint.
  */
 export async function moveSlugBindings(
   tx: Pick<BrainEngine, 'transaction' | 'executeRaw'>,
@@ -68,20 +71,24 @@ export async function moveSlugBindings(
 ): Promise<void> {
   if (oldSlug === newSlug) return;
   await tx.executeRaw(MOVE_WITHDRAWAL_SUBJECT_SQL, [sourceId, oldSlug, newSlug]);
-  const statements = [
-    `UPDATE facts SET entity_slug = $3 WHERE source_id = $1 AND entity_slug = $2`,
-    `DELETE FROM facts f WHERE f.source_id = $1 AND f.source_markdown_slug = $3 AND f.row_num IS NOT NULL
-       AND EXISTS (SELECT 1 FROM facts o WHERE o.source_id = $1 AND o.source_markdown_slug = $2 AND o.row_num = f.row_num)`,
-    `UPDATE facts SET source_markdown_slug = $3 WHERE source_id = $1 AND source_markdown_slug = $2`,
-    `DELETE FROM page_aliases a WHERE a.source_id = $1 AND a.slug = $3
-       AND EXISTS (SELECT 1 FROM page_aliases o WHERE o.source_id = $1 AND o.slug = $2 AND o.alias_norm = a.alias_norm AND o.origin = a.origin)`,
-    `UPDATE page_aliases SET slug = $3 WHERE source_id = $1 AND slug = $2`,
+  type Savepoint = Pick<BrainEngine, 'executeRaw'>;
+  const sql = (text: string) => (savepoint: Savepoint) => savepoint.executeRaw(text, [sourceId, oldSlug, newSlug]);
+  const statements: Array<(savepoint: Savepoint) => Promise<unknown>> = [
+    savepoint => dropRekeyDuplicates(savepoint, sourceId, { where: 'f.entity_slug = $2', entity: '$3::text', sms: 'f.source_markdown_slug', params: [oldSlug, newSlug] }),
+    sql(`UPDATE facts SET entity_slug = $3 WHERE source_id = $1 AND entity_slug = $2`),
+    sql(`DELETE FROM facts f WHERE f.source_id = $1 AND f.source_markdown_slug = $3 AND f.row_num IS NOT NULL
+       AND EXISTS (SELECT 1 FROM facts o WHERE o.source_id = $1 AND o.source_markdown_slug = $2 AND o.row_num = f.row_num)`),
+    savepoint => dropRekeyDuplicates(savepoint, sourceId, { where: 'f.source_markdown_slug = $2', entity: 'f.entity_slug', sms: '$3::text', params: [oldSlug, newSlug] }),
+    sql(`UPDATE facts SET source_markdown_slug = $3 WHERE source_id = $1 AND source_markdown_slug = $2`),
+    sql(`DELETE FROM page_aliases a WHERE a.source_id = $1 AND a.slug = $3
+       AND EXISTS (SELECT 1 FROM page_aliases o WHERE o.source_id = $1 AND o.slug = $2 AND o.alias_norm = a.alias_norm AND o.origin = a.origin)`),
+    sql(`UPDATE page_aliases SET slug = $3 WHERE source_id = $1 AND slug = $2`),
   ];
-  for (const sql of statements) {
+  for (const statement of statements) {
     try {
-      await tx.transaction(savepoint => savepoint.executeRaw(sql, [sourceId, oldSlug, newSlug]));
+      await tx.transaction(savepoint => statement(savepoint));
     } catch (error) {
-      if (!isMissingSchemaObject(error, 'table', ['facts', 'page_aliases'])) throw error;
+      if (!isMissingSchemaObject(error, 'table', ['facts', 'page_aliases']) && !isMissingSchemaObject(error, 'column', ['dimension', 'value_hash'])) throw error;
     }
   }
 }

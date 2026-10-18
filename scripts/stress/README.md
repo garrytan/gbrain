@@ -102,7 +102,12 @@ shards.
   never sampled or skipped.
 - **Shards.** Work items (a file's iterations, split when ten exceed the
   budget) pack into the fewest shards whose measured estimates stay under 25
-  minutes. There is no shard-count cap; `max-parallel: 12` keeps a large PR
+  minutes. A file's estimate is its measured stress iteration
+  (`scripts/stress/iteration-weights.json`, mined from stress shard job logs
+  with `bun scripts/stress/gate.ts mine-iterations <log>…`, which merges into
+  the map), else its lane weight, else the lane's p75: a fresh database per
+  iteration can make a stress iteration slower than the file's lane run.
+  There is no shard-count cap; `max-parallel: 12` keeps a large PR
   from starving other jobs. Shard jobs record results and exit 0 on test
   failures; the result job decides, so a planned iteration without a receipt
   fails the check as incomplete.

@@ -43,6 +43,7 @@ import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { dropOriginIndex } from './helpers/origin-index.ts';
 import { repairRunner } from '../src/core/repair/registry.ts';
 import { resolveRepairScope } from '../src/core/repair/core.ts';
 
@@ -84,8 +85,12 @@ for (const backend of testBackends()) describe(`[${backend}] #6517 delete of a s
     expect((await withEnv(env, () => performManagedSync(engine, opts))).status).toBe('first_sync');
     expect((await page(id, names.file))?.source_path).toBe(`${names.file}.md`);
     const sourcePath = twin === 'uri' ? null : twin === 'dot-path' ? `./${names.file}.md` : `${names.file}.md`;
-    await engine.transaction(tx => withCoordinatedWrite(tx, [id], () => tx.putPage(names.twin, { type: 'note', title: 'Twin', compiled_truth: `A twin recording ${names.file}.`,
-      timeline: '', frontmatter: {}, content_hash: `twin-${names.file}`, source_path: sourcePath, source_uri: twin === 'uri' ? pathToFileURL(file).href : null }, { sourceId: id }), TEST_WRITE_ATTRIBUTION));
+    // #6948: no writer records a held origin on a second page any more, so the twin's origin is set as legacy data left it.
+    await engine.transaction(tx => withCoordinatedWrite(tx, [id], async () => {
+      await tx.putPage(names.twin, { type: 'note', title: 'Twin', compiled_truth: `A twin recording ${names.file}.`,
+        timeline: '', frontmatter: {}, content_hash: `twin-${names.file}`, source_uri: twin === 'uri' ? pathToFileURL(file).href : null }, { sourceId: id });
+      if (sourcePath) await tx.executeRaw('UPDATE pages SET source_path=$3 WHERE source_id=$1 AND slug=$2', [id, names.twin, sourcePath]);
+    }, TEST_WRITE_ATTRIBUTION));
     return { id, root, file, bytes, opts, names };
   }
   const coordinated = (sourceId: string, sql: string, params: unknown[]) => engine.transaction(tx => withCoordinatedWrite(tx, [sourceId], () => tx.executeRaw(sql, params), TEST_WRITE_ATTRIBUTION));
@@ -95,6 +100,8 @@ for (const backend of testBackends()) describe(`[${backend}] #6517 delete of a s
   beforeAll(async () => {
     if (backend === 'pglite') { engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); }
     else { const pg = await isolatedPersistencePostgres(process.env.DATABASE_URL!); engine = pg.engine; closePostgres = pg.close; }
+    // Shared origins exist only on brains written before #6948, whose pages_live_origin_key index is pending.
+    await dropOriginIndex(engine);
   }, 120_000);
   afterAll(async () => {
     installFaultHook(undefined);

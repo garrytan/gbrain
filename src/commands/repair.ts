@@ -24,11 +24,13 @@ import { readFix } from '../core/ops/op-fix.ts';
 import { shellQuote } from '../core/agent-output.ts';
 import { OLDER_THAN_RE } from '../cli/strict-args.ts';
 import { parseSince } from '../core/since.ts';
-import { REPAIR_KINDS, resolveRepairScope, type RepairKind, type RepairResult } from '../core/repair/core.ts';
+import { REPAIR_KINDS, resolveRepairScope, type RepairKind, type RepairResult, type RepairScope } from '../core/repair/core.ts';
 import { consentGate, engineConsentEnv } from '../core/consent-cli.ts';
 import { AUTO_REPAIR_REGISTRY, EXPLICIT_REPAIR_REGISTRY, LLM_REPAIR_REGISTRY, PREVIEW_BOUND_REPAIR_REGISTRY, REPAIR_REGISTRY, explicitRepairNotices, repairMayEmbed, repairMaySpend,
-  repairPreviewCommand, repairRunner, repairSpec } from '../core/repair/registry.ts';
+  repairPreviewCommand, repairRunner, repairSpec, type RepairKindSpec } from '../core/repair/registry.ts';
 import { CONTENT_REPAIR_KINDS } from '../core/repair/content-lane.ts';
+import { kindErrorResult } from '../core/remediation/repairs.ts';
+import { ItemRun } from '../core/item-failure.ts';
 
 /** The content-repair lane's command word (#6377): parsed like a kind, dispatched to repair-content.ts, never a RepairKind. */
 export const CONTENT_LANE = 'content';
@@ -70,8 +72,9 @@ export const REPAIR_HELP = `Usage: gbrain repair [<kind>] [--apply] [--source <i
        gbrain repair file-drift --source <id> (--slug <slug>... | --request <id>... | --all-drifted [--class <name>] [--since <ISO-8601|7d>])
                                 [--only <glob>]... [--skip <glob>]... --prefer file|database [--apply --expect <preview-hash>] [--json]
        gbrain repair stuck-recovery [--source <id>] [--request-id <uuid>]
-                                    [--keep prior|disk --apply --expect <preview-hash> --yes] [--json]
+                                    [--keep prior|disk|withdrawn --apply --expect <preview-hash> --yes] [--json]
        gbrain repair ghost-pages --source <id> [--apply --expect <preview-hash> --yes] [--json]
+       gbrain repair url-clone-fences [--source <id>] [--apply --expect <preview-hash> --yes] [--json]
        gbrain repair rename-identity --source <id> [--slug <new-slug> [--from <old-slug>] [--close]
                                      [--apply --expect <preview-hash> --yes]] [--json]
 ${REPAIR_CONTENT_HELP}
@@ -117,11 +120,12 @@ Options:
                  model-tier items stay held with llm_disabled.
   --max-usd <n>  Kinds that may call a paid model (${llmKinds}) and the content lane: spend at most n USD on the
                  model in this run. It only lowers the cap (the daily fences.repair cap still applies); never raises it.
-  --keep prior|disk
-                 stuck-recovery --apply: the version of each blocked file to keep (the user's choice from the preview).
+  --keep prior|disk|withdrawn
+                 stuck-recovery --apply: the version of each blocked file to keep (the user's choice from the preview;
+                 withdrawn is a withdrawal-mirror effect's only choice).
   --request-id <uuid>
                  stuck-recovery: resolve only this request's recovery (default: every blocked record of the source).
-  --yes          frontmatter, conversation-labels, stuck-recovery, ghost-pages, rename-identity --apply: the user agreed to the previewed changes (destructive
+  --yes          frontmatter, conversation-labels, stuck-recovery, ghost-pages, rename-identity, url-clone-fences --apply: the user agreed to the previewed changes (destructive
                  consent; without it a terminal asks, and a non-interactive run exits 3 with the consent payload).
   --json         Machine-readable output with a stable shape (frontmatter: every per-file diff).
 
@@ -133,14 +137,15 @@ Held files (the content lane, then the two-pass frontmatter repair): docs/guides
 Malformed facts/takes fences (preview, apply, undo): docs/guides/repair.md#fences.
 A write recovery blocked on unexpected_file_bytes: docs/guides/repair.md#stuck-recovery.
 Live pages whose canonical file is missing (ghost pages): docs/guides/repair.md#ghost-pages.
+A sources add --url clone whose pull stops at pull_blocked_local_changes: docs/guides/repair.md#url-clone-fences.
 Renames whose identity sync did not keep (rename-identity): docs/guides/live-sync.md#renaming-a-page.`;
 
 const BOOLEAN_FLAGS = new Set(['--apply', '--all', '--json', '--no-embed', '--include-ambiguous', '--diff', '--yes', '--no-llm', '--all-drifted', '--include-failures', '--force', '--close']);
 const VALUE_FLAGS = new Set(['--source', '--limit', '--expect', '--only', '--skip', '--slug', '--max-usd', '--prefer', '--request', '--class', '--since', '--keep', '--request-id', '--older-than', '--from']);
 /** Flags only some kinds accept, with the kinds that do. */
 const KIND_FLAGS: Record<string, readonly string[]> = {
-  '--only': ['frontmatter', 'fences', 'slug-conflicts', 'file-drift', CONTENT_LANE], '--skip': ['frontmatter', 'fences', 'slug-conflicts', 'file-drift', CONTENT_LANE], '--diff': ['frontmatter', 'fences', 'slug-conflicts', CONTENT_LANE], '--yes': ['frontmatter', 'conversation-labels', 'stuck-recovery', 'ghost-pages', 'rename-identity'],
-  '--slug': ['fences', 'file-drift', 'rename-identity', 'overwritten-edits'], '--from': ['rename-identity'], '--close': ['rename-identity'], '--prefer': ['file-drift'], '--request': ['file-drift'], '--all-drifted': ['file-drift'], '--class': ['file-drift'], '--since': ['file-drift'],
+  '--only': ['frontmatter', 'fences', 'slug-conflicts', 'file-drift', CONTENT_LANE], '--skip': ['frontmatter', 'fences', 'slug-conflicts', 'file-drift', CONTENT_LANE], '--diff': ['frontmatter', 'fences', 'slug-conflicts', CONTENT_LANE], '--yes': ['frontmatter', 'conversation-labels', 'stuck-recovery', 'ghost-pages', 'rename-identity', 'url-clone-fences'],
+  '--slug': ['fences', 'file-drift', 'rename-identity', 'overwritten-edits', 'origin-twins'], '--from': ['rename-identity'], '--close': ['rename-identity'], '--prefer': ['file-drift'], '--request': ['file-drift'], '--all-drifted': ['file-drift'], '--class': ['file-drift'], '--since': ['file-drift'],
   '--keep': ['stuck-recovery'], '--request-id': ['stuck-recovery'],
   '--older-than': ['receipt-compaction'], '--include-failures': ['receipt-compaction'], '--force': ['receipt-compaction'],
 };
@@ -154,7 +159,7 @@ const invalid = (message: string, suggestion: string, preview: string[] = ['gbra
 interface RepairArgs { kind?: string; apply: boolean; all: boolean; json: boolean; noEmbed: boolean; includeAmbiguous: boolean; diff: boolean; yes: boolean;
   noLlm: boolean; source?: string; limit?: string; expect?: string; maxUsd?: number; only: string[]; skip: string[]; slugs: string[];
   allDrifted: boolean; prefer?: 'file' | 'database'; requests: string[]; driftClass?: string; since?: string;
-  keep?: 'prior' | 'disk'; requestId?: string; olderThan?: string; includeFailures: boolean; force: boolean; from?: string; close: boolean }
+  keep?: 'prior' | 'disk' | 'withdrawn'; requestId?: string; olderThan?: string; includeFailures: boolean; force: boolean; from?: string; close: boolean }
 
 /** `--max-usd` on a kind that never calls a paid model: the cap belongs to the doctor remediation run. */
 function maxUsdRefusal(flag: string, cap: string | undefined, kind: string | undefined): OperationError {
@@ -269,8 +274,8 @@ export function parseRepairArgs(args: string[]): RepairArgs {
       `Preview it by name: gbrain repair ${kinds[kinds.length - 1]}${parsed.source ? ` --source ${parsed.source}` : ''}`);
   }
   if (keepText !== undefined) {
-    if (keepText !== 'prior' && keepText !== 'disk') throw invalid(`--keep must be prior or disk (got "${keepText}").`,
-      'Pass --keep prior to write the recorded prior bytes back, or --keep disk to keep the bytes on disk; the preview lists which are available.', ['gbrain', 'repair', 'stuck-recovery', '--json']);
+    if (keepText !== 'prior' && keepText !== 'disk' && keepText !== 'withdrawn') throw invalid(`--keep must be prior, disk or withdrawn (got "${keepText}").`,
+      'Pass --keep prior to write the recorded prior bytes back, --keep disk to keep the bytes on disk, or --keep withdrawn to write a withdrawal mirror\'s withdrawn bytes; the preview lists which are available.', ['gbrain', 'repair', 'stuck-recovery', '--json']);
     parsed.keep = keepText;
   }
   const llmKind = LLM_REPAIR_REGISTRY.some(spec => spec.kind === parsed.kind) || parsed.kind === CONTENT_LANE;
@@ -362,7 +367,8 @@ export async function runRepairCommand(engine: BrainEngine, args: string[]): Pro
     const preview = ['gbrain', 'repair', kind, ...(source ? ['--source', source] : []), ...only.flatMap(path => ['--only', path]), ...skip.flatMap(path => ['--skip', path]),
       ...(includeAmbiguous ? ['--include-ambiguous'] : []), ...(requestId ? ['--request-id', requestId] : []),
       ...(olderThan ? ['--older-than', olderThan] : []), ...(includeFailures ? ['--include-failures'] : []), ...(force ? ['--force'] : []),
-      ...(kind === 'rename-identity' ? [...slugs.flatMap(slug => ['--slug', slug]), ...(from ? ['--from', from] : []), ...(close ? ['--close'] : [])] : [])];
+      ...(kind === 'rename-identity' ? [...slugs.flatMap(slug => ['--slug', slug]), ...(from ? ['--from', from] : []), ...(close ? ['--close'] : [])] : []),
+      ...(kind === 'origin-twins' ? slugs.flatMap(slug => ['--slug', slug]) : [])];
     const custom = repairSpec(kind as RepairKind).consentText;
     const text = custom ? { ...custom, why: `Preview ${expect}: ${custom.why}`, user_message: `${custom.user_message} (preview ${expect.slice(0, 12)}${keep ? `, keep ${keep}` : ''})` } : {
       what: `Rewrite the previewed ${kind} changes on disk and import them`,
@@ -374,18 +380,13 @@ export async function runRepairCommand(engine: BrainEngine, args: string[]): Pro
     if (!auth) return;
   }
   const runner = await repairRunner(engine, { apply, noEmbed });
-  const results: Array<RepairResult & { paid: boolean }> = [];
-  for (const k of kinds) {
-    const result = await runner.run(k, scope, { limit, sourceFlag: source, explicit: k === kind, expect, includeAmbiguous,
-      ...(k === kind && KIND_FLAGS['--only']!.includes(k) ? { only, skip } : {}), ...(k === kind && slugs.length ? { slugs } : {}),
-      ...(k === kind && noLlm ? { noLlm } : {}), ...(k === kind && maxUsd !== undefined ? { maxLlmUsd: maxUsd } : {}),
-      ...(k === kind && k === 'file-drift' ? { prefer, requests, allDrifted, driftClass, since } : {}),
-      ...(k === kind && keep ? { keep } : {}), ...(k === kind && requestId ? { requestId } : {}),
-      ...(k === kind && k === 'receipt-compaction' ? { olderThan, includeFailures, force } : {}),
-      ...(k === kind && k === 'rename-identity' ? { from, close } : {}) });
-    results.push({ ...result, paid: repairMaySpend(repairSpec(k), noEmbed) });
-    if (result.stopped) break;
-  }
+  const results = await runRepairKinds(kinds, scope, { apply, source, noEmbed, named: kind !== undefined }, k => runner.run(k, scope, { limit, sourceFlag: source, explicit: k === kind, expect, includeAmbiguous,
+    ...(k === kind && KIND_FLAGS['--only']!.includes(k) ? { only, skip } : {}), ...(k === kind && slugs.length ? { slugs } : {}),
+    ...(k === kind && noLlm ? { noLlm } : {}), ...(k === kind && maxUsd !== undefined ? { maxLlmUsd: maxUsd } : {}),
+    ...(k === kind && k === 'file-drift' ? { prefer, requests, allDrifted, driftClass, since } : {}),
+    ...(k === kind && keep ? { keep } : {}), ...(k === kind && requestId ? { requestId } : {}),
+    ...(k === kind && k === 'receipt-compaction' ? { olderThan, includeFailures, force } : {}),
+    ...(k === kind && k === 'rename-identity' ? { from, close } : {}) }));
   if (apply) clearHealthMemo(engine);
   const paidKinds = results.filter(r => r.paid).map(r => r.kind);
   if (json) {
@@ -407,6 +408,33 @@ export async function runRepairCommand(engine: BrainEngine, args: string[]): Pro
     if (explicitKindsNotRun.length) console.log(`Explicit-only kinds (not run without their name; preview each): ${explicitKindsNotRun.map(n => n.preview_command).join('; ')}`);
   }
   if (repairExitVerdict(results) !== 0) setCliExitVerdict(1);
+}
+
+/**
+ * Runs each kind in order; a kind that stops (capacity, a held writer, a pending write) ends the loop. A kind whose plan
+ * or apply throws item-scoped (GBRA-130 A-45) is reported as a result stopped with reason `error` and the loop goes on;
+ * a run-scoped error, or most kinds failing (`item_failures_systemic`), stops the command. `named`: the operator named
+ * one kind, whose error is the command's error. `registry`: the kinds' specs (tests pass stubs).
+ */
+export async function runRepairKinds(kinds: readonly RepairKind[], scope: RepairScope, opts: { apply: boolean; source?: string; noEmbed: boolean; named: boolean; registry?: readonly RepairKindSpec[] },
+  run: (kind: RepairKind) => Promise<RepairResult>): Promise<Array<RepairResult & { paid: boolean }>> {
+  const results: Array<RepairResult & { paid: boolean }> = [];
+  const kindRun = new ItemRun('repair.all_kinds');
+  for (const k of kinds) {
+    let result: RepairResult;
+    try {
+      result = await run(k);
+      kindRun.succeed();
+    } catch (error) {
+      if (opts.named) throw error;
+      kindRun.fail(k, error);
+      results.push({ ...kindErrorResult(k, scope, { apply: opts.apply, error, source: opts.source }), paid: false });
+      continue;
+    }
+    results.push({ ...result, paid: repairMaySpend(repairSpec(k, opts.registry), opts.noEmbed) });
+    if (result.stopped) break;
+  }
+  return results;
 }
 
 /** Exit 1 when any kind stopped early or refused an item; 0 only when every pending item was attempted and applied or skipped. */

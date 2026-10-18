@@ -15,6 +15,7 @@ import { loadReceiptDir } from '../../scripts/ci-executed-counts.ts';
 import { buildManifest, checkManifest, failureSignature, junitMessages, MANIFEST_ARTIFACT, MANIFEST_SCHEMA, type CiManifest } from '../../scripts/ci-manifest.ts';
 import { failureSignature as gateSignature, parseExemptionBlocks } from '../fixtures/nightly-watch/stress-exemption-contract.ts';
 import { GET_RETRY_DELAYS_MS, inert, jsonBlock, labelNames, readJsonBlock, readZipEntry, restClient, type GitHubClient, type Issue } from '../../scripts/lib/gh-issue.ts';
+import { pagedJobs } from '../../scripts/lib/ci-run.ts';
 import { FLAKE_MARKER, MR_MARKER, PUSH_ALLOWLIST, type FlakeRecord, type MasterRedState } from '../../scripts/lib/master-red.ts';
 import {
   JSON_MARKER, parseKnownRed, resolveTarget, routeRun, validateKnownRed, watch, watchRun, type IncidentRecord, type JobInfo, type KnownRow, type RunInfo,
@@ -671,6 +672,55 @@ describe('master-red: push-to-master runs', () => {
     } finally {
       globalThis.fetch = real;
     }
+  });
+
+  test('restClient retries a GET whose connection dropped (no response), and a 4xx after a network blip still fails without more retries', async () => {
+    const real = globalThis.fetch;
+    let script: Array<number | 'drop'> = [];
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls++;
+      const next = script.shift() ?? 200;
+      if (next === 'drop') throw new TypeError('fetch failed');
+      return new Response(next === 200 ? JSON.stringify({ ok: true }) : 'nope', { status: next });
+    }) as unknown as typeof fetch;
+    const slept: number[] = [];
+    const client = restClient('o/r', 'token', async ms => { slept.push(ms); });
+    try {
+      script = ['drop', 200];
+      expect(await client.request<unknown>('GET', 'repos/{repo}/actions/runs/1')).toEqual({ ok: true });
+      expect({ calls, slept }).toEqual({ calls: 2, slept: [GET_RETRY_DELAYS_MS[0]!] });
+
+      calls = 0; slept.length = 0;
+      script = ['drop', 404];
+      expect(await client.request('GET', 'repos/{repo}/actions/runs/9').then(() => 0, e => (e as { status?: number }).status)).toBe(404);
+      expect(calls).toBe(2);
+
+      calls = 0;
+      script = ['drop'];
+      expect(await client.request('POST', 'repos/{repo}/issues', { title: 't' }).then(() => 'ok', e => (e as { network?: boolean }).network)).toBe(true);
+      expect(calls).toBe(1);
+    } finally {
+      globalThis.fetch = real;
+    }
+  });
+
+  test('pagedJobs lists a 98-job attempt GitHub refuses to render 100 jobs at a time (a 502 on every per_page=100 page, runs 39059772114 / 39103163273)', async () => {
+    const all = Array.from({ length: 98 }, (_, i) => ({ id: i + 1, name: `job ${i + 1}`, conclusion: 'success' }));
+    const seen: string[] = [];
+    const client: GitHubClient = {
+      async request<T>(_method: string, path: string): Promise<T> {
+        seen.push(path);
+        const q = new URLSearchParams(path.split('?')[1]);
+        const perPage = Number(q.get('per_page')), page = Number(q.get('page'));
+        if (perPage > 50) throw Object.assign(new Error('GitHub API GET -> 502: server error'), { status: 502 });
+        return { jobs: all.slice((page - 1) * perPage, page * perPage), total_count: all.length } as T;
+      },
+    };
+    const run = { id: 39052886222, run_attempt: 2 } as RunInfo;
+    const { jobs, complete } = await pagedJobs(client, run);
+    expect({ count: jobs.length, complete }).toEqual({ count: 98, complete: true });
+    expect(seen.every(p => p.startsWith('repos/{repo}/actions/runs/39052886222/attempts/2/jobs?'))).toBe(true);
   });
 
   test('more than three failures are all listed; a database URL in run text is redacted and never reaches a reproduce command', async () => {

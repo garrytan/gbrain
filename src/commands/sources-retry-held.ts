@@ -26,7 +26,7 @@ import type { Action } from '../core/agent-output.ts';
 import { OperationError } from '../core/ops/contract.ts';
 import { managedBrain, readAllSourceHolds, readHoldRetryKeys, requestHoldRetry, writeHeldRetryPointer } from '../core/connectors/item-holds-store.ts';
 import { isConnectorSourceKind } from '../core/persistence/connector-identity.ts';
-import { fenceAutoRepairFor, holdRepairSteps, readGitHoldRetryPaths, readGitSourceHolds, requestGitHoldRetry, type GitHoldRecord } from '../core/persistence/sync-holds.ts';
+import { outOfAttemptsHold, fenceAutoRepairFor, holdRepairSteps, readGitHoldRetryPaths, readGitSourceHolds, requestGitHoldRetry, type GitHoldRecord } from '../core/persistence/sync-holds.ts';
 import { readManagedSyncBacklog } from '../core/persistence/sync-drain.ts';
 import type { FenceAutoRepair } from '../core/fence-repair/hold-fix.ts';
 import { companyBrainProfile } from '../core/company-brain/policy.ts';
@@ -71,7 +71,7 @@ export async function gitFollowUpSync(engine: BrainEngine, sourceId: string, hel
   if (!await managedBrain(engine)) return ['gbrain', 'sync', '--source', sourceId];
   const [backlog] = await readManagedSyncBacklog(engine, [sourceId]).catch(() => []);
   if (backlog) return ['gbrain', 'sync', ...backlog.resume_args];
-  const stalled = held.find(record => record.code === 'preparation_stalled' && record.meta.stall?.sync_argv?.length);
+  const stalled = held.find(record => outOfAttemptsHold(record.code) && record.meta.stall?.sync_argv?.length);
   return ['gbrain', 'sync', ...(stalled?.meta.stall?.sync_argv ?? ['--source', sourceId, '--no-pull'])];
 }
 
@@ -98,7 +98,7 @@ function gitNextStep(sourceId: string, dryRun: boolean, scheduled: Scheduled): {
       why: `Schedules a re-screen of ${count} held file(s) on the next sync of ${sourceId}; nothing runs now.` } };
   const fences = scheduled.items.filter(item => item.code === 'invalid_fence').length;
   const concurrent = scheduled.items.filter(item => item.code === 'concurrent_write').length;
-  const stalled = scheduled.items.filter(item => item.code === 'preparation_stalled').length;
+  const stalled = scheduled.items.filter(item => outOfAttemptsHold(item.code)).length;
   const dirty = scheduled.items.filter(item => item.code === 'worktree_dirty').length;
   const drift = scheduled.items.filter(item => item.code === 'file_drift').length;
   return { text: `${count} held file(s) scheduled for a re-screen; none has run yet. ${automatic} Run it now with: ${sync}, then verify with: gbrain sources status ${sourceId}. `

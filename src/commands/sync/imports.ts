@@ -25,6 +25,7 @@ import {
 import { isPathSafe } from '../../core/sync-git.ts';
 import { resolveStallAbortSeconds, composeAbortSignals } from '../../core/sync-reconcile.ts';
 import { sanitizePathForDisplay } from '../../core/sync.ts';
+import { syncFailureCode } from '../../core/sync-failure-ledger.ts';
 import { isWindowsColonTarget } from '../../core/persistence/native-file-target.ts';
 import { ERROR_CATALOGUE } from '../../core/error-catalogue.ts';
 import { enginePoolStats } from '../../core/postgres-engine/pool-stats.ts';
@@ -89,6 +90,13 @@ export async function runImportsPhase(
   // a killed run banks `completed`, the next run skips it (no per-file disk
   // read or content_hash DB lookup for done files).
   const importsToDo = resumeFilter(addsAndMods, [...completed]);
+  // GBRA-130 A-18: files an earlier run of this drain already banked count as
+  // the breaker's successes, so a resumed run that re-attempts only the
+  // failing files is not mistaken for a run where most files fail.
+  for (let i = importsToDo.length; i < addsAndMods.length; i++) run.itemRun.succeed();
+  // Their imports still prove other files of this drain import, so an infra
+  // failure the resumed run re-attempts alone keeps its isolated streak.
+  run.bankedImports = addsAndMods.filter(path => completed.has(path) && !holds?.existing.has(path)).length;
 
   const { effectiveConcurrency, runParallel } = await resolveImportConcurrency(engine, opts, importsToDo.length);
 
@@ -351,6 +359,7 @@ async function importOnePath(run: SyncRun, ctx: ImportContext, eng: BrainEngine,
       // persist. partial() reports this so cron operators see how
       // much actually landed before --timeout fired.
       run.filesImported++;
+      run.itemRun.succeed();
       await clearLegacyHold(eng, holds, path);
       // v0.42.x (#1794): checkpoint this path so a kill banks it.
       await markCompleted(run, path);
@@ -376,12 +385,16 @@ async function importOnePath(run: SyncRun, ctx: ImportContext, eng: BrainEngine,
       await markCompleted(run, path);
     }
   } catch (e: unknown) {
+    // GBRA-130 A-18: a run-scoped failure (lost connection, failed
+    // transaction, abort, an unavailable writer) stops the sync before the
+    // ledger records anything; a file's own failure carries a structured code.
+    run.itemRun.record(path, e);
     const msg = e instanceof Error ? e.message : String(e);
     if (await holdRefusedImport(eng, holds, path, filePath, { status: 'error', error: msg })) {
       await markCompleted(run, path);
     } else {
       serr(`  Warning: skipped ${path}: ${msg}`);
-      failedFiles.push({ path, error: msg });
+      failedFiles.push({ path, error: msg, code: syncFailureCode(e, path) });
     }
   } finally {
     permit.release();

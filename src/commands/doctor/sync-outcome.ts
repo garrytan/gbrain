@@ -9,12 +9,13 @@ import type { Action } from '../../core/agent-output.ts';
 import type { BrainEngine } from '../../core/engine.ts';
 import { readLastSyncAttempt, type SyncAttemptState } from '../../core/sync-attempt.ts';
 import { classifyManagedSyncOrphans } from '../../core/persistence/managed-sync-orphans.ts';
+import { isOwnedContentSchemaMissing, staleOwnedContent } from '../../core/shared-skills/content-freshness.ts';
 import { agentFix, doctorVerify } from './check-fix.ts';
 
 export interface SyncOutcomeEntry {
   source_id: string;
-  code: 'sync_first_run_in_progress' | 'sync_no_successful_sync';
-  reason: 'first_sync_running' | SyncAttemptState;
+  code: 'sync_first_run_in_progress' | 'sync_no_successful_sync' | 'content_receipt_stale';
+  reason: 'first_sync_running' | 'receipt_root_moved' | SyncAttemptState;
   last_attempt_at: string | null;
   result: string | null;
   held: number;
@@ -38,6 +39,8 @@ export function firstSyncRunning(sourceId: string, display: string, snap: { hold
 }
 
 export async function noSuccessfulSync(engine: BrainEngine, sourceId: string, display: string, managed: boolean): Promise<{ issue: string; entry: SyncOutcomeEntry }> {
+  const stale = managed ? (await staleOwnedContent(engine, [sourceId]).catch(error => { if (isOwnedContentSchemaMissing(error)) return []; throw error; }))[0] : undefined;
+  if (stale) return contentReceiptStale(sourceId, display);
   const attempt = await readLastSyncAttempt(engine, sourceId, managed);
   const retry: Action = { argv: ['gbrain', 'sync', '--source', sourceId, ...(managed ? ['--no-pull'] : [])], consent: [], actor: 'agent', requires_exclusive: false,
     verify: VERIFY, docs: DOCS, why: `No successful sync of ${sourceId} is recorded; this runs one and stamps last_sync_at when it succeeds.` };
@@ -60,6 +63,22 @@ export async function noSuccessfulSync(engine: BrainEngine, sourceId: string, di
     issue: `Source ${display}: no successful sync recorded; ${what}; ${step}`,
     entry: { source_id: sourceId, code: 'sync_no_successful_sync', reason: attempt.state, last_attempt_at: attempt.last_attempt_at, result: attempt.result,
       held: attempt.held, job_id: attempt.job_id, fix },
+  };
+}
+
+/**
+ * C-7 (#6892): a gbrain-owned content source never syncs, and doctor exempts it only while its content receipt names
+ * the source's root. A receipt left on an old root (a transfer or relocation, or a set-path still to run) is
+ * `content_receipt_stale`, fixed by the preview of `gbrain repair content-receipt-root`, never by a sync that refuses.
+ */
+function contentReceiptStale(sourceId: string, display: string): { issue: string; entry: SyncOutcomeEntry } {
+  const fix = agentFix(['gbrain', 'repair', 'content-receipt-root', '--source', sourceId],
+    `The content receipt of ${sourceId} names another root than the source and its owner binding (a writer transfer or relocation moved it). `
+      + 'The preview checks the owner\'s tree against the recorded manifest and prints the apply command with its hash, or names what to fix first; writes nothing.',
+    'sync_freshness', { docs: 'docs/guides/repair.md#content-receipt-root' });
+  return {
+    issue: `Source ${display}: no successful sync recorded; it is a gbrain-owned content directory whose content receipt names an old root, so sync does not apply and doctor cannot exempt it; run \`${fix.argv!.join(' ')}\``,
+    entry: { source_id: sourceId, code: 'content_receipt_stale', reason: 'receipt_root_moved', last_attempt_at: null, result: null, held: 0, job_id: null, fix },
   };
 }
 

@@ -30,6 +30,7 @@ import { operationsByName } from '../src/core/operations.ts';
 import { reconcileCanonical } from '../src/core/persistence/reconcile-merge.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { dropOriginIndex } from './helpers/origin-index.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 
 const home = mkdtempSync(join(tmpdir(), 'gbrain-reconcile-'));
@@ -38,6 +39,8 @@ let closePostgres: (() => Promise<void>) | undefined;
 beforeAll(async () => {
   const engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); engines.push(engine);
   if (process.env.DATABASE_URL) { const pg = await isolatedPersistencePostgres(process.env.DATABASE_URL); engines.push(pg.engine); closePostgres = pg.close; }
+  // Several tests seed legacy shared origins, which only a brain whose pages_live_origin_key index is pending holds (#6948).
+  for (const engine of engines) await dropOriginIndex(engine);
 }, 120_000);
 afterAll(async () => {
   await withEnv({ GBRAIN_HOME: home }, async () => {
@@ -568,7 +571,9 @@ test('historical basename origins in separate slug directories remain distinct c
     await engine.transaction(tx => withCoordinatedWrite(tx, [f.id], async () => {
       await tx.executeRaw('UPDATE pages SET source_path=$3 WHERE source_id=$1 AND slug=$2', [f.id, f.slug, 'example.md']);
       await tx.putPage(otherSlug, { type: 'note', title: 'Other example', compiled_truth: 'An independent historical basename page.',
-        frontmatter: { independent: true }, source_path: 'example.md' }, { sourceId: f.id });
+        frontmatter: { independent: true } }, { sourceId: f.id });
+      // #6948: two pages recording one basename are legacy data no writer creates now.
+      await tx.executeRaw('UPDATE pages SET source_path=$3 WHERE source_id=$1 AND slug=$2', [f.id, otherSlug, 'example.md']);
     }, TEST_WRITE_ATTRIBUTION));
     const other = (await engine.readPageSnapshot(otherSlug, { sourceId: f.id }))!;
     writeFileSync(otherFile, serializePageToMarkdown(other.page, other.tags));
@@ -620,7 +625,9 @@ test('genuine shared-file origins through explicit paths or URI fallback still r
       const sourcePath = origin === 'uri' ? null : origin === 'dot-path' ? './notes/example.md'
         : origin === 'repeated-separators' ? 'notes//example.md' : 'notes/example.md';
       await tx.putPage('other/collision', { type: 'note', title: 'Collision', compiled_truth: 'Another page claiming the same file.',
-        frontmatter: {}, source_path: sourcePath, source_uri: origin === 'uri' ? uri : null }, { sourceId: f.id });
+        frontmatter: {}, source_uri: origin === 'uri' ? uri : null }, { sourceId: f.id });
+      // #6948: a second live claimant of a file is legacy data no writer creates now.
+      if (sourcePath) await tx.executeRaw('UPDATE pages SET source_path=$3 WHERE source_id=$1 AND slug=$2', [f.id, 'other/collision', sourcePath]);
     }, TEST_WRITE_ATTRIBUTION));
     const snapshot = await engine.readPageSnapshot(f.slug, { sourceId: f.id });
     await local(engine, f.registration, async () => {

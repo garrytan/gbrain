@@ -1490,6 +1490,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'facts.extraction_max_tokens',
   // Automatic facts drain caps (src/core/facts/drain.ts FACTS_DRAIN_KEYS).
   'facts.drain_budget_usd', 'facts.drain_daily_budget_usd', 'facts.drain_max_jobs',
+  'facts.absorb_retry.max_resubmits', // C-9: re-submits per dead page-write facts-absorb job (default 3; 0 disables; facts/dead-absorb-retry.ts)
   // #3852: operator-set system-prompt appendix for the facts extractor (e.g.
   // a durable-vs-ephemeral rubric for agent work-session transcripts).
   // Composes with BOTH honest-notability prompt variants.
@@ -1746,6 +1747,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // restores fail-closed blocking. Detail, escalation and the parser-regression
   // stop are tuned by GBRAIN_SYNC_* env since #6712 PR 2 (RETIRED_SYNC_KEYS).
   'sync.holds', 'sync.slug_conflicts.auto_remove', // #6865: sync-time removal of a stray slug: line naming no page (repair/slug-autoheal.ts); default on
+  'sync.origin_twins.auto_resolve', // #6948: sync-time merge of verified duplicate-origin twins (repair/origin-twins-heal.ts); default on
   'fences.normalize', // #6188: inline Tier 1 fence normalization (fence-repair/config.ts); default on
   'fences.repair.enabled', 'fences.repair.llm', // #6188: the fence_repair cycle phase and its Tier 3 model step (fence-repair/config.ts); default on
   'fences.repair.max_usd_per_page', 'fences.repair.max_usd_per_day', // #6188: Tier 3 fence repair caps; 0 = no model spend

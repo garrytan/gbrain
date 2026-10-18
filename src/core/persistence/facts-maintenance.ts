@@ -30,6 +30,7 @@ import { MaintenanceWriteWait } from './maintenance-wait.ts';
 import { digest, requireUuid, sha256 } from './digest.ts';
 import { isTerminal, type WriteAuthority, type WriteRequest } from './model.ts';
 import type { WriteReceipt } from './types.ts';
+import { FACTS_BATCH_INCOMPLETE_MESSAGE } from './verb-errors.ts';
 import { assertAmbientCaptureAdmissible, captureGateLaneForSource } from '../facts/capture-sources.ts';
 import { declareDerivation, type DerivationDeclaration } from '../trust/taint.ts';
 import type { TaintInput, WriteTrust } from '../trust/tier.ts';
@@ -40,7 +41,10 @@ export interface ManagedFactsResult {
   withdrawn_skipped?: number;
   /** #6333 shadow: same-page rewordings the managed preparer counted; nothing was dropped. */
   would_dedup_same_page?: number;
+  /** GBRA-130 A-36: entity requests that ended refused for their own page; the other entities' facts committed. */
+  refused?: ManagedFactsRefusal[];
 }
+export interface ManagedFactsRefusal { slug: string; code: string; request_id: string }
 export interface ManagedFactOrigin { slug: string; pageId: number; revision: string; }
 export type FrozenExtractedFact = Omit<NewFact, 'embedding' | 'valid_from' | 'valid_until' | 'expired_at'> & {
   embedding: number[] | null; valid_from: string; valid_until: string | null;
@@ -90,6 +94,11 @@ export interface ManagedFactsSession {
   inputKeyed?: boolean;
   /** #6091: set when the facts come from an ambient capture lane. */
   captureSource?: string;
+  /**
+   * GBRA-130 A-36: automatic extraction reports an entity refused for its own page under `refused` instead of throwing,
+   * so a replay returns the committed entities' counts. Explicit fact writers leave it unset and keep the refusal.
+   */
+  reportRefusals?: boolean;
   derivation?: DerivationDeclaration;
   /**
    * #6778: the publish wait, one budget per session: 30 s bounded by the job's deadline
@@ -306,17 +315,42 @@ export async function prepareManagedFactsSession(ctx: FactsBackstopCtx,
   return session;
 }
 
+/**
+ * GBRA-130 A-36: codes one entity request ends on for reasons of its own page (changed, segmented, fence or content
+ * refused). Automatic extraction reports them under `refused` and keeps the committed entities' counts. A file-check
+ * refusal (`source_changed`) and a withdrawal refusal are not among them: they keep the batch refused, so the
+ * follow-up walks (#6048, #6506) re-admit their retained facts once the cause clears.
+ */
+const ENTITY_REFUSAL_CODES: ReadonlySet<string> = new Set(['revision_conflict', 'invalid_fence', 'target_fence_malformed', 'page_body_segmented',
+  'invalid_params', 'page_identity_changed', 'page_not_found', 'request_too_large', 'payload_too_large']);
+
+/**
+ * Every row is awaited and collected before anything throws. A refused entity (ENTITY_REFUSAL_CODES) is reported when
+ * the session asks for it and another entity committed, and the completion receipt that only says the batch is
+ * incomplete is not a failure of its own; any other terminal row, then a still-pending one, then a refusal with
+ * nothing committed beside it, throws as its receipt.
+ */
 async function collectManagedFacts(engine: BrainEngine, session: ManagedFactsSession, rows: WriteRequest[]): Promise<ManagedFactsResult> {
   const result: ManagedFactsResult = { inserted: 0, duplicate: 0, superseded: 0, fact_ids: [], entity_slugs: [], write_requests: [] };
+  const refused: WriteRequest[] = [];
+  let pending: WriteRequest | null = null;
+  let failed: WriteRequest | null = null;
+  let committed = 0;
   for (const row of rows) {
     if ((row.intent?.inputDigest ?? row.outcome?.input_digest) !== session.inputDigest) throw opError('idempotency_conflict', 'The fact request ID was already used with different extraction input.',
       `Request ${row.request_id} in source ${row.source_id} was accepted for different extraction input, so this extraction was not merged into it. Give this extraction a new request_id; read the receipt to see the original.`,
       { fix: receiptFix(row.request_id) });
     await authorizeStoredRequest(engine, row);
     const finished = session.wait.observe((await awaitWrite(engine, row, session.config, { waitMs: session.wait.ms(), signal: session.signal })).row);
-    writeResponse(finished);
     result.write_requests.push(receiptFor(finished));
-    if ((row.intent?.kind ?? row.outcome?.kind) === 'managed_facts_entity') {
+    if (finished.state !== 'committed') {
+      if (!isTerminal(finished)) pending ??= finished;
+      else if (isEntityRequest(finished) && ENTITY_REFUSAL_CODES.has(finished.error_code ?? '') && !withdrawalRefusal(finished)) refused.push(finished);
+      else if (isEntityRequest(finished) || !refused.length || finished.error_message !== FACTS_BATCH_INCOMPLETE_MESSAGE) failed ??= finished;
+      continue;
+    }
+    if (isEntityRequest(row)) {
+      committed++;
       const out = finished.outcome!;
       result.inserted += Number(out.inserted ?? 0);
       result.duplicate += Number(out.duplicate ?? 0);
@@ -327,6 +361,8 @@ async function collectManagedFacts(engine: BrainEngine, session: ManagedFactsSes
       if (out.inserted && out.fenced && !result.entity_slugs.includes(row.slug)) result.entity_slugs.push(row.slug);
     }
   }
+  for (const row of [failed, pending, session.reportRefusals && committed ? null : refused[0]]) if (row) writeResponse(row);
+  if (refused.length) result.refused = refused.map(row => ({ slug: row.slug, code: row.error_code!, request_id: row.request_id }));
   return result;
 }
 

@@ -91,12 +91,12 @@ describe('readRecentSourceFailures + isSourceInCooldown (PGLite)', () => {
   afterAll(async () => { await engine.disconnect(); });
   beforeEach(async () => { await resetPgliteState(engine); });
 
-  async function addJob(status: string, sourceId: string | null, finishedMinAgo: number, result: unknown = null): Promise<void> {
+  async function addJob(status: string, sourceId: string | null, finishedMinAgo: number): Promise<void> {
     const finished = new Date(Date.now() - finishedMinAgo * 60_000).toISOString();
     const data = sourceId === null ? {} : { source_id: sourceId };
     await engine.executeRaw(
-      `INSERT INTO minion_jobs (submission_authority, name, status, data, finished_at, result) VALUES ('{"version":1,"kind":"application"}'::jsonb, 'autopilot-cycle', $1, $2, $3, $4)`,
-      [status, data, finished, result],
+      `INSERT INTO minion_jobs (submission_authority, name, status, data, finished_at) VALUES ('{"version":1,"kind":"application"}'::jsonb, 'autopilot-cycle', $1, $2, $3)`,
+      [status, data, finished],
     );
   }
 
@@ -112,17 +112,6 @@ describe('readRecentSourceFailures + isSourceInCooldown (PGLite)', () => {
     // last failed is the most recent of the two (2 min ago).
     const lastA = map.get('repo-a')!.lastFailedAt.getTime();
     expect(Date.now() - lastA).toBeLessThan(4 * 60_000);
-  });
-
-  test('a completed cycle carrying a failed phase counts; a warn-only completed cycle does not', async () => {
-    // The cycle returns status 'partial' for a lost extract write, so its job
-    // completes. Without counting it, the source skips the cooldown and the
-    // same failing write re-runs every tick.
-    await addJob('completed', 'repo-lost', 2, { report: { status: 'partial', phases: [{ phase: 'lint', status: 'ok' }, { phase: 'extract', status: 'fail' }] } });
-    await addJob('completed', 'repo-warn', 2, { report: { status: 'partial', phases: [{ phase: 'lint', status: 'warn' }, { phase: 'extract', status: 'ok' }] } });
-    const map = await readRecentSourceFailures(engine, { sinceMin: 120 });
-    expect(map.get('repo-lost')?.count).toBe(1);
-    expect(map.has('repo-warn')).toBe(false);
   });
 
   test('null source_id rows are excluded (codex #6)', async () => {

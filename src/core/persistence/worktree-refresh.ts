@@ -38,6 +38,7 @@ import { startPersistenceConsumer } from './service.ts';
 import { lockTopologyPrincipal, lockTopologyRows, topologyPrincipal, withTopologyLocks } from './topology-locks.ts';
 import { ACTIVE_REFRESH_STATES_SQL, CHECKOUT_EFFECT_KINDS_SQL, type WorktreeRefreshState } from './worktree-refresh-schema.ts';
 import { gitChildEnv } from '../git-env.ts';
+import { classifyOriginUniqueViolation } from './origin-guard.ts';
 
 export interface WorktreeRefreshRow {
   id: string; worktree_id: string; source_ids: string[]; principal_id: string; owner_epoch: string | number;
@@ -441,7 +442,7 @@ async function fenceDraining(engine: BrainEngine, sourceId: string, plan: Plan, 
       plan.oldHead, plan.targetHead, plan.upstreamRef, plan.preserved]);
     return row;
   })).catch(error => {
-    if ((error as { code?: string }).code === '23505') throw refusal('refresh_in_progress', 'Another refresh of this worktree started first.', `gbrain sources refresh ${sourceId} --resume`);
+    if ((error as { code?: string }).code === '23505' && !classifyOriginUniqueViolation(error)) throw refusal('refresh_in_progress', 'Another refresh of this worktree started first.', `gbrain sources refresh ${sourceId} --resume`);
     throw error;
   });
 }

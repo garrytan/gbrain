@@ -108,6 +108,16 @@ watermark, so the watermark can advance. Any other failed conversation keeps
 the watermark where it is, so the next run lists it and tries again.
 Re-imports are free (content-hash idempotency), so re-running is safe.
 
+One conversation the brain refuses (a typed refusal such as `source_changed`)
+fails alone: the rest of its batch still imports, and `gbrain connectors status
+<provider> --json` shows the refusal's `code` on its row. Only a failure of the
+run itself (a lost database connection, the writer unavailable, an abort)
+stops the sync. On a managed brain, a conversation whose write was accepted but
+has not published within the wait is listed under `pending`: it is not marked
+synced and holds the watermark, and the next sync waits on that same write
+instead of submitting a second one. If that write ends without committing, the
+next sync submits it again.
+
 A failed conversation is never forgotten. It stays in the source's failed
 ledger until it imports, even after the watermark passes it and the provider
 stops listing it. Each sync retries up to 10 due failures by id, oldest first,

@@ -304,18 +304,25 @@ describe('gbrain repair stuck-recovery', () => {
     expect(error.suggestion).toContain('--keep disk');
   }));
 
-  test('a v2 shared-skill bundle record is refused with recovery_bundle_unsupported', () => run(async () => {
+  test('a v2 shared-skill bundle record is previewed with its files (GBRA-130 C-4); one this binary cannot read is refused with recovery_bundle_unsupported', () => run(async () => {
     const s = await stuck({ prior: PRIOR, after: AFTER, disk: EDITED });
     const [row] = await engine.executeRaw<{ recovery: any }>('SELECT recovery FROM persistence_requests WHERE id=$1::uuid', [s.id]);
-    const bundle = { version: 2, target: 'skill_bundle', root: s.root, ownerEpoch: row.recovery.ownerEpoch, attempt: row.recovery.attempt, files: [row.recovery] };
-    // Fixture only: the protocol trigger admits a bundle row solely through the shared-skill writer, so it is bypassed for this one update.
-    await engine.transaction(async tx => {
+    const bundle = (files: unknown[]) => ({ version: 2, target: 'skill_bundle', root: s.root, ownerEpoch: row.recovery.ownerEpoch, attempt: row.recovery.attempt, files });
+    // Fixture only: the protocol trigger admits a bundle row solely through the shared-skill writer, so it is bypassed for these updates.
+    const setRecovery = (record: unknown) => engine.transaction(async tx => {
       await tx.executeRaw('SET LOCAL session_replication_role = replica');
-      await tx.executeRaw("UPDATE persistence_requests SET recovery=$2::text::jsonb,target_kind='skill_bundle',protocol_version=2 WHERE id=$1::uuid", [s.id, JSON.stringify(bundle)]);
+      await tx.executeRaw("UPDATE persistence_requests SET recovery=$2::text::jsonb,target_kind='skill_bundle',protocol_version=2 WHERE id=$1::uuid", [s.id, JSON.stringify(record)]);
     });
-    const error = await refusal(() => repair(s.sourceId));
+    await setRecovery(bundle([row.recovery]));
+    const preview = await repair(s.sourceId);
+    expect((preview.details as any).recoveries.map((found: any) => [found.target, found.request_id, found.files.map((file: any) => file.matches)]))
+      .toEqual([['skill_bundle', s.requestId, ['neither']]]);
+    await setRecovery(bundle([]));
+    expect((await repair(s.sourceId)).details).toMatchObject({ recoveries: [], refused: [{ code: 'recovery_bundle_unsupported', request_id: s.requestId, fix: { ask_user: true } }] });
+    const error = await refusal(() => repair(s.sourceId, { requestId: s.requestId }));
     expect(error.code).toBe('recovery_bundle_unsupported');
     expect(error.toJSON()).toMatchObject({ docs: 'docs/guides/repair.md#recovery-bundle-unsupported' });
+    expect(error.fix).toMatchObject({ ask_user: true, argv: ['gbrain', 'repair', 'stuck-recovery', '--source', s.sourceId, '--request-id', s.requestId] });
     expect(readFileSync(s.path, 'utf8')).toBe(EDITED);
   }));
 

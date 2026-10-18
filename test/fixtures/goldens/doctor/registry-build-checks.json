@@ -675,6 +675,10 @@
       },
       {
         "category": "ops",
+        "name": "global_maintenance_stalled"
+      },
+      {
+        "category": "ops",
         "name": "embed_backfill_stalled"
       },
       {
@@ -860,6 +864,10 @@
       {
         "category": "brain",
         "name": "ghost_pages"
+      },
+      {
+        "category": "brain",
+        "name": "origin_twins"
       },
       {
         "category": "brain",

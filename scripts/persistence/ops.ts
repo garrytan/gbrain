@@ -104,6 +104,8 @@ export interface World {
   sessionDrops?: SessionDrops;
   /** Write reply wait every op context carries; absent = the operation default (a probe shortens it to force `write_pending`). */
   writeWaitMs?: number;
+  /** `consumer:claiming` passes a counting or crashing worker's fault hook saw; `finish` waits for one after its probe (#6957). */
+  claimPasses?: number;
 }
 
 /**

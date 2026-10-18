@@ -21,6 +21,7 @@
 | A write (`add_timeline_entry`, `put_page`, `remember`, any `mutating` tool) refused `invalid_params` "unknown parameter … write operations always reject unknown parameters; nothing was written" | the call named a parameter the tool does not declare (for example `content` instead of `detail`); the `suggestion` names the submitted key and the declared one; resend with the declared name. Reads keep the `mcp.strict_params` warn grace period | agent | none | the resent call returns no `invalid_params` and no `unknown_param` warning |
 | Facts extraction or embedding reports `(cause=AIConfigError model_not_found)` or `gbrain models doctor` says `model_not_found` while the key is valid | the provider refused the model, not the key (a 404, or a 403 "project does not have access to model"): the fix text names the config key that selected the model when the gateway knows it ("Selected via models.tier.reasoning. Fix: gbrain config set …"; an env var or config.json pin says what to clear); otherwise check the model id with `gbrain models`, enable the model for the project in the provider console or set another model (`gbrain config set models.facts <provider:model>`) | user (provider console); agent for the config change, after the user agrees | none | `gbrain models doctor` reports the model `ok` |
 | Doctor `links_extraction_lag` or sync says "N page(s) have un-extracted edges" | `gbrain extract --stale --dry-run --json`, then on the host `gbrain extract --stale --catch-up [--source-id <id>]` | user above 120 s, else agent | none | dry run: `actionable: 0` |
+| Doctor `links_extraction_lag` says "N page(s) failed link extraction 3 runs in a row and are held", or `extract --stale` lists failed pages | Read each page's code (`unknown_source`: the page's source row is gone; restore the source or delete the page), fix the cause, then `gbrain extract --stale [--source-id <id>] --retry-held` | agent | none | `gbrain extract --stale --dry-run --json`: `held: 0` |
 | A gbrain call failed with a code you don't recognize | follow `fix.next` ([protocol](../protocol/AGENT_OPERATOR_v1.md)); `gbrain errors <code>` | agent | as the fix's `consent` | the fix's `verify` |
 | A graph read omits a relationship you know existed, or says someone still works somewhere they left | the default read returns relationships true today: repeat with `status: "all"` or `as_of`; to record an end, add a dated timeline line (`Ended works_at [[companies/x]]`) or `add_link ... valid_until` ([temporal edges](temporal-edges.md)) | agent | none | `gbrain doctor --only edge_validity --json` |
 | A command exited 3 (`confirmation_required`) | relay `user_message`; run `fix.command` only after the user agrees | agent, after the user agrees | the payload's `effects` | the fix's `verify` |
@@ -248,7 +249,7 @@ Refused writes a caller never saw land (`lost_caller_writes`) have their own rep
 | `reason` | What it means | Next |
 |---|---|---|
 | `host_mismatch` | Another host id owns the checkout. The message prints both ids' first 8 characters and, to a local caller, the `host.json` this process read (`<GBRAIN_HOME>/.gbrain/persistence/host.json`). A maintenance worker (launchd, cron, autopilot) started with a different `GBRAIN_HOME` or user than the shell that ran the sync reads a different identity file and is, to the brain, a different host. `retryable: false`: a retry from the same environment cannot change the answer. | Run the step on the owner host writer status names, or make both environments use one `GBRAIN_HOME`. Never copy or regenerate `host.json`: a new identity orphans the ownership and pending writes recorded for the old one. |
-| `transfer_in_progress` | The worktree is `draining`: a writer transfer was prepared and not yet accepted or cancelled. | `fix.next` is `wait`: retry after 30 s; the status read shows the state. |
+| `transfer_in_progress` | The worktree is `draining`: a writer transfer was prepared and not yet accepted or cancelled. | `fix.next` is `wait`: retry after 30 s; the status read shows the state. A transfer prepared more than 30 minutes ago never ends on its own, so its refusal reads `ask_user` and names both exits: `gbrain sources writer transfer accept` on the successor, or `gbrain sources writer transfer cancel <source> --expected-epoch <n>` on the owner host (`--dry-run` previews; the worktree returns to active at the same epoch and the prepared manifest is cleared). A drain an older release prepared records no time and keeps the wait, whose `why` names the cancel. |
 | `clone_in_progress` | The worktree is `recovering`: a topology clone or reclone is in progress. | `wait`: retry after 30 s; it is `active` when the clone finishes. |
 | `binding_missing` | The source has no canonical worktree binding at all. | Claiming a checkout is the host administrator's decision. |
 | `incarnation_changed` | The binding belongs to an earlier incarnation of the source (removed and re-added, or restored). | Re-bind the checkout on the brain host. |
@@ -576,6 +577,38 @@ maintenance job completed (the phase records a partial result). Raise that
 child's timeout with `gbrain config set dream.<phase>.subagent_timeout_ms <ms>`;
 `gbrain dream --phase <phase>` reruns it and spends model tokens, so ask the
 user first. The warning clears once that phase's next child completes.
+
+## Global maintenance stalled
+
+**Doctor reports `global_maintenance_stalled`, or `gbrain autopilot --status`
+exits 1 with a `Global maintenance:` line?** A brain-wide maintenance pass
+stamps `autopilot.last_global_at` only when no phase blocked it. Each blocking
+phase keeps a streak in `autopilot.global_maintenance.progress`, keyed by why
+it blocked: `fail:<code>` (the phase failed), `budget`, `child:<outcome>` or
+`deferred`. After a phase fails with the same code in three passes in a row,
+later passes stamp past it (the job result lists it under
+`pass_completed_with_failing_phase`) and the phase backs off: it is skipped
+for two global intervals, then four, up to a day. Budget, deferral and child
+blockers never let a pass stamp past them; child failures back off too.
+
+Doctor warns when the stamp is older than three global intervals
+(`autopilot.global_floor_min`, 60 minutes by default) while maintenance jobs
+failed or a phase streak is active, fails once it is a week old, and also
+warns while passes stamp past a phase that keeps failing. The message names
+the phase, its blocker key and back-off, or the last failed job.
+
+1. Run the named phase in the foreground to see its error:
+   `gbrain dream --phase <name>`. LLM and embedding phases spend tokens, so
+   ask the user first. With no phase named, read the failed job:
+   `gbrain jobs get <id>`.
+2. Fix the cause the error names, then end the back-off so the next pass
+   runs the phase again: `gbrain autopilot --retry-global --phase <name>`
+   (without `--phase`, every backed-off phase). The streak count stays, so a
+   phase that still fails backs off again. Upgrading gbrain drops every
+   streak, and a phase that fails for a different reason starts a new one.
+3. Confirm with `gbrain doctor --only global_maintenance_stalled`: it is `ok`
+   after a pass completes with the phase passing.
+
 ## auto_chronicle has no effect
 
 **Say to your agent:** *"Why aren't my meetings showing up as timeline events?"*

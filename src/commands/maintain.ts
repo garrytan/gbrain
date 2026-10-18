@@ -16,6 +16,8 @@ import type { BrainHealth } from '../core/types.ts';
 import { buildChecks, computeDoctorReport, type DoctorReport, type Check } from './doctor.ts';
 import { extractStaleFromDB } from './extract.ts';
 import { runCycle, type CycleReport } from '../core/cycle.ts';
+import { ItemRun } from '../core/item-failure.ts';
+import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 
 type ActionStatus = 'ok' | 'would_apply' | 'applied' | 'blocked' | 'skipped';
 
@@ -136,17 +138,33 @@ async function runCycleFreshnessMaintenance(
 
   const sources = await engine.listAllSources();
   const actions: MaintenanceAction[] = [];
+  // One source's cycle throwing blocks that source only; a run-scoped error (abort, lost lock or connection) still stops maintain.
+  const run = new ItemRun('maintain.cycle_sources');
 
   for (const sourceId of sourceIds) {
     const source = sources.find((s) => s.id === sourceId);
     const localPath = source?.local_path ?? null;
     const brainDir = localPath && existsSync(localPath) ? localPath : null;
-    const report: CycleReport = await runCycle(engine, {
-      brainDir,
-      dryRun: false,
-      pull: false,
-      sourceId,
-    });
+    let report: CycleReport;
+    try {
+      report = await runCycle(engine, {
+        brainDir,
+        dryRun: false,
+        pull: false,
+        sourceId,
+      });
+      run.succeed();
+    } catch (error) {
+      const failure = run.fail(sourceId, error);
+      actions.push({
+        name: 'cycle_freshness',
+        status: 'blocked',
+        message: `Source-scoped dream cycle for ${sourceId} stopped with ${failure.code}: ${failure.message}`,
+        details: { source_id: sourceId, brain_dir: brainDir, code: failure.code, error: failure.message, fix: { argv: ['gbrain', 'dream', '--source', sourceId], consent: ['paid'], actor: 'agent', requires_exclusive: false,
+          why: `Reruns the source-scoped dream cycle for ${sourceId} once the cause above is fixed; its paid phases spend only within their configured caps.` } },
+      });
+      continue;
+    }
     actions.push({
       name: 'cycle_freshness',
       status: report.status === 'failed' ? 'blocked' : 'applied',
@@ -197,6 +215,7 @@ Not auto-applied:
     actions,
     after: { health: afterHealth, doctor: afterDoctor },
   };
+  if (actions.some((action) => action.status === 'blocked')) setCliExitVerdict(1);
 
   if (opts.json) {
     console.log(JSON.stringify(report, null, 2));

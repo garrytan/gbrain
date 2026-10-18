@@ -38,6 +38,8 @@ export interface FailedEntry {
   /** Absent: due now. Set once the entry is quarantined. */
   nextRetryAt?: string;
   orgId?: string;
+  /** The typed code of the last ingest failure (a fetch failure records none). */
+  code?: string;
 }
 
 export type FailedLedger = Record<string, FailedEntry>;
@@ -47,7 +49,7 @@ export function isQuarantined(entry: FailedEntry): boolean {
 }
 
 /** Record one failure; a quarantined entry gets its next retry time. */
-export function recordFailedAttempt(ledger: FailedLedger, stub: ConversationStub, nowMs: number): FailedEntry {
+export function recordFailedAttempt(ledger: FailedLedger, stub: ConversationStub, nowMs: number, code: string | null = null): FailedEntry {
   const updatedAt = stub.updatedAt ?? '';
   const prior = ledger[stub.id];
   const attempts = (prior?.updatedAt === updatedAt ? prior.attempts : 0) + 1;
@@ -59,6 +61,7 @@ export function recordFailedAttempt(ledger: FailedLedger, stub: ConversationStub
     lastAttemptAt: new Date(nowMs).toISOString(),
     ...(backoff ? { nextRetryAt: new Date(nowMs + backoff).toISOString() } : {}),
     ...(orgId ? { orgId } : {}),
+    ...(code ? { code } : {}),
   };
   ledger[stub.id] = entry;
   return entry;

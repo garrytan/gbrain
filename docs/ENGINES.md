@@ -425,7 +425,7 @@ and the fix is the read-only `gbrain migrate --to postgres --plan --json`.
 | Cost | Free | Supabase Pro ($25/mo) |
 | Concurrency | Single process | Connection pooling |
 | Backups | Manual (file copy) | Managed by Supabase |
-| Largest page | 24 MiB; 128 MiB stored in segments with `pages.segmented_storage on` (`pages.max_bytes`) | 24 MiB; 256 MiB stored in segments with `pages.segmented_storage on` (`pages.max_bytes`) |
+| Largest page | 128 MiB, stored in segments (`pages.max_bytes`) | 256 MiB, stored in segments (`pages.max_bytes`) |
 
 **The belief ledger lives only in the database.** `belief_events` and its side tables record what the brain had recorded, and when (`gbrain beliefs status`). Markdown carries only current state, so a rebuild from Markdown, `gbrain reinit-pglite` or a dropped database starts an empty history; back up the database itself. After restoring a Postgres (or PGLite) backup, replay the purges made after the backup was taken: until then content purged later is readable again, and `gbrain doctor --only belief_ledger_coverage` reports a restore whose purge replay was partial, unavailable or unverified. Graduation copies the ledger verbatim (equal event keys and digests); the legacy copier refuses a brain that has one.
 
@@ -524,6 +524,54 @@ version bump changes it.
 to connect: it diagnoses the dir from disk, names the repair command, reports
 retained repair backups, and escalates when repairs keep recurring (that
 means the unclean-shutdown genesis is still active — see the ladder's rung 4).
+
+<a id="legacy-pglite-lock"></a>
+### Legacy PGLite lock (`pglite_busy` reason `legacy_owner_unverified`)
+
+A PGLite brain is owned through the stable sibling kernel lock
+`<data-dir>.gbrain-owner.lock`. Brains last opened by an older gbrain may
+still hold that release's lock folder, `<data-dir>/.gbrain-lock/`. The first
+open by a current gbrain removes it automatically only when it can prove the
+old owner is dead: readable metadata with a PID that `kill -0` reports gone
+and, on Linux, the same PID namespace and boot id as this process. A live
+owner keeps the ordinary `pglite_busy` refusal.
+
+When the folder's metadata is torn or missing, records no PID, or (Linux) does
+not prove the PID ran in this namespace since the last boot, waiting never
+helps, so the open refuses `pglite_busy` with reason
+`legacy_owner_unverified` (class consent, exit 3, not retryable). Its fix
+asks the user and starts with the read-only preview; `gbrain doctor` shows
+the same reason and fix on its `connection` check.
+
+1. **Preview.** `gbrain pglite-repair --legacy-lock --dry-run --json [--path <dir>]`
+   never opens the engine and never creates anything. It names the recorded
+   PID, whether `kill -0` says it is running and its command, the processes
+   an open-file scan of `/proc` (Linux) saw holding files under the data dir,
+   and the filesystem type (Linux `statfs`, macOS `df -P` and `mount`), and prints the `plan_hash` and
+   the apply command. This evidence is advisory: it covers only this host and
+   PID namespace and cannot see other containers or other hosts that share the
+   folder.
+2. **Apply, after the user agrees.**
+   `gbrain pglite-repair --legacy-lock --path <dir> --yes --expect <plan_hash>`
+   takes the kernel lock (so no current gbrain can be running), inspects
+   again under it and refuses `legacy_lock_removal_refused` while a process
+   on this host holds the data dir or the recorded PID runs a command that
+   could be gbrain (`live_holder`), or when the data dir is on a network or
+   shared filesystem such as NFS, SMB, 9p, virtiofs or FUSE
+   (`network_filesystem`), or when it cannot confirm the filesystem is local
+   (`filesystem_unverified`: Linux reads `statfs`; macOS reads the mount
+   point from `df -P` and its `mount` line, and counts it local only with
+   the `local` flag and a local type such as apfs or hfs. Other systems, a
+   failed probe, an unrecognised type, a macOS network mount such as smbfs or
+   nfs, and a macOS mount without the `local` flag all refuse). A lock that changed since the preview refuses `preview_changed`.
+   It inspects again after consent, so a holder or change that appears while
+   the prompt waits refuses the same way. Otherwise it moves the folder into
+   `<data-dir>.legacy-lock-removed-<timestamp>/` (nothing is deleted) with a
+   `receipt.json` and the exact restore command (it also puts back the prior
+   `<data-dir>.gbrain-owner.json` bytes, kept as `prior-owner-marker.json`,
+   or removes the new marker when there was none), writes the kernel-v1 marker
+   `<data-dir>.gbrain-owner.json`, and starts the 10-minute WAL-repair
+   quarantine (`<data-dir>.lock-reap.json`). The next ordinary open succeeds.
 
 ## Canonical schema sources
 
@@ -998,6 +1046,25 @@ driver discards that connection. Nothing from the batch was committed and the
 checkpoint did not advance. The message names both errors (redacted, at most
 200 characters each). Fix the cause they name, then run
 `gbrain backfill <kind> --resume`.
+
+<a id="backfill-commit-indeterminate"></a>**`backfill_commit_indeterminate`** (error).
+A `gbrain backfill` batch sent its `COMMIT` and got no verdict from the
+server (for example the connection dropped), so the batch may or may not have
+committed. The run stops without bisecting or skipping anything, and the
+checkpoint stays before the batch. Run `gbrain backfill <kind> --resume`:
+rows that did commit no longer match the backfill and are not redone.
+
+<a id="backfill-skipped-rows"></a>**Skipped backfill rows.** A row whose compute
+or UPDATE fails on its own (a CHECK or type violation, a compute error) is
+isolated by splitting its batch, each part in its own transaction, and recorded
+in the config key `backfill.<kind>.skipped`; the checkpoint moves past it and
+the other rows land. `gbrain backfill <kind>` prints each recorded row with
+its code and the retry command, and every later run retries it first. A row
+that fails with the same content error on 3 consecutive runs (same row, same
+gbrain version) is held: it is reported but not retried until the row or the
+gbrain version changes; `gbrain backfill <kind> --fresh` retries it now. When
+most rows of a run fail, the run stops with `item_failures_systemic` and keeps
+the skip record and checkpoint it began with.
 
 <a id="persistence-consumer-log"></a>**`[persistence] phase=<phase> reason=<code>`**
 (stderr). The resident write consumer could not finish a phase. `reason` is

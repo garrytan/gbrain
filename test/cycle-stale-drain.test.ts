@@ -307,4 +307,34 @@ describe('cycle extract phase stale drain (#4062)', () => {
       `SELECT count(*) AS n FROM timeline_entries t JOIN pages p ON p.id = t.page_id WHERE p.source_id = 'wiki' AND p.slug = 'carol'`);
     expect(Number(row!.n)).toBe(1);
   });
+
+  test('a lost walk write makes the extract phase warn and the same cycle stale drain retries the unstamped page (#6954, GBRA-130 A-1)', async () => {
+    // The walk loses carol's timeline batch. Pre-fix the walk still stamped her,
+    // so the drain never saw her and the entry was lost with an 'ok' phase.
+    writeFileSync(join(brainDir, 'carol.md'), '# Carol\n\n## Timeline\n- **2026-01-02** | Signed the term sheet\n');
+    await engine.executeRaw(
+      `INSERT INTO pages (slug, source_id, type, title, compiled_truth, timeline)
+       VALUES ('carol', 'wiki', 'person', 'Carol', '', '- **2026-01-02** | Signed the term sheet')`,
+    );
+    const addTimeline = spyOn(engine, 'addTimelineEntriesBatch').mockRejectedValueOnce(new Error('pool exhausted'));
+    const err = spyOn(console, 'error').mockImplementation(() => {});
+    const stderr = spyOn(process.stderr, 'write').mockReturnValue(true);
+    try {
+      await withEnv({ GBRAIN_HOME: gbrainHome }, async () => {
+        const report = await runCycle(engine, { brainDir, sourceId: 'wiki', phases: ['extract'] });
+        const extractPhase = report.phases.find(p => p.phase === 'extract');
+        expect(extractPhase?.status).toBe('warn');
+        expect(extractPhase?.summary).toContain('remain due');
+        expect(extractPhase?.details?.stale_pages_drained).toBeGreaterThan(0);
+      });
+    } finally {
+      addTimeline.mockRestore();
+      err.mockRestore();
+      stderr.mockRestore();
+    }
+    expect(await stamped('carol')).toBe(true);
+    const [row] = await engine.executeRaw<{ n: number | string }>(
+      `SELECT count(*) AS n FROM timeline_entries t JOIN pages p ON p.id = t.page_id WHERE p.source_id = 'wiki' AND p.slug = 'carol'`);
+    expect(Number(row!.n)).toBeGreaterThan(0);
+  });
 });

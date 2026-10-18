@@ -74,6 +74,10 @@ const FAILURES: Record<number, Failure> = {
   3: { code: 'source_changed', message: 'file_database_drift: notes/item-3.md differs from the database copy; neither was overwritten' },
 };
 
+/** GBRA-130: every failed item carries the kind's read-only preview for its source as its fix. */
+const PREVIEW_FIX = expect.objectContaining({ argv: ['gbrain', 'repair', 'timeline', '--source', 'default', '--json'], consent: [] });
+const LANE_PREVIEW_FIX = expect.objectContaining({ argv: ['gbrain', 'repair', 'fences', '--source', 'default', '--json'], consent: [] });
+
 const cursorRows = () => engine.executeRaw<{ completed_keys: unknown }>("SELECT completed_keys FROM op_checkpoints WHERE op='repair'");
 
 describe('repair --apply continues past a per-item invalid_params / source_changed refusal (PR #6459)', () => {
@@ -85,8 +89,8 @@ describe('repair --apply continues past a per-item invalid_params / source_chang
     expect(result).toMatchObject({ applied: 3, skipped: 0, complete: true });
     expect(result.stopped).toBeUndefined();
     expect(result.failed).toEqual([
-      { item: 'default:notes/item-1', source_id: 'default', slug: 'notes/item-1', reason: 'invalid_params', message: expect.stringContaining('not a valid slug'), retry: 'next_full_scan' },
-      { item: 'default:notes/item-3', source_id: 'default', slug: 'notes/item-3', reason: 'source_changed', message: expect.stringContaining('file_database_drift'), retry: 'next_full_scan' },
+      { item: 'default:notes/item-1', source_id: 'default', slug: 'notes/item-1', reason: 'invalid_params', message: expect.stringContaining('not a valid slug'), retry: 'next_full_scan', fix: PREVIEW_FIX },
+      { item: 'default:notes/item-3', source_id: 'default', slug: 'notes/item-3', reason: 'source_changed', message: expect.stringContaining('file_database_drift'), retry: 'next_full_scan', fix: PREVIEW_FIX },
     ]);
     expect(JSON.stringify(result)).not.toContain('secret');
     expect(result.outcomes).toEqual({ repaired: 3, failed: 2 });
@@ -138,7 +142,7 @@ describe('repair --apply continues past a per-item invalid_params / source_chang
     expect(stub.store.get(1)).toBe('repaired item 1');
   });
 
-  test('other refusals still stop the run as before (write_pending stops; an unexpected error rethrows)', async () => {
+  test('other refusals still stop the run as before (write_pending stops; a lost connection rethrows; an unexpected error is one item\'s failure, GBRA-130)', async () => {
     const stub = stubKind('timeline', 3, {});
     stub.handler.apply = async (_c, it) => {
       stub.attempts.push(it.cursor.id);
@@ -152,7 +156,12 @@ describe('repair --apply continues past a per-item invalid_params / source_chang
     await resetPgliteState(engine);
     const boom = stubKind('timeline', 3, {});
     boom.handler.apply = async (_c, it) => { if (it.cursor.id === 0) throw new Error('disk on fire'); return { applied: true, outcome: 'repaired' }; };
-    await expect(runRepair(ctx(), boom.handler, await resolveRepairScope(engine), { apply: true, spec: boom.spec })).rejects.toThrow('disk on fire');
+    const isolated = await runRepair(ctx(), boom.handler, await resolveRepairScope(engine), { apply: true, spec: boom.spec });
+    expect(isolated).toMatchObject({ applied: 2, complete: true, failed: [{ slug: 'notes/item-0', reason: 'internal', message: 'disk on fire', retry: 'next_full_scan' }] });
+    await resetPgliteState(engine);
+    const lost = stubKind('timeline', 3, {});
+    lost.handler.apply = async (_c, it) => { if (it.cursor.id === 0) throw Object.assign(new Error('Connection terminated unexpectedly'), { code: '08006' }); return { applied: true, outcome: 'repaired' }; };
+    await expect(runRepair(ctx(), lost.handler, await resolveRepairScope(engine), { apply: true, spec: lost.spec })).rejects.toThrow('Connection terminated');
   });
 
   test('the human output counts the failures, names the slug and the full-scan command; the command exits 1', async () => {
@@ -187,8 +196,8 @@ describe('repair --apply continues past a per-item invalid_params / source_chang
     const lane = await runContentLane(engine, await resolveRepairScope(engine), { apply: true, kinds: ['fences'], registry: [stub.spec] });
     const [result] = lane.results as RepairResult[];
     expect(result!.failed.map(f => f.slug)).toEqual(['notes/item-1', 'notes/item-3']);
-    expect(lane.failed).toEqual([{ kind: 'fences', item: 'default:notes/item-1', source_id: 'default', slug: 'notes/item-1', reason: 'invalid_params', message: expect.any(String), retry: 'next_full_scan' },
-      { kind: 'fences', item: 'default:notes/item-3', source_id: 'default', slug: 'notes/item-3', reason: 'source_changed', message: expect.any(String), retry: 'next_full_scan' }]);
+    expect(lane.failed).toEqual([{ kind: 'fences', item: 'default:notes/item-1', source_id: 'default', slug: 'notes/item-1', reason: 'invalid_params', message: expect.any(String), retry: 'next_full_scan', fix: LANE_PREVIEW_FIX },
+      { kind: 'fences', item: 'default:notes/item-3', source_id: 'default', slug: 'notes/item-3', reason: 'source_changed', message: expect.any(String), retry: 'next_full_scan', fix: LANE_PREVIEW_FIX }]);
     expect(lane.stopped).toEqual([]);
   });
 });

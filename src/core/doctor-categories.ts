@@ -201,6 +201,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'undeclared_db_only_pages',
   // #6696 B5: live pages whose canonical file is missing on the owner host (doctor/checks/ghost-pages.ts).
   'ghost_pages',
+  // #6948: files recorded by several live pages (origin twins) and the pages_live_origin_key index (doctor/checks/origin-twins.ts).
+  'origin_twins',
   // #6729: inexact renames whose identity sync did not keep, until the pair gets a disposition (doctor/checks/rename-identity-downgrades.ts).
   'rename_identity_downgrades',
   // #6609: live pages of a classic checkout whose recorded file a full sync would not find (doctor/checks/missing-recorded-files.ts).
@@ -334,6 +336,8 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'queue_health',
   // #4578: brain-wide maintenance jobs dying at their deadline.
   'global_maintenance_timeouts',
+  // GBRA-130 C-6: no completed brain-wide pass while jobs fail or a phase keeps blocking it.
+  'global_maintenance_stalled',
   'embed_backfill_stalled',
   'connector_account_mismatch',
   // #5157: queued jobs from before the v0.50 authority cutover block every worker.

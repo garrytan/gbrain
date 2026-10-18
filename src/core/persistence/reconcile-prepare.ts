@@ -24,6 +24,7 @@ import { stabilizeSafetyAssessments } from './reconcile-safety.ts';
 import { ABSENT_FILE_HASH, assertReconcilePins, readReconcileState, reconcileFileReading, reconcileReadOptions, staleReconcile, validateReconcileArtifact, type ReconcileState } from './reconcile-state.ts';
 import { verifyReconcileBackup } from './reconcile-backup.ts';
 import { assertAutoDecisions } from './reconcile-additive.ts';
+import { bindOrigin } from './origin-guard.ts';
 
 const pageFix = (sourceId: string, slug: string): Action => readFix(`Shows page ${slug} in source ${sourceId} as stored now, with its revision, read-only.`,
   { argv: ['gbrain', 'get', '--source', sourceId, '--', slug] });
@@ -158,12 +159,11 @@ export async function prepareReconcileMutation(engine: BrainEngine, row: WriteRe
     apply: async tx => {
       await ready.apply(tx);
       if (state.originSourcePath) {
-        await tx.executeRaw(`UPDATE pages SET source_path=$3 WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL
-          AND source_path IS NULL`, [row.source_id, row.slug, state.originSourcePath]);
+        await bindOrigin(tx, { sourceId: row.source_id, slug: row.slug, sourcePath: state.originSourcePath, onlyIfUnset: true, liveOnly: true });
       }
       // The page has a canonical origin (adopted above, or already recorded, #6536): drop the #5254 database-only classification.
       await tx.executeRaw(`UPDATE pages SET database_only_reason=NULL WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL
-        AND database_only_reason='unbound_source' AND source_path IS NOT NULL`, [row.source_id, row.slug]);
+        AND database_only_reason IN ('unbound_source', 'origin_twin') AND source_path IS NOT NULL`, [row.source_id, row.slug]);
       if (!ready.noop) { await prepared.project!(tx); await sealPageTextProjection(tx, row.slug, row.source_id); }
       const final = await tx.readPageSnapshot(row.slug, { sourceId: row.source_id });
       const scanStateTransferred = final ? await transferLegacyAtomPageState(tx, state.snapshot, final) : false;

@@ -24,6 +24,7 @@ import { sha256 } from './digest.ts';
 import type { PreparedMutation } from './coordinator.ts';
 import type { WriteRequest } from './model.ts';
 import type { PreparedContentImport } from './prepared-import.ts';
+import { bindOrigin } from './origin-guard.ts';
 
 /** The frozen intent fields of an image entry: the bytes as base64 and their hash (`rawHash` and `content` agree on a committed, clean file). */
 export function frozenImageIntent(bytes: Buffer): { content: string; contentHash: string } {
@@ -94,7 +95,7 @@ export async function prepareManagedSyncImage(engine: BrainEngine, row: WriteReq
     noop: ready.noop && !ctx.renamedFrom, contentUnchanged: ready.noop && !ctx.renamedFrom, deferEmbedding: true, apply: async tx => {
       if (ctx.renamedFrom) { await tx.createVersion(ctx.renamedFrom.slug, { sourceId: row.source_id }); await tx.softDeletePage(ctx.renamedFrom.slug, { sourceId: row.source_id }); }
       await ready.apply(tx);
-      await tx.executeRaw('UPDATE pages SET source_path=$3 WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL AND source_path IS DISTINCT FROM $3', [row.source_id, row.slug, p.sourcePath]);
+      await bindOrigin(tx, { sourceId: row.source_id, slug: row.slug, sourcePath: p.sourcePath, liveOnly: true });
       await ctx.releaseHold(tx);
       await ctx.recordProvenance(tx);
       mutation.postimage = await tx.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });

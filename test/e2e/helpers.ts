@@ -10,6 +10,7 @@
 import { readFileSync, existsSync, readdirSync, statSync } from 'fs';
 import { join, resolve, relative, dirname, basename, extname } from 'path';
 import { PostgresEngine } from '../../src/core/postgres-engine.ts';
+import { ORIGIN_INDEX } from '../../src/core/persistence/origin-index.ts';
 import * as db from '../../src/core/db.ts';
 import { importFromContent } from '../../src/core/import-file.ts';
 import { parseMarkdown } from '../../src/core/markdown.ts';
@@ -173,6 +174,9 @@ export async function setupDB(options: { replayMigrations?: boolean } = {}): Pro
   // MIGRATIONS array and only run when engine.initSchema() executes them.
   // Idempotent: re-running migrations on an already-migrated DB is a no-op.
   await engine.initSchema();
+  // #6948: a test that seeds legacy origin twins drops pages_live_origin_key, which the migrations do not rebuild on
+  // an already-migrated database; the emptied tables hold no twin, so every file starts with the index a fresh brain has.
+  await engine.executeRaw(ORIGIN_INDEX.sql);
   return engine;
 }
 

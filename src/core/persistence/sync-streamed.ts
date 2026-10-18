@@ -11,7 +11,10 @@
  * rewritten). A file the streamed path refuses fails its request with the
  * refusal's code, and the run holds it (`holdFailedFenceRequest`). A rename
  * moves the page in the publication and applies the preparation made at the
- * new path.
+ * new path. The import targets the admitted page (`row.slug`, the page that
+ * records the file as its origin, as the inline import does), and the
+ * publication records the origin through `bindOrigin`; several live pages
+ * recording the file are held `origin_conflict` by discovery (#6948).
  */
 import { createReadStream } from 'node:fs';
 import { lstat } from 'node:fs/promises';
@@ -33,6 +36,7 @@ import { SYNC_READ_BOUND, type TreeBlob } from './sync-blobs.ts';
 import { recordSyncImportProvenance, type SyncImportProvenanceBase } from './sync-holds.ts';
 import type { WriteRequest } from './model.ts';
 import type { SyncIntent, SyncPreparedMutation } from './sync-prepare.ts';
+import { bindOrigin } from './origin-guard.ts';
 
 /** A frozen Markdown file over the single-string ceiling: the bytes the owner streams and verifies. */
 export interface SyncBodyRef { kind: 'git_blob' | 'input_file'; sha256: string; bytes: number; blob_oid: string }
@@ -96,14 +100,12 @@ export async function prepareManagedSyncStreamed(engine: BrainEngine, row: Write
   let ready: StreamedPreparedImport | undefined;
   enterClaimStep(ctx.clock, 'import_content', undefined, 'fs');
   const result = await importStreamedMarkdownFile(engine, filePath, p.sourcePath, { sourceId: row.source_id, noEmbed: true, ...(ctx.activePack ? { activePack: ctx.activePack } : {}),
-    coordinated: { snapshot: base, sha256: ref.sha256, moved: !!renamed, prepare: async value => { ready = value; return value.result; },
+    coordinated: { snapshot: base, sha256: ref.sha256, slug: row.slug, moved: !!renamed, prepare: async value => { ready = value; return value.result; },
       owner: { kind: 'sync', principalKind: row.principal_kind, principalId: row.principal_id, baseRevision: base?.revision ?? null } } }, stat, policy)
     .catch(error => { throw error instanceof OperationError && error.code === 'source_changed' ? changed() : error; });
   if (!ready) throw result.refusal ? ctx.contentRefusal(result.refusal) : refuse('invalid_params', result.error ?? 'The sync file could not be prepared.',
     `The file could not be prepared as page ${row.slug}.`);
   const prepared: StreamedPreparedImport = ready;
-  if (prepared.slug !== row.slug) throw refuse('revision_conflict', 'A different page already owns this file identity; resolve the duplicate before syncing.',
-    `Page ${prepared.slug} already holds the content identity of ${row.slug}; resolve the duplicate pages first.`);
   if (prepared.observedRevision !== (base?.revision ?? null)) throw refuse('revision_conflict', 'The page changed during sync preparation.',
     `Page ${renamed?.slug ?? row.slug} changed while this sync was being prepared.`);
   const source = { sourceId: row.source_id };
@@ -124,7 +126,7 @@ export async function prepareManagedSyncStreamed(engine: BrainEngine, row: Write
       await prepared.apply(tx);
       // An unchanged body keeps its chunks (the no-op required a sealed page), so the move's new revision is sealed here.
       if (renamed && prepared.noop) await sealSegmentedPage(tx, renamed.pageId);
-      await tx.executeRaw('UPDATE pages SET source_path=$3 WHERE source_id=$1 AND slug=$2 AND source_path IS DISTINCT FROM $3', [row.source_id, row.slug, p.sourcePath]);
+      await bindOrigin(tx, { sourceId: row.source_id, slug: row.slug, sourcePath: p.sourcePath });
       await tx.executeRaw("UPDATE pages SET database_only_reason=NULL WHERE source_id=$1 AND slug=$2 AND database_only_reason='unbound_source'", [row.source_id, row.slug]);
       const final = await tx.readPageSnapshot(row.slug, { ...source, includeDeleted: true });
       await pipelined(tx, [

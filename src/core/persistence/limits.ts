@@ -1,5 +1,5 @@
 import { opError } from '../ops/contract.ts';
-import { PAGE_BODY_CONFIG_KEYS, pageRecoveryBytes } from '../page-body/limits.ts';
+import { PAGE_BODY_CONFIG_KEYS, pageRecoveryBytes, segmentedPageCeiling } from '../page-body/limits.ts';
 import { DEFAULT_JOURNAL_LIMITS, type JournalLimits, type SqlEngine } from './model.ts';
 import { COMPACTED_HEADROOM_BYTES, RECEIPT_RESERVATION_FLOOR } from './receipt-bytes.ts';
 
@@ -25,14 +25,28 @@ export function parseJournalConfigValue(key:string,value:string):number {
 }
 /**
  * Database configuration applies to every server sharing this brain. An unset `worktree_recovery_bytes` defaults to
- * room for the largest page `pages.max_bytes` admits (page-body/limits.ts `pageRecoveryBytes`, never below 256 MiB); an
+ * room for the largest page `pages.max_bytes` admits and the largest page stored in segments (page-body/limits.ts
+ * `pageRecoveryBytes`, never below 256 MiB; the stored maximum is one probe of pages_segmented_body_bytes_idx, v260, or
+ * the engine ceiling while that index is not valid: JOURNAL_LIMITS_SQL); an
  * engine that is not PGLite (or a stub without a `kind`) counts as Postgres, the larger ceiling.
  */
+/**
+ * The journal's one config statement. Its last row (key NULL) is the largest page stored in segments, read only while
+ * pages_segmented_body_bytes_idx is valid (the CASE leaves the subquery unexecuted otherwise, so an index the online
+ * v260 build left INVALID never turns each limit read into a scan of pages); 'unindexed' then stands for a page at the
+ * engine ceiling, the most any stored page can hold.
+ */
+export const JOURNAL_LIMITS_SQL=`SELECT key,value FROM config WHERE key LIKE 'persistence.limits.%' OR key IN ('${PAGE_BODY_CONFIG_KEYS.segmentedStorage}','${PAGE_BODY_CONFIG_KEYS.maxBytes}')
+    UNION ALL SELECT NULL,CASE WHEN (SELECT indisvalid FROM pg_index WHERE indexrelid=to_regclass('pages_segmented_body_bytes_idx')) IS TRUE
+      THEN (SELECT max(body_bytes) FROM pages WHERE body_storage='segmented')::text ELSE 'unindexed' END`;
 export async function readJournalLimits(engine:SqlEngine & { kind?: string },overrides?:Partial<JournalLimits>):Promise<JournalLimits> {
-  const rows=await engine.executeRaw<{key:string;value:string}>(`SELECT key,value FROM config WHERE key LIKE 'persistence.limits.%' OR key IN ('${PAGE_BODY_CONFIG_KEYS.segmentedStorage}','${PAGE_BODY_CONFIG_KEYS.maxBytes}')`);
-  const configured=new Map(rows.map(row=>[row.key,row.value]));
-  const limits={...DEFAULT_JOURNAL_LIMITS,worktreeRecoveryBytes:pageRecoveryBytes(engine.kind === 'pglite' ? 'pglite' : 'postgres',configured.get(PAGE_BODY_CONFIG_KEYS.segmentedStorage) ?? null,
-    configured.get(PAGE_BODY_CONFIG_KEYS.maxBytes) ?? null,DEFAULT_JOURNAL_LIMITS.worktreeRecoveryBytes)};
+  const rows=await engine.executeRaw<{key:string|null;value:string|null}>(JOURNAL_LIMITS_SQL);
+  const kind=engine.kind === 'pglite' ? 'pglite' : 'postgres';
+  const configured=new Map(rows.filter(row=>row.key!==null && row.value!==null).map(row=>[row.key!,row.value!]));
+  const stored=rows.find(row=>row.key===null)?.value ?? null;
+  const storedSegmented=stored==='unindexed' ? segmentedPageCeiling(kind) : Number(stored ?? 0);
+  const limits={...DEFAULT_JOURNAL_LIMITS,worktreeRecoveryBytes:pageRecoveryBytes(kind,configured.get(PAGE_BODY_CONFIG_KEYS.segmentedStorage) ?? null,
+    configured.get(PAGE_BODY_CONFIG_KEYS.maxBytes) ?? null,DEFAULT_JOURNAL_LIMITS.worktreeRecoveryBytes,storedSegmented)};
   for(const key of Object.keys(limits) as Array<keyof JournalLimits>) {
     const value=configured.get(journalLimitKey(key));
     if(value!==undefined) limits[key]=parseJournalConfigValue(journalLimitKey(key),value);

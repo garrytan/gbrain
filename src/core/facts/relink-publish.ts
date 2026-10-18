@@ -128,6 +128,19 @@ async function classify(db: BrainEngine, row: WriteRequest, intent: RelinkIntent
         : { id: f.id, action: 'skip', reason: 'visibility_conflict' });
       continue;
     }
+    // B-10: an ontology observation the page already holds at the same key would collide on
+    // idx_facts_ontology_stint_dedup once linked; it retires as that row's duplicate instead.
+    if (v.dimension != null) {
+      const [held] = await db.executeRaw<{ id: number | string }>(
+        `SELECT t.id FROM facts m JOIN facts t ON t.source_id = m.source_id AND t.dimension = m.dimension AND t.value_hash = m.value_hash
+             AND t.valid_from = m.valid_from AND t.id <> m.id
+           WHERE m.source_id=$1 AND m.id=$3 AND t.entity_slug=$2 AND t.source_markdown_slug=$2
+           ORDER BY (t.expired_at IS NULL) DESC, t.id LIMIT 1`, [row.source_id, row.slug, f.id]);
+      if (held) {
+        out.push({ id: f.id, action: 'retire', duplicateOf: Number(held.id) });
+        continue;
+      }
+    }
     const exact = await decideSingleFact(db, row.source_id,
       { entity_slug: row.slug, fact: String(v.fact), kind: v.kind as never, visibility }, null);
     if (exact.status === 'duplicate' && exact.candidate) {

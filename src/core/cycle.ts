@@ -59,7 +59,7 @@ import { assertValidSourceId } from './source-id.ts';
 import { PHASE_SCOPE, SOURCE_FRESHNESS_PHASES, type PhaseScope } from './cycle/phase-scope.ts';
 import { acquireLeaseSet, maintenanceLockBusySkip, MAINTENANCE_LEASE_ID } from './cycle/lock-set.ts';
 import { assertEmbedNotStalled } from './embed-stall.ts'; import { embedBackfillFix } from './embed-consent.ts';
-import { anyAbortSignal } from './abort-signals.ts';
+import { anyAbortSignal } from './abort-signals.ts'; import { urlClonePullBlock, urlClonePullBlockSummary } from './url-clone.ts';
 import { maybeRefreshPlannerStats } from './planner-stats.ts'; import { listSourceChangedPages, sourceCycleWindowStamp, unionSlugSets, type SourceCycleWindow } from './cycle/source-window.ts';
 
 export { PHASE_SCOPE, SOURCE_FRESHNESS_PHASES, type PhaseScope } from './cycle/phase-scope.ts';
@@ -1303,6 +1303,7 @@ async function runPhaseSync(
     // doesn't report a clean run over a wedged source. Timeout-class partials
     // keep the pre-existing 'ok' mapping (they converge on retry by design).
     const pullFailedPartial = result.status === 'partial' && result.reason === 'pull_failed';
+    const pullBlock = pullFailedPartial && sourceId ? await urlClonePullBlock(engine, sourceId) : null;
     // Untracked-gap fix: uncommitted working-tree drift (files invisible to
     // commit-driven sync) surfaces as 'warn', not a clean 'ok +0' — a nightly
     // cycle over a dirty vault otherwise reports convergence it never achieved.
@@ -1321,7 +1322,7 @@ async function runPhaseSync(
       duration_ms: 0,
       summary: dryRun
         ? `${syncedCount} page(s) would sync, ${result.deleted} would delete`
-        : pullFailedPartial
+        : pullBlock ? urlClonePullBlockSummary(pullBlock) : pullFailedPartial
           ? `git pull failed, nothing imported — source may be behind its remote (sync anchor unchanged)`
           : `+${result.added} added, ~${result.modified} modified, -${result.deleted} deleted${uncommittedNote}${upstreamNote}`,
       details: {
@@ -1335,6 +1336,7 @@ async function runPhaseSync(
         syncStatus: result.status,
         ...(result.reason ? { syncReason: result.reason } : {}),
         ...(result.uncommitted ? { uncommitted: result.uncommitted } : {}),
+        ...(pullBlock ? { pull_blocked: { code: pullBlock.code, paths: pullBlock.paths, fix: pullBlock.fix } } : {}),
         dryRun,
       },
       pagesAffected: result.pagesAffected,
@@ -1397,6 +1399,8 @@ async function runPhaseExtract(
     }
     // Incremental path: if sync told us which slugs changed, only extract those.
     // On a 54K-page brain this turns a 10-minute full walk into a sub-second pass.
+    // PR #6954: a lost link/timeline write leaves its pages unstamped (still due), so the stale drain below retries them; warn, like A-1.
+    let lostWrites: string | null = null;
     const result = await runExtractCore(engine, {
       mode: 'all',
       jsonMode: false, // batch errors stay human-readable on stderr, as in a plain `gbrain extract`
@@ -1406,7 +1410,7 @@ async function runPhaseExtract(
       signal,
       sourceId,
       includeFrontmatter,  // honored on the incremental (slugs) path only
-    });
+    }).catch((e: unknown) => { if ((e as { code?: unknown } | null)?.code !== 'EXTRACT_BATCH_WRITE_FAILED') throw e; lostWrites = `; ${(e as Error).message}`; return null; });
     const linksCreated = result?.links_created ?? 0;
     const timelineCreated = result?.timeline_entries_created ?? 0;
     const incremental = changedSlugs !== undefined;
@@ -1424,6 +1428,8 @@ async function runPhaseExtract(
     // hiccup must not fail the phase).
     let staleRemaining: number | undefined;
     let staleDetails: Record<string, unknown> = {};
+    // GBRA-130 A-1: pages the drain could not derive, or a drain its breaker stopped, make the phase warn with the page and code.
+    let staleWarning: string | null = null;
     try {
       const { extractStaleFromDB } = await import('../commands/extract.ts');
       const drained = await extractStaleFromDB(engine, {
@@ -1442,20 +1448,23 @@ async function runPhaseExtract(
         stale_timeline_created: drained.timelineCreated,
         staleRemaining: drained.staleRemaining, ...(drained.mentions ? { mention_pages: drained.mentions.pages, mention_links_created: drained.mentions.created, mention_due: drained.mentions.remaining, mention_state: drained.mentions.state } : {}),
       };
+      const failures = (await import('./cycle/connector-extract.ts')).staleDrainFailures(drained);
+      if (failures) { staleDetails = { ...staleDetails, ...failures.details }; staleWarning = failures.note; }
     } catch (e) {
-      if ((e as { code?: unknown })?.code === 'EXTRACT_BATCH_WRITE_FAILED') throw e;
       staleDetails = { stale_drain_error: e instanceof Error ? e.message : String(e) };
+      // The breaker stopped a source-scoped drain because most of its pages failed: warn, not a hiccup.
+      if ((e as { code?: unknown } | null)?.code === 'item_failures_systemic') staleWarning = `; the stale drain stopped: ${staleDetails.stale_drain_error}`;
     }
     const { sweepStaleRelationships } = await import('./link-relationships.ts');
     staleDetails = { ...staleDetails, ...(await sweepStaleRelationships(engine)) };
     staleDetails = { ...staleDetails, ...(await (await import('./belief/coverage-report.ts')).cycleBeliefReconcile(engine, sourceId)) };
     return {
       phase: 'extract',
-      status: 'ok',
+      status: staleWarning || lostWrites ? 'warn' : 'ok',
       duration_ms: 0,
-      summary: incremental
+      summary: (incremental
         ? `${linksCreated} link(s), ${timelineCreated} timeline entries (incremental: ${changedSlugs.length} slugs)`
-        : `${linksCreated} link(s), ${timelineCreated} timeline entries`,
+        : `${linksCreated} link(s), ${timelineCreated} timeline entries`) + (lostWrites ?? '') + (staleWarning ?? ''),
       details: {
         linksCreated, timelineCreated,
         pages_processed: result?.pages_processed ?? 0,
@@ -3136,7 +3145,7 @@ async function runCycleUnscoped(
   // autopilot's per-source freshness gate next tick. Skipped when:
   //   - opts.sourceId is unset (legacy callers — autopilot still here)
   //   - engine is null (no-DB path)
-  //   - failed/skipped or fail-bearing partial (warn-only partial still stamps)
+  //   - status is 'failed' or 'skipped' (don't mark a non-run as fresh)
   //   - dryRun (writes are out of scope)
   //
   // #3504: the write is still best-effort in the sense that it never throws out
@@ -3147,7 +3156,7 @@ async function runCycleUnscoped(
   // timestamp post-failure is still higher than missing a successful write, so
   // the stamp itself is unchanged — only the reporting is.
   let stampWriteFailed: { source_id: string; error: string } | undefined;
-  if (opts.sourceId && phases.length > 0 && engine && !dryRun && !aborted && (status === 'ok' || status === 'clean' || (status === 'partial' && !phaseResults.some(p => p.status === 'fail')))) {
+  if (opts.sourceId && phases.length > 0 && engine && !dryRun && !aborted && (status === 'ok' || status === 'clean' || status === 'partial')) {
     try {
       const nowIso = new Date().toISOString();
       // #2194 fix #3 (the cycle split): `last_source_cycle_at` is the NEW gate

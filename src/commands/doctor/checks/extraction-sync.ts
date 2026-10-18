@@ -14,7 +14,7 @@ import { lagFromContentMs, loadSyncFreshnessSources, resolveStalenessCeilingSeco
 import { resolveHoursEnv } from '../../../core/env-number.ts';
 import { chunkerStamp } from '../../../core/chunkers/code.ts';
 import { smallBrainBacklogNote } from '../../../core/link-extraction-watermark.ts';
-import { extractionLagVerdict, extractionRoutes, readExtractionLag } from '../../../core/extraction-lag.ts';
+import { extractionLagVerdict, extractionRoutes, heldExtractionReport, readExtractionLag } from '../../../core/extraction-lag.ts';
 import { isMissingSchemaObject } from '../../../core/utils.ts';
 import {
   loadStorageConfig,
@@ -96,6 +96,7 @@ export { EXTRACTION_LAG_WARN_PCT_DEFAULT, EXTRACTION_LAG_MIN_PAGES } from '../..
  *
  * `opts.sourceId` scopes both the denominator and the stale count to one
  * source (the explicit-only `--source` parse, like orphan_ratio).
+ * GBRA-130 A-1: held pages (`heldExtractionReport`) are counted apart and warn on any brain size.
  */
 export async function checkLinksExtractionLag(
   engine: BrainEngine,
@@ -107,11 +108,15 @@ export async function checkLinksExtractionLag(
     // #6803 (D1): one statement and one verdict shared with the sync nudge; attendance-blocked pages (#5761: stale
     // only by an unresolved attendee, `extract --stale` cannot clear them) are reported apart from lag.
     const lag = await readExtractionLag(engine, { sourceId });
-    const { total, actionable: stale, attendance_blocked: attendanceBlocked } = lag;
+    const { total, actionable: stale, attendance_blocked: attendanceBlocked, held = 0 } = lag;
     if (total === 0) {
       return { name, status: 'ok', message: 'Extraction lag not applicable (no pages)' };
     }
     const verdict = extractionLagVerdict(lag, sourceId);
+    const { note: heldNote, fix: heldFix } = await heldExtractionReport(engine, held, sourceId);
+    if (verdict.skipped && heldFix) {
+      return { name, status: 'warn', message: `Extraction lag not graded (${total} pages, too few to assess)${heldNote}`, details: { total, stale, held, source_id: sourceId ?? null }, fix: heldFix };
+    }
     if (verdict.skipped) {
       return { name, status: 'ok', message: `Extraction lag not applicable (${total} pages — too few to assess)${await smallBrainBacklogNote(engine)}` };
     }
@@ -121,17 +126,19 @@ export async function checkLinksExtractionLag(
       ? `. ${attendanceBlocked} more page(s) wait on unresolved attendees; the next extraction clears each once its attendee's person page exists in the meeting's source (docs/guides/attendance-evidence.md)`
       : '';
     const mentionNote = lag.mention_due ? `; ${lag.mention_due} page(s) await the mention pass (last pass: ${lag.mention_last_pass_at ?? 'never'})` : '';
-    const details: Record<string, unknown> = { total, stale, attendance_blocked: attendanceBlocked, pct: Number(pctStr), warn_pct: verdict.warn_pct, fail_pct: verdict.fail_pct,
+    const details: Record<string, unknown> = { total, stale, attendance_blocked: attendanceBlocked, held, pct: Number(pctStr), warn_pct: verdict.warn_pct, fail_pct: verdict.fail_pct,
       source_id: sourceId ?? null, mention_due: lag.mention_due, mention_last_pass_at: lag.mention_last_pass_at };
     if (verdict.status === 'ok') {
-      return { name, status: 'ok', message: `Extraction current: ${stale}/${total} pages (${pctStr}%) stale${scope}${mentionNote}${blockedNote}`, details };
+      return { name, status: held ? 'warn' : 'ok', message: `Extraction current: ${stale}/${total} pages (${pctStr}%) stale${scope}${mentionNote}${blockedNote}${heldNote}`, details,
+        ...(heldFix ? { fix: heldFix } : {}) };
     }
     const { fix, decision, routes } = extractionRoutes(lag, { sourceId, remote: opts?.remote });
     details.routes = routes;
     details.decision = decision;
     const fixText = `Run: ${routes.map(route => `${route.argv.join(' ')} (${route.label})`).join(', or ')}`;
     const what = verdict.status === 'fail' ? `need link/timeline extraction (> ${verdict.fail_pct}% fail threshold)` : 'have un-extracted edges';
-    return { name, status: verdict.status, message: `${stale}/${total} pages (${pctStr}%)${scope} ${what}${mentionNote}. ${fixText}${blockedNote}`, details, fix };
+    if (heldFix) details.held_fix = heldFix;
+    return { name, status: verdict.status, message: `${stale}/${total} pages (${pctStr}%)${scope} ${what}${mentionNote}. ${fixText}${blockedNote}${heldNote}`, details, fix };
   } catch (e) {
     // Pre-v112 brain: links_extracted_at column doesn't exist yet. Graceful OK
     // (migration/bootstrap adds it; nothing to assess until then).

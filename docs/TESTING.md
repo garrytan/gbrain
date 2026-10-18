@@ -852,16 +852,8 @@ build. A guard whose pattern rots into a permanently-green no-op fails CI
 instead of masquerading as coverage.
 
 A guard may carry extra known-bad trees named `bad-<variant>/`; each one must
-fail on its own. Refactor wave 1 uses them to prove that every scanner naming
-a file the wave splits also scans the new module locations
-(`src/core/engine-sql/`, `src/core/schema-migrations/`, `src/commands/sync/`,
-`src/commands/doctor/checks/`, `src/commands/serve-http-*.ts`,
-`src/core/minions/handlers/`): `check-jsonb-pattern.sh`,
-`check-engine-dynamic-import.sh`, `check-source-config-leak.sh`,
-`check-no-legacy-getconnection.sh`, `check-operations-filter-bypass.sh`,
-`check-source-id-projection.sh` (engine-sql) and `check-search-path.sh` (the
-generated PGLite template) each have a bad fixture placed inside the new path. The checklist
-of every script, workflow, helper and doc that names a split file is
+fail on its own. Refactor wave 1 adds one inside each split module location for
+every scanner that names a split file, listed in
 [`docs/designs/refactor-wave-1/path-consumers.md`](designs/refactor-wave-1/path-consumers.md).
 
 #### Layering guard
@@ -1090,18 +1082,15 @@ general; the authoring gate above owns that.
 `scripts/check-function-size.ts` (`bun run check:function-size`, in
 `bun run verify`, about 1.5 s) measures every function-like node in
 `src/**/*.ts` except `*.generated.ts` and `.d.ts` with the TypeScript compiler
-API: function declarations, methods, constructors, accessors, arrow functions
-and function expressions, including object-literal and class-property forms.
-A nested function is measured on its own, and its lines also count toward the
-function that contains it. Code under `test/` is out of scope.
+API, every function form included. A nested function is measured on its own
+and also counts toward its parent. Code under `test/` is out of scope.
 
 `scripts/function-size-baseline.tsv` holds one row per function over 300
 lines: `path`, `name`, `lines`, `justification`. The name is a path built from
 declarations, property names and call context, never line numbers, so edits
 above a function do not touch its row: `PGLiteEngine.initSchema`,
-`runServeHttp>app.post('/mcp')`, `MIGRATIONS[v131].handler`. `>` enters a
-function, `.` a member, `=` a call whose result is bound, and a repeated key
-gets a `#2` ordinal. The guard fails when a function over 300 lines has no
+`runServeHttp>app.post('/mcp')`, `MIGRATIONS[v131].handler` (key grammar in the
+script header). The guard fails when a function over 300 lines has no
 row, a baselined function grows, a baselined function drops to 300 lines or
 fewer (remove the row), a row has more than 50 lines of stale slack (lower
 it), a row names a function that no longer exists, or a row is malformed,
@@ -1113,16 +1102,30 @@ raise.
 Each failure prints `FAIL: <file:line> <what>` with the computed key, then one
 `Why:` / `Fix:` / `See:` block. The fix is extraction: move a cohesive block
 into a named helper or sibling module (phase, stage or handler-table pattern).
-After a move-only commit changes a function's key, run
-`bun scripts/check-function-size.ts --transfer`. It rewrites a missing row to
-the one unbaselined over-limit function whose whitespace-normalized text is
-identical to the old function at `HEAD` (`--from <ref>` for another base),
-apart from an added leading `export` and module specifiers re-relativized to
-the new directory (each resolved against its own file, so a retargeted
-specifier still refuses), keeping lines and justification, and leaves
-everything else for review.
+After a move-only commit changes a function's key,
+`bun scripts/check-function-size.ts --transfer` moves the row to the
+verified identical function (rules in the script header).
 Fixtures: `test/fixtures/guards/check-function-size.ts/{bad,good}`; every rule
 is driven in `test/scripts/check-function-size.test.ts`.
+
+### Pathological states
+
+`test/pathological/` holds one file per GBRA-130 inventory row,
+`<row>-<short-name>.test.ts`. `catalogue.ts` maps each `ISOLATE_SITES` key
+(`src/core/item-failure.ts`) to its file, item-case and run-case titles;
+`sites.test.ts` enforces it. `harness.ts` asserts the unit was not aborted
+(`expectUnitNotAborted`), the bad item has a typed code and fix
+(`expectItemFailure`) and nothing else changed (`snapshotItems`,
+`expectOthersUnchanged`; `expectProgress` names siblings that must move). The run
+case injects `runScopedErrors()` and expects a stop with no hold.
+`pathologicalArms()` is PGLite always plus Postgres with `DATABASE_URL`; list
+Postgres-arm files in `test/postgres-unit-arms.txt`.
+
+`bun run check:item-allowlist-catches` (verify) counts catches in a loop body or
+`.forEach`/`.map` callback that test the caught error's code against a set, list or
+literal and rethrow it. Per-file counts in `scripts/item-allowlist-catches-baseline.tsv`
+only shrink; stale, empty or malformed rows fail. `--update` rewrites it after a
+shrink; a raised row fails review. Rules and blind spots: script header.
 
 ### SyncRun state guard
 

@@ -31,34 +31,15 @@ export async function resolveSlugByPathOrSourcePath(
   path: string,
   sourceId?: string,
 ): Promise<string> {
-  // v0.41.19.0 (D8): when sourceId is set, delegate to the new batch
-  // resolveSlugsByPaths so single-call and batched paths share one SQL
-  // owner + one fallback semantic. One Map allocation per single-call;
-  // negligible cost. When sourceId is undefined (legacy unscoped callers),
-  // a direct executeRaw runs instead — the batch method requires sourceId
-  // to prevent the multi-source-bug-class on its new surface (D5). That
-  // branch is NOT the historical unscoped query any more; see below.
+  // v0.41.19.0 (D8): the batch resolveSlugsByPaths is the one SQL owner and
+  // fallback semantic (#6948: the canonical page of the path, never an
+  // arbitrary twin). #3583 gate14: without a sourceId it is scoped to
+  // 'default', matching every WRITE the bare no-sourceId path performs
+  // (updateSlug, deletePage, the rename bookkeeping repair), so resolve and
+  // mutate agree on the scope.
   try {
-    if (sourceId) {
-      const m = await engine.resolveSlugsByPaths([path], { sourceId });
-      const slug = m.get(path);
-      if (slug) return slug;
-    } else {
-      // #3583 gate14: scoped to 'default', matching every WRITE the bare
-      // no-sourceId path performs (updateSlug, deletePage, the rename
-      // bookkeeping repair — all default-scoped). The historical unscoped
-      // form could hand back a row from ANOTHER source that happened to
-      // share the source_path; the rename loop takes this return value
-      // directly as its cheap-move target, so that foreign slug went to
-      // updateSlug, the default-scoped move silently no-opped, and the
-      // fallback import landed under a cross-source dedup. Resolve and
-      // mutate must agree on the scope.
-      const rows = await engine.executeRaw<{ slug: string }>(
-        `SELECT slug FROM pages WHERE source_path = $1 AND source_id = $2 LIMIT 1`,
-        [path, DEFAULT_SOURCE_ID],
-      );
-      if (rows.length > 0 && rows[0].slug) return rows[0].slug;
-    }
+    const slug = (await engine.resolveSlugsByPaths([path], { sourceId: sourceId ?? DEFAULT_SOURCE_ID })).get(path);
+    if (slug) return slug;
   } catch {
     // Fall through — best-effort. Pre-migration brains or query errors
     // shouldn't break delete/rename for path-derived pages.
@@ -74,6 +55,8 @@ export interface RefusedSlugResolution {
   slug: string;
   /** The DIFFERENT file the page at that slug records as its origin. */
   originPath: string;
+  /** #6948: several live pages record the removed path and none is its canonical page; none is touched. */
+  claimants?: string[];
 }
 
 export interface RemovedPathSlugResolution {
@@ -90,6 +73,9 @@ function normalizeOriginPath(p: string): string {
 
 /** One-line operator warning for a refused resolution (#3942). */
 export function refusedRemovedPathMessage(r: RefusedSlugResolution): string {
+  if (r.claimants) {
+    return `  [sync] refusing to delete a page for removed path '${r.path}': ${r.claimants.join(', ')} all record it as their origin (preview gbrain repair origin-twins to choose the page that keeps it).`;
+  }
   return (
     `  [sync] refusing to touch '${r.slug}' for removed path '${r.path}': ` +
     `that page originates from '${r.originPath}' (#3942 — re-slugified paths ` +
@@ -164,8 +150,21 @@ export async function resolveSlugsForRemovedPaths(
     }
   }
 
+  const twins = new Map<string, string[]>();
+  const unresolved = paths.filter(p => !exact.has(p));
+  for (let i = 0; sourceId !== undefined && i < unresolved.length; i += DELETE_BATCH_SIZE) {
+    try {
+      const rows = await engine.executeRaw<{ source_path: string; slugs: string[] }>(`SELECT source_path, array_agg(slug ORDER BY slug) AS slugs FROM pages
+        WHERE source_id = $1 AND deleted_at IS NULL AND source_path = ANY($2::text[]) GROUP BY source_path HAVING count(*) > 1`, [sourceId, unresolved.slice(i, i + DELETE_BATCH_SIZE)]);
+      for (const row of rows) twins.set(row.source_path, row.slugs);
+    } catch {
+      // Best-effort, like phase 1.
+    }
+  }
   const fallbacks: Array<{ path: string; slug: string }> = [];
   for (const p of paths) {
+    const claimants = twins.get(p);
+    if (claimants) { refused.push({ path: p, slug: claimants[0]!, originPath: p, claimants }); continue; }
     const hit = exact.get(p);
     if (hit !== undefined) slugs.set(p, hit);
     else fallbacks.push({ path: p, slug: resolveSlugForPath(p) });

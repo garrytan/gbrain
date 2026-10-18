@@ -24,6 +24,8 @@ import { defaultCloneDir } from './sources-ops.ts';
 import { gbrainPath } from './config.ts';
 import { isMissingSchemaObject } from './utils.ts';
 import { deleteSourceRow, EXPIRED_ARCHIVE_SQL, UNVERIFIED_ARCHIVE_SQL, unverifiedArchiveReason } from './source-delete.ts';
+import { ItemRun } from './item-failure.ts';
+import { cliRenderContext, renderAction, type RenderedAction } from './agent-output.ts';
 
 // ── Types ───────────────────────────────────────────────────
 
@@ -447,7 +449,14 @@ export interface PurgeExpiredResult {
    * every client is revoked-and-purged or re-scoped. Blocked is a policy
    * outcome, not an error: the sweep reports it and moves on.
    */
-  blocked: Array<{ id: string; reason: string }>;
+  blocked: Array<{
+    id: string;
+    reason: string;
+    /** GBRA-130 A-50 (unmanaged): the classified code of a delete that failed for this source alone (statement_timeout, lock_timeout, ...). */
+    code?: string;
+    /** With `code`: the manual purge of this source, for the user to run (`next: tell_user_to_run`). */
+    fix?: RenderedAction;
+  }>;
 }
 
 /**
@@ -459,8 +468,12 @@ export interface PurgeExpiredResult {
  * aborted the whole statement, wedging the nightly purge forever. The sweep is
  * now per-source: each DELETE re-checks the expiry predicate (no
  * select-then-delete race with a concurrent restore), ONLY the FK-restriction
- * error class (SQLSTATE 23503) is treated as blocked-and-reported, and every
- * other error re-raises. (Supersedes #4238's set-based NOT-EXISTS variant at
+ * error class (SQLSTATE 23503) is treated as blocked-and-reported.
+ * GBRA-130 A-50: any other failure of one source's delete is classified
+ * (classifyItemFailure via ItemRun): an item-scoped one (a statement timeout on
+ * a large source's cascade, a lock timeout) is reported in `blocked` with its
+ * code and the manual purge as its fix, and the sweep continues; a run-scoped
+ * one, or a sweep where most sources fail, re-raises. (Supersedes #4238's set-based NOT-EXISTS variant at
  * merge: the 23503 catch covers ANY current or future RESTRICT FK — including
  * soft-deleted oauth_clients, since the FK is physical — not just the one
  * table an EXISTS prefilter names, and the structured {purged, blocked}
@@ -491,6 +504,7 @@ export async function purgeExpiredSources(
   const purged: string[] = [];
   const blocked: PurgeExpiredResult['blocked'] = await unverifiedArchives(engine);
   const cloneRoot = gbrainPath('clones');
+  const items = new ItemRun('retention.expired_sources');
   for (const candidate of candidates) {
     const { id } = candidate;
     try {
@@ -527,6 +541,7 @@ export async function purgeExpiredSources(
       }
       // 0 rows = restored/already gone between SELECT and DELETE; neither
       // purged nor blocked.
+      items.succeed();
     } catch (err) {
       // SQLSTATE 23503 foreign_key_violation — same detection idiom as
       // oauth-provider.ts's delete path for this exact FK.
@@ -539,7 +554,13 @@ export async function purgeExpiredSources(
         });
         continue;
       }
-      throw err;
+      const failure = items.fail(id, err);
+      blocked.push({
+        id, code: failure.code,
+        reason: `its delete failed (${failure.message}); the next retention sweep retries it`,
+        fix: renderAction({ argv: ['gbrain', 'sources', 'purge', id, '--confirm-destructive'], consent: ['destructive'], actor: 'user', requires_exclusive: false,
+          why: 'Purges this expired archived source by hand, outside the nightly sweep.' }, cliRenderContext()),
+      });
     }
   }
   return { purged, blocked };

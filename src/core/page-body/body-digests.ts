@@ -13,9 +13,10 @@ import type { BrainEngine } from '../engine.ts';
 import type { ParseOpts } from '../markdown.ts';
 import { BodyScanner, type BodyPiece, type BodyScan } from './body-scan.ts';
 import { openSegmentedBody, readBodyRange, type BodyLedger } from './read-range.ts';
-import { BLOCK_MAX_BYTES, readGarbageCollector } from './segment-blocks.ts';
+import { readGarbageCollector } from './segment-blocks.ts';
 import { partialFenceRuns } from '../facts/withdrawal-overlay.ts';
-import { SEGMENT_MAX_BYTES } from './limits.ts';
+import { FACTS_FENCE_BEGIN, FACTS_FENCE_END } from '../facts-fence.ts';
+import { FENCE_MAX_BYTES, SEGMENT_MAX_BYTES } from './limits.ts';
 import type { BodyRegion } from './types.ts';
 
 const FACTS_MARKER = Buffer.from('gbrain:facts:begin', 'utf8');
@@ -24,9 +25,10 @@ const REGIONS: readonly BodyRegion[] = ['truth', 'timeline'];
 /**
  * @internal Work a digest comparison does, for the memory-bound tests: file bytes the scan and the region hashes read
  * (`fileBytes`), stored bytes hashed (`segmentBytes`), and the largest single piece handed to a scan or hash
- * (`largestPiece`, at most a segment). Counts, not time.
+ * (`largestPiece`, at most a segment), and the longest file text a withdrawal overlay holds at once (`largestHeld`, UTF-16
+ * units: the text waiting for a fence block to close, or handed to the overlay). Counts, not time.
  */
-export const bodyDigestWork = { fileBytes: 0, segmentBytes: 0, largestPiece: 0 };
+export const bodyDigestWork = { fileBytes: 0, segmentBytes: 0, largestPiece: 0, largestHeld: 0 };
 
 /** SHA-256 (hex) of each region's UTF-8 bytes. */
 export type RegionDigests = Record<BodyRegion, string>;
@@ -82,15 +84,21 @@ export function fileBodyDigests(bytes: ByteSource, reading: FileReading, filePat
     regions: { truth: scan.truth, timeline: scan.timeline } };
 }
 
+/** A fence opener keeps at most this much of its line before it (UTF-16 units): the stored side overlays a segment, so it sees at most that much. */
+const OPENER_CONTEXT = SEGMENT_MAX_BYTES;
+const MARKER_KEEP = Math.max(FACTS_FENCE_BEGIN.length, FACTS_FENCE_END.length) - 1;
+
 /**
  * The digest of each file region after `overlay` (the withdrawal overlay of one complete text, overlayCanonicalBodies),
- * applied as the stored side applies it per segment: to complete lines, each chunk ending outside every facts fence
- * block (partialFenceRuns), so a block is always overlaid whole. Text before the first fence marker of a chunk is
- * hashed as read. A block that stays open past BLOCK_MAX_BYTES (a fence the stored side can only hold split across
- * forced cuts) calls `refuse`: such a body is not overlaid in pieces.
+ * applied as the stored side applies it: each chunk handed to it ends outside every facts fence block (partialFenceRuns)
+ * and before any marker the next bytes could complete, so a block is always overlaid whole. The text held is the open
+ * block, with at most OPENER_CONTEXT of the line before its opener, or that much of the current line when no block is
+ * open, plus the piece just read: never a whole long line. A block longer than FENCE_MAX_BYTES, counted from its begin
+ * marker, calls `refuse` with its length so far before anything more is held or overlaid. `between` runs after each
+ * piece (an effect's claim renewal).
  */
 export async function overlaidFileBodyDigests(bytes: ByteSource, reading: FileReading, regions: Record<BodyRegion, readonly BodyPiece[]>,
-  overlay: (text: string) => Promise<string>, refuse: () => Error): Promise<RegionDigests> {
+  overlay: (text: string) => Promise<string>, refuse: (bytes: number) => Error, between?: () => Promise<void>): Promise<RegionDigests> {
   const digests = {} as RegionDigests;
   for (const region of REGIONS) {
     const hash = createHash('sha256');
@@ -98,35 +106,50 @@ export async function overlaidFileBodyDigests(bytes: ByteSource, reading: FileRe
       const buffer = Buffer.from(text, 'utf8');
       for (let at = 0; at < buffer.length; at += SEGMENT_MAX_BYTES) hash.update(count(buffer.subarray(at, at + SEGMENT_MAX_BYTES), 'fileBytes'));
     };
-    const emit = async (text: string) => update(text.includes('gbrain:facts:begin') ? await overlay(text) : text);
+    const emit = async (text: string) => {
+      if (text.length > bodyDigestWork.largestHeld) bodyDigestWork.largestHeld = text.length;
+      update(text.includes('gbrain:facts:begin') ? await overlay(text) : text);
+    };
     const decoder = new TextDecoder('utf-8');
     let pending = '';
-    const drain = async () => {
-      const end = pending.lastIndexOf('\n') + 1;
-      if (end === 0) return;
-      const complete = pending.slice(0, end);
-      const { tail } = partialFenceRuns(complete, false);
-      const cut = tail === complete.length ? end : complete.lastIndexOf('\n', tail - 1) + 1;
-      if (cut > 0) await emit(complete.slice(0, cut));
+    // The start of the line holding `at`, at most OPENER_CONTEXT before it, never inside a block that ends before `at`.
+    const keepFrom = (at: number) => {
+      const lastEnd = pending.lastIndexOf(FACTS_FENCE_END, at - FACTS_FENCE_END.length);
+      return Math.max(pending.lastIndexOf('\n', at - 1) + 1, at - OPENER_CONTEXT, lastEnd === -1 ? 0 : lastEnd + FACTS_FENCE_END.length);
+    };
+    const drain = async (final: boolean) => {
+      const { tail } = partialFenceRuns(pending, false);
+      if (tail < pending.length) {
+        const fence = Buffer.byteLength(pending.slice(tail), 'utf8');
+        if (fence > FENCE_MAX_BYTES) throw refuse(fence);
+      }
+      const lastEnd = pending.lastIndexOf(FACTS_FENCE_END);
+      const closedAt = Math.max(0, pending.length - MARKER_KEEP, lastEnd === -1 ? 0 : lastEnd + FACTS_FENCE_END.length);
+      const cut = final ? pending.length : keepFrom(tail < pending.length ? tail : closedAt);
+      if (cut > 0) await emit(pending.slice(0, cut));
       pending = pending.slice(cut);
-      if (Buffer.byteLength(pending, 'utf8') > BLOCK_MAX_BYTES) throw refuse();
     };
     for (const piece of regions[region]) {
       const parts = 'text' in piece ? [Buffer.from(piece.text, 'utf8')] : virtualSlice(bytes, reading, piece.start, piece.end);
       for (const part of parts) {
         pending += decoder.decode(count(part, 'fileBytes'), { stream: true });
-        await drain();
+        if (pending.length > bodyDigestWork.largestHeld) bodyDigestWork.largestHeld = pending.length;
+        await drain(false);
+        await between?.();
       }
     }
     pending += decoder.decode();
-    if (pending) await emit(pending);
+    await drain(true);
     digests[region] = hash.digest('hex');
   }
   return digests;
 }
 
-/** The digest of each region of a segmented page's trusted stored body under `ledger` (the snapshot's withdrawals), one segment at a time. */
-export async function storedBodyDigests(engine: BrainEngine, pageId: number, ledger: BodyLedger): Promise<RegionDigests> {
+/**
+ * The digest of each region of a segmented page's trusted stored body under `ledger` (the snapshot's withdrawals), one
+ * segment (or one joined fence) at a time; `between` runs after each piece (an effect's claim renewal).
+ */
+export async function storedBodyDigests(engine: BrainEngine, pageId: number, ledger: BodyLedger, between?: () => Promise<void>): Promise<RegionDigests> {
   const body = await openSegmentedBody(engine, { pageId, ledger });
   const collect = readGarbageCollector();
   const digests = {} as RegionDigests;
@@ -135,6 +158,7 @@ export async function storedBodyDigests(engine: BrainEngine, pageId: number, led
     for await (const piece of readBodyRange(engine, { pageId, space: 'stored', start: 0, end: Infinity, audience: 'trusted', region, body })) {
       hash.update(count(piece.bytes, 'segmentBytes'));
       collect(piece.bytes.length);
+      await between?.();
     }
     digests[region] = hash.digest('hex');
   }

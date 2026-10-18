@@ -58,7 +58,8 @@ for (const databaseUrl of process.env.DATABASE_URL ? [undefined, process.env.DAT
     expect(dry.mode).toBe('managed');
     expect(dry.dry_run).toBe(true);
     expect(dry.blockers.map((b: { kind: string }) => b.kind)).toEqual(['writer_admin_lock', 'effect']);
-    expect(dry.blockers.find((b: { kind: string }) => b.kind === 'effect').exit).toBe('gbrain repair embedding-effects --source default');
+    expect(dry.blockers.find((b: { kind: string }) => b.kind === 'effect').exit)
+      .toBe('wait for the owner to drain it, then rerun deactivate; one still queued after an hour is re-queued by gbrain repair embedding-effects --source default');
     expect(dry.retired_worktrees.length).toBe(1);
     expect(dry.kept).toMatchObject({ skill_bundles_enabled: true, writer_protocol_floor: 2 });
     expect(await writerAdminState(engine)).toBe(before);

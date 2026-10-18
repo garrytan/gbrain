@@ -91,7 +91,7 @@ Flags:
                      (default 3 - 1 = 2). Always reserves 1 conn for HNSW +
                      heartbeat + doctor probes.
   --resume           Pick up from last checkpoint (auto-detected; default on).
-  --fresh            Restart from id=0, ignoring checkpoint.
+  --fresh            Restart from id=0, ignoring checkpoint; retries held rows.
   --dry-run          Report what WOULD happen; no writes.
   --keep-index       Skip HNSW drop-rebuild for embedding backfills.
   --max-errors N     Bail after N total errors (default 200).
@@ -186,6 +186,12 @@ export async function runBackfillCommand(engine: BrainEngine, args: string[]): P
   console.log(`  errors:   ${result.errors}`);
   console.log(`  lastId:   ${result.lastId}`);
   console.log(`  duration: ${result.durationSec.toFixed(2)}s`);
+  if (result.skipped.length > 0) {
+    const held = result.skipped.filter(s => s.state === 'held').length;
+    console.log(`  skipped:  ${result.skipped.length} row(s) recorded in backfill.${reg.spec.name}.skipped (${held} held); each later run retries them`);
+    for (const s of result.skipped.slice(0, 20)) console.log(`    id ${s.id}: ${s.code} (${s.state} after ${s.attempts} run(s)); retry: ${s.fix}`);
+    if (result.skipped.length > 20) console.log(`    ... ${result.skipped.length - 20} more`);
+  }
   if (result.cappedByMaxRows) console.log(`  ⚠️  Capped by --max-rows; more remain.`);
   if (result.cappedByErrors) console.log(`  ⚠️  Capped by --max-errors at ${result.errors}.`);
 

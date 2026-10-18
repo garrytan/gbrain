@@ -1,7 +1,8 @@
 /**
  * #6517 (GBRA-79 wave 16, G3.3 [R7]): the managed sync path end to end with a
  * duplicate-origin twin. Two live pages of the source record one file: the
- * run refuses `page_identity_changed` and names the soft-delete exit. After
+ * run holds that file `origin_conflict` (#6948; it used to refuse the whole
+ * source with `page_identity_changed`). After
  * the loser is soft-deleted (the shared-origin delete keeps the file), the run
  * imports the file into the survivor through both origin guards (discovery
  * census, `assertSyncPageOrigin` at preparation and publication), then edits
@@ -25,6 +26,7 @@ import { operations, type OperationContext } from '../../src/core/operations.ts'
 import { claimWorktree } from '../../src/core/persistence/ownership.ts';
 import { performManagedSync } from '../../src/core/persistence/sync-run.ts';
 import { readManagedSyncFailures } from '../../src/core/persistence/sync-failures.ts';
+import { readGitSourceHolds } from '../../src/core/persistence/sync-holds.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 import { installFaultHook } from '../../src/core/persistence/fault-points.ts';
 import { withCoordinatedWrite } from '../../src/core/persistence/context.ts';
@@ -32,6 +34,7 @@ import { TEST_WRITE_ATTRIBUTION } from '../helpers/write-attribution.ts';
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withEnv } from '../helpers/with-env.ts';
+import { dropOriginIndex } from '../helpers/origin-index.ts';
 
 const op = (name: string) => operations.find(o => o.name === name)!;
 const git = (root: string, ...args: string[]) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
@@ -65,14 +68,18 @@ for (const backend of testBackends()) describe(`[${backend}] #6517 managed sync 
     await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
     const opts = { sourceId: id, noPull: true, noEmbed: true, noExtract: true };
     expect((await sync(opts)).status).toBe('first_sync');
-    await engine.transaction(tx => withCoordinatedWrite(tx, [id], () => tx.putPage('alpha-twin', { type: 'note', title: 'Twin', compiled_truth: 'A twin recording alpha.',
-      timeline: '', frontmatter: {}, content_hash: 'twin', source_path: 'alpha.md' }, { sourceId: id }), TEST_WRITE_ATTRIBUTION));
+    // #6948: no writer records a held origin on a second page any more, so the twin's origin is set as legacy data left it.
+    await engine.transaction(tx => withCoordinatedWrite(tx, [id], async () => {
+      await tx.putPage('alpha-twin', { type: 'note', title: 'Twin', compiled_truth: 'A twin recording alpha.', timeline: '', frontmatter: {}, content_hash: 'twin' }, { sourceId: id });
+      await tx.executeRaw('UPDATE pages SET source_path=$3 WHERE source_id=$1 AND slug=$2', [id, 'alpha-twin', 'alpha.md']);
+    }, TEST_WRITE_ATTRIBUTION));
     return { id, root, file, opts };
   }
 
   beforeAll(async () => {
     if (backend === 'pglite') { engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); }
     else { const pg = await isolatedPersistencePostgres(process.env.DATABASE_URL!); engine = pg.engine; closePostgres = pg.close; }
+    await dropOriginIndex(engine);
   }, 120_000);
   afterAll(async () => {
     installFaultHook(undefined);
@@ -81,13 +88,14 @@ for (const backend of testBackends()) describe(`[${backend}] #6517 managed sync 
     rmSync(home, { recursive: true, force: true });
   }, 60_000);
 
-  test('two live claimants refuse the run and name the exit; after the loser is soft-deleted the file imports, edits and deletes through both guards; a single tombstone resurrects', async () => {
+  test('two live claimants hold their file (the rest syncs); after the loser is soft-deleted the file imports, edits and deletes through both guards; a single tombstone resurrects', async () => {
     const f = await twins();
     writeFileSync(f.file, note('Alpha, version two.')); commit(f.root, 'version two');
-    const refused = await sync(f.opts).then(() => null, error => error as Error & { code?: string; suggestion?: string });
-    expect(refused?.code).toBe('page_identity_changed');
-    expect(refused?.message).toContain('Several pages claim the same imported origin');
-    expect(refused?.suggestion).toContain('Soft-delete the page that should not own the file');
+    // #6948: the twin no longer refuses the source; only its file is held origin_conflict (the bodies differ: a person decides).
+    const held = await sync(f.opts);
+    expect(held.status).toBe('synced');
+    const [hold] = (await readGitSourceHolds(engine, { sourceIds: [f.id] }))[0]?.holds ?? [];
+    expect(hold).toMatchObject({ path: 'alpha.md', code: 'origin_conflict', meta: { reason: 'content_differs', canonical_slug: 'alpha' } });
     expect((await page(f.id, 'alpha'))!.compiled_truth).toContain('version one');
     // The exit: the twin is hidden, the file stays.
     expect(await softDelete(f.id, 'alpha-twin')).toMatchObject({ state: 'committed', write_through: { skipped: 'shared_origin' } });

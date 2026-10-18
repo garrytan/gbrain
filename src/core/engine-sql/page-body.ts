@@ -267,6 +267,7 @@ function metaParams(meta: SegmentedPageMeta) {
 
 export async function createSegmentedPageShell(exec: SqlExecutor, slug: string, meta: SegmentedPageMeta, opts: { sourceId: string }): Promise<{ id: number }> {
   const m = metaParams(meta);
+  // origin-guard-ok: applySegmentedBody runs assertOriginUnclaimed in this transaction first
   const { rows } = await exec.run<{ id: number }>(sqlFragment`
     INSERT INTO pages (source_id, slug, type, page_kind, title, compiled_truth, timeline, frontmatter, updated_at, effective_date,
       effective_date_source, import_filename, chunker_version, source_path, source_kind, source_uri, ingested_via, ingested_at,
@@ -324,6 +325,7 @@ export async function flipBodyGeneration(exec: SqlExecutor, input: BodyFlipInput
     await tx.run(sqlFragment`UPDATE page_body_manifest SET staging_id = NULL WHERE page_id = ${input.pageId} AND staging_id = ${input.stagingId}::uuid`);
     const m = metaParams(input.meta);
     const b = input.body;
+    // origin-guard-ok: applySegmentedBody runs assertOriginUnclaimed in this transaction first
     await tx.run(sqlFragment`UPDATE pages SET
         body_storage = 'segmented', compiled_truth = NULL, timeline = NULL, body_generation = ${input.newGeneration}::bigint,
         content_hash = ${b.content_hash}, body_bytes = ${b.body_bytes}::bigint, truth_bytes = ${b.truth_bytes}::bigint,

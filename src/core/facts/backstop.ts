@@ -45,6 +45,7 @@ import { isFactsBackstopEligible } from './eligibility.ts';
 import type { PageType } from '../types.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import type { WriteReceipt } from '../persistence/types.ts';
+import type { ManagedFactsRefusal } from '../persistence/facts-maintenance.ts';
 import type { GBrainConfig } from '../config.ts';
 import { isAvailable } from '../ai/gateway.ts';
 import { withAIInvocationPreflight } from '../ai/invocation-guard.ts';
@@ -184,6 +185,8 @@ export type FactsBackstopResult =
       would_dedup_same_page?: number;
       /** #6506: candidates skipped because the exact claim was forgotten in this source and visibility. */
       withdrawn_skipped?: number;
+      /** GBRA-130 A-36 (managed): entity requests refused for their own page; the other entities' facts committed. */
+      refused?: ManagedFactsRefusal[];
       /** Large pages A7: the extractor read only part of the page (also stored in page_extraction_state). */
       input_truncated?: InputTruncated;
     };
@@ -201,7 +204,7 @@ interface PipelineInput {
 }
 
 /** One page or turn pipeline run's counts (runPipelineWithBody). */
-interface PipelineResult { inserted: number; duplicate: number; superseded: number; fact_ids: number[]; entity_slugs: string[]; skipped_reason?: import('./extract.ts').ExtractFailureReason; write_gate?: GateTally; fence_refused?: number; would_dedup_same_page?: number; withdrawn_skipped?: number }
+interface PipelineResult { inserted: number; duplicate: number; superseded: number; fact_ids: number[]; entity_slugs: string[]; skipped_reason?: import('./extract.ts').ExtractFailureReason; write_gate?: GateTally; fence_refused?: number; would_dedup_same_page?: number; withdrawn_skipped?: number; refused?: ManagedFactsRefusal[] }
 
 interface ParsedPageInput {
   slug: string;
@@ -561,6 +564,8 @@ export async function runFactsPipeline(
   would_dedup_same_page?: number;
   /** #6506: candidates skipped because the exact claim was forgotten in this source and visibility. */
   withdrawn_skipped?: number;
+  /** GBRA-130 A-36 (managed): entity requests refused for their own page; the other entities' facts committed. */
+  refused?: ManagedFactsRefusal[];
 }> {
   return runPipelineWithBody({
     turnText,
@@ -728,6 +733,7 @@ async function runPipelineBodyInner(
   const derivation = await factsDerivation(ctx, input);
   const managed = await prepareManagedFactsSession(ctx, input, derivation);
   if (managed) {
+    managed.reportRefusals = true;
     const replay = await resumeManagedFacts(ctx.engine, managed);
     if (replay) return replay;
     const embedding = await resolveManagedFactsEmbedding(ctx.engine, managed.config);
@@ -1034,7 +1040,7 @@ async function runPipelineBodyInner(
       // didn't (null-localPath echo, or the write_through flag flipped
       // mid-pipeline across the config-cache TTL). Route the group to the
       // legacy DB-only path — never drop facts.
-      warnOnce(
+      if (result.databaseOnlyReason !== 'url_clone') warnOnce(
         'facts:fence-write-unexpected-fallback',
         `[facts] writeFactsToFence returned legacyFallback for slug=${slug} despite localPath being set — routing to DB-only inserts.`,
       );

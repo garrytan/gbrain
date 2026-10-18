@@ -25,7 +25,7 @@ import type { PageSnapshot } from '../page-state/types.ts';
 import type { JsonObject, SegmentedPageMeta } from '../page-body/types.ts';
 import type { PreparedSegmentedBody, SegmentChunkingContext, SegmentedLivePage, SegmentedStagingOwner } from '../page-body/ingest.ts';
 import { materializeSegmentedBody, prepareSegmentedBody, segmentWriteScope, stringBodyFlags, stringRegion } from '../page-body/ingest.ts';
-import { buildSegmentedProjection, hasStaleChunks, liveOccurrenceIds } from '../page-body/projection.ts';
+import { buildSegmentedProjection } from '../page-body/projection.ts';
 import { maintenanceAttribution } from './attribution.ts';
 import { readPageBodyPolicy, chooseBodyStorage, SEGMENTED_DEMOTE_AT_OR_BELOW_BYTES, type PageBodyPolicy } from '../page-body/limits.ts';
 import { SEGMENTED_CHUNKER_VERSION } from '../page-body/segment-chunks.ts';
@@ -38,6 +38,7 @@ import { bodyStagingGoneError, LIVE_STAGING_STATES } from '../engine-sql/page-bo
 import { segmentedPageSearchable } from './searchable.ts';
 import { stableJson } from './digest.ts';
 import { pageBodyOverCeilingError } from '../page-body/page-shape.ts';
+import { assertOriginUnclaimed } from './origin-guard.ts';
 
 const BODY_KEYS = new Set(['compiled_truth', 'timeline', 'content']);
 
@@ -160,6 +161,7 @@ export async function sealSegmentedPage(tx: Pick<BrainEngine, 'executeRaw'>, pag
 export async function applySegmentedBody(tx: BrainEngine, input: SegmentedApplyInput): Promise<SegmentedApplied> {
   const { prepared } = input;
   let pageId = input.pageId;
+  await assertOriginUnclaimed(tx, { sourceId: input.sourceId, slug: input.slug, pageId, sourcePath: input.meta.source_path ?? null, revive: true });
   if (prepared.createRows) {
     // A create inserts its manifest rows before the flip checks its staging: a staging a fact purge aborted (and whose
     // claim-bearing texts it deleted) refuses here, not on the manifest's text foreign key.
@@ -179,9 +181,10 @@ export async function applySegmentedBody(tx: BrainEngine, input: SegmentedApplyI
   await faultPoint('segmented:flipped', { sourceId: input.sourceId });
   await tx.setBodyStagingState(prepared.stagingId, 'committed', { commitRequestId: input.requestId ?? null });
   const chunked = prepared.createRows ? createChunks !== null : prepared.unchunked === 0;
-  // The flip retires only the occurrences this write closes: rows an earlier write's deferred retirement left keep the page unsealed.
-  const complete = chunked && !flip.retireDeferred
-    && !await hasStaleChunks(tx, pageId, prepared.newGeneration, await liveOccurrenceIds(tx, pageId, prepared.newGeneration));
+  // The flip retires only the occurrences this write closes: rows an earlier write's deferred retirement left keep the page
+  // unsealed. Preparation read them (`priorStale`); while the generation it read is live no stale row is added, since a
+  // projection chunks only occurrences without rows and this flip retires every occurrence the preparation chunked again.
+  const complete = chunked && !flip.retireDeferred && !prepared.priorStale;
   return { pageId, complete, retireDeferred: flip.retireDeferred };
 }
 

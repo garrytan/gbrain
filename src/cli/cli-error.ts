@@ -8,7 +8,7 @@
  * idle and the patched `process.exit` drains anything queued, so callers may
  * exit right after.
  */
-import { cliRenderContext, renderCliError, renderNotice, type AgentEnvelope, type Notice } from '../core/agent-output.ts';
+import { cliRenderContext, renderCliError, renderNotice, type Action, type AgentEnvelope, type Notice } from '../core/agent-output.ts';
 import { renderCliNotices } from '../core/agent-markers.ts';
 import { jsonGuardActive, jsonRequested, noteRenderedErrorCode, writeStdoutFinal } from '../core/cli-force-exit.ts';
 import { opError, type OpErrorOpts, type OperationError } from '../core/ops/contract.ts';
@@ -159,7 +159,12 @@ export function unknownFlagError(command: string, flag: string, message: string,
 export function writeFatalCliError(e: unknown, opts: { argv?: readonly string[]; dbUrl?: string | null; brainId?: string } = {}): number {
   const argv = opts.argv ?? process.argv.slice(2);
   const command = cliCommandOf(argv);
-  const busy = e as { code?: unknown; reason?: unknown; message?: unknown } | null;
+  const busy = e as { code?: unknown; reason?: unknown; message?: unknown; fix?: Action } | null;
+  if (busy?.code === 'pglite_busy' && busy.reason === 'legacy_owner_unverified' && busy.fix) {
+    const next = 'Waiting does not free this lock. Ask the user (fix.user_message); if they agree, run the read-only preview in fix and follow it.';
+    const err = opError('pglite_busy', String(busy.message), next, { reason: busy.reason, fix: busy.fix, retryable: false });
+    return writeCliError(err, command, { argv, legacy: { error: 'pglite_busy', retryable: false, reason: busy.reason } });
+  }
   if (busy?.code === 'pglite_busy') {
     const next = 'Wait for the current command or server to close, then retry. Do not remove a live lock.';
     // A7: a live serve owns the brain (usually an agent session's stdio serve), so

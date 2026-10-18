@@ -276,7 +276,10 @@ export function planShards(files: Array<{ file: string; perIterationMs: number; 
   }
 }
 
-export interface Weights { unit: Map<string, number>; serialSeconds: Map<string, number>; e2e: Map<string, number>; arms: Map<string, number> }
+export interface Weights { unit: Map<string, number>; serialSeconds: Map<string, number>; e2e: Map<string, number>; arms: Map<string, number>; stress?: Map<string, number> }
+
+/** Measured stress iterations (milliseconds), mined from stress shard logs by `gate.ts mine-iterations`; read before the lane maps. */
+export const STRESS_ITERATION_WEIGHTS = 'scripts/stress/iteration-weights.json';
 
 const loadMap = (path: string): Map<string, number> => (existsSync(path) ? new Map(Object.entries(JSON.parse(readFileSync(path, 'utf8')) as Record<string, number>)) : new Map());
 
@@ -286,13 +289,34 @@ export function loadWeights(root: string): Weights {
     serialSeconds: loadMap(join(root, 'scripts/serial-weights.json')),
     e2e: loadMap(join(root, 'scripts/e2e-weights.json')),
     arms: loadMap(join(root, 'scripts/postgres-arm-weights.json')),
+    stress: loadMap(join(root, STRESS_ITERATION_WEIGHTS)),
   };
 }
 
 const p75 = (values: number[]) => { const s = [...values].sort((a, b) => a - b); return s.length ? s[Math.min(s.length - 1, Math.ceil(0.75 * s.length) - 1)]! : 30_000; };
 
-/** Measured milliseconds for one iteration of `file` in `profile`, or the lane's p75 for an unmeasured file. */
+/**
+ * Per-file median of the stress iterations in `logs` (stress shard job logs: `✓|✗ <file> iteration N (seed S) 12.3s`), in
+ * milliseconds. A stress iteration can cost more than the file's lane run (a fresh database per iteration).
+ */
+export function mineStressIterations(logs: string[]): Map<string, number> {
+  const samples = new Map<string, number[]>();
+  for (const log of logs) {
+    for (const m of log.matchAll(/[✓✗] (test\/[\w./-]+\.test\.ts) iteration \d+ \(seed \d+\) ([\d.]+)s/g)) {
+      samples.set(m[1]!, [...(samples.get(m[1]!) ?? []), Math.round(Number(m[2]) * 1000)]);
+    }
+  }
+  return new Map([...samples].map(([file, ms]) => {
+    const sorted = [...ms].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    return [file, sorted.length % 2 ? sorted[mid]! : Math.round((sorted[mid - 1]! + sorted[mid]!) / 2)];
+  }));
+}
+
+/** Measured milliseconds for one iteration of `file` in `profile`: a measured stress iteration first, else the lane's weight, else its p75. */
 export function iterationEstimateMs(file: string, profile: ProfileName, w: Weights): number {
+  const stressed = w.stress?.get(file);
+  if (stressed !== undefined) return stressed;
   switch (profile) {
     case 'postgres-arm': return w.arms.get(file) ?? p75([...w.arms.values()]);
     case 'e2e': return w.e2e.get(file) ?? p75([...w.e2e.values()]);

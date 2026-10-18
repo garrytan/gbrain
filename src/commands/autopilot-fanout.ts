@@ -39,6 +39,7 @@ import { existsSync } from 'fs';
 import type { BrainEngine, SourceRow } from '../core/engine.ts';
 import type { MinionQueue } from '../core/minions/queue.ts';
 import { SOURCE_FRESHNESS_PHASES, MAINTENANCE_PHASES, LAST_GLOBAL_AT_KEY } from '../core/cycle.ts';
+import { GLOBAL_FLOOR_MIN, resolveGlobalFloorMin } from '../core/minions/handlers/autopilot-global-maintenance.ts';
 import { CONNECTOR_SOURCE_PHASES } from '../core/cycle/phase-scope.ts';
 import { isConnectorSourceKind } from '../core/persistence/connector-identity.ts';
 import { attemptedConnectorSourceIds, type ConnectorAccountMismatch } from '../core/persistence/connector-state.ts';
@@ -58,7 +59,7 @@ const FAILURE_COOLDOWN_BASE_MIN = 10;
 const FAILURE_COOLDOWN_CAP_MIN = 120;
 const FAILURE_COOLDOWN_EXP_CAP = 4; // 2^4 = 16× base before the cap clamps
 
-/** Recent failures include completed cycles carrying a failed phase. */
+/** Recent-failure record for one source (from minion_jobs dead/failed rows). */
 export interface SourceFailure { count: number; lastFailedAt: Date; }
 
 /** Resolved cooldown knobs. baseMin <= 0 means the cooldown is disabled. */
@@ -308,8 +309,7 @@ export async function readRecentSourceFailures(
               max(finished_at) AS last_failed_at
          FROM minion_jobs
         WHERE name = 'autopilot-cycle'
-          AND (status IN ('dead','failed')
-               OR (status = 'completed' AND result->'report'->'phases' @> '[{"status":"fail"}]'::jsonb))
+          AND status IN ('dead','failed')
           AND data->>'source_id' IS NOT NULL
           AND finished_at IS NOT NULL
           AND finished_at > $1`;
@@ -689,8 +689,6 @@ export async function dispatchPerSource(
   };
 }
 
-const GLOBAL_FLOOR_MIN = 60;
-
 /** Is the brain-wide maintenance overdue? Null/unparseable → overdue. */
 export function isGlobalMaintenanceStale(lastGlobalAtIso: string | null, now = Date.now(), floorMin = GLOBAL_FLOOR_MIN): boolean {
   if (!lastGlobalAtIso) return true;
@@ -733,12 +731,7 @@ export async function dispatchGlobalMaintenance(
   const emit = opts.emit ?? ((line) => process.stderr.write(line + '\n'));
   const log = opts.log ?? ((line) => console.log(line));
 
-  let floorMin = GLOBAL_FLOOR_MIN;
-  const floorCfg = await engine.getConfig('autopilot.global_floor_min');
-  if (floorCfg) {
-    const n = parseInt(floorCfg, 10);
-    if (Number.isFinite(n) && n >= 1) floorMin = n;
-  }
+  const floorMin = await resolveGlobalFloorMin(engine);
   const lastGlobalAt = await engine.getConfig(LAST_GLOBAL_AT_KEY);
   if (!isGlobalMaintenanceStale(lastGlobalAt, Date.now(), floorMin)) {
     return { dispatched: false, reason: 'fresh' };

@@ -30,6 +30,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
+import { dropOriginIndex } from './helpers/origin-index.ts';
 import { PAGE_MAX_BYTES } from '../src/core/page-size-policy.ts';
 
 let engine: PGLiteEngine;
@@ -45,6 +46,9 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
+  // These tests recreate legacy bookkeeping (several live rows naming one source_path), which only a brain whose
+  // pages_live_origin_key index is pending can hold (#6948).
+  await dropOriginIndex(engine);
 });
 
 afterAll(async () => {
@@ -605,6 +609,15 @@ describe('#3583 review: a live page sharing the stale source_path survives the r
     execSync('git mv people/alpha.md people/beta.md', { cwd: repo, stdio: 'pipe' });
     execSync('git commit -m "cheap rename alpha to beta"', { cwd: repo, stdio: 'pipe' });
     await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
+
+    // An unrelated NEW file appears at the old path, and the live beta row
+    // names that path again (the legacy bookkeeping): two active rows now
+    // share source_path=people/alpha.md. No writer records a held origin on
+    // a second page any more (#6948), so the legacy row is set last, as a
+    // brain written before that guard holds it.
+    writeFileSync(join(repo, 'people/alpha.md'), personMd('Alpha II', 'A fresh, unrelated alpha.'));
+    execSync('git add -A && git commit -m "new unrelated alpha"', { cwd: repo, stdio: 'pipe' });
+    await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
     await engine.executeRaw(
       `UPDATE pages SET source_path = 'people/alpha.md'
        WHERE source_id = 'default' AND slug = 'people/beta'`,
@@ -615,12 +628,6 @@ describe('#3583 review: a live page sharing the stale source_path survives the r
     );
     expect(betaRows).toHaveLength(1);
     expect(betaRows[0].source_path).toBe('people/alpha.md');
-
-    // An unrelated NEW file appears at the old path — two active rows now
-    // share source_path=people/alpha.md.
-    writeFileSync(join(repo, 'people/alpha.md'), personMd('Alpha II', 'A fresh, unrelated alpha.'));
-    execSync('git add -A && git commit -m "new unrelated alpha"', { cwd: repo, stdio: 'pipe' });
-    await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
     expect(await engine.getPage('people/alpha')).not.toBeNull();
     expect(await engine.getPage('people/beta')).not.toBeNull();
 

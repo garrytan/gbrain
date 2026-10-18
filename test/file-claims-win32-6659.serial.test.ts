@@ -13,6 +13,7 @@ import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { findLiveFileClaimants } from '../src/core/persistence/file-claims.ts';
+import { dropOriginIndex } from './helpers/origin-index.ts';
 
 let engine: PGLiteEngine;
 let root: string;
@@ -27,8 +28,12 @@ beforeAll(async () => {
   await engine.executeRaw("INSERT INTO sources(id,name,local_path,config) VALUES('win-6659','win-6659',$1,'{}')", [root]);
   for (const slug of ['notes/shared', 'notes/shared-twin']) {
     await importFromContent(engine, slug, '---\ntype: note\ntitle: Shared\n---\nShared body.\n',
-      { sourceId: 'win-6659', sourcePath: 'notes/shared.md', noEmbed: true });
+      { sourceId: 'win-6659', sourcePath: slug === 'notes/shared' ? 'notes/shared.md' : undefined, noEmbed: true });
   }
+  // No writer records a held origin on a second page any more (#6948): the twin's origin is set as a brain written
+  // before that guard, whose pages_live_origin_key index is pending, holds it.
+  await dropOriginIndex(engine);
+  await engine.executeRaw("UPDATE pages SET source_path='notes/shared.md' WHERE source_id='win-6659' AND slug='notes/shared-twin'");
 }, 120_000);
 
 afterAll(async () => {

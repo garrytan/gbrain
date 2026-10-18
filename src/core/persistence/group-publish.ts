@@ -59,6 +59,7 @@ import { withFilesystemPublication } from './filesystem-guard.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
 import { assertKnowledgePublicationAllowed } from '../shared-skills/knowledge-guard.ts';
 import { isStreamedContent } from './large-file.ts';
+import { sharedReadFailure } from './bounded-reads.ts';
 import { decoratePublicationOutcome, finishPreparationStalled, finishUnpublishedFailure, pageRecoveryRecord, persistenceFileHash, preparationAbortReason, publicationPostimage, publishMutation,
   publishPersistenceFile, recoverPublication, type PreparedMutation } from './coordinator.ts';
 import { pipelined } from '../page-state/transactions.ts';
@@ -68,7 +69,7 @@ import { readJournalLimits } from './limits.ts';
 import type { JournalLimits } from './model.ts';
 import { writerStamp } from './writer-versions.ts';
 import { recordPublicationFenceTrend } from '../fence-repair/census-store.ts';
-import { faultPoint, type PublicationBoundary } from './fault-points.ts';
+import { faultHookInstalled, faultPoint, type PublicationBoundary } from './fault-points.ts';
 import { assertMutationProtocol } from './protocol.ts';
 import { writeSwitchOn } from './switches.ts';
 import { importGroupReads, type ImportGroupReads } from './import-reads.ts';
@@ -170,7 +171,9 @@ export function preparationReads(engine: BrainEngine, imports?: ImportGroupReads
   const reads = new Map<string, Promise<unknown>>();
   const once = <T>(id: string, read: () => Promise<T>): Promise<T> => {
     let value = reads.get(id) as Promise<T> | undefined;
-    if (!value) { value = read(); reads.set(id, value); value.catch(() => reads.delete(id)); }
+    // Flip lane C: a failed shared read is no member's own statement (`sharedReadFailure`): it is charged once, never to every member.
+    // The read is sent synchronously (the memo rule); only an installed hook runs the `group:shared_read` seam first.
+    if (!value) { value = (faultHookInstalled() ? faultPoint('group:shared_read').then(read) : read()).catch(error => { throw sharedReadFailure(error); }); reads.set(id, value); value.catch(() => reads.delete(id)); }
     return value;
   };
   return new Proxy(engine, { get(target, key) {

@@ -21,6 +21,7 @@ import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { dropOriginIndex } from './helpers/origin-index.ts';
 
 const backends = testBackends();
 const engines: BrainEngine[] = [];
@@ -29,6 +30,8 @@ const dirs: string[] = [];
 beforeAll(async () => {
   if (backends.includes('pglite')) { const engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); engines.push(engine); }
   if (backends.includes('postgres')) { const pg = await isolatedPersistencePostgres(process.env.DATABASE_URL!); engines.push(pg.engine); closePostgres = pg.close; }
+  // The parity fixture gives two live pages one origin, which only a brain whose pages_live_origin_key is pending holds (#6948).
+  for (const engine of engines) await dropOriginIndex(engine);
 }, 120_000);
 afterAll(async () => {
   for (const engine of engines) { await disposePersistenceConsumer(engine); await engine.disconnect(); }

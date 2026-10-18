@@ -209,6 +209,7 @@ test/jobs-list-get-json.serial.test.ts	help advertises --json on list/get/stats 
 test/jobs-thin-client-date-rehydration.test.ts	thin-client unpack sites route through rehydrateJobDates (source audit)	2	source-surface-helper
 test/jobs-worker-startup-recovery.test.ts	work-handler recovery placement (structural)	1	source-surface-helper
 test/large-pages-skill-guidance.test.ts	large-page guidance in shipped skills	3	readFileSync
+test/large-pages/segmented-writer-floor.test.ts	(file-level)	1	readFileSync
 test/link-source-check-repair.test.ts	regex literal drift guard (#4613)	1	readFileSync
 test/longmemeval-embed-cache.test.ts	EmbeddingCache — canonical hash	4	readFileSync
 test/loops-extract-wiring.test.ts	jobs.ts wiring	2	source-surface-helper
@@ -284,6 +285,7 @@ test/schema-pack/suggest.test.ts	runSuggest — source-text contract (structural
 test/scripts/build-schema-migrations.test.ts	generator diagnostics (FAIL/Why/Fix/See)	9	exec-scan
 test/scripts/build-schema-migrations.test.ts	out-of-order landing check	2	exec-scan
 test/scripts/check-function-size.test.ts	check-function-size.ts rules	11	readFileSync
+test/scripts/check-item-allowlist-catches.test.ts	CLI	2	readFileSync
 test/scripts/chunk-visibility-ratchet.test.ts	check-chunk-visibility.ts	6	readFileSync
 test/scripts/ci-bounded-run.test.ts	(file-level)	7	readFileSync
 test/scripts/ci-executed-counts.test.ts	CLI	2	readFileSync
@@ -314,7 +316,7 @@ test/scripts/native-setup-toolchain.test.ts	scripts/native/setup-toolchain.ts do
 test/scripts/nightly-e2e.test.ts	full E2E shard classification (#6040)	2	readFileSync
 test/scripts/nightly-e2e.test.ts	nightly E2E scheduling	4	readFileSync
 test/scripts/nightly-issue.test.ts	.github/nightly-known-red.tsv	2	readFileSync
-test/scripts/nightly-issue.test.ts	master-red: push-to-master runs	21	readFileSync
+test/scripts/nightly-issue.test.ts	master-red: push-to-master runs	23	readFileSync
 test/scripts/nightly-issue.test.ts	nightly-watch coverage ratchet	1	readFileSync
 test/scripts/nightly-issue.test.ts	nightly-watch incidents	9	readFileSync
 test/scripts/nightly-issue.test.ts	nightly-watch routing and guard	9	readFileSync

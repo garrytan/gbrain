@@ -91,6 +91,7 @@ import type { TranscriptPageIndex } from '../transcripts/discover.ts';
 import { managedAtomSession, readAtomOrigin, resumeManagedAtoms, publishManagedAtoms, MANAGED_ATOM_DISCOVERY_SQL, type AtomOrigin } from '../persistence/atom-maintenance.ts';
 import { effectiveVisibility } from '../search/private-visibility.ts';
 import { OperationError } from '../ops/contract.ts';
+import { isOpPageSlug } from '../ops/context.ts';
 import type { WriteReceipt } from '../persistence/types.ts';
 import { acceptedPendingReceipt } from '../persistence/accepted-pending.ts';
 import { AtomPageStateError, completeAtomReceipts, MAX_DETERMINISTIC_FAILURES, readAtomPageIdentity, writeAtomPageState, type AtomPageInput } from './extract-atoms-page-state.ts';
@@ -1509,10 +1510,12 @@ async function retireStaleAtoms(
  * same normalizer the FS-import path uses) and RE-STRIPS a trailing dash after
  * the 60-char truncation — the cut can land on a hyphen and re-introduce one.
  * Two writers disagreeing on that trailing dash (`…would` vs `…would-`) was the
- * "trailing-dash twin" duplicate bug.
+ * "trailing-dash twin" duplicate bug. #6804: leading dots are dropped too
+ * (`.example domains` → `example-domains`); slugifySegment keeps them and the
+ * page grammar (validatePageSlug) refuses a dot-led segment.
  */
 function atomSlugStem(title: string): string {
-  return slugifySegment(title).slice(0, 60).replace(/-+$/g, '') || 'untitled';
+  return slugifySegment(title).replace(/^[.-]+/, '').slice(0, 60).replace(/-+$/g, '') || 'untitled';
 }
 
 /**
@@ -1577,6 +1580,9 @@ function atomSlug(title: string, srcRef: string, sourcePageSlug?: string, undate
  *      live bound atoms once per run into `pageAtomTitles`; exactly one match
  *      on the JS-lowercased title (SQL LOWER() differs for some non-ASCII
  *      titles) is adopted, while zero or several mint the new-shape slug.
+ *      #6804: an atom an older build minted under a slug the page grammar
+ *      refuses (dot-led) is never adopted; the new slug lands and the
+ *      reconciliation retires the old atom.
  * Every read is scoped to the write's source (unscoped-check/scoped-write).
  */
 async function resolvePageAtomSlug(
@@ -1603,7 +1609,7 @@ async function resolvePageAtomSlug(
     for (const row of rows) titles.set(row.title.toLowerCase(), [...(titles.get(row.title.toLowerCase()) ?? []), row.slug]);
     pageAtomTitles.set(sourcePageSlug, titles);
   }
-  const variants = titles.get(title.toLowerCase()) ?? [];
+  const variants = (titles.get(title.toLowerCase()) ?? []).filter(isOpPageSlug);
   return variants.length === 1 ? variants[0]! : slug;
 }
 

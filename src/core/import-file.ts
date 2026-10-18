@@ -65,6 +65,7 @@ import { abortSegmentedStaging, bodyStorageOf, demoteSegmentedPage, materialized
 import type { SegmentedStagingOwner } from './page-body/ingest.ts';
 import type { PageBodyPolicy } from './page-body/limits.ts';
 import { parseFactsFence, renderFactsTable, restoreHiddenFactRows, factsGapWarning, replaceOrInsertFactsFence } from './facts-fence.ts';
+import { assertOriginUnclaimed, isOriginClaimRefusal } from './persistence/origin-guard.ts';
 
 /**
  * #2044 / #4548: row-level, visibility-aware fence merge for one page
@@ -209,12 +210,16 @@ async function refreshSourcePath(engine: BrainEngine, slug: string, sourceId: st
   try {
     // Keep this optional legacy repair inside a savepoint: a rejected SQL
     // statement must not poison the surrounding canonical transaction.
-    await engine.transaction(tx => tx.executeRaw(
-      `UPDATE pages SET source_path = $1, source_uri = COALESCE($4::text, source_uri) WHERE source_id = $2 AND slug = $3
+    await engine.transaction(async tx => {
+      await assertOriginUnclaimed(tx, { sourceId: sourceId ?? 'default', slug, sourcePath });
+      // origin-guard-ok: assertOriginUnclaimed above, in the same savepoint
+      await tx.executeRaw(`UPDATE pages SET source_path = $1, source_uri = COALESCE($4::text, source_uri) WHERE source_id = $2 AND slug = $3
         AND deleted_at IS NULL AND (source_path IS DISTINCT FROM $1 OR source_uri IS DISTINCT FROM COALESCE($4::text, source_uri))`,
-      [sourcePath, sourceId ?? 'default', slug, originUri],
-    ));
-  } catch { /* bookkeeping only — never fail the import over it */ }
+      [sourcePath, sourceId ?? 'default', slug, originUri]);
+    });
+  } catch (error) {
+    if (isOriginClaimRefusal(error)) process.stderr.write(`[import] ${slug}: origin ${sourcePath} not recorded: ${(error as Error).message}\n`);
+  }
 }
 
 /** #6188 (E8): `importFromContent`'s fence options. */

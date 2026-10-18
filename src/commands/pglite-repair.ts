@@ -46,12 +46,13 @@ interface RepairCmdOpts {
   jsonOutput: boolean;
   customPath: string | null;
   help: boolean;
+  legacyLock: boolean;
 }
 
 class UnknownFlagError extends Error {}
 
 function parseArgs(args: string[]): RepairCmdOpts {
-  const opts: RepairCmdOpts = { dryRun: false, yes: false, jsonOutput: false, customPath: null, help: false };
+  const opts: RepairCmdOpts = { dryRun: false, yes: false, jsonOutput: false, customPath: null, help: false, legacyLock: false };
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === '--dry-run') opts.dryRun = true;
@@ -70,6 +71,7 @@ function parseArgs(args: string[]): RepairCmdOpts {
       opts.customPath = val;
     }
     else if (a === '--help' || a === '-h') opts.help = true;
+    else if (a === '--legacy-lock') opts.legacyLock = true;
     // Reject unknown args on a DESTRUCTIVE command (codex): silently ignoring
     // a typo like `--dry-rnu` would run a real WAL reset instead of a dry run.
     else throw new UnknownFlagError(`unknown argument: ${a}`);
@@ -92,6 +94,10 @@ Usage:
   gbrain pglite-repair --dry-run [--json] [--path <dir>]   diagnose only
   gbrain pglite-repair [--yes --expect <plan_hash>] [--json] [--path <dir>]
                                                            repair (asks first)
+  gbrain pglite-repair --legacy-lock --dry-run [--json] [--path <dir>]
+                                                           preview a legacy lock
+  gbrain pglite-repair --legacy-lock [--yes --expect <plan_hash>] [--json] [--path <dir>]
+                                                           move it aside (asks first)
 
 Flags:
   --dry-run     Read-only diagnosis of the data dir. Mutates nothing.
@@ -102,6 +108,12 @@ Flags:
                 user_message to the user).
   --json        Machine-readable output on stdout.
   --path <dir>  Repair a specific data dir (default: the configured brain).
+  --legacy-lock Act on a lock folder (.gbrain-lock) left by an older gbrain whose
+                owner cannot be proven dead (pglite_busy reason
+                legacy_owner_unverified) instead of the WAL. The preview's
+                evidence covers only this host and PID namespace; the removal
+                refuses while a process here still uses the data dir or on a
+                network filesystem, and keeps the old folder and a receipt.
 
 Notes:
   Auto-repair runs on ordinary commands by default; disable it with
@@ -164,6 +176,10 @@ export async function runPgliteRepair(args: string[]): Promise<number> {
       return 1;
     }
     dataDir = cfg.database_path || gbrainPath('brain.pglite');
+  }
+  if (opts.legacyLock) {
+    const { runLegacyLockRepair } = await import('./pglite-repair-legacy-lock.ts');
+    return runLegacyLockRepair(dataDir, { dryRun: opts.dryRun, json: opts.jsonOutput, args: opts.yes ? [...args, '--yes'] : args });
   }
 
   // Read-only diagnosis first — BEFORE any lock (acquireLock mkdirs the data
