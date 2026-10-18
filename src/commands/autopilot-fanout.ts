@@ -58,9 +58,22 @@ import { AUTOPILOT_FULL_CYCLE_FLOOR_MINUTES } from './autopilot-remediation-poli
 const FAILURE_COOLDOWN_BASE_MIN = 10;
 const FAILURE_COOLDOWN_CAP_MIN = 120;
 const FAILURE_COOLDOWN_EXP_CAP = 4; // 2^4 = 16× base before the cap clamps
+// Failures are counted over at least this long a window so the series can
+// climb 10→20→40→80→120 and STAY capped. A window no longer than the cap
+// aged the streak out and settled into a 40-minute loop.
+const FAILURE_COUNT_WINDOW_MIN = 24 * 60;
 
-/** Recent-failure record for one source (from minion_jobs dead/failed rows). */
-export interface SourceFailure { count: number; lastFailedAt: Date; }
+/** Window (minutes) over which failures are counted, covering the whole series for any cap. */
+export function failureCountWindowMin(opts: CooldownOpts): number {
+  return Math.max(FAILURE_COUNT_WINDOW_MIN, opts.capMin * 12);
+}
+
+/**
+ * Recent-failure record for one source. `failedAt` (newest first) lets the
+ * cooldown count only failures after the source's last success; records built
+ * without it keep the aggregate count.
+ */
+export interface SourceFailure { count: number; lastFailedAt: Date; failedAt?: Date[]; }
 
 /** Resolved cooldown knobs. baseMin <= 0 means the cooldown is disabled. */
 export interface CooldownOpts { baseMin: number; capMin: number; }
@@ -261,7 +274,12 @@ export function isInFailureCooldown(
   if (opts.baseMin <= 0) return false;            // disabled
   if (!failure || failure.count <= 0) return false;
   if (lastSuccessAt && lastSuccessAt.getTime() >= failure.lastFailedAt.getTime()) return false;
-  const cooldownMs = cooldownMinForCount(failure.count, opts) * 60_000;
+  // Only the streak since the last success counts: a failure before a recovery
+  // must not inflate the next cooldown.
+  const count = failure.failedAt && lastSuccessAt
+    ? failure.failedAt.filter((d) => d.getTime() > lastSuccessAt.getTime()).length
+    : failure.count;
+  const cooldownMs = cooldownMinForCount(count, opts) * 60_000;
   return (now - failure.lastFailedAt.getTime()) < cooldownMs;
 }
 
@@ -293,34 +311,47 @@ export async function resolveFailureCooldownOpts(engine: BrainEngine): Promise<C
  * the exact failures that drive the storm. Engine-parity-safe via executeRaw
  * (one query, both engines); cutoff is precomputed in JS to avoid INTERVAL
  * portability concerns. codex #6: rows with a null source_id are excluded.
+ *
+ * A COMPLETED job also counts when its report withheld the freshness stamp
+ * (a freshness phase hard-failed; cycle/source-freshness.ts), when its report
+ * status is 'failed' (every attempted phase failed), or when its stamp WRITE
+ * failed (#3504): the handler returns normally on all three, so without this a
+ * persistent failure re-dispatched every tick. Aborted runs report 'partial'
+ * and claim-time skips 'skipped', so neither counts. A later stamped success
+ * clears it.
  */
 export async function readRecentSourceFailures(
   engine: BrainEngine,
-  opts: { sinceMin?: number; sourceId?: string } = {},
+  opts: { sinceMin?: number; sourceId?: string; now?: number } = {},
 ): Promise<Map<string, SourceFailure>> {
-  const sinceMin = opts.sinceMin ?? FAILURE_COOLDOWN_CAP_MIN;
-  const cutoff = new Date(Date.now() - sinceMin * 60_000).toISOString();
+  const sinceMin = opts.sinceMin ?? FAILURE_COUNT_WINDOW_MIN;
+  const cutoff = new Date((opts.now ?? Date.now()) - sinceMin * 60_000).toISOString();
   const map = new Map<string, SourceFailure>();
   try {
     const params: unknown[] = [cutoff];
     let sql =
-      `SELECT data->>'source_id' AS source_id,
-              count(*)::int AS fail_count,
-              max(finished_at) AS last_failed_at
+      `SELECT data->>'source_id' AS source_id, finished_at
          FROM minion_jobs
         WHERE name = 'autopilot-cycle'
-          AND status IN ('dead','failed')
+          AND (status IN ('dead','failed')
+               OR (status = 'completed'
+                   AND (jsonb_typeof(result->'report'->'freshness_withheld_for') = 'array'
+                        OR result->'report'->>'status' = 'failed'
+                        OR result->'report'->>'reason' = 'stamp_write_failed')))
           AND data->>'source_id' IS NOT NULL
           AND finished_at IS NOT NULL
           AND finished_at > $1`;
     if (opts.sourceId) { params.push(opts.sourceId); sql += ` AND data->>'source_id' = $${params.length}`; }
-    sql += ` GROUP BY data->>'source_id'`;
-    const rows = await engine.executeRaw<{ source_id: string | null; fail_count: number; last_failed_at: string | Date }>(sql, params);
+    sql += ` ORDER BY finished_at DESC`;
+    const rows = await engine.executeRaw<{ source_id: string | null; finished_at: string | Date }>(sql, params);
     for (const r of rows) {
       if (!r.source_id) continue; // codex #6 null-source guard (defensive)
-      const last = r.last_failed_at instanceof Date ? r.last_failed_at : new Date(r.last_failed_at);
-      if (!Number.isFinite(last.getTime())) continue;
-      map.set(r.source_id, { count: Number(r.fail_count) || 0, lastFailedAt: last });
+      const at = r.finished_at instanceof Date ? r.finished_at : new Date(r.finished_at);
+      if (!Number.isFinite(at.getTime())) continue;
+      const prior = map.get(r.source_id);
+      // Rows arrive newest first, so the first row per source is the latest failure.
+      if (prior) { prior.count++; prior.failedAt!.push(at); }
+      else map.set(r.source_id, { count: 1, lastFailedAt: at, failedAt: [at] });
     }
   } catch {
     // Pre-migration / transient DB error → no cooldown data (fail open: dispatch).
@@ -338,7 +369,7 @@ export async function readRecentSourceFailures(
 export async function isSourceInCooldown(engine: BrainEngine, sourceId: string, now = Date.now()): Promise<boolean> {
   const opts = await resolveFailureCooldownOpts(engine);
   if (opts.baseMin <= 0) return false;
-  const failures = await readRecentSourceFailures(engine, { sinceMin: opts.capMin, sourceId });
+  const failures = await readRecentSourceFailures(engine, { sinceMin: failureCountWindowMin(opts), sourceId, now });
   const failure = failures.get(sourceId);
   if (!failure) return false;
   let lastSuccessAt: Date | null = null;
@@ -540,7 +571,7 @@ export async function dispatchPerSource(
   try {
     cooldownOpts = await resolveFailureCooldownOpts(engine);
     if (cooldownOpts.baseMin > 0) {
-      recentFailures = await readRecentSourceFailures(engine, { sinceMin: cooldownOpts.capMin });
+      recentFailures = await readRecentSourceFailures(engine, { sinceMin: failureCountWindowMin(cooldownOpts) });
     }
   } catch {
     cooldownOpts = { baseMin: 0, capMin: FAILURE_COOLDOWN_CAP_MIN };
