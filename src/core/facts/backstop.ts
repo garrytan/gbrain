@@ -249,10 +249,11 @@ async function dropRewordedDuplicates<T extends ExtractedFact & { entity_inferre
       { embedding, embeddingModel: f.embedding_model, k: DEDUP_CANDIDATE_LIMIT, attributedTo: f.attributed_to ?? null }))
       .filter(c => c.visibility === visibility);
     const top = Math.max(-1, ...candidates.map(c => (c.embedding ? cosineSimilarity(embedding, c.embedding) : -1)));
-    const { threshold } = await readSupersessionThreshold(ctx.engine, f.embedding_model, embedding.length);
-    const verdict = top >= CLASSIFY_FLOOR && (threshold === null || top < threshold)
+    // The writer's threshold, overrides included; no cosine cutoff when uncalibrated.
+    const cutoff = (await readSupersessionThreshold(ctx.engine, f.embedding_model, embedding.length)).threshold ?? Number.POSITIVE_INFINITY;
+    const verdict = top >= CLASSIFY_FLOOR && top < cutoff
       ? await classifyAgainstCandidates({ fact: f.fact, kind: f.kind ?? 'fact', embedding }, candidates,
-        { model: ctx.model, embeddingModel: f.embedding_model, abortSignal })
+        { model: ctx.model, cheapThreshold: cutoff, fallbackThreshold: cutoff, abortSignal })
       : null;
     if (verdict?.decision === 'duplicate') dropped.push(verdict.matched_id);
     else kept.push(f);
