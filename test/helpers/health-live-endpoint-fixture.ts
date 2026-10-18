@@ -13,8 +13,8 @@ stub('timeline-grading.ts',{loadTimelineGradedPredicate:async()=>()=>true,gradeT
 stub('search/embedding-column.ts',{quoteIdentifier:(s:string)=>{assert.match(s,/^[a-z_]+$/);return `"${s}"`}});
 const {renderFragment}=await import(resolve(core,'engine-sql/fragment.ts'));
 const {getHealth}=await import(resolve(core,'engine-sql/health.ts'));
-const db=new PGlite();let statements=0;let rawCount:number;
-const exec={run:async(f:any)=>{statements++;let q=renderFragment(f);const res=await db.query(q.text,q.params);if(statements%3===1)rawCount=Number(res.rows[0].link_count);return res}};
+const db=new PGlite();let statements=0;let rawCount:number|undefined;
+const exec={run:async(f:any)=>{statements++;let q=renderFragment(f);const res=await db.query<{link_count:unknown}>(q.text,q.params);if(statements%3===1)rawCount=Number(res.rows[0].link_count);return res}};
 // Actual schema-pack predicate, quarantine filter and orphan policy run natively.
 const filter={types:['researcher'],per_source:[{source_id:'B',types:['company']}]};
 const deps={embeddingColumn:async()=> 'active_embedding', getConfig:async()=>null,
