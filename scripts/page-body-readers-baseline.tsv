@@ -430,6 +430,7 @@ src/core/persistence/reconcile-merge.ts	reconcileCanonical	field	INLINE
 src/core/persistence/reconcile-prepare.ts	prepareReconcileMutation	call:serializePageToMarkdown	INLINE	
 src/core/persistence/reconcile-prepare.ts	prepareReconcileResult	call:serializePageToMarkdown	INLINE	
 src/core/persistence/reconcile-prepare.ts	prepareReconcileResult	field	INLINE	
+src/core/persistence/reconcile-splice.ts	spliceBody	field	INLINE	compares and splices the canonical file parsed as strings with the reconciled result; readReconcileState reads a segmented page whole through wholeBodySnapshot (refused over 24 MiB)
 src/core/persistence/reconcile-state.ts	readReconcileState	sql	INLINE	
 src/core/persistence/reconcile.ts	runReconcilePreview	call:serializePageToMarkdown	SEGW	
 src/core/persistence/segmented-apply.ts	demoteSegmentedPage	sql	INLINE	demotion: the row turns inline with an empty body that the inline write in the same transaction fills
