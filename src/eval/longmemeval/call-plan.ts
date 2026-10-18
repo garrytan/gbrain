@@ -73,6 +73,8 @@ export const EXPANSION_TOOL_ALLOWANCE_TOKENS = 1024;
 /** Output defaults the AI SDK applies when expansion sends no max_tokens (@ai-sdk/anthropic getModelCapabilities). */
 const EXPANSION_DEFAULT_MAX_OUT: ReadonlyArray<{ provider: string; match: string; maxOut: number }> = [
   { provider: 'anthropic', match: 'claude-haiku-4-5', maxOut: 64_000 },
+  // Not in the SDK's model table yet; its generic claude- branch applies.
+  { provider: 'anthropic', match: 'claude-haiku-5-5', maxOut: 4096 },
 ];
 const EXPANSION_MAX_VARIANT_CHARS = 500;
 /** The longest synopsis the wrapper keeps (embedding-context.ts SUMMARY_HARD_CAP_CHARS). */
