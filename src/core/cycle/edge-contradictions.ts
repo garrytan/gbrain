@@ -33,6 +33,7 @@ import { BudgetMeter, loadAllowUnpriced, loadPricingOverrides, parseBudgetUsd } 
 import { resolveModel } from '../model-config.ts';
 import { closeContradiction, parseMultirange, utcToday, dateKey, type Stint } from '../link-validity.ts';
 import { declaredSingleValueTypes, planSingleValueClosures } from '../link-single-value.ts';
+import { NON_EMPLOYER_TYPES, NON_EMPLOYER_PREFIXES } from '../link-target-roles.ts';
 
 export interface EdgeContradictionsResult {
   name: 'edge_contradictions';
@@ -122,9 +123,10 @@ export const EDGE_JUDGE_PROMPT = `You check a person's or organization's current
 Each numbered relationship below is currently recorded as true. Decide, for each pair of relationships
 of the SAME type, whether they can both be true at the same time right now.
 
-Examples: two full-time works_at relationships at different companies usually cannot both hold
-(someone moved jobs) unless the evidence says the person holds both roles; advising two companies,
-working at a company while advising another, and board seats can all hold at once.
+Concurrent roles, including concurrent employment, can both hold: parent/subsidiary roles,
+part-time work, advising and board seats are not exclusive. For works_at, return conflict: false
+unless the evidence explicitly establishes a move or replacement (left, joined instead, formerly).
+Two employer titles or different start dates alone are not evidence of exclusivity.
 
 Do not guess dates. Judge only whether both can be true now, from the evidence shown.
 
@@ -193,7 +195,16 @@ async function findCandidateGroups(engine: BrainEngine, maxSubjects: number): Pr
   const rows = await engine.executeRaw<CandidateRow>(
     `WITH live AS (
        SELECT lr.* FROM link_relationships lr
+         JOIN pages f ON f.id = lr.from_page_id AND f.deleted_at IS NULL
+           AND ($3::timestamptz IS NULL OR f.links_extracted_at >= $3::timestamptz)
+         JOIN pages t ON t.id = lr.to_page_id AND t.deleted_at IS NULL
         WHERE lr.scope = 'all' AND lr.semantics = 'state' AND lr.valid_ranges @> $1::date
+          -- Admit roles before grouping/LIMIT: malformed newer groups must not starve valid ones.
+          AND (lr.link_type <> 'works_at' OR (
+            f.type = 'person' AND
+            CASE WHEN NULLIF(t.type, '') IS NOT NULL THEN NOT (t.type = ANY($4::text[]))
+              ELSE NOT EXISTS (SELECT 1 FROM unnest($5::text[]) AS prefix(value)
+                WHERE starts_with(t.slug, prefix.value)) END))
      ), multi AS (
        SELECT source_id, from_page_id, link_type FROM live
         GROUP BY 1, 2, 3 HAVING count(DISTINCT to_page_id) >= 2
@@ -207,7 +218,7 @@ async function findCandidateGroups(engine: BrainEngine, maxSubjects: number): Pr
          AND ($3::timestamptz IS NULL OR f.links_extracted_at >= $3::timestamptz)
        JOIN pages t ON t.id = l.to_page_id AND t.deleted_at IS NULL
       ORDER BY l.from_page_id, l.link_type, l.last_start NULLS FIRST, t.slug`,
-    [today, maxSubjects, pendingCutoff]);
+    [today, maxSubjects, pendingCutoff, [...NON_EMPLOYER_TYPES], [...NON_EMPLOYER_PREFIXES]]);
   const groups = new Map<string, SubjectGroup>();
   for (const r of rows) {
     const key = `${r.from_page_id}\0${r.link_type}`;
