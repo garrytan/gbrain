@@ -74,8 +74,9 @@ record, the travel server for search and booking.
 - **The user pays at `checkout_url`** unless their platform can mint a Stripe
   Shared Payment Token for agent payment.
 - **One page per trip** under `trips/`, with flights, stay, travellers, total
-  paid, `booking_ref` and `trip_id`. Never write passport or ID numbers, dates
-  of birth, card details or the API key into a page.
+  paid and `trip_id` (the `booking_ref` too, only when the user agrees). Never
+  write passport or ID numbers, dates of birth, card details or the API key
+  into a page.
 - **Confirm the price before booking.** Prices from the flight discovery tools
   are indicative and for one adult; confirm with `flight_search` before adding
   a fare to a trip.

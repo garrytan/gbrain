@@ -12,13 +12,13 @@ writes_to:
   - trips/
   - people/
 # Brain ops (MCP names). Travel tools come from the separate Jinko MCP server.
-tools: [whoami, query, get_page, recall, remember, forget, put_page, add_link, remove_link]
+tools: [whoami, query, get_page, recall, remember, put_page, add_link, remove_link]
 ---
 
 # Travel Booking: book with the brain's context, file what was booked
 
 The Jinko MCP server (`https://mcp.builders.gojinko.com/mcp`) does the travel
-work: flight, hotel and car search, the trip cart, checkout and payment, and
+work: flight, hotel and car search, the trip, checkout and payment, and
 managing bookings afterwards (exchanges, refunds and cancellations). The brain supplies who is
 travelling and how they like to travel, and keeps the record afterwards.
 
@@ -43,7 +43,7 @@ tool below maps to the command of the same name with hyphens
 | `trip` (`select_ancillaries`) | `jinko get-ancillaries`, then `jinko select-ancillaries` |
 | `get_trip` | `jinko trip-status` |
 | `submit_agent_payment` | `jinko agent-pay submit` |
-| `flight_refund` | `jinko refund check` / `preview` / `commit` / `status` |
+| `flight_refund` | `jinko refund preview` / `commit` / `status` |
 | `flight_exchange` | `jinko exchange shop` / `price` / `commit` / `status` |
 | `car_cancel` | `jinko car-cancel preview` / `commit` / `status` |
 | `hotel_cancel` | `jinko hotel-cancel preview` / `commit` / `status`. Never run `jinko hotel-cancel` without a subcommand: that form cancels at once, with no preview. |
@@ -70,10 +70,14 @@ source is not `__all__` (read everything; nothing can be written to it), and
 over MCP the capabilities resource's `available_operations` include
 `put_page`, its `access` (where present) is not `read-only`, and its write
 prefixes (where listed) include `trips/`. If not, tell the user before booking
-that the trip cannot be filed until the connection is fixed. If
-`available_operations` lack `add_link` or `remove_link`, or the write prefixes
-(where listed) leave out `people/`, file the trip without `attended` edges or
-saved preferences and tell the user. In a brain with several
+that the trip cannot be filed until the connection is fixed. These checks do
+not show every write restriction (a stdio writer's own grant can narrow it
+further): if a write is refused after payment, tell the user the booking is
+paid but not filed, and give them its `trip_id` and `booking_ref`. If
+`available_operations` lack `add_link` or `remove_link`, file the trip without
+`attended` edges; if they lack `remember`, save no preferences; if the write
+prefixes (where listed) leave out `people/`, do neither. Tell the user what was
+skipped. In a brain with several
 sources, pass that `source_id` to every
 read in this skill (`recall`, `query`, `get_page`): an unscoped read spans
 every source you can read, so it can return a trip page you cannot update, or
@@ -87,14 +91,19 @@ ask the user for their preferences and companions directly, and book as usual.
 
 Do this once per trip request, before the first travel tool call:
 
-- `recall` / `query` the traveller's travel preferences: home airport, preferred
-  and avoided airlines, seat, cabin, hotel style, loyalty programmes.
-- `get_page people/<slug>` for every named companion, to resolve who they are.
+- `recall` (with `entity` set to the traveller) the traveller's travel
+  preferences: home airport, preferred and avoided airlines, seat, cabin, hotel
+  style, loyalty programmes. `query` returns only a few facts, so do not use it
+  in place of `recall`.
+- `get_page people/<slug>` for the traveller and every named companion, to
+  resolve who they are and read any travel preferences written on the page.
   Do not take passport numbers, dates of birth or document details from the
   brain for a booking; ask the user for them at booking time.
-- `query` (with the `source_id`) for existing pages under `trips/` that overlap the dates. If one
-  exists, ask the user whether this booking belongs to that trip; extend it
-  only if they say yes.
+- `query` (with the `source_id`) for existing pages under `trips/` that overlap the dates,
+  without `since` / `until`: those compare a page's `date`, which is its trip's
+  start, so a trip that began earlier would be left out. If one exists, ask the
+  user whether this booking belongs to that trip; extend it only if they say
+  yes.
 
 Use what you found as defaults, and say which ones you applied ("searching
 from SFO, aisle seats, as usual"). Anything the user says in the request wins.
@@ -105,8 +114,12 @@ brain's operator has turned on automatic capture: then call `remember` with one
 claim, `kind: preference`, `entity` set to the person, `provenance` naming
 where it came from (e.g. "user, travel request 2026-04-02"), and no `ttl`.
 When it changes a preference you recalled, pass that fact's id as `replaces`
-(or, where `remember` offers no `replaces`, `forget` the old fact first), so
-the old one stops applying, and keep the old fact's `visibility`. `remember`
+and keep the old fact's `visibility`. If `remember` answers `inserted` rather
+than `superseded`, the old preference still applies (gbrain leaves a more
+trusted fact for the brain's owner to review); tell the user. Where `remember`
+offers no `replaces`, save nothing: use the change for this request and tell
+the user the saved preference stays as it was (changing it needs a connection
+whose `remember` takes `replaces`). `remember`
 stores a fact as `world` (readable by every client of the source) unless told
 otherwise, so ask the user before saving anything sensitive (health,
 accessibility, religion). Do
@@ -137,7 +150,7 @@ show the alternatives it returns and let the user choose.
 
 ## 3. Book
 
-1. `trip` with `add_item` and the token of the fare, rate or car the user chose.
+1. `trip` with `add_item` and the `trip_item_token` of the fare, rate or car the user chose.
    Flights, hotels and cars share one trip and one checkout.
 2. `trip` with `upsert_travelers`. Traveller names, dates of birth and contact
    details come from the user, never from guesses or placeholders.
@@ -192,8 +205,10 @@ File the trip as soon as `payment_attempt.payment_status` is `authorized` or
 booked or failed; mark a failed item `(failed, not booked)`.
 That way a paid booking is in the brain even if the conversation ends before
 it is confirmed. While the payment is `authorized`, write the amount under
-`## Paid` as `(authorized, not yet charged)`; drop that note once it is
-`captured`, or record the authorization as released if it never is. If a
+`## Paid` as `(authorized, not yet charged)`. Once it is `captured`, write the
+amount from `payment_attempt.money.captured` instead (a partly booked trip is
+charged only for what was booked) and drop the note; if it never is, record
+the authorization as released. If a
 later conversation brings up a booking that has no trip page (the user paid
 in the browser and left), look it up with `get_booking` or `get_trip` and
 file it then.
@@ -216,8 +231,10 @@ record a trip, don't.
 
 Each booked item carries its own status; the page's `status` describes the trip
 as a whole. Recompute it on every write: `cancelled` once no item is still
-active (every item is refunded, cancelled or failed, never booked), otherwise
-`booked`. An exchanged item is still active. On the same writes, including
+active (every item is refunded, cancelled or failed, never booked); `pending`
+while every active item is still `(booking in progress)`, a booking Jinko is
+checking (`needs_review`) included; otherwise `booked`. An exchanged item is
+still active. On the same writes, including
 when a booking is added, set the title (first destination, start to end
 date), `date` (start date) and `location` from the items still active, and
 keep the last ones when none is. Re-date the `attended` edge of each
@@ -233,8 +250,7 @@ attendees: [people/alice-example, people/bob-example]
 visibility: private   # only when whoami says transport: local; see below
 status: booked
 bookings:
-  - booking_ref: JNK-ABC123
-    trip_id: "2139"
+  - trip_id: "2139"   # booking_ref only when the user agreed; see below
 provider: jinko
 ---
 
@@ -242,18 +258,18 @@ provider: jinko
 
 Travellers: [[people/alice-example]], [[people/bob-example]]
 
-## Flights (booked, JNK-ABC123)
+## Flights (booked, trip 2139)
 - 2026-05-14 EX 101 SFO 21:10 → LIS 15:25 (+1), economy, 1 checked bag each
 - 2026-05-18 EX 102 LIS 11:00 → SFO 15:05
 
-## Stay (booked, JNK-ABC123)
+## Stay (booked, trip 2139)
 - Hotel Example, 2026-05-15 to 2026-05-18, 1 room, free cancellation until 2026-05-12
 
-## Car (booked, JNK-ABC123)
+## Car (booked, trip 2139)
 - Example Rentals, compact, pick-up LIS airport 2026-05-15 17:00, drop-off LIS airport 2026-05-18 08:00, free cancellation until 2026-05-13
 
 ## Paid
-- USD 2,184.60, JNK-ABC123 (checkout 2026-04-02)
+- USD 2,184.60, trip 2139 (checkout 2026-04-02)
 ```
 
 - Who can read the page. A guest can change or cancel a booking with its
@@ -264,27 +280,27 @@ Travellers: [[people/alice-example]], [[people/bob-example]]
   remote, you included: stdio or remote MCP, and a thin-client CLI (one
   configured with `remote_mcp`).
   - If `whoami` reports `transport: local`, keep `visibility: private`: remote
-    clients cannot read the page, and you still can.
+    clients cannot read the page, and you still can, unless the brain's
+    operator has turned that filter off (`search.remote_private_pages`).
   - Otherwise a private trip page could not be read back or updated. Leave
     `visibility` out; the page is then readable by every MCP client that can
     read this source. Over remote MCP, suggest a source granted only to this
     agent (gbrain's boundary for remote access); stdio connections have no
     per-client grants.
   - Either way, `visibility` does not cover copies outside gbrain: a source
-    backed by a git repository gets the page as a file, private or not. Before
-    each new trip page, tell the user who will be able to read it, unless
-    `recall` returns a choice they saved for this (save it with `remember`,
-    `kind: preference`, when they want it kept for later trips). If they do
-    not want booking references stored there, record each booking's `trip_id` without its
-    `booking_ref`, and read the `booking_ref` back from `get_trip` when you
-    need it. Keep that choice on every later write: when the page's
-    `bookings:` entries carry no `booking_ref`, do not add one anywhere on the
-    page, and name items and payment lines by `trip_id` instead.
+    backed by a git repository gets the page as a file, private or not.
+  - By default record each booking's `trip_id` without its `booking_ref`, and
+    read the `booking_ref` back from `get_trip` when you need it. Before each
+    new trip page, tell the user who will be able to read it; store the
+    `booking_ref` there only if they then agree. Keep the page's choice on every
+    later write: when its `bookings:` entries carry no `booking_ref`, do not
+    add one anywhere on the page, and name items and payment lines by
+    `trip_id`.
 - Record only these values: flight numbers, airports, times, cabin and bags;
   the hotel name, room, dates and cancellation deadline; for a rental car, the
   rental company, car category, pick-up and drop-off places and times, and
   cancellation deadline; the total paid; and
-  the `booking_ref` (unless the page stores none, see above) and `trip_id` of
+  the `trip_id` (and the `booking_ref` when the user agreed, see above) of
   every booking on the trip; and, while a
   change is in progress, the handle its status step needs (see section 5). A booking
   added to an existing trip page gets its own entry under `bookings:`, and each
@@ -314,7 +330,7 @@ Travellers: [[people/alice-example]], [[people/bob-example]]
 
 ## 5. Changes, refunds and cancellations
 
-- Every change, refund or cancellation call takes the `booking_ref` and the `item_id` of the item
+- Every change, refund or cancellation call takes the `booking_ref` and the `booked_item_id` of the item
   being changed; guests also give the traveller's `last_name`.
 - Always run the preview or quote step first, show the amount and any fee, and
   get an explicit yes before the commit step. `fee_known: false` means the fee

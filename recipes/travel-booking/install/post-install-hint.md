@@ -8,7 +8,7 @@ operator knows what to do next.
 
 ✓ Travel-booking skill installed to `<target-repo>/skills/travel-booking/`.
 
-**Three follow-up steps:**
+**Four follow-up steps:**
 
 ### 1. Confirm the travel tools are reachable
 
@@ -32,7 +32,15 @@ This install appended one row to your `<target>/RESOLVER.md` (or `AGENTS.md`):
 travel-booking | the user wants to find, price, book, change, refund or cancel a flight, hotel or rental car; ...
 ```
 
-### 3. Update later
+### 3. Reload and check the skill is picked up
+
+If the harness loads `AGENTS.md`, `RESOLVER.md` or skills only at startup,
+restart it. Then, in a new conversation, ask "What do flights from <home
+airport> to Lisbon cost next month?": the agent should read the brain for the
+home airport and call `flight_calendar` or `find_dates`. Step 4 of
+`recipes/travel-booking.md` has the full check.
+
+### 4. Update later
 
 When gbrain ships a new version of the skill, refresh your local copy:
 
