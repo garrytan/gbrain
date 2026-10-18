@@ -12,7 +12,6 @@ import { submissionAuthority } from './authority.ts';
 import { currentVerifiedLocalWriter, existingLocalHostId, readLocalWriter, verifyLocalWriter } from './identity.ts';
 import { getWorktreeBinding } from './ownership.ts';
 import { prepareFileTarget } from './page-prepare.ts';
-import { loadActivePackForEngine } from '../schema-pack/engine-resolution.ts';
 import { readFix, trustedCliRequired } from '../ops/op-fix.ts';
 import { readReconcileState } from './reconcile-state.ts';
 import { reconcileCanonical } from './reconcile-merge.ts';
@@ -67,8 +66,6 @@ export async function auditCanonicalSource(engine: BrainEngine, sourceId: string
     next_after: rows.length > limit ? rows[limit - 1].slug : null, complete: rows.length <= limit, snapshot_only: true,
     ...(options.classify ? { classified: { structurally_additive: 0, additive_with_suggestions: 0, review_required: 0, formatting_only: 0, slug_rule_mismatch: 0, error: 0 } } : {}) };
   const mode = await scannerSlugRootMode(engine, sourceId, root);
-  // A file is read through the active pack, as page writes read it: its path rules type a page whose file has no `type:`.
-  const pack = await loadActivePackForEngine(engine, { remote: false, sourceId }).catch(() => null);
   for (const candidate of rows.slice(0, limit)) {
     report.inspected++;
     if (isDatabaseOnlyPage(candidate)) {
@@ -106,7 +103,7 @@ export async function auditCanonicalSource(engine: BrainEngine, sourceId: string
       } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
       if (size > 5_000_000) throw opError('invalid_params', 'The file exceeds the bounded audit size.',
         `The file for page ${candidate.slug} is over 5 MB, so the audit skipped it; inspect it on the canonical host.`);
-      await prepareFileTarget(engine, { source_id: sourceId, worktree_id: binding.worktree_id, slug: candidate.slug }, snapshot, null, hostId!, { activePack: pack?.manifest });
+      await prepareFileTarget(engine, { source_id: sourceId, worktree_id: binding.worktree_id, slug: candidate.slug }, snapshot, null, hostId!);
     } catch (error) {
       const reason = error instanceof OperationError ? error.code : 'storage_error';
       if (reason === 'source_changed') report.drifted++;

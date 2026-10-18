@@ -296,6 +296,40 @@ ${subtypes}`);
     expect(fs.readFileSync(file, 'utf8')).toContain('subtype: therapy');
   });
 
+  test('a type-less file whose stored type is not its pack path type keeps the stored subtype in the file check (#5521)', async () => {
+    const packDir = path.join(tmpRoot, 'home', '.gbrain', 'schema-packs', 'typed-meetings');
+    fs.mkdirSync(packDir, { recursive: true });
+    fs.writeFileSync(path.join(packDir, 'pack.yaml'), `api_version: gbrain-schema-pack-v1
+name: typed-meetings
+version: 1.0.0
+extends: gbrain-base-v2
+page_types:
+  - name: meeting
+    primitive: temporal
+    path_prefixes: [therapy-meetings/]
+    aliases: []
+    extractable: false
+    expert_routing: false
+    subtypes:
+      - name: therapy
+        when:
+          path_pattern: '^therapy-meetings/'
+`);
+    const ctx = makeCtx({ remote: true });
+    const slug = 'therapy-meetings/review';
+    const file = path.join(brainDir, `${slug}.md`);
+    const write = (params: Record<string, unknown>) => withEnv({ GBRAIN_SCHEMA_PACK: 'typed-meetings' }, () => putPage.handler(ctx, { slug, ...params }));
+    const first = await write({ content: '---\ntitle: Review\ntype: note\nsubtype: weekly\n---\n\nFirst discussion.' }) as { revision: string };
+    expect((await engine.readPageSnapshot(slug, { sourceId: 'default' }))?.page).toMatchObject({ type: 'note', frontmatter: { subtype: 'weekly' } });
+
+    // A mirror rewrites the file without its type and subtype lines; import reads it as the same page (#1035).
+    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(/^(type|subtype): .*\n/gm, ''));
+    const edited = await write({ content: '---\ntitle: Review\n---\n\nSecond discussion.', expected_revision: first.revision });
+    expect(edited).toMatchObject({ state: 'committed' });
+    expect((await engine.readPageSnapshot(slug, { sourceId: 'default' }))?.page).toMatchObject({
+      type: 'note', compiled_truth: 'Second discussion.', frontmatter: { subtype: 'weekly' } });
+  });
+
   test('a grandfather validate:false stamp held only by the database is not an uncoordinated file edit (#6429)', async () => {
     const ctx = makeCtx({ remote: true });
     const slug = 'companies/acme-example';

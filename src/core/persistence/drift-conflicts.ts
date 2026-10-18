@@ -36,7 +36,6 @@ import { sha256 } from './digest.ts';
 import { existingLocalHostId } from './identity.ts';
 import { getWorktreeBinding } from './ownership.ts';
 import { prepareFileTarget } from './page-prepare.ts';
-import { loadActivePackForEngine } from '../schema-pack/engine-resolution.ts';
 import { readReconcileState } from './reconcile-state.ts';
 import { reconcileCanonical } from './reconcile-merge.ts';
 import { classifyDrift } from './reconcile-additive.ts';
@@ -83,8 +82,7 @@ export async function liveFileDrift(engine: BrainEngine, sourceId: string, slug:
   if (!page || page.page.deleted_at) return { still_present: null, reason: 'page_missing' };
   const root = join(binding.local_path, binding.relative_path);
   try {
-    const pack = await loadActivePackForEngine(engine, { remote: false, sourceId }).catch(() => null);
-    const file = await prepareFileTarget(engine, { source_id: sourceId, worktree_id: binding.worktree_id, slug }, page, null, hostId!, { activePack: pack?.manifest });
+    const file = await prepareFileTarget(engine, { source_id: sourceId, worktree_id: binding.worktree_id, slug }, page, null, hostId!);
     if (!file) return { still_present: false, reason: 'database_only', db_revision: page.revision };
     return { still_present: false, reason: 'agrees', db_revision: page.revision, path: relative(root, file.path).split(sep).join('/'),
       ...(file.expectedBeforeHash ? { file_hash: file.expectedBeforeHash } : {}) };
