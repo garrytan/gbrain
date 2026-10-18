@@ -234,14 +234,14 @@ const CLASSIFY_FLOOR = 0.85;
  * subjects and capture lanes are skipped.
  */
 async function dropRewordedDuplicates<T extends ExtractedFact & { entity_inferred?: unknown }>(
-  ctx: FactsBackstopCtx, facts: T[], visibility: 'private' | 'world',
+  ctx: FactsBackstopCtx, captured: { facts: T[]; dropped: number[] }, visibility: 'private' | 'world',
   resolveEntity: (engine: BrainEngine, sourceId: string, raw: string) => Promise<{ slug: string; source: string } | null>,
   abortSignal?: AbortSignal,
 ): Promise<{ facts: T[]; dropped: number[] }> {
-  if (isCaptureLane(ctx.source)) return { facts, dropped: [] };
+  if (isCaptureLane(ctx.source)) return captured;
   const kept: T[] = [];
-  const dropped: number[] = [];
-  for (const f of facts) {
+  const dropped = [...captured.dropped];
+  for (const f of captured.facts) {
     const embedding = f.entity_inferred ? null : f.embedding;
     const resolved = embedding && f.entity_slug ? await resolveEntity(ctx.engine, ctx.sourceId, f.entity_slug) : null;
     if (!embedding || !resolved || resolved.source === 'fallback_slugify') { kept.push(f); continue; }
@@ -842,8 +842,7 @@ async function runPipelineBodyInner(
   const visibility = ctx.visibility ?? (await resolveDefaultVisibility(ctx.engine));
   // #5888: one exact-duplicate check for the capture lanes, before either writer; #6333: the reworded band for explicit lanes.
   const captured = await dedupCapturedFacts(ctx, await inferMissingSubjects(ctx, outcome.facts, visibility, input.pageSlug, managed), visibility, resolveEntitySlugWithSource);
-  const { facts, dropped: reworded } = await dropRewordedDuplicates(ctx, captured.facts, visibility, resolveEntitySlugWithSource, abortSignal);
-  const dropped = [...captured.dropped, ...reworded];
+  const { facts, dropped } = await dropRewordedDuplicates(ctx, captured, visibility, resolveEntitySlugWithSource, abortSignal);
   if (!managed) await assertAmbientCaptureAdmissible(ctx.engine, ctx.source);
   if (managed) return withCaptureDrops(dropped, facts.length || !dropped.length ? await publishManagedFacts(ctx.engine, managed, ctx, facts, visibility, input.pageSlug, { withdrawn: 'skip' }) : null);
 
