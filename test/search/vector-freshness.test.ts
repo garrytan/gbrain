@@ -100,15 +100,16 @@ describe('vector freshness outside the candidate CTE (PGLite)', () => {
     await reset();
     await seed('stale', 300, 0.0001, 0.0001, { hash: 'stale' });
     await seed('fresh', 30, 0.5, 0.001, { hash: 'current' });
+    // Isolate raw-window escalation: the source supplement can recover fresh rows earlier.
     const attempts = spyAttempts();
     const events: PoolMeta[] = [];
-    const hits = await engine.searchVector(query, { limit: 10, embeddingColumn: column, onVectorPoolMeta: meta => events.push(meta) });
+    const hits = await engine.searchVector(query, { limit: 10, embeddingColumn: column, source_boosts: {}, onVectorPoolMeta: meta => events.push(meta) });
     expect(hits.map(hit => hit.slug)).toEqual(Array.from({ length: 10 }, (_, i) => `fresh-${i}`));
     expect(attempts.map(attempt => attempt.innerLimit)).toEqual([100, 400]);
     expect(events).toEqual([]);
 
     const guarded = spyAttempts();
-    const legacy = await engine.searchVector(query, { limit: 10, embeddingColumn: column, vectorLegacyGuard: true });
+    const legacy = await engine.searchVector(query, { limit: 10, embeddingColumn: column, source_boosts: {}, vectorLegacyGuard: true });
     expect(legacy.map(hit => hit.slug)).toEqual(hits.map(hit => hit.slug));
     expect(guarded.map(attempt => attempt.innerLimit)).toEqual([100]);
   }, 60_000);
@@ -117,9 +118,10 @@ describe('vector freshness outside the candidate CTE (PGLite)', () => {
     await reset();
     await seed('stale', 6_500, 0.00001, 0.00001, { hash: 'stale' });
     await seed('fresh', 30, 0.5, 0.001, { hash: 'current' });
+    // Isolate raw-window escalation: the source supplement can recover fresh rows earlier.
     const attempts = spyAttempts();
     const events: PoolMeta[] = [];
-    const hits = await engine.searchVector(query, { limit: 10, embeddingColumn: column, onVectorPoolMeta: meta => events.push(meta) });
+    const hits = await engine.searchVector(query, { limit: 10, embeddingColumn: column, source_boosts: {}, onVectorPoolMeta: meta => events.push(meta) });
     expect(attempts.map(attempt => attempt.innerLimit)).toEqual([100, 400, 1_600, 6_400]);
     expect(hits).toEqual([]);
     expect(events).toEqual([{ underfilled: true, incomplete: true, reason: 'candidate_budget', escalations: 3, innerLimit: 6_400, candidatePool: 6_400, exactFallback: false }]);

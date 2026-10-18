@@ -28,7 +28,7 @@ test('all narrowing predicates are reused by the supplement; bound placeholders 
  expect(stmt.params[stmt.innerLimitIdx]).toBe(100);
 });
 test('uniform maps, normalized high detail, invalid entries and complete exact fallback do not add work',()=>{
- for(const source_boosts of [{}, {'all/':1}, {'bad/':NaN,'negative/':-1,'':.1}])expect(buildVectorSearchStatement({...base,opts:{source_boosts}}).sql).not.toContain('source_candidates');
+ for(const source_boosts of [{}, {'all/':1}, {'bad/':NaN,'negative/':-1,'':.1}] as Record<string, number>[])expect(buildVectorSearchStatement({...base,opts:{source_boosts}}).sql).not.toContain('source_candidates');
  for(const detail of ['high',' HIGH '])expect(buildVectorSearchStatement({...base,opts:{...base.opts,detail:detail as any}}).sql).not.toContain('source_candidates');
  const zero=buildVectorSearchStatement({...base,opts:{source_boosts:{'zero/':0,'normal/':1}}});expect(supplement(zero.sql)).toContain('> 0');
  const pg=buildVectorSearchStatement({...base,dialect:'pglite',offset:20});expect(pg.params[pg.innerLimitIdx]).toBe(120);expect(supplement(pg.sql)).toContain('100)');
