@@ -184,6 +184,11 @@ describe('phaseBFenceFacts — happy path backfill', () => {
       '---\ntype: person\ntitle: Alice\nslug: people/alice\n---\n\n# Alice\n\nNotes about Alice.\n',
       'utf-8',
     );
+    // Happy-path adoption starts from the same imported body on both sides.
+    // The generic seed's '# Existing page' would be a real body conflict.
+    await engine.putPage('people/alice', {
+      type: 'person', title: 'Alice', compiled_truth: '# Alice\n\nNotes about Alice.\n', frontmatter: {},
+    }, { sourceId: 'default' });
     await seedLegacyFact({ entity_slug: 'people/alice', fact: 'Founded Acme' });
 
     await __testing.phaseBFenceFacts(engine, OPTS);
