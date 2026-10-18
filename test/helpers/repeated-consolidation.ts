@@ -313,6 +313,9 @@ export async function runRepeatedConsolidation(opts: { onCycle?: (cycle: number,
     await engine.setConfig('dream.synthesize.min_chars', '200');
     await engine.setConfig('dream.synthesize.mode', 'agentic');
     await engine.setConfig('agent.use_gateway_loop', 'true');
+    // Agentic mode projects max_turns x the child output cap per transcript,
+    // which exceeds the default $5 cap; the scripted transport costs nothing.
+    await engine.setConfig('dream.synthesize.budget_usd', 'unlimited');
 
     for (let i = 0; i < CYCLES.length; i++) {
       writeFileSync(join(corpusDir, CYCLES[i].basename), CYCLES[i].transcript);

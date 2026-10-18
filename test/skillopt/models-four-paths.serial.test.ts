@@ -53,9 +53,9 @@ import { runPhaseSkillopt } from '../../src/core/skillopt/cycle-phase.ts';
 import { buildSkillOptJobData, runSkillOptJob } from '../../src/core/skillopt/job.ts';
 import { resolveSkillOptModels, type SkillOptModelFlags, type SkillOptModels } from '../../src/core/skillopt/models-plan.ts';
 
-const OPUS = 'anthropic:claude-opus-4-7';
-const SONNET = 'anthropic:claude-sonnet-4-6';
-const HAIKU = 'anthropic:claude-haiku-4-5-20251001';
+const OPUS = 'anthropic:claude-opus-5-5';
+const SONNET = 'anthropic:claude-sonnet-5-5';
+const HAIKU = 'anthropic:claude-haiku-5-5';
 
 let engine: PGLiteEngine;
 const origWrite = { out: process.stdout.write.bind(process.stdout), err: process.stderr.write.bind(process.stderr) };
