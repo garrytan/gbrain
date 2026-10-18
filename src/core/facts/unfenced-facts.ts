@@ -46,10 +46,12 @@
  * - Managed: one `managed_maintenance_adopt_fact_fence` request per page
  *   through the coordinator, which publishes the fence and adopts the rows
  *   in place (ids, vectors and provenance kept).
- * - Unmanaged: under the source filesystem lock and the page lock, the same
- *   `.tmp` + parse + rename write as `fence-write.ts`, then one maintenance
- *   transaction mirrors the file body into `pages` and stamps the rows; a
- *   durability-hardened checkout commits the file.
+ * - Unmanaged: under the source filesystem lock, page lock and database row
+ *   lock, require write-through enabled and matching file/DB bodies before
+ *   `.tmp` + parse + rename. The same maintenance transaction mirrors the
+ *   body and stamps the rows; a durability-hardened checkout commits the file.
+ *   Disabled write-through or a body conflict leaves both sides and rows
+ *   untouched, reporting the page so healthy siblings can still progress.
  * A page that fails is reported in `failed_pages`; the others still fence.
  */
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
@@ -74,7 +76,7 @@ import { assertPersistenceAccepting } from '../persistence/service.ts';
 import type { WriteAuthority } from '../persistence/model.ts';
 import { UNBOUND_WRITE_KEY } from '../persistence/unbound-source.ts';
 import { contentHash } from '../utils.ts';
-import { resolvePageWriteTarget } from '../write-through.ts';
+import { isWriteThroughDisabled, resolvePageWriteTarget } from '../write-through.ts';
 import { commitFactFenceFile, gitPathState } from './fence-write.ts';
 import { isOwnedClone } from '../url-clone.ts';
 
@@ -539,43 +541,53 @@ async function fenceDatabaseOnlyPage(engine: BrainEngine, sourceId: string, enti
   }
 }
 
-/** One unmanaged page: file first (atomic), then the page mirror and row stamps in one maintenance transaction. */
+/** One unmanaged page: lock its DB body before checking and extending the matching file, then mirror and stamp. */
 async function fenceFilePage(engine: BrainEngine, sourceId: string, entitySlug: string, filePath: string,
   group: UnfencedFactRow[], outcome: UnfencedFactsOutcome, lockRoot?: string): Promise<void> {
   const target = await resolvePageWriteTarget(engine, entitySlug, sourceId);
   if (!target.ok) { outcome.skipped_no_page += group.length; return; }
   const { writeRoot } = target;
   const write = () => withPageLock(entitySlug, async () => {
-    const fence = await planFence(engine, sourceId, entitySlug, readFileSync(filePath, 'utf-8'), group);
-    if ('warnings' in fence) {
-      outcome.failed_pages.push(`${entitySlug} (${fence.warnings.join('; ')})`);
-      return;
-    }
-    recordUnadoptable(outcome, entitySlug, fence.rejected);
-    if (fence.assignments.length === 0) return;
-    const durable = isDurabilityHardened(writeRoot);
-    const prewrite = durable ? gitPathState(writeRoot, filePath) : 'clean';
-    const tmpPath = `${filePath}.tmp`;
-    assertSourceFilesystemActive();
-    writeFileSync(tmpPath, fence.body, 'utf-8');
-    const tmpBody = readFileSync(tmpPath, 'utf-8');
-    const parsed = parseFactsFence(tmpBody);
-    if (parsed.warnings.length > 0) {
-      // .tmp stays for inspection; the canonical file is untouched.
-      outcome.failed_pages.push(`${entitySlug} (${parsed.warnings.join('; ')})`);
-      return;
-    }
-    renameSync(tmpPath, filePath);
-    // Mirror the file into pages so this run's reconcile and get_page read the
-    // new fence (same body-only mirror as fence-write.ts: the row keeps its
-    // content_hash, so the next sync re-imports and re-chunks the page).
-    const reparsed = parseMarkdown(tmpBody, `${entitySlug}.md`);
-    await maintenanceTransaction(engine, async tx => {
+    const adopted = await maintenanceTransaction(engine, async tx => {
+      // The filesystem/page locks do not serialize database-only writers. Hold
+      // the row lock from the body comparison through the mirror so a newer DB
+      // edit cannot arrive between validation and refreshPageBody (#6982).
+      const locked = await tx.executeRaw('SELECT id FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL FOR UPDATE', [sourceId, entitySlug]);
+      if (locked.length === 0) { outcome.skipped_no_page += group.length; return 0; }
+      if (await isWriteThroughDisabled(tx)) throw new Error('disabled_by_config: sync.write_through is off; file-backed facts remain unfenced');
       const existing = await tx.getPage(entitySlug, { sourceId });
-      if (existing) {
-        await tx.refreshPageBody(entitySlug, sourceId, sanitizeText(reparsed.compiled_truth), sanitizeText(reparsed.timeline),
-          existing.content_hash || contentHash(existing));
+      const fileBody = readFileSync(filePath, 'utf-8');
+      const baseline = parseMarkdown(fileBody, `${entitySlug}.md`);
+      if (!existing || sanitizeText(baseline.compiled_truth).trim() !== sanitizeText(existing.compiled_truth).trim()
+        || sanitizeText(baseline.timeline).trim() !== sanitizeText(existing.timeline).trim()) {
+        throw new Error('body_conflict: canonical file and database body differ; neither was changed and facts remain unfenced');
       }
+      const fence = await planFence(tx, sourceId, entitySlug, fileBody, group);
+      if ('warnings' in fence) {
+        outcome.failed_pages.push(`${entitySlug} (${fence.warnings.join('; ')})`);
+        return 0;
+      }
+      recordUnadoptable(outcome, entitySlug, fence.rejected);
+      if (fence.assignments.length === 0) return 0;
+      const durable = isDurabilityHardened(writeRoot);
+      const prewrite = durable ? gitPathState(writeRoot, filePath) : 'clean';
+      const tmpPath = `${filePath}.tmp`;
+      assertSourceFilesystemActive();
+      writeFileSync(tmpPath, fence.body, 'utf-8');
+      const tmpBody = readFileSync(tmpPath, 'utf-8');
+      const parsed = parseFactsFence(tmpBody);
+      if (parsed.warnings.length > 0) {
+        // .tmp stays for inspection; the canonical file is untouched.
+        outcome.failed_pages.push(`${entitySlug} (${parsed.warnings.join('; ')})`);
+        return 0;
+      }
+      renameSync(tmpPath, filePath);
+      // Mirror the file into pages so this run's reconcile and get_page read the
+      // new fence (same body-only mirror as fence-write.ts: the row keeps its
+      // content_hash, so the next sync re-imports and re-chunks the page).
+      const reparsed = parseMarkdown(tmpBody, `${entitySlug}.md`);
+      await tx.refreshPageBody(entitySlug, sourceId, sanitizeText(reparsed.compiled_truth), sanitizeText(reparsed.timeline),
+        existing.content_hash || contentHash(existing));
       // The parsed claim is what the fence projects; the row keeps its id,
       // vectors and provenance (the reconcile would retire a row whose text
       // differs from its fence row).
@@ -586,9 +598,11 @@ async function fenceFilePage(engine: BrainEngine, sourceId: string, entitySlug: 
           [a.row_num, entitySlug, a.id, sourceId, a.fact],
         );
       }
+      return { count: fence.assignments.length, durable, prewrite };
     });
-    if (durable) await commitFactFenceFile(writeRoot, filePath, entitySlug, sourceId, prewrite);
-    outcome.fenced += fence.assignments.length;
+    if (adopted === 0) return;
+    if (adopted.durable) await commitFactFenceFile(writeRoot, filePath, entitySlug, sourceId, adopted.prewrite);
+    outcome.fenced += adopted.count;
     outcome.pages_touched += 1;
     outcome.fenced_slugs.push(entitySlug);
   }, { timeoutMs: 5_000, ...(lockRoot ? { lockRoot } : {}) });

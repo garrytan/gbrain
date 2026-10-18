@@ -47,6 +47,11 @@
  * `fence_integrity` names the opt-in. Fails when: such a page is reported as a
  * missing file every run (`FACTS_FENCE_FAILED ... does not exist on this
  * host`) and halts the facts fence for good.
+ *
+ * #6982: classic file adoption must not mirror a stale file over a newer DB
+ * body or disregard write-through opt-out. Real put_page + repeated cycles,
+ * divergent prose/timeline, healthy sibling progress and a transaction-entry
+ * edit exercise the loss and the locked recheck, without paid model calls.
  */
 import { expect, test } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -63,6 +68,9 @@ import { LEGACY_DB_ONLY_SLUG, LEGACY_FILE_SLUG, seedLegacyManagedContent, type L
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { operationsByName } from '../src/core/operations.ts';
+import type { OperationContext } from '../src/core/ops/contract.ts';
+import { fenceUnfencedFacts, planUnfencedFacts } from '../src/core/facts/unfenced-facts.ts';
 
 const SLUG = 'people/alice-example';
 
@@ -160,6 +168,88 @@ async function rowsById(engine: BrainEngine, ids: number[]) {
 
 for (const backend of testBackends()) {
   const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;
+
+  test(`${backend}: unmanaged (#6982): put_page with write-through disabled survives repeated fact-fence cycles without changing its stale file`, async () => {
+    await unmanagedBrain(databaseUrl, async ({ engine, root }) => {
+      const path = join(root, `${SLUG}.md`);
+      const file = readFileSync(path, 'utf8');
+      await engine.setConfig('sync.write_through', 'false');
+      const snapshot = (await engine.readPageSnapshot(SLUG, { sourceId: 'default' }))!;
+      const result = await operationsByName.put_page.handler({ engine, remote: false, sourceId: 'default' } as OperationContext, {
+        slug: SLUG, expected_revision: snapshot.revision,
+        content: serializePageToMarkdown({ ...snapshot.page, compiled_truth: `${snapshot.page.compiled_truth}\n\nNew database-only paragraph.` }, snapshot.tags),
+      });
+      expect(result).toMatchObject({ write_through: { written: false, skipped: 'disabled_by_config' } });
+      const page = (await engine.getPage(SLUG, { sourceId: 'default' }))!;
+      expect(page.compiled_truth).toContain('New database-only paragraph.');
+      const facts = await factState(engine);
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const phase = await extractFactsPhase(engine, root);
+        expect(phase.status).toBe('warn');
+        expect(phase.details).toMatchObject({ unfencedRowsFenced: 0, legacyRowsPending: 2 });
+        expect(JSON.stringify(phase.details)).toContain('disabled_by_config');
+        expect(await engine.getPage(SLUG, { sourceId: 'default' })).toEqual(page);
+        expect(readFileSync(path, 'utf8')).toBe(file);
+        expect(await factState(engine)).toEqual(facts);
+      }
+    });
+  }, 120_000);
+
+  for (const side of ['database', 'file', 'timeline'] as const) {
+    test(`${backend}: unmanaged (#6982): divergent ${side} body is held without mutation while a healthy sibling adopts its facts`, async () => {
+      await unmanagedBrain(databaseUrl, async ({ engine, root }) => {
+        const path = join(root, `${SLUG}.md`);
+        const old = (await engine.getPage(SLUG, { sourceId: 'default' }))!;
+        if (side === 'database') await engine.putPage(SLUG, { ...old, compiled_truth: `${old.compiled_truth}\n\nNewer database prose.`, timeline: '2026-10-01: Database timeline.' });
+        else if (side === 'timeline') await engine.putPage(SLUG, { ...old, timeline: '2026-10-01: Database-only timeline.' });
+        else writeFileSync(path, `${readFileSync(path, 'utf8')}\nNewer local prose.\n`);
+        const before = (await engine.getPage(SLUG, { sourceId: 'default' }))!;
+        const file = readFileSync(path, 'utf8');
+        const facts = await factState(engine);
+        const OTHER = 'people/bob-example';
+        await engine.putPage(OTHER, { type: 'person', title: 'Bob Example', compiled_truth: '# Bob Example\n\nHealthy sibling.' });
+        const sibling = (await engine.readPageSnapshot(OTHER, { sourceId: 'default' }))!;
+        writeFileSync(join(root, `${OTHER}.md`), serializePageToMarkdown(sibling.page, sibling.tags));
+        await engine.executeRaw(`INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, source, confidence)
+          VALUES ('default', $1, 'Bob example prefers tea', 'preference', 'private', 'mcp:remember', 1)`, [OTHER]);
+        const phase = await extractFactsPhase(engine, root);
+        expect(phase.status).toBe('warn');
+        expect(phase.details).toMatchObject({ unfencedRowsFenced: 1, legacyRowsPending: 2 });
+        expect(JSON.stringify(phase.details)).toContain('body_conflict');
+        expect(await engine.getPage(SLUG, { sourceId: 'default' })).toEqual(before);
+        expect(readFileSync(path, 'utf8')).toBe(file);
+        expect((await factState(engine)).filter(f => f.entity_slug !== OTHER)).toEqual(facts);
+        expect(parseFactsFence((await engine.getPage(OTHER, { sourceId: 'default' }))!.compiled_truth).facts.map(f => f.claim)).toEqual(['Bob example prefers tea']);
+      });
+    }, 120_000);
+  }
+
+  test(`${backend}: unmanaged (#6982): a DB edit after the fence census is rechecked at the locked publication`, async () => {
+    await unmanagedBrain(databaseUrl, async ({ engine, root }) => {
+      const plan = await planUnfencedFacts(engine, { sourceId: 'default' });
+      const file = readFileSync(join(root, `${SLUG}.md`), 'utf8');
+      const facts = await factState(engine);
+      const original = engine.transaction;
+      let injected = false;
+      engine.transaction = async function (this: BrainEngine, fn) {
+        if (!injected) {
+          injected = true;
+          const page = (await this.getPage(SLUG, { sourceId: 'default' }))!;
+          await this.putPage(SLUG, { ...page, compiled_truth: `${page.compiled_truth}\n\nConcurrent database edit.` });
+        }
+        return original.call(this, fn);
+      } as BrainEngine['transaction'];
+      try {
+        const outcome = await fenceUnfencedFacts(engine, plan);
+        expect(injected).toBe(true);
+        expect(outcome.fenced).toBe(0);
+        expect(outcome.failed_pages.join('\n')).toContain('body_conflict');
+      } finally { engine.transaction = original; }
+      expect((await engine.getPage(SLUG, { sourceId: 'default' }))!.compiled_truth).toContain('Concurrent database edit.');
+      expect(readFileSync(join(root, `${SLUG}.md`), 'utf8')).toBe(file);
+      expect(await factState(engine)).toEqual(facts);
+    });
+  }, 120_000);
 
   test(`${backend}: unmanaged: codec shapes: whitespace rows adopt with normalized text under their ids, the rest stay legacy rows, the other page still reconciles`, async () => {
     await unmanagedBrain(databaseUrl, async ({ engine, root }) => {
