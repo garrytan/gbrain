@@ -58,6 +58,14 @@ export type ParsePhase = 'regex_match' | 'polish' | 'llm_fallback' | 'no_match';
  */
 export interface ParseResult {
   messages: MatchedMessage[];
+  /** Known native email refusal: retryable, never eligible for LLM rescue.
+   * Fixed categories only; no account, message ID or imported body text. */
+  native_email_refusal?: {
+    code: 'NATIVE_GMAIL_ENVELOPE_REFUSED';
+    reason: string;
+    action: string;
+    docs: string;
+  };
   /** Which phase produced the final messages. */
   phase: ParsePhase;
   /** When phase=regex_match or polish: which pattern won. */

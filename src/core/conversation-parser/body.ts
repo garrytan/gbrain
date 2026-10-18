@@ -24,8 +24,10 @@ export class ConversationBodyTooLargeError extends Error {
   }
 }
 
-export function readSummaryBody(page: Page): string {
+/** compiled_truth joined with timeline; `compiledOnly` keeps compiled_truth alone (a native Gmail thread's timeline is derived, not email turns). */
+export function readSummaryBody(page: Page, opts: { compiledOnly?: boolean } = {}): string {
   const compiled = page.compiled_truth ?? '';
+  if (opts.compiledOnly) return compiled;
   const timeline = page.timeline ?? '';
   if (!compiled) return timeline;
   if (!timeline) return compiled;
@@ -158,6 +160,14 @@ export async function readConversationInput(
         '[conversation-parser] raw_transcript refused (containment); falling back to summary body',
       );
     }
+  }
+  // Native Gmail envelopes and attachment footers belong to the collector
+  // transcript in compiled_truth. Derived timeline entries are not email turns.
+  // The native parser still validates the envelope; malformed metadata cannot
+  // escape to generic parsing by selecting a different body here.
+  if (!isSegmentedPage(page) && page.type === 'email' && page.frontmatter &&
+    ('thread_id' in page.frontmatter || 'message_ids' in page.frontmatter)) {
+    return { body: readSummaryBody(page, { compiledOnly: true }) };
   }
   if (!isSegmentedPage(page)) return { body: readSummaryBody(page) };
   const totalBytes = Number(page.body_bytes);

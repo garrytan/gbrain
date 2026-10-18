@@ -297,8 +297,19 @@ export interface GmailThreadAttachmentReceipts {
   messages: Array<{
     messageId: string;
     inspection: GmailAttachmentInspection;
+    /** Original authenticated headers, not inferred from the rendered body. */
+    envelope?: GmailMessageEnvelope;
+    /** Captured-footer proof; null means legacy unknown. */
+    renderedInspection?: GmailAttachmentInspection | null;
     unavailable?: 'thread_not_found' | 'message_not_found';
   }>;
+}
+
+export interface GmailMessageEnvelope {
+  from: string;
+  dateIso: string;
+  to: string[];
+  cc: string[];
 }
 
 export interface GmailThreadData {

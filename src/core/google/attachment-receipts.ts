@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { GmailAttachmentInspection, GmailAttachmentReceipt, GmailThreadData } from './types.ts';
+import { bareAddress, type GmailAttachmentInspection, type GmailAttachmentReceipt, type GmailMessageEnvelope, type GmailThreadData } from './types.ts';
 
 export interface GmailMimePart {
   partId?: string;
@@ -117,7 +117,31 @@ export function renderAttachmentInspection(inspection?: GmailAttachmentInspectio
   )].join('\n');
 }
 
+/** Shared bounded header contract for native admission and parser consumers. */
+export function gmailMessageEnvelope(value: unknown): GmailMessageEnvelope | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const v = value as Record<string, unknown>;
+  const safe = (s: unknown, cap: number): s is string => typeof s === 'string' && s.length <= cap &&
+    !/[\u0000-\u001f\u007f]/.test(s) && Buffer.from(s).toString('utf8') === s;
+  const address = /^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/;
+  if (!safe(v.from, 2048) || !address.test(bareAddress(v.from)) || !safe(v.dateIso, 32) ||
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(v.dateIso)) return null;
+  const date = new Date(v.dateIso);
+  if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 19) !== v.dateIso.slice(0, 19)) return null;
+  for (const recipients of [v.to, v.cc]) {
+    if (!Array.isArray(recipients) || recipients.length > 256 ||
+      recipients.some(s => !safe(s, 512) || !address.test(s))) return null;
+  }
+  return value as GmailMessageEnvelope;
+}
+
 export function threadAttachmentReceipts(thread: GmailThreadData) {
   return { version: 1 as const, account: thread.account, threadId: thread.threadId,
-    messages: thread.messages.map(m => ({ messageId: m.id, inspection: m.attachmentInspection ?? { state: 'not_inspected' as const, attachments: [] } })) };
+    messages: thread.messages.map(m => {
+      const inspection = m.attachmentInspection ?? { state: 'not_inspected' as const, attachments: [] };
+      const envelope = gmailMessageEnvelope({ from: m.from, dateIso: m.dateIso, to: m.to, cc: m.cc });
+      // Missing renderedInspection means this inspection also proves the captured
+      // footer. Only a later changed rendered footer needs a separate copy.
+      return { messageId: m.id, inspection, ...(envelope ? { envelope } : {}) };
+    }) };
 }
