@@ -828,6 +828,8 @@ export async function runThink(
   // [E2] best-effort usage aggregation across synthesis calls (single-pass in
   // v0.28+, but summed so the round loop inherits it when gap-fill lands).
   let usage: { input_tokens: number; output_tokens: number } | null = null;
+  // Set when a chat_fallback_chain model answered; it, not the requested model, is reported, priced and persisted.
+  let answeredBy: string | undefined;
   // Initialized to the llm_error shape; every non-throwing branch overwrites it.
   let response: ThinkResponse = { answer: '', citations: [], gaps: [] };
   if (opts.stubResponse) {
@@ -924,17 +926,8 @@ export async function runThink(
       // response keeps its empty llm_error initialization.
     }
     if (created) {
-      // [E2] capture usage when the message carries it (test-injected clients
-      // and providers without accounting leave it null).
-      const u = (created as { usage?: { input_tokens?: number; output_tokens?: number } }).usage;
-      if (u && typeof u.input_tokens === 'number' && typeof u.output_tokens === 'number') {
-        // Single synthesis call in v0.28+; when gap-driven rounds land, sum here.
-        const prev = usage as { input_tokens: number; output_tokens: number } | null;
-        usage = {
-          input_tokens: (prev?.input_tokens ?? 0) + u.input_tokens,
-          output_tokens: (prev?.output_tokens ?? 0) + u.output_tokens,
-        };
-      }
+      answeredBy = (created as { answered_by?: string }).answered_by;
+      usage = addMessageUsage(usage, created);
       const block = created.content.find(b => b.type === 'text');
       const text = block && 'text' in block ? block.text : '';
       const parsed = tryParseJSON(text);
@@ -1021,7 +1014,7 @@ export async function runThink(
     pagesGathered: gather.pages.length,
     takesGathered: gather.takes.length,
     graphHits: gather.graphSlugs.length,
-    modelUsed,
+    modelUsed: answeredBy ?? modelUsed,
     rounds: 1,
     warnings,
     // #1698: persistable only when a real synthesis produced a non-empty answer.
@@ -1042,6 +1035,23 @@ export async function runThink(
     },
     temporal: { reference_date: temporal.referenceDate, time_zone: temporal.timeZone },
     ...windowMeta,
+  };
+}
+
+/**
+ * [E2] `prev` plus the message's token usage; `prev` unchanged when the message carries none
+ * (test-injected clients and providers without accounting). Single synthesis call in v0.28+;
+ * when gap-driven rounds land, runThink sums each round through here.
+ */
+function addMessageUsage(
+  prev: { input_tokens: number; output_tokens: number } | null,
+  message: Anthropic.Message,
+): { input_tokens: number; output_tokens: number } | null {
+  const u = (message as { usage?: { input_tokens?: number; output_tokens?: number } }).usage;
+  if (!u || typeof u.input_tokens !== 'number' || typeof u.output_tokens !== 'number') return prev;
+  return {
+    input_tokens: (prev?.input_tokens ?? 0) + u.input_tokens,
+    output_tokens: (prev?.output_tokens ?? 0) + u.output_tokens,
   };
 }
 
@@ -1310,6 +1320,7 @@ function chatResultToMessage(result: ChatResult, modelStr: string): {
   type: 'message';
   role: 'assistant';
   model: string;
+  answered_by?: string;
   content: Array<{ type: 'text'; text: string }>;
   usage: { input_tokens: number; output_tokens: number };
   stop_reason: 'end_turn' | 'max_tokens' | 'tool_use' | 'stop_sequence';
@@ -1319,6 +1330,8 @@ function chatResultToMessage(result: ChatResult, modelStr: string): {
     type: 'message',
     role: 'assistant',
     model: modelStr,
+    // A chat_fallback_chain entry answered: runThink reports that model instead of the requested one.
+    ...(result.fallbackFrom ? { answered_by: result.model } : {}),
     content: [{ type: 'text', text: result.text }],
     usage: {
       input_tokens: result.usage.input_tokens,
