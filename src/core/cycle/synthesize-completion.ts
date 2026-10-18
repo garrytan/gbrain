@@ -58,9 +58,10 @@ export async function partitionCompletedSynthesis(
  * Only jobs SUBMITTED after the current source row was created count, so a
  * source removed and re-added under the same id does not inherit the
  * completions of the pages it lost, even when an old job finishes late.
- * `dream_synthesis_completions` is not consulted: it keeps no submission time
- * (and prune stamps an unknown finish as now()), so it cannot prove a row
- * belongs to the current source; a pruned classic completion re-runs.
+ * Forward archives count only with original job identity/submission time and
+ * an exact current source-row creation/incarnation snapshot. Legacy archives
+ * retain NULL provenance and do not count; completed_at (which may be an
+ * archive-time fallback) never proves source identity or submission time.
  */
 async function loadPreManagedSynthesisKeys(engine: BrainEngine, sourceId: string): Promise<{ legacy: string[]; v2: string[] }> {
   const v2Prefix = `dream:synth-v2:${encodeURIComponent(sourceId)}:filename:`;
@@ -71,7 +72,16 @@ async function loadPreManagedSynthesisKeys(engine: BrainEngine, sourceId: string
         AND j.status = 'completed'
         AND COALESCE(NULLIF(j.data->>'source_id', ''), 'default') = $1
         AND (j.idempotency_key LIKE 'dream:synth:%' OR left(j.idempotency_key, length($2)) = $2)
-        AND j.created_at >= s.created_at`,
+        AND j.created_at >= s.created_at
+     UNION
+     SELECT a.idempotency_key
+       FROM dream_synthesis_completions a JOIN sources s ON s.id = $1
+      WHERE a.source_id = $1
+        AND (a.idempotency_key LIKE 'dream:synth:%' OR left(a.idempotency_key, length($2)) = $2)
+        AND a.job_id IS NOT NULL
+        AND a.submitted_at >= s.created_at
+        AND a.source_created_at = s.created_at
+        AND a.source_incarnation = s.incarnation`,
     [sourceId, v2Prefix],
   );
   const keys = rows.map(row => row.idempotency_key);

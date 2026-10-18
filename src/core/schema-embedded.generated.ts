@@ -1999,6 +1999,11 @@ CREATE TABLE IF NOT EXISTS dream_synthesis_completions (
   source_id TEXT NOT NULL,
   idempotency_key TEXT NOT NULL,
   completed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- Forward-only proof from an actual pruned job; legacy rows remain unknown.
+  job_id INTEGER,
+  submitted_at TIMESTAMPTZ,
+  source_created_at TIMESTAMPTZ,
+  source_incarnation UUID,
   PRIMARY KEY (source_id, idempotency_key)
 );
 -- Large pages A7 (migration v247): per-page extraction watermark and the

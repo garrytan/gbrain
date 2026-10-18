@@ -1247,18 +1247,36 @@ export class MinionQueue {
 
     // A completed dream synthesis child is the record that its transcript was
     // synthesized. Archive the key before the row goes, or the next cycle
-    // pays to synthesize the transcript again.
+    // pays to synthesize the transcript again. Keep the original submission
+    // identity and a source-row snapshot, bound by submission (not finish) time.
+    // A missing/recreated source stays unknown; never stamp it as current.
+    // completed_at retains the archive timestamp fallback, NOT provenance.
+    // Only a newer, independently proven job may replace an old/unknown key.
     const rows = await this.engine.executeRaw<{ count: string }>(
       `WITH pruned AS (
          DELETE FROM minion_jobs
          WHERE status = ANY($1) AND updated_at < $2
-         RETURNING name, status, data, idempotency_key, finished_at
+         RETURNING id, name, status, data, idempotency_key, created_at, finished_at
        ), archived AS (
-         INSERT INTO dream_synthesis_completions (source_id, idempotency_key, completed_at)
-         SELECT COALESCE(NULLIF(data->>'source_id', ''), 'default'), idempotency_key, COALESCE(finished_at, now())
-           FROM pruned
-          WHERE name = 'subagent' AND status = 'completed' AND idempotency_key LIKE 'dream:synth%'
-         ON CONFLICT DO NOTHING
+         INSERT INTO dream_synthesis_completions
+           (source_id, idempotency_key, completed_at, job_id, submitted_at, source_created_at, source_incarnation)
+         SELECT COALESCE(NULLIF(p.data->>'source_id', ''), 'default'), p.idempotency_key,
+                COALESCE(p.finished_at, now()), p.id, p.created_at, s.created_at, s.incarnation
+           FROM pruned p
+           LEFT JOIN sources s
+             ON s.id = COALESCE(NULLIF(p.data->>'source_id', ''), 'default')
+            AND p.created_at >= s.created_at
+          WHERE p.name = 'subagent' AND p.status = 'completed' AND p.idempotency_key LIKE 'dream:synth%'
+         ON CONFLICT (source_id, idempotency_key) DO UPDATE
+           SET completed_at = EXCLUDED.completed_at,
+               job_id = EXCLUDED.job_id, submitted_at = EXCLUDED.submitted_at,
+               source_created_at = EXCLUDED.source_created_at, source_incarnation = EXCLUDED.source_incarnation
+         WHERE EXCLUDED.source_incarnation IS NOT NULL
+           AND EXCLUDED.source_created_at IS NOT NULL
+           AND EXCLUDED.job_id IS NOT NULL
+           AND EXCLUDED.submitted_at IS NOT NULL
+           AND (dream_synthesis_completions.submitted_at IS NULL
+                OR EXCLUDED.submitted_at >= dream_synthesis_completions.submitted_at)
        )
        SELECT count(*)::text as count FROM pruned`,
       [statuses, olderThan.toISOString()]

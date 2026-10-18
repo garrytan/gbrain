@@ -1563,7 +1563,11 @@
         "columns": [
           "1 source_id text/text NOT NULL",
           "2 idempotency_key text/text NOT NULL",
-          "3 completed_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+          "3 completed_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "4 job_id integer/int4 NULL",
+          "5 submitted_at timestamp with time zone/timestamptz NULL",
+          "6 source_created_at timestamp with time zone/timestamptz NULL",
+          "7 source_incarnation uuid/uuid NULL"
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },

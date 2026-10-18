@@ -1266,6 +1266,10 @@ CREATE TABLE IF NOT EXISTS dream_synthesis_completions (
   source_id TEXT NOT NULL,
   idempotency_key TEXT NOT NULL,
   completed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  job_id INTEGER,
+  submitted_at TIMESTAMPTZ,
+  source_created_at TIMESTAMPTZ,
+  source_incarnation UUID,
   PRIMARY KEY (source_id, idempotency_key)
 );
 CREATE TABLE IF NOT EXISTS page_extraction_state (
