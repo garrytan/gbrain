@@ -113,16 +113,17 @@ export function detectAdapter(
   opts: { explicitFormat?: TranscriptFormat; adapters?: TranscriptAdapter[] } = {},
 ): DetectResult {
   const adapters = opts.adapters ?? transcriptAdapters();
-  if (opts.explicitFormat) {
-    const adapter = adapters.find((a) => a.format === opts.explicitFormat);
-    if (adapter) return { ok: true, adapter };
-    return { ok: false, reason: 'unknown_format', tried: adapters.map((a) => a.format) };
-  }
   try {
     const st = lstatSync(path);
     if (st.isSymbolicLink()) return { ok: false, reason: 'symlink', tried: [] };
   } catch {
     return { ok: false, reason: 'unreadable', tried: [] };
+  }
+  // An explicit format bypasses sniffing, not filesystem admission.
+  if (opts.explicitFormat) {
+    const adapter = adapters.find((a) => a.format === opts.explicitFormat);
+    if (adapter) return { ok: true, adapter };
+    return { ok: false, reason: 'unknown_format', tried: adapters.map((a) => a.format) };
   }
   let sample: Buffer;
   try {
