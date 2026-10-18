@@ -235,6 +235,14 @@ export async function extractTimelineFromMeetings(
       dateFallbacks++;
     }
 
+    // Retained calendar invites are not evidence that a discussion happened.
+    // Defer their derived timeline rows until the declared end (else start,
+    // else authored meeting date); keep the source page for meeting prep.
+    const happenedAt = [frontmatter.end, frontmatter.start, date]
+      .map(value => value instanceof Date ? value.getTime() : typeof value === 'string' ? Date.parse(value) : NaN)
+      .find(value => Number.isFinite(value));
+    if (happenedAt !== undefined && happenedAt > Date.now()) continue;
+
     meetingsScanned++;
     opts.onProgress?.(meetingsScanned, meetings.length, entriesCreated);
 
