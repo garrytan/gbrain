@@ -1,6 +1,6 @@
 {
   "golden": {
-    "count": 252,
+    "count": 255,
     "gaps": [
       17,
       18,
@@ -21,11 +21,13 @@
       "FACT_UNLINKED_INDEX_SQL": "87dcf23c3fa570d93bfb214b6bbb024faa9ff9bff227aa78869a29580be03298",
       "FTS_CJK_BOUNDARY_REGEX": "e8605bc0f2c6f3ecd2b451cbc8a4fe27ae0974d048f0bea655533cf37e0ff88d",
       "FTS_INPUT_FUNCTION_SQL": "d2f44fc1ef338ff7563c07659d938b743fedb20230948792c71068c022ec54c3",
+      "INGEST_LOG_MARKED_INDEX": "1099f19af7873878974239a9a6f1a627827221eebd75aea01896246e0809e91c",
       "INGEST_LOG_UNMARKED_INDEX": "c94e6b009f830527d2f1d6af1683bee94189474e8e67aa4c60165ab4abbd8726",
       "ISSUANCE_CLOCK_SLACK_SECONDS": "8f36c80392df6f9b9c754826289b63969d9d41ca8955213291e4413d614dce35",
       "OPEN_LOOPS_COUNTERPARTY_SOURCE_INDEX": "e9b472d9db37733e908ea40512ad3f9520d7a6729ce207b0d279d43d3beb5b2f",
       "PAGES_NAME_LOOKUP_INDEXES": "1ca830342164b5606e96cf0090645364f9145d36178d90f166230189fe8d2705",
       "PAGES_RECONCILE_NAME_INDEXES": "8805e35341b22324b932b1cc05030cc8f2bfc95532bf810ec35330783f29c59a",
+      "PAGES_SEGMENTED_BODY_BYTES_INDEX": "c904a4f68cf190cce6bc68c03219c7b62d05b77eeb557db946a4f58a4f965e57",
       "PAGE_TIMELINE_FTS_MAX_CHARS": "f7d29264f4144976bbe2e1ded0251095b638175f8e1d711c36f1e80d2263e172",
       "PERSISTENCE_COMMITTED_WATERMARK_INDEX": "f472fa0acb542c1caebaaa3bc69fb2da1647e5e201239429fc02ccef0d669533",
       "PERSISTENCE_COMPACTABLE_INDEX": "25ee657878efb41ba9ea3a7624464ddcf66407d861659456c230366e57f230a0",
@@ -67,7 +69,7 @@
       "tableRows": "906d2413b13d76a06d5910885e47ed5c544be4ff3a2266e83146715721b24270",
       "verifyProjectionStatistics": "0d231b04ecfbc5a4109d6fca9567bf4e8c9e9db6c3fbbb35212e026579ed6f67"
     },
-    "latest": 257,
+    "latest": 260,
     "records": [
       {
         "handler": {
@@ -4028,6 +4030,71 @@
         "transaction": false,
         "verify": "absent",
         "version": 257
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "pages_links_extract_failure",
+        "sql": {
+          "length": 79,
+          "sha256": "076f0d516a37d225deec04c581a0176a4551351e08cc052acd5d79c89ca8dd4d"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 258
+      },
+      {
+        "handler": {
+          "form": "arrow",
+          "helpers": [
+            "INGEST_LOG_MARKED_INDEX",
+            "PLANNER_REPAIR_TABLES",
+            "analyzeAfterIndexBuild",
+            "buildIndexOnline",
+            "dropInvalidConcurrentIndex",
+            "migrationNotice",
+            "quietMigrationNotices",
+            "tableRows"
+          ],
+          "sha256": "0d85538d5d8481866342b45c8872e889d1f0c8dcffe114ab833c9209effc42dc"
+        },
+        "idempotent": true,
+        "name": "ingest_log_marked_index",
+        "sql": {
+          "length": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "sqlFor": "absent",
+        "transaction": false,
+        "verify": "absent",
+        "version": 259
+      },
+      {
+        "handler": {
+          "form": "arrow",
+          "helpers": [
+            "PAGES_SEGMENTED_BODY_BYTES_INDEX",
+            "PLANNER_REPAIR_TABLES",
+            "analyzeAfterIndexBuild",
+            "buildIndexOnline",
+            "dropInvalidConcurrentIndex",
+            "migrationNotice",
+            "quietMigrationNotices",
+            "tableRows"
+          ],
+          "sha256": "35f2cceeba8abac07df01b2da479d76e6594ccc62b62a760a3cc7f3c846a73e9"
+        },
+        "idempotent": true,
+        "name": "segmented_page_size_index",
+        "sql": {
+          "length": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "sqlFor": "absent",
+        "transaction": false,
+        "verify": "absent",
+        "version": 260
       }
     ],
     "versions": [
@@ -4282,7 +4349,10 @@
       254,
       255,
       256,
-      257
+      257,
+      258,
+      259,
+      260
     ]
   },
   "normalizer": "migrations-record-v1"

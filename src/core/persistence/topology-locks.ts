@@ -146,11 +146,11 @@ export async function settleTopologyRequests(tx: BrainEngine, sources: string[],
   }
   const [blocked] = await tx.executeRaw<{ id: string; source_id: string | null }>(`SELECT id,source_id FROM persistence_effects WHERE
     (source_id=ANY($1::text[]) OR worktree_id=ANY($2::uuid[])) AND
-    (recovery IS NOT NULL OR state='running' OR (kind='withdrawal-mirror' AND state<>'committed')) LIMIT 1`, [sources,worktrees]);
+    (recovery IS NOT NULL OR state='running' OR (kind='withdrawal-mirror' AND state='queued')) LIMIT 1`, [sources,worktrees]);
   if (blocked) {
     const source = blocked.source_id ?? sources[0];
     throw opError('recovery_required', 'Finish the pending withdrawal mirror and publication effects before changing source topology.',
-      `Effect ${blocked.id} on source ${source} (a withdrawal mirror or publication effect) has not finished, so the lifecycle change rolled back and nothing changed. The owner's effect worker settles it; check it with the command in fix, which lists it with its page and request; gbrain sources writer retry-effects re-authorizes a failed or parked one. Then run the same lifecycle command again with the same request_id.`,
+      `Effect ${blocked.id} on source ${source} (a queued withdrawal mirror, a running effect or one holding a recovery record) has not finished, so the lifecycle change rolled back and nothing changed. The owner's effect worker settles it; check it with the command in fix, which lists it with its page and request. Then run the same lifecycle command again with the same request_id.`,
       {fix:ownerStatusFix(source)});
   }
   const pending = requests.filter(row => row.state === 'queued');

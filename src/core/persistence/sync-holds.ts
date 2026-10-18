@@ -70,7 +70,14 @@ export const GIT_HOLD_ESCALATE_MIN_SCREENED = 40;
 type Exec = Pick<BrainEngine, 'executeRaw'>;
 
 export type GitHoldCode = ContentRefusal['code'] | 'rename_held' | 'parser_regression' | 'managed_image_sync_unsupported' | 'concurrent_write' | 'preparation_stalled' | 'worktree_dirty' | 'file_drift'
-  | 'legacy_slug_conflict' | 'origin_conflict';
+  | 'legacy_slug_conflict' | 'write_interrupted' | 'origin_conflict';
+/**
+ * Flip lane C: the holds of a write that ran out of attempts, its preparation never settling (`preparation_stalled`)
+ * or its statements ended by the database every time (`write_interrupted`). The file is not the problem: they route to
+ * writer status and a re-screen, never a file repair.
+ */
+export const OUT_OF_ATTEMPTS_HOLDS: ReadonlySet<string> = new Set(['preparation_stalled', 'write_interrupted']);
+export const outOfAttemptsHold = (code: string | null | undefined): boolean => OUT_OF_ATTEMPTS_HOLDS.has(code ?? '');
 /** #6278: what the owner recorded about a preparation it gave up on (step names and vocabulary only, never content). */
 export interface PreparationStallMeta {
   request_id: string;
@@ -261,7 +268,7 @@ const staleWeight = (record: Pick<GitHoldRecord, 'page_id'> | null) => record &&
 const imageWeight = (record: Pick<GitHoldRecord, 'code'> | null) => record?.code === 'managed_image_sync_unsupported' ? 1 : 0;
 const fenceWeight = (record: Pick<GitHoldRecord, 'code'> | null) => record?.code === 'invalid_fence' ? 1 : 0;
 const concurrentWeight = (record: Pick<GitHoldRecord, 'code'> | null) => record?.code === 'concurrent_write' ? 1 : 0;
-const stalledWeight = (record: Pick<GitHoldRecord, 'code'> | null) => record?.code === 'preparation_stalled' ? 1 : 0;
+const stalledWeight = (record: Pick<GitHoldRecord, 'code'> | null) => outOfAttemptsHold(record?.code) ? 1 : 0;
 const dirtyWeight = (record: Pick<GitHoldRecord, 'code'> | null) => record?.code === 'worktree_dirty' ? 1 : 0;
 const driftWeight = (record: Pick<GitHoldRecord, 'code'> | null) => record?.code === 'file_drift' ? 1 : 0;
 const weightsOf = (record: Pick<GitHoldRecord, 'code' | 'page_id'>, sign = 1): SummaryWeights => ({ stale: sign * staleWeight(record), images: sign * imageWeight(record),
@@ -506,11 +513,11 @@ export async function holdBasisMoved(engine: Pick<BrainEngine, 'executeRaw'>, so
 export function holdRescreenDue(record: Pick<GitHoldRecord, 'code' | 'meta'>, retried: boolean): boolean {
   return retried || ['frontmatter_slug_conflict', 'file_too_large', 'rename_held', 'parser_regression', 'content_rejected', 'write_gate_rejected', 'purged_content', 'legacy_slug_conflict', 'origin_conflict'].includes(record.code)
     // #6712: a transient hold (the write owner stalled, not the file) is retried by every sync until it has been held HOLD_ATTEMPTS_NEEDS_HUMAN times.
-    || (record.code === 'preparation_stalled' && (record.meta.attempts ?? 1) < HOLD_ATTEMPTS_NEEDS_HUMAN)
+    || (outOfAttemptsHold(record.code) && (record.meta.attempts ?? 1) < HOLD_ATTEMPTS_NEEDS_HUMAN)
     || (record.code === 'managed_image_sync_unsupported' && isMultimodalEnabled())
     || record.meta.recovery_version < RECOVERY_VERSION
     || (record.code === 'invalid_fence' && (record.meta.fence_version ?? 0) < FENCE_VERSION)
-    || (record.code === 'preparation_stalled' && record.meta.stall?.gbrain_version !== VERSION);
+    || (outOfAttemptsHold(record.code) && record.meta.stall?.gbrain_version !== VERSION);
 }
 
 /**
@@ -647,20 +654,24 @@ export function gitHoldFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'c
           why: `Re-screens ${record.path} after the repair (a changed file or page revision re-screens it by itself).` },
         verify };
     }
-    case 'preparation_stalled': {
+    case 'preparation_stalled':
+    case 'write_interrupted': {
       const stall = record.meta.stall;
       const steps = stalledHoldSteps(source, stall?.sync_argv);
       const where = stall?.step ? ` at step ${stall.step}${stall.waiting_on && stall.waiting_on !== 'unknown' ? ` (waiting on ${stall.waiting_on})` : ''}` : '';
       const verify = { argv: ['gbrain', 'sources', 'status', source, '--json'] };
-      return { argv: steps.status, consent: [], actor: 'agent', requires_exclusive: false, docs: 'docs/guides/write-refusals.md#preparation_stalled',
-        why: `${record.path} is held because its ${record.meta.deleted ? 'deletion' : 'import'} could not finish preparing${where}: the write owner gave up after `
-          + `${stall?.attempts ?? 'the allowed'} attempt(s) (request ${stall?.request_id ?? '(unknown)'}) and the rest of the source kept syncing. The file itself is not the problem, so no `
-          + `frontmatter or fence repair applies. Writer status (read-only) shows the owner process, its gbrain version and any write still stuck; fix what it names or upgrade `
+      const interrupted = record.code === 'write_interrupted';
+      const kind = record.meta.deleted ? 'deletion' : 'import';
+      const cause = interrupted ? `the database ended its ${kind}'s statements before they finished (a statement timeout or cancel) ${stall?.attempts ?? 'the allowed number of'} time(s)`
+        : `its ${kind} could not finish preparing${where}: the write owner gave up after ${stall?.attempts ?? 'the allowed'} attempt(s)`;
+      return { argv: steps.status, consent: [], actor: 'agent', requires_exclusive: false, docs: gitHoldDocs(record.code),
+        why: `${record.path} is held because ${cause} (request ${stall?.request_id ?? '(unknown)'}) and the rest of the source kept syncing. The file itself is not the problem, so no `
+          + `frontmatter or fence repair applies. Writer status (read-only) shows the owner process, its gbrain version${interrupted ? ', the load on its pool' : ''} and any write still stuck; fix what it names or upgrade `
           + `gbrain, then schedule the re-screen and rerun the same sync.`,
         then: { argv: steps.retry, consent: [], actor: 'agent', requires_exclusive: false, verify,
           why: `Schedules ${record.path} for a re-screen on the next sync of ${source}; nothing runs now.`,
           then: { argv: steps.sync, consent: [], actor: 'agent', requires_exclusive: false, verify,
-            why: `Re-imports ${record.path} with the run's own options (a different sync command would start another cursor); a preparation that stalls again is held again without blocking the rest.` } },
+            why: `Re-imports ${record.path} with the run's own options (a different sync command would start another cursor); a write that runs out of attempts again is held again without blocking the rest.` } },
         verify };
     }
     case 'file_too_large':
@@ -743,7 +754,7 @@ export function gitHoldDocs(code: GitHoldCode, reason?: GitHoldReason, meta?: Pi
   if (code === 'invalid_fence') return reason && reason in FENCE_REASONS ? FENCE_REASONS[reason as FenceReason].docs : 'docs/guides/write-refusals.md#invalid_fence';
   // #6377: a judged slug conflict points at its verdict's anchor.
   if (code === 'frontmatter_slug_conflict') return contentHoldDocs(meta?.content_repair);
-  if (code === 'preparation_stalled') return 'docs/guides/write-refusals.md#preparation_stalled';
+  if (outOfAttemptsHold(code)) return `docs/guides/write-refusals.md#${code}`;
   if (code === 'worktree_dirty') return 'docs/guides/write-refusals.md#worktree_dirty';
   return `docs/guides/write-refusals.md#${reason ? `${code}-${reason}` : code}`;
 }

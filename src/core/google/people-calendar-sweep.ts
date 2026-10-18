@@ -3,14 +3,30 @@
  * source kind (peeled from google-source.ts). Cursor discipline per service:
  * the syncToken is committed only after that service's fully-successful
  * sweep; an expired token drops it and re-lists windowed.
+ *
+ * GBRA-130 A-3: each contact (`contact:<resourceName>`) and each event
+ * (`event:<calendarId>:<eventId>`) goes through the connector item holds
+ * (connectors/connector-hold-session.ts). An item-scoped failure is reported
+ * and the sweep goes on; only a content-class one counts toward a hold.
+ * While a failing item is not held the service's token stays where it is, so
+ * the next sync lists it again; once it is held the token moves past it. A held item that retry-held or a due
+ * reconsideration re-admits and no listing returns is re-fetched by id; one the provider no longer has (its
+ * deletion passed in a delta while it was held) retires the page it owns through the same ownership-checked
+ * deletion as a contact tombstone or a cancelled event, and its hold clears only once that deletion lands.
+ * Run-scoped failures stop the sweep as before.
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { abortsManagedRun, type ConnectorHoldSession } from '../connectors/connector-hold-session.ts';
+import { classifyConnectorError } from '../connectors/item-holds.ts';
+import { assertConnectorIdentity } from '../connectors/connector-text.ts';
+import { classifyItemFailure } from '../item-failure.ts';
+
 import { CALENDAR_HORIZON_DAYS, CalendarSyncWindow, planCalendarPage, staleCalendarPages } from './calendar-window.ts';
 import { CalendarClient, calendarUnreadableStatus, CONTACT_PERSON_FIELDS, GoogleCursorExpiredError, GoogleSyncTokenRejectedError, PeopleClient } from './google-clients.ts';
 import { calendarRelPath, contactIdSlug, personSlugFromContact, renderCalendarEventPage, renderPersonPage } from './google-render.ts';
-import { DEFAULT_CALENDAR_ID, type CalendarEventData, type ContactData, type GoogleSourceState } from './types.ts';
+import { contactHoldKey, DEFAULT_CALENDAR_ID, eventHoldKey, type CalendarEventData, type ContactData, type GoogleSourceState } from './types.ts';
 import { deletePageByRelPath, importRendered, type ActivePack, type GoogleSyncDeps, type GoogleSyncSummary } from './sweep-shared.ts';
 
 // ── Contacts sweep ───────────────────────────────────────────────────────────
@@ -22,6 +38,7 @@ export async function sweepContacts(
   activePack: ActivePack,
   summary: GoogleSyncSummary,
   countedSlugs: Set<string>,
+  holds?: ConnectorHoldSession,
 ): Promise<void> {
   const signal = deps.opts.signal ? { signal: deps.opts.signal } : {};
   // #6324: a syncToken is only valid with the request parameters that minted
@@ -45,69 +62,24 @@ export async function sweepContacts(
     result = await people.listConnections({ syncToken: null, ...signal });
   }
   const groupNames = await resolveContactGroups(deps, people, state, result.contacts);
-  // Ownership is keyed on google_contact_id, not path alone: a page owned by
-  // a DIFFERENT contact (name collision — two "John Smith"s) must neither be
-  // rewritten nor deleted; the colliding contact gets a disambiguated slug.
-  const ownerOf = async (relPath: string): Promise<string | null> => {
-    if (deps.managed) {
-      const page = await deps.managed.page(relPath.replace(/\.md$/, ''));
-      if (!page) return null;
-      return typeof page.frontmatter.google_contact_id === 'string' ? page.frontmatter.google_contact_id : 'hand-authored';
-    }
-    const filePath = join(deps.cfg.dir, relPath);
-    if (!existsSync(filePath)) return null;
-    const m = readFileSync(filePath, 'utf-8').match(/^google_contact_id:\s*"([^"]+)"/m);
-    return m ? m[1] : 'hand-authored';
-  };
-  const contactsDir = deps.cfg.contactsDir;
+  const sweep = { activePack, summary, countedSlugs, groupNames };
+  let blocked = false;
   for (const c of result.contacts) {
     if (deps.opts.signal?.aborted) return;
-    // DB lookup by contact id FIRST, in any directory: deletion tombstones
-    // typically carry only resourceName + deleted (no names/emails — slug
-    // derivation yields null), a renamed contact's current name derives a
-    // DIFFERENT slug than the page it owns, and a changed `g_contacts_dir`
-    // (#4845) moves every page. All three need the id-keyed path (mirror of
-    // the calendar sweep's event_id keying).
-    const existingPath = await contactPageRelPathByContactId(deps, c.resourceName);
-    if (c.deleted) {
-      if (existingPath && await ownerOf(existingPath) === c.resourceName) {
-        await deletePageByRelPath(deps, existingPath, summary);
-      } else {
-        // Page not (yet) in the DB — fall back to slug candidates, guarded
-        // by file ownership. Delete only the page THIS contact owns.
-        for (const slug of [personSlugFromContact(c, false, contactsDir), personSlugFromContact(c, true, contactsDir), contactIdSlug(c.resourceName, contactsDir)]) {
-          if (slug && await ownerOf(`${slug}.md`) === c.resourceName) {
-            await deletePageByRelPath(deps, `${slug}.md`, summary);
-          }
-        }
-      }
-      continue;
-    }
-    const baseSlug = personSlugFromContact(c, false, contactsDir);
-    if (!baseSlug) continue;
-    const baseOwner = await ownerOf(`${baseSlug}.md`);
-    const collides = baseOwner !== null && baseOwner !== 'hand-authored' && baseOwner !== c.resourceName;
-    const rendered = renderPersonPage(
-      { ...c, groups: c.groups.map((g) => ({ id: g.id, name: groupNames[g.id] ?? null })) },
-      collides,
-      contactsDir,
-    );
-    if (!rendered) continue;
-    const owner = await ownerOf(rendered.relPath);
-    if (owner === 'hand-authored') {
-      deps.log(`[google] skipping hand-authored ${rendered.relPath}`);
-      continue;
-    }
-    // Staged rename: this contact previously rendered elsewhere (a rename, or
-    // a changed contacts directory). The new page lands first, then the page
-    // it owned at the old path is retired, so a sweep that dies in between
-    // leaves the contact with a page rather than none.
-    await importRendered(deps, rendered.relPath, rendered.markdown, activePack, summary, countedSlugs);
-    if (existingPath && existingPath !== rendered.relPath && await ownerOf(existingPath) === c.resourceName) {
-      await deletePageByRelPath(deps, existingPath, summary);
-    }
-    deps.tick(`contact ${c.resourceName}`);
+    const item = { key: contactHoldKey(c.resourceName), version: c.etag ?? null, title: c.displayName };
+    if (!await throughHolds(deps, summary, holds, item, () => applyContact(deps, c, sweep))) blocked = true;
   }
+  const prefix = contactHoldKey('');
+  for (const key of holds?.dueHeldKeys().filter(k => k.startsWith(prefix)) ?? []) {
+    if (deps.opts.signal?.aborted) return;
+    await throughHolds(deps, summary, holds, { key, version: null, title: null }, async () => {
+      const resourceName = key.slice(prefix.length);
+      const c = await people.getContact(resourceName, signal)
+        ?? { resourceName, displayName: null, emails: [], phones: [], organization: null, title: null, groups: [], deleted: true };
+      await applyContact(deps, c, sweep);
+    });
+  }
+  if (blocked) return;
   // Cursor and the mask it was minted under commit together, only after the
   // whole sweep succeeded. A full list that returned no replacement token
   // leaves no cursor behind (the next sweep lists fully again); a same-mask
@@ -115,6 +87,120 @@ export async function sweepContacts(
   if (result.nextSyncToken) state.contacts_sync_token = result.nextSyncToken;
   else if (maskChanged) state.contacts_sync_token = null;
   state.contacts_person_fields = CONTACT_PERSON_FIELDS;
+}
+
+/**
+ * One contact applied to the brain: a tombstone retires the page this
+ * contact owns, anything else renders (disambiguated on a name collision)
+ * and lands, retiring the page it owned at an older path.
+ */
+async function applyContact(deps: GoogleSyncDeps, c: ContactData,
+  sweep: { activePack: ActivePack; summary: GoogleSyncSummary; countedSlugs: Set<string>; groupNames: Record<string, string> }): Promise<void> {
+  assertConnectorIdentity({ google_contact_id: c.resourceName, emails: c.emails });
+  const contactsDir = deps.cfg.contactsDir;
+  // DB lookup by contact id FIRST, in any directory: deletion tombstones
+  // typically carry only resourceName + deleted (no names/emails — slug
+  // derivation yields null), a renamed contact's current name derives a
+  // DIFFERENT slug than the page it owns, and a changed `g_contacts_dir`
+  // (#4845) moves every page. All three need the id-keyed path (mirror of
+  // the calendar sweep's event_id keying).
+  const existingPath = await contactPageRelPathByContactId(deps, c.resourceName);
+  if (c.deleted) {
+    if (existingPath && await contactOwner(deps, existingPath) === c.resourceName) {
+      await deletePageByRelPath(deps, existingPath, sweep.summary);
+    } else {
+      // Page not (yet) in the DB — fall back to slug candidates, guarded
+      // by file ownership. Delete only the page THIS contact owns.
+      for (const slug of [personSlugFromContact(c, false, contactsDir), personSlugFromContact(c, true, contactsDir), contactIdSlug(c.resourceName, contactsDir)]) {
+        if (slug && await contactOwner(deps, `${slug}.md`) === c.resourceName) {
+          await deletePageByRelPath(deps, `${slug}.md`, sweep.summary);
+        }
+      }
+    }
+    return;
+  }
+  const baseSlug = personSlugFromContact(c, false, contactsDir);
+  if (!baseSlug) return;
+  const baseOwner = await contactOwner(deps, `${baseSlug}.md`);
+  const collides = baseOwner !== null && baseOwner !== 'hand-authored' && baseOwner !== c.resourceName;
+  const rendered = renderPersonPage(
+    { ...c, groups: c.groups.map((g) => ({ id: g.id, name: sweep.groupNames[g.id] ?? null })) },
+    collides,
+    contactsDir,
+  );
+  if (!rendered) return;
+  const owner = await contactOwner(deps, rendered.relPath);
+  if (owner === 'hand-authored') {
+    deps.log(`[google] skipping hand-authored ${rendered.relPath}`);
+    return;
+  }
+  // Staged rename: this contact previously rendered elsewhere (a rename, or
+  // a changed contacts directory). The new page lands first, then the page
+  // it owned at the old path is retired, so a sweep that dies in between
+  // leaves the contact with a page rather than none.
+  await importRendered(deps, rendered.relPath, rendered.markdown, sweep.activePack, sweep.summary, sweep.countedSlugs);
+  if (existingPath && existingPath !== rendered.relPath && await contactOwner(deps, existingPath) === c.resourceName) {
+    await deletePageByRelPath(deps, existingPath, sweep.summary);
+  }
+  deps.tick(`contact ${c.resourceName}`);
+}
+
+/**
+ * Ownership is keyed on google_contact_id, not path alone: a page owned by
+ * a DIFFERENT contact (name collision — two "John Smith"s) must neither be
+ * rewritten nor deleted; the colliding contact gets a disambiguated slug.
+ */
+async function contactOwner(deps: GoogleSyncDeps, relPath: string): Promise<string | null> {
+  if (deps.managed) {
+    const page = await deps.managed.page(relPath.replace(/\.md$/, ''));
+    if (!page) return null;
+    return typeof page.frontmatter.google_contact_id === 'string' ? page.frontmatter.google_contact_id : 'hand-authored';
+  }
+  const filePath = join(deps.cfg.dir, relPath);
+  if (!existsSync(filePath)) return null;
+  const m = readFileSync(filePath, 'utf-8').match(/^google_contact_id:\s*"([^"]+)"/m);
+  return m ? m[1] : 'hand-authored';
+}
+
+/**
+ * One contact or event through the connector item holds. A held item is
+ * skipped unless re-admitted; an item-scoped failure is reported and the
+ * sweep goes on, and only a content-class one (the item fails the same way
+ * until it changes) counts toward a hold; a run-scoped failure, and on a
+ * managed brain a failed coordinator write, stop the sweep uncounted as
+ * before. Returns false
+ * when the item failed and was not already held: the service's token must
+ * not move past it.
+ */
+async function throughHolds(deps: GoogleSyncDeps, summary: GoogleSyncSummary, holds: ConnectorHoldSession | undefined,
+  item: { key: string; version: string | null; title: string | null }, apply: () => Promise<void>): Promise<boolean> {
+  if (!holds) {
+    await apply();
+    return true;
+  }
+  if (!holds.shouldAttempt(item.key, item.version)) {
+    deps.tick(`${item.key} held`);
+    return true;
+  }
+  try {
+    await apply();
+    holds.succeed(item.key);
+    return true;
+  } catch (e) {
+    // A failed managed write keeps its own path (the run ends; `--retry-failed` re-admits it), as before.
+    if (classifyItemFailure(e).scope === 'run' || deps.managed && abortsManagedRun(e)) throw e;
+    const classified = classifyConnectorError(e);
+    if (classified.scope !== 'item') throw e;
+    const wasHeld = holds.isHeld(item.key);
+    // Only a failure the item will repeat until it changes counts toward a hold; a transient one is retried next sync.
+    if (classified.class === 'content') await holds.fail(item.key, e, { version: item.version, meta: { title: item.title } });
+    summary.failedFiles++;
+    deps.log(`[google] ${JSON.stringify(item.key)} failed (${classified.code}): ${classified.message}; `
+      + (classified.class === 'content' ? `counted toward a hold (see: gbrain sources status ${deps.sourceId})` : 'retried on the next sync'));
+    if (wasHeld) return true;
+    summary.status = 'partial';
+    return false;
+  }
 }
 
 /**
@@ -191,6 +277,7 @@ export async function sweepCalendar(
   activePack: ActivePack,
   summary: GoogleSyncSummary,
   countedSlugs: Set<string>,
+  holds?: ConnectorHoldSession,
 ): Promise<void> {
   const range = new CalendarSyncWindow(Date.now(), deps.cfg.historyDays, deps.cfg.futureDays ?? CALENDAR_HORIZON_DAYS);
   const list = (query: { syncToken: string } | { timeMinIso: string; timeMaxIso: string }) =>
@@ -227,10 +314,11 @@ export async function sweepCalendar(
     }
   }
   state.calendar_unreadable = null;
-  const tally = { outside: 0 };
-  const sweepCtx = { activePack, summary, countedSlugs };
+  const tally = { outside: 0, blocked: 0 };
+  const sweepCtx = { activePack, summary, countedSlugs, holds };
   if (!await applyCalendarList(deps, result.events, range, sweepCtx, tally)) return;
-  if (result.nextSyncToken) {
+  // A failing event that is not held yet keeps the token here, so the next sync lists it again.
+  if (result.nextSyncToken && !tally.blocked) {
     state.calendar_sync_token = result.nextSyncToken;
     state.calendar_id = deps.cfg.calendarId;
   }
@@ -243,7 +331,18 @@ export async function sweepCalendar(
     const caughtUp = await list(range.listBounds(catchUpFrom));
     if (!await applyCalendarList(deps, caughtUp.events, range, sweepCtx, tally)) return;
   }
-  if (wholeWindow || catchUpFrom !== null) state.calendar_horizon_ms = range.ceilMs;
+  if (!tally.blocked && (wholeWindow || catchUpFrom !== null)) state.calendar_horizon_ms = range.ceilMs;
+  const prefix = eventHoldKey(deps.cfg.calendarId, '');
+  for (const key of holds?.dueHeldKeys().filter(k => k.startsWith(prefix)) ?? []) {
+    if (deps.opts.signal?.aborted) return;
+    await throughHolds(deps, summary, holds, { key, version: null, title: null }, async () => {
+      const eventId = key.slice(prefix.length);
+      const ev = await calendar.getEvent(deps.cfg.account, deps.cfg.calendarId, eventId, deps.opts.signal ? { signal: deps.opts.signal } : {});
+      if (ev) return applyEvent(deps, ev, range, sweepCtx, tally);
+      const owned = await calendarPageRelPathByEventId(deps, eventId);
+      if (owned) await deletePageByRelPath(deps, owned, summary);
+    });
+  }
   if (tally.outside > 0) {
     deps.log(`[google] calendar: ${tally.outside} listed event(s) outside the sync window (${deps.cfg.historyDays} days back, ${range.futureDays} ahead) were not imported`);
   }
@@ -269,28 +368,40 @@ function recordCalendarUnreadable(deps: GoogleSyncDeps, state: GoogleSourceState
   return true;
 }
 
+type CalendarSweepCtx = { activePack: ActivePack; summary: GoogleSyncSummary; countedSlugs: Set<string>; holds?: ConnectorHoldSession };
+
 /**
- * Apply one calendar list to the brain, event by event. Returns false when
- * the sweep was aborted part-way, so the caller commits no cursor state.
+ * Apply one calendar list to the brain, event by event, each through the
+ * item holds (`tally.blocked` counts failing events not held yet). Returns
+ * false when the sweep was aborted part-way, so the caller commits no cursor
+ * state.
  */
 async function applyCalendarList(deps: GoogleSyncDeps, events: CalendarEventData[], range: CalendarSyncWindow,
-  ctx: { activePack: ActivePack; summary: GoogleSyncSummary; countedSlugs: Set<string> }, tally: { outside: number }): Promise<boolean> {
+  ctx: CalendarSweepCtx, tally: { outside: number; blocked: number }): Promise<boolean> {
   for (const ev of events) {
     if (deps.opts.signal?.aborted) return false;
-    const page = renderCalendarEventPage(ev);
-    const side = page ? range.side(ev.startIso, ev.endIso) : 'inside';
-    if (side !== 'inside') tally.outside++;
-    // Nothing is written or removed for an event that already ended before
-    // the window, so skip the page lookup.
-    if (side === 'before') continue;
-    const change = planCalendarPage(side, page?.relPath ?? null, await calendarPageRelPathByEventId(deps, ev.id), calendarRelPath(ev));
-    if (change.kind === 'remove') await deletePageByRelPath(deps, change.relPath, ctx.summary);
-    if (change.kind !== 'write' || !page) continue;
-    if (change.removeFirst) await deletePageByRelPath(deps, change.removeFirst, ctx.summary);
-    await importRendered(deps, page.relPath, page.markdown, ctx.activePack, ctx.summary, ctx.countedSlugs);
-    deps.tick(`event ${ev.id}`);
+    const item = { key: eventHoldKey(deps.cfg.calendarId, ev.id), version: ev.etag ?? null, title: ev.summary };
+    if (!await throughHolds(deps, ctx.summary, ctx.holds, item, () => applyEvent(deps, ev, range, ctx, tally))) tally.blocked++;
   }
   return !deps.opts.signal?.aborted;
+}
+
+/** One event: written, moved or removed by where it falls against the sync window. */
+async function applyEvent(deps: GoogleSyncDeps, ev: CalendarEventData, range: CalendarSyncWindow, ctx: CalendarSweepCtx,
+  tally: { outside: number }): Promise<void> {
+  assertConnectorIdentity({ event_id: ev.id, attendees: ev.attendees.map((a) => a.email) });
+  const page = renderCalendarEventPage(ev);
+  const side = page ? range.side(ev.startIso, ev.endIso) : 'inside';
+  if (side !== 'inside') tally.outside++;
+  // Nothing is written or removed for an event that already ended before
+  // the window, so skip the page lookup.
+  if (side === 'before') return;
+  const change = planCalendarPage(side, page?.relPath ?? null, await calendarPageRelPathByEventId(deps, ev.id), calendarRelPath(ev));
+  if (change.kind === 'remove') await deletePageByRelPath(deps, change.relPath, ctx.summary);
+  if (change.kind !== 'write' || !page) return;
+  if (change.removeFirst) await deletePageByRelPath(deps, change.removeFirst, ctx.summary);
+  await importRendered(deps, page.relPath, page.markdown, ctx.activePack, ctx.summary, ctx.countedSlugs);
+  deps.tick(`event ${ev.id}`);
 }
 
 /**

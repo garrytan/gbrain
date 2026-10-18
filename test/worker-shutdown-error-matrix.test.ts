@@ -19,14 +19,18 @@
  * job is not in `inFlight` when the watchdog fires. Before the fix the job
  * launched unaborted and took the requestShutdown path (`worker_shutdown`
  * hand-back, or the handler's own text for an UnrecoverableError) instead of
- * `aborted: watchdog`; this is the window the un-forced watchdog test hit
- * on a CI Postgres.
+ * the watchdog abort; this is the window the un-forced watchdog test hit on a
+ * CI Postgres. Since GBRA-130 A-30 the watchdog charges only a job that ran
+ * alone when it tripped, so a claim that registers after the drain began goes
+ * back to `waiting` uncharged and marked to run alone
+ * (watchdog-attribution.ts).
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
 import { MinionQueue } from '../src/core/minions/queue.ts';
+import { WATCHDOG_DRAIN_RELEASE } from '../src/core/minions/watchdog-attribution.ts';
 import { MinionWorker } from '../src/core/minions/worker.ts';
 import { UnrecoverableError, type MinionJobContext } from '../src/core/minions/types.ts';
 import { LocalConfigurationError } from '../src/core/minions/configuration-error.ts';
@@ -110,9 +114,9 @@ for (const backend of testBackends()) describe(`worker shutdown error matrix (W9
     expect(await runCase(engine, 'watchdog', 'unrecoverable')).toEqual({ status: 'dead', attempts: 1, error: 'aborted: watchdog' });
   }, 60_000);
 
-  test('watchdog inside the claim round trip: a claim committed before the shutdown is aborted when it registers', async () => {
-    expect(await runCase(engine, 'watchdog', 'plain', true)).toEqual({ status: 'delayed', attempts: 1, error: 'aborted: watchdog' });
-    expect(await runCase(engine, 'watchdog', 'unrecoverable', true)).toEqual({ status: 'dead', attempts: 1, error: 'aborted: watchdog' });
+  test('watchdog inside the claim round trip: a claim committed before the shutdown is aborted when it registers and goes back uncharged (it did not run alone when the watchdog tripped)', async () => {
+    expect(await runCase(engine, 'watchdog', 'plain', true)).toEqual({ status: 'waiting', attempts: 0, error: WATCHDOG_DRAIN_RELEASE });
+    expect(await runCase(engine, 'watchdog', 'unrecoverable', true)).toEqual({ status: 'waiting', attempts: 0, error: WATCHDOG_DRAIN_RELEASE });
   }, 60_000);
 
   test('configuration block: every error releases through the configuration path with no attempt burned', async () => {

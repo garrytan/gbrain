@@ -18,7 +18,13 @@
  *   coordination_path_missing  this host's registration has no coordination directory
  *
  * The two in-progress reasons are a `wait` (the fix's actor is `provider`;
- * the `why` names the delay); the rest are a host administrator's decision
+ * the `why` names the delay), except a transfer whose recorded preparation
+ * (`prepared_at`) is older than TRANSFER_STALE_MINUTES: a prepared transfer
+ * never ends on its own, so that refusal asks the user (`ask_user`) to accept
+ * it on the successor or cancel it on the owner host, with both argv and the
+ * cancel's `--dry-run` preview; a drain with no recorded time (an older
+ * release prepared it) keeps the wait, whose `why` names the cancel. The rest
+ * are a host administrator's decision
  * (`tell_user_to_run`). `host_mismatch` is `retryable: false`: retrying on
  * the same host cannot change the answer. Nothing here claims or transfers
  * ownership; the fix is always the read-only writer status, and the local
@@ -38,6 +44,15 @@ export type OwnerUnavailableReason = typeof OWNER_UNAVAILABLE_REASONS[number];
 
 /** Seconds a caller waits before retrying while a transfer or clone is in progress. */
 export const OWNER_WAIT_SECONDS = 30;
+
+/** Minutes after its recorded preparation a still-draining transfer stops reading as in progress and asks the user to accept or cancel it. */
+export const TRANSFER_STALE_MINUTES = 30;
+
+/** Whole minutes since the binding's transfer was prepared, or null when no preparation time is recorded. */
+function drainingMinutes(binding: WorktreeBinding | null): number | null {
+  const at = binding?.prepared_at ? Date.parse(binding.prepared_at) : NaN;
+  return Number.isFinite(at) ? Math.floor((Date.now() - at) / 60_000) : null;
+}
 
 /** A binding this host may publish through: active, owned here, with both registered paths. */
 export type ActiveOwnerBinding = WorktreeBinding & { state: 'active'; local_path: string; coordination_path: string };
@@ -115,10 +130,24 @@ export function ownerRefusal(input: OwnerRefusalInput): OwnerRefusal {
         fix: admin(`Shows the owner host of source ${sourceId}; run ${work} there, or align GBRAIN_HOME so the worker and the shell share one host identity. Do not copy or regenerate host.json: a new identity orphans the ownership recorded for the old one.`,
           `gbrain could not run ${work} for source ${sourceId} because a different host identity owns its checkout. Run it on the owner host (writer status names it), or make both environments use the same GBRAIN_HOME.`) };
     }
-    case 'transfer_in_progress':
-      return { reason, retryable: true, message: `Source ${sourceId}'s worktree is draining for a writer transfer, so ${work} waits.`,
+    case 'transfer_in_progress': {
+      const minutes = drainingMinutes(binding);
+      const epoch = String(binding?.owner_epoch ?? '<owner_epoch>');
+      const cancel = ['gbrain', 'sources', 'writer', 'transfer', 'cancel', sourceId, '--expected-epoch', epoch];
+      if (minutes === null || minutes < TRANSFER_STALE_MINUTES) return { reason, retryable: true, message: `Source ${sourceId}'s worktree is draining for a writer transfer, so ${work} waits.`,
         why: `A writer transfer of source ${sourceId} is prepared and its worktree is in state draining; until the transfer is accepted or cancelled no host may publish to it. ${never}`,
-        fix: wait(`Source ${sourceId}'s worktree is draining for a writer transfer (gbrain sources writer transfer prepare was run); the status read shows its state.`) };
+        fix: wait(`Source ${sourceId}'s worktree is draining for a writer transfer (gbrain sources writer transfer prepare was run); the status read shows its state. `
+          + `If no successor will accept it, the owner host ends it with ${cancel.join(' ')} (preview with --dry-run).`) };
+      const accept = `gbrain sources writer transfer accept ${sourceId} --path <successor root> --expected-epoch ${epoch} --manifest <manifest digest printed by prepare> --admin-intent writer_transfer_accept --expected-state <admin_state>`;
+      const apply = [...cancel, '--admin-intent', 'writer_transfer_cancel', '--expected-state', '<admin_state>'];
+      return { reason, retryable: false, message: `Source ${sourceId}'s worktree has been draining for a writer transfer for ${minutes} minutes, so ${work} did not run.`,
+        why: `A writer transfer of source ${sourceId} was prepared ${minutes} minutes ago (over ${TRANSFER_STALE_MINUTES}) and never accepted; a prepared transfer does not end on its own, and until it is accepted or cancelled no host may publish to it. ${never}`,
+        fix: { ask_user: true, argv: apply, preview_argv: [...cancel, '--dry-run', '--json'], consent: [], actor: 'host_admin', requires_exclusive: false, verify,
+          inputs: [{ name: 'admin_state', how: `admin_state from gbrain sources writer status ${sourceId} --json on the owner host` }],
+          why: `Cancels the prepared transfer on the owner host: the worktree returns to active at epoch ${epoch} and the prepared manifest is cleared; pages and files are untouched. Run the --dry-run preview first.`,
+          user_message: `A writer transfer of source ${sourceId} was prepared ${minutes} minutes ago and never accepted, so ${work} is paused. Either finish it on the successor host (${accept}) `
+            + `or cancel it on this owner host (${apply.join(' ')}). Which do you want?` } };
+    }
     case 'clone_in_progress':
       return { reason, retryable: true, message: `Source ${sourceId}'s worktree is being cloned or recloned, so ${work} waits.`,
         why: `A topology clone of source ${sourceId}'s checkout is in progress and its worktree is in state recovering; it becomes active when the clone finishes. ${never}`,

@@ -14,8 +14,18 @@ import type { WriteRequest } from './model.ts';
 
 export type PublicationBoundary = Parameters<NonNullable<PublicationHooks['boundary']>>[0];
 export type FaultPoint = `publication:${PublicationBoundary}` | `effect:${EffectKind}:mid` | 'effect:embedding:settle'
-  | 'effect_recovery:before_clear' | 'publication_recovery:before_clear' | 'sync:mid_checkpoint' | 'sync:before_group_admission' | 'sync:mid_waiver_run' | 'sync:prescreened' | 'consumer:prepared'
+  | 'effect_recovery:before_clear' | 'publication_recovery:before_clear'
+  // A streamed (version 2) withdrawal mirror (effect-recovery.ts): once its record is durable and before its file is
+  // streamed into the publication stage, and after that step (the stage written and flushed, or left as it was found),
+  // before the recovery transaction renames it.
+  | 'effect_recovery:before_stage' | 'effect_recovery:staged' | 'sync:mid_checkpoint' | 'sync:before_group_admission' | 'sync:mid_waiver_run' | 'sync:prescreened' | 'consumer:prepared'
   | 'consumer:preparing' | 'lane:applied'
+  // Flip lane C: after a statement-cancelled (57014) write's attempt is charged, before its claim is released or finished.
+  | 'persistence:interruption_charged'
+  // Flip lane C: on publishMutation's recovery route, after a statement-cancelled (57014) write's attempt is charged, before the request is marked recovering.
+  | 'persistence:recovery_interruption_charged'
+  // Flip lane C: before a group's memoized shared preparation read (group-publish.ts `preparationReads`) is sent; a hook that throws a 57014 models the database cancelling it.
+  | 'group:shared_read'
   // Before each claim attempt of the consumer, a FIFO claim or a lane head's: a stalling hook keeps this process from starting
   // another request or lane group meanwhile, while the requests it already holds run on.
   | 'consumer:claiming'
@@ -39,11 +49,16 @@ export type FaultPoint = `publication:${PublicationBoundary}` | `effect:${Effect
   // bytes are written (before their journal step), after a --keep disk write is abandoned (its journal step written), and after recoverPublication returns.
   | 'stuck_recovery:backed_up' | 'stuck_recovery:written' | 'stuck_recovery:abandoned' | 'stuck_recovery:recovered'
   // Wave B segmented writes (spec 3.4 crash windows): after the texts, the staged manifest rows and the staged chunks of a
-  // preparation, after the generation flip (inside the publication transaction), and after a projection staged its chunks (before its seal).
-  | 'segmented:texts_staged' | 'segmented:manifest_staged' | 'segmented:chunks_staged' | 'segmented:flipped' | 'segmented:projection_staged'
+  // preparation, after the generation flip (inside the publication transaction), before each chunk batch a projection reads (its segment
+  // texts, then its claim renewal and insert), and after a projection staged its chunks (before its seal).
+  | 'segmented:texts_staged' | 'segmented:manifest_staged' | 'segmented:chunks_staged' | 'segmented:flipped' | 'segmented:projection_batch'
+  | 'segmented:projection_staged'
   // A prior file over the single-string ceiling copied to its before stage (large-file.ts `stageBeforeCopy`): after the copy is
   // written under its temporary name (unverified, unflushed: a crash during the copy) and once it is flushed, before its rename.
-  | 'large_file:stage_copying' | 'large_file:stage_flushed';
+  | 'large_file:stage_copying' | 'large_file:stage_flushed'
+  // A streamed file (large-file.ts `stageStreamedContent`: restore_page, a segmented withdrawal mirror) after each piece is
+  // written to its in-progress name, before the stream is verified, flushed and renamed to the reserved stage name.
+  | 'large_file:stage_streaming';
 /**
  * `signal` (#6278, `consumer:preparing` only): the preparation's abort signal, so
  * a stalling hook can model both the reporter's cases: a preparer that honours
@@ -67,6 +82,8 @@ export const EFFECT_FAULT_POINTS: Record<EffectKind, FaultPoint> = {
 let installed: FaultHook | undefined;
 /** Gate workers only. */
 export function installFaultHook(hook: FaultHook | undefined): void { installed = hook; }
+/** Whether a hook is installed: a seam that must not delay a synchronous send in production checks it first. */
+export function faultHookInstalled(): boolean { return installed !== undefined; }
 export async function faultPoint(point: FaultPoint, detail: FaultDetailInput = {}): Promise<void> {
   if (!installed) return;
   const { effectId, ...rest } = detail;

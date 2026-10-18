@@ -81,7 +81,7 @@ export async function runContentRepairPhase(engine: BrainEngine | null, opts: Co
   let lane: ContentLaneResult;
   try {
     lane = await runContentLane(engine, await resolveRepairScope(engine), { apply: !opts.dryRun, kinds, deadline: start + timeBudgetMs,
-      logger: { info() {}, warn: console.warn, error: console.error }, ...(opts.registry ? { registry: opts.registry } : {}) });
+      logger: { info() {}, warn: console.warn, error: console.error }, ...(opts.registry ? { registry: opts.registry } : {}), ...(opts.signal ? { signal: opts.signal } : {}) });
   } catch (error) {
     if (isUncontainedPhaseError(error, opts.signal)) throw error;
     const rawCode = (error as { code?: unknown } | null)?.code;
@@ -109,6 +109,9 @@ export async function runContentRepairPhase(engine: BrainEngine | null, opts: Co
   const oldest = kindsRun.map(k => k.oldest_hold_at).filter((at): at is string => !!at).sort()[0] ?? null;
   const oldestHoldAgeHours = oldest ? Math.max(0, Math.round((now() - Date.parse(oldest)) / 3_600_000)) : null;
   const hardStop = lane.stopped.find(stop => stop.reason !== 'time_budget');
+  // A kind that threw (reason `error`, GBRA-130 A-46) is reported by its code: the phase report never carries an error's message.
+  const kindError = hardStop?.reason === 'error' ? hardStop : undefined;
+  const stopped = lane.stopped.map(stop => stop.reason === 'error' ? { kind: stop.kind, reason: stop.reason, code: stop.code ?? 'internal', message: `${stop.kind} raised ${stop.code ?? 'an error'}`, ...(stop.fix ? { fix: stop.fix } : {}) } : stop);
   const timeStop = lane.stopped.find(stop => stop.reason === 'time_budget');
   const failed = lane.failed.length;
   const usd = `$${lane.cost.llm_usd.toFixed(4)}`;
@@ -121,7 +124,8 @@ export async function runContentRepairPhase(engine: BrainEngine | null, opts: Co
   ].filter(Boolean).join('; ');
   const notes = [
     timeStop ? `Stopped at the phase time budget (${Math.round(timeBudgetMs / 1000)} s) in ${timeStop.kind}; the next maintenance run resumes.` : '',
-    hardStop ? `Stopped (${hardStop.kind}: ${hardStop.reason}): ${hardStop.message}` : '',
+    kindError ? `${kindError.kind} stopped on an error (${kindError.code ?? 'internal'}) and the next maintenance run retries; the other kinds ran. Run \`${preview}\` on the brain host to see the plan and the error; ask the user if it keeps failing.`
+      : hardStop ? `Stopped (${hardStop.kind}: ${hardStop.reason}): ${hardStop.message}` : '',
     failed ? `${failed} item(s) refused and left unchanged (first: ${lane.failed[0]!.kind} ${lane.failed[0]!.item}, ${lane.failed[0]!.reason}); the next full scan retries them.` : '',
     needsHuman ? `${needsHuman} wait for a person: gbrain sync status --source <id> --json names each with its paragraph.` : '',
   ].filter(Boolean);
@@ -135,7 +139,7 @@ export async function runContentRepairPhase(engine: BrainEngine | null, opts: Co
       mode: lane.mode, kinds: lane.kinds, candidates, repaired, failed, held_by_reason: heldTotals, by_kind: byKind,
       llm_usd: lane.cost.llm_usd, oldest_hold_at: oldest, oldest_hold_age_hours: oldestHoldAgeHours,
       complete: lane.results.every(result => result.complete), time_budget_ms: timeBudgetMs, stopped_reason: hardStop?.reason ?? timeStop?.reason ?? null,
-      ...(lane.stopped.length ? { stopped: lane.stopped } : {}), ...(fix ? { fix } : {}),
+      ...(kindError ? { reason: 'error', code: kindError.code ?? 'internal' } : {}), ...(lane.stopped.length ? { stopped } : {}), ...(fix ? { fix } : {}),
     },
   };
 }

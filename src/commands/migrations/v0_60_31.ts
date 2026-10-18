@@ -14,8 +14,11 @@
  *
  * Idempotent: each page re-seals in its own transaction and a re-sealed page
  * is no longer pending, so a rerun after an interruption resumes with the
- * pages still withheld. A failed page records the run as partial so the next
- * `gbrain apply-migrations --yes` retries it.
+ * pages still withheld. A page whose re-chunk fails item-scoped is held (its
+ * chunks stay withheld, doctor lists it, `gbrain repair safe-chunks --source
+ * <id> --apply` retries it) and the phase completes with `held: N` in its
+ * detail. A run-scoped failure, or most pages failing, fails the phase so the
+ * next `gbrain apply-migrations --yes` retries it.
  */
 import type { Migration, OrchestratorOpts, OrchestratorPhaseResult, OrchestratorResult } from './types.ts';
 import type { BrainEngine } from '../../core/engine.ts';
@@ -24,6 +27,8 @@ import { createEngine } from '../../core/engine-factory.ts';
 import { buildGatewayConfig } from '../../core/ai/build-gateway-config.ts';
 import { credentialProjectionPending, resealCredentialProjections } from '../../core/page-state/credential-reseal.ts';
 import { runMigrateOnlyCore } from './in-process.ts';
+import { classifyItemFailure } from '../../core/item-failure.ts';
+import { redactConnectionInfo } from '../../core/audit/redact-connection-info.ts';
 import { googleFileModesNoticePhase } from './v0_60_31-google-file-modes.ts';
 
 let testEngineOverride: BrainEngine | null = null;
@@ -37,12 +42,21 @@ async function credentialProjectionPhase(engine: BrainEngine, opts: Orchestrator
     const pending = await credentialProjectionPending(engine);
     return { name, status: 'skipped', detail: `dry-run: ${pending.rebuildable} page(s) would be re-chunked without provider calls` };
   }
-  const result = await resealCredentialProjections(engine);
+  let result: Awaited<ReturnType<typeof resealCredentialProjections>>;
+  try {
+    result = await resealCredentialProjections(engine);
+  } catch (error) {
+    // A run-scoped failure (connection, schema, abort) or a systemic one: the phase fails and the next run resumes; no page was held.
+    const failure = classifyItemFailure(error);
+    return { name, status: 'failed', detail: `The credential-safe re-chunk stopped (${failure.code}): ${redactConnectionInfo(failure.message).slice(0, 500)} `
+      + 'Pages it did not reach stay withheld; fix the cause, and the next gbrain apply-migrations run resumes the re-chunk.' };
+  }
   const kept = result.kept ? `; ${result.kept} code page(s) without a recorded source path stay withheld until re-imported` : '';
-  const detail = `${result.resealed} page(s) re-chunked without provider calls, ${result.superseded} superseded by newer writes${kept}. `
-    + 'Embed the re-chunked text when ready: gbrain embed --stale';
-  if (result.failed) return { name, status: 'failed', detail: `${result.failed} page(s) failed to re-chunk and stay withheld; ${detail}` };
-  return { name, status: 'complete', detail };
+  const codes = [...new Set(result.held.map(hold => hold.code))].join(', ');
+  const held = result.held.length ? `; held: ${result.held.length} page(s) whose re-chunk failed (${codes}) stay withheld; gbrain doctor --only text_projection_readiness lists them `
+    + 'and gbrain repair safe-chunks --source <id> --apply retries them' : '';
+  return { name, status: 'complete', detail: `${result.resealed} page(s) re-chunked without provider calls, ${result.superseded} superseded by newer writes${kept}${held}. `
+    + 'Embed the re-chunked text when ready: gbrain embed --stale' };
 }
 
 async function orchestrator(opts: OrchestratorOpts): Promise<OrchestratorResult> {

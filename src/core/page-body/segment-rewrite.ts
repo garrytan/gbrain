@@ -13,13 +13,15 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { isQuarantined } from '../quarantine.ts';
-import { PAGE_MAX_BYTES } from '../page-size-policy.ts';
+import { FACTS_FENCE_END } from '../facts-fence.ts';
 import { maintenanceAttribution } from '../persistence/attribution.ts';
 import { applySegmentedBody, sealSegmentedPage } from '../persistence/segmented-apply.ts';
 import { withPageTierKept } from '../trust/fence-append.ts';
 import { prepareSegmentedBody, readSegmentedBody, type SegmentedStagingOwner } from './ingest.ts';
-import { readPageBodyPolicy, STAGE_BATCH_BYTES } from './limits.ts';
+import { FENCE_MAX_BYTES, readPageBodyPolicy, STAGE_BATCH_BYTES } from './limits.ts';
+import { fenceTooLargeError } from './read-range.ts';
 import { pageBodySegmentedError } from './page-shape.ts';
+import { readEntryState } from './entry-state.ts';
 import { ContentHashStream } from './content-hash-stream.ts';
 import type { StoredRegion } from './segmenter.ts';
 import type { BodyRegion, JsonObject, ManifestRow } from './types.ts';
@@ -37,17 +39,45 @@ const fenceRegions = (row: ManifestRow) => (row.protectedRegions as StoredRegion
 /** The region runs on into the next segment (it crosses a forced cut there). */
 const runsOn = (r: StoredRegion) => r.open_start !== undefined && r.open_end === undefined;
 
-/** Every fence unit of `rows` the transform changes, in order. Reads only segments holding a fence. */
+/**
+ * Every fence unit of `rows` the transform changes, in order. Reads only segments holding a fence. A unit joins the
+ * segments a fence region runs on through, and a segment that ends inside a facts marker (the next one's entry state
+ * carries the marker's first bytes) with the next: a fence region of a segment starting inside its opener begins at the
+ * region's recorded `open_start`, in the segment before, and a facts fence whose closer a cut splits ends after the
+ * closer's last bytes, which the next segment holds outside any facts region. A fence longer than FENCE_MAX_BYTES,
+ * counted from its begin marker through its end marker, refuses before its segments are read.
+ */
 async function changedUnits(engine: BrainEngine, sourceId: string, rows: readonly ManifestRow[], transform: FenceTransform): Promise<FenceUnit[]> {
   const units: FenceUnit[] = [];
+  const joinsNext = (i: number) => i + 1 < rows.length && rows[i + 1]!.region === rows[i]!.region
+    && (fenceRegions(rows[i]!).some(runsOn) || !!readEntryState(rows[i + 1]!.entryState)?.withdrawal.carry);
   for (let from = 0; from < rows.length; from++) {
-    if (!fenceRegions(rows[from]!).length) continue;
+    if (!fenceRegions(rows[from]!).length && !joinsNext(from)) continue;
     let to = from;
-    while (to + 1 < rows.length && rows[to + 1]!.region === rows[from]!.region && fenceRegions(rows[to]!).some(runsOn)) to++;
+    while (joinsNext(to)) to++;
     const span = rows.slice(from, to + 1);
-    if (span.reduce((n, row) => n + row.byteLen, 0) > PAGE_MAX_BYTES) {
+    const spanStart = span[0]!.byteStart;
+    const extents: Array<{ start: number; end: number; closer: boolean }> = [];
+    for (const row of span) {
+      const regions = fenceRegions(row);
+      const last = extents[extents.length - 1];
+      const entry = row === span[0] ? undefined : readEntryState(row.entryState)?.withdrawal;
+      if (entry?.open && entry.carry && last?.end === row.byteStart && !regions.some(r => r.start === 0)) {
+        last.end += Buffer.byteLength(FACTS_FENCE_END, 'utf8') - Buffer.byteLength(entry.carry, 'utf8');
+        last.closer = true;
+      }
+      for (const r of regions) {
+        const start = row.byteStart + r.start, end = row.byteStart + r.end;
+        const tail = extents[extents.length - 1];
+        if (tail && tail.end === start) tail.end = end;
+        else extents.push({ start: Math.min(start, r.open_start ?? start), end, closer: false });
+      }
+    }
+    const overBound = extents.find(e => e.end - e.start > FENCE_MAX_BYTES);
+    if (overBound || (extents[0] && extents[0].start < spanStart)) {
       const [page] = await engine.executeRaw<{ slug: string }>('SELECT slug FROM pages WHERE id=$1', [span[0]!.pageId]);
-      throw pageBodySegmentedError({ slug: page?.slug, source_id: sourceId }, 'fence rewrite of a fence larger than the single-string ceiling');
+      if (overBound) throw fenceTooLargeError(page?.slug ?? String(span[0]!.pageId), sourceId, overBound.end - overBound.start);
+      throw pageBodySegmentedError({ slug: page?.slug, source_id: sourceId }, 'fence rewrite of a fence whose opener lies before the segments joined for it');
     }
     const texts = await engine.readSegmentTexts(sourceId, span.map(row => row.sha256));
     const raw = Buffer.concat(span.map(row => {
@@ -55,20 +85,12 @@ async function changedUnits(engine: BrainEngine, sourceId: string, rows: readonl
       if (!text) throw new Error(`Segment text ${hex(row.sha256)} of page ${row.pageId} is missing.`);
       return text;
     }));
-    const regions: Array<{ start: number; end: number }> = [];
-    let offset = 0;
-    for (const row of span) {
-      for (const r of fenceRegions(row)) {
-        const last = regions[regions.length - 1];
-        if (last && last.end === offset + r.start) last.end = offset + r.end;
-        else regions.push({ start: offset + r.start, end: offset + r.end });
-      }
-      offset += row.byteLen;
-    }
     const parts: Buffer[] = [];
     let cursor = 0, changed = false;
-    for (const r of regions) {
+    for (const e of extents) {
+      const r = { start: e.start - spanStart, end: e.end - spanStart };
       const fence = raw.subarray(r.start, r.end).toString('utf8');
+      if (e.closer && !fence.endsWith(FACTS_FENCE_END)) throw new Error(`Facts fence at stored byte ${e.start} of page ${span[0]!.pageId} does not end with its end marker across the cut.`);
       const next = await transform(fence, { region: span[0]!.region });
       parts.push(raw.subarray(cursor, r.start), Buffer.from(next, 'utf8'));
       cursor = r.end;

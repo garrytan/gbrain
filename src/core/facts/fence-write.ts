@@ -63,6 +63,7 @@ import { recordTaintEdges } from '../trust/taint.ts';
 import { recordFlaggedRow, type GatedRowDecision } from '../write-gate-store.ts';
 import type { TaintInput, WriteTrust } from '../trust/tier.ts';
 import { gitChildEnv } from '../git-env.ts';
+import { urlCloneReadOnly } from '../url-clone.ts';
 
 /** Resolved source binding for the entity page. */
 export interface FenceTarget {
@@ -115,8 +116,10 @@ export interface FenceWriteResult {
   inserted: number;
   /** DB ids assigned to the inserted rows, in input order. */
   ids: number[];
-  /** True when the path fell through to DB-only because local_path was unset. */
+  /** True when the path fell through to DB-only: local_path unset, `sync.write_through` off, or a gbrain-owned clone (`databaseOnlyReason`). */
   legacyFallback?: true;
+  /** #6946: why a `legacyFallback` is expected — `url_clone`: the source is a clone gbrain owns and pulls (url-clone.ts), so its checkout is never written. */
+  databaseOnlyReason?: 'url_clone';
   /** True when fence parse-validate failed; rows were NOT inserted, .tmp quarantined. */
   fenceWriteFailed?: true;
   /**
@@ -299,7 +302,9 @@ export function stubEntityPage(
  * the `## Facts` fence, atomically renames the .tmp into place, and
  * stamps the DB index via engine.insertFacts.
  *
- * Returns `legacyFallback: true` when `target.localPath` is null —
+ * Returns `legacyFallback: true` when `target.localPath` is null (also
+ * under `sync.write_through` off and, with `databaseOnlyReason: 'url_clone'`,
+ * for a clone gbrain owns, #6946) —
  * the caller is responsible for falling through to the legacy
  * DB-only `engine.insertFact` path. We don't do the legacy fallback
  * here because the caller has the FactsBackstopCtx (visibility,
@@ -344,9 +349,8 @@ export async function writeFactsToFence(
   // choice: no fence file, no stub entity page, no git commit. Same
   // legacyFallback contract as a missing local_path — the caller's DB-only
   // path still records the facts.
-  if (await isWriteThroughDisabled(engine)) {
-    return { inserted: 0, ids: [], legacyFallback: true };
-  }
+  if (await isWriteThroughDisabled(engine)) return { inserted: 0, ids: [], legacyFallback: true };
+  if (await urlCloneReadOnly(engine, target.sourceId)) return { inserted: 0, ids: [], legacyFallback: true, databaseOnlyReason: 'url_clone' };
 
   // #4204: compute the SAME path writePageThrough computes for this
   // (source, slug) — the fence appends to the page's file, so the two writers

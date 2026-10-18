@@ -9,12 +9,13 @@
 import type { BrainEngine } from './engine.ts';
 import { AGENT_TOOL_LIMIT_MS, type Action, type Decision } from './agent-output.ts';
 import { cliRouting, pinRouting, type FixRouting } from './fix-routing.ts';
-import { extractionLagStatement } from './engine-sql/pages.ts';
+import { extractionLagStatement, heldLinkExtractionStatement } from './engine-sql/pages.ts';
 import { effectiveLinkExtractorWatermark } from './link-extraction-watermark.ts';
 import { previewMentionPass } from './mentions/stale.ts';
 import { readMentionPolicy } from './mentions/policy.ts';
 import { resolveEnvNumber, warnOnceForEnv } from './env-number.ts';
 import { isMissingSchemaObject } from './utils.ts';
+import { LINK_HOLD_THRESHOLD_RUNS, linkExtractionRetryFix } from './persistence/links-extraction-holds.ts';
 
 /** Warn threshold (percent of live pages actionable-stale); `GBRAIN_EXTRACTION_LAG_WARN_PCT` overrides it. */
 export const EXTRACTION_LAG_WARN_PCT_DEFAULT = 20;
@@ -34,6 +35,8 @@ export interface ExtractionLag {
   /** Stale pages extraction can clear (attendance-blocked excluded). */
   actionable: number;
   attendance_blocked: number;
+  /** GBRA-130 A-1: pages whose link extraction is held after repeated failures (excluded from `actionable`). */
+  held?: number;
   /** Pages due for the mention pass; null when the pass is off. */
   mention_due: number | null;
   mention_last_pass_at: string | null;
@@ -41,18 +44,37 @@ export interface ExtractionLag {
 
 export async function readExtractionLag(engine: BrainEngine, opts: { sourceId?: string; timeoutMs?: number } = {}): Promise<ExtractionLag> {
   const versionTs = await effectiveLinkExtractorWatermark(engine);
-  const read = async (attendance: boolean) => {
-    const { text, params } = extractionLagStatement({ sourceId: opts.sourceId, versionTs, attendance });
-    return (await engine.executeRaw<{ total: number; stale: number; attendance_blocked: number }>(text, params, { timeoutMs: opts.timeoutMs ?? 10_000 }))[0];
+  const read = async (attendance: boolean, held: boolean) => {
+    const { text, params } = extractionLagStatement({ sourceId: opts.sourceId, versionTs, attendance, held });
+    return (await engine.executeRaw<{ total: number; stale: number; attendance_blocked: number; held: number }>(text, params, { timeoutMs: opts.timeoutMs ?? 10_000 }))[0];
   };
   let row;
-  try { row = await read(true); } catch (e) {
-    if (!isMissingSchemaObject(e, 'column', 'links_attendance_blocked_revision')) throw e;
-    row = await read(false);
+  try { row = await read(true, true); } catch (e) {
+    if (isMissingSchemaObject(e, 'column', 'links_extract_failure')) row = await read(true, false).catch(async inner => {
+      if (!isMissingSchemaObject(inner, 'column', 'links_attendance_blocked_revision')) throw inner;
+      return read(false, false);
+    });
+    else if (isMissingSchemaObject(e, 'column', 'links_attendance_blocked_revision')) row = await read(false, false);
+    else throw e;
   }
   const mention = (await readMentionPolicy(engine)).enabled ? await previewMentionPass(engine, opts.sourceId) : null;
-  return { total: Number(row?.total ?? 0), actionable: Number(row?.stale ?? 0), attendance_blocked: Number(row?.attendance_blocked ?? 0),
+  return { total: Number(row?.total ?? 0), actionable: Number(row?.stale ?? 0), attendance_blocked: Number(row?.attendance_blocked ?? 0), held: Number(row?.held ?? 0),
     mention_due: mention ? mention.due : null, mention_last_pass_at: mention?.last_pass_at ?? null };
+}
+
+/**
+ * GBRA-130 A-1: doctor's note for pages whose managed link extraction is held (failed
+ * `LINK_HOLD_THRESHOLD_RUNS` runs in a row), naming the first five with their codes, and the fix that retries them
+ * (`gbrain extract --stale [--source-id <id>] --retry-held`). Empty note and no fix when nothing is held.
+ */
+export async function heldExtractionReport(engine: BrainEngine, held: number, sourceId?: string): Promise<{ note: string; fix?: Action }> {
+  if (!held) return { note: '' };
+  const { text, params } = heldLinkExtractionStatement({ sourceId, versionTs: await effectiveLinkExtractorWatermark(engine), limit: 5 });
+  const sample = (await engine.executeRaw<{ slug: string; source_id: string; code: string }>(text, params, { timeoutMs: 10_000 }))
+    .map(row => `${row.source_id}:${row.slug} (${row.code})`);
+  const fix = linkExtractionRetryFix(sourceId, true);
+  return { fix, note: `. ${held} page(s) failed link extraction ${LINK_HOLD_THRESHOLD_RUNS} runs in a row and are held (${sample.join(', ')}${held > sample.length ? ', ...' : ''}); `
+    + `fix the cause the code names, then run ${fix.argv!.join(' ')}` };
 }
 
 export interface ExtractionLagVerdict { status: 'ok' | 'warn' | 'fail'; skipped: boolean; pct: number; warn_pct: number; fail_pct: number | null }
@@ -130,12 +152,12 @@ export function extractionNudgeLines(lag: ExtractionLag, opts: { sourceId?: stri
     ...routes.map(route => `[sync]   ${route.argv.join(' ')} — ${route.label}`)];
 }
 
-export interface StaleExtractionCounts { actionable: number; attendance_blocked: number; mention_due: number | null; complete: boolean }
+export interface StaleExtractionCounts { actionable: number; attendance_blocked: number; held: number; mention_due: number | null; complete: boolean }
 
 /** The terminal counts `extract --stale` reports: done when `actionable` is 0 and, with mentions on, `mention_due` is 0. */
 export async function staleExtractionCounts(engine: BrainEngine, sourceId?: string): Promise<StaleExtractionCounts> {
   const lag = await readExtractionLag(engine, { sourceId });
-  return { actionable: lag.actionable, attendance_blocked: lag.attendance_blocked, mention_due: lag.mention_due,
+  return { actionable: lag.actionable, attendance_blocked: lag.attendance_blocked, held: lag.held ?? 0, mention_due: lag.mention_due,
     complete: lag.actionable === 0 && (lag.mention_due ?? 0) === 0 };
 }
 
@@ -143,6 +165,7 @@ export async function staleExtractionCounts(engine: BrainEngine, sourceId?: stri
 export function formatStaleCounts(c: StaleExtractionCounts): string {
   return `Actionable: ${c.actionable} page(s) still need link/timeline extraction` +
     (c.attendance_blocked ? `; ${c.attendance_blocked} attendance-blocked page(s) wait on unresolved attendees (extraction cannot clear them)` : '') +
+    (c.held ? `; ${c.held} held page(s) failed extraction ${LINK_HOLD_THRESHOLD_RUNS} runs in a row (gbrain extract --stale --retry-held retries them)` : '') +
     (c.mention_due === null ? '' : `; ${c.mention_due} page(s) due for the mention pass`) +
     (c.complete ? '. Extraction is complete (raw stale totals are not a completion signal).' : '. Raw stale totals include blocked pages; done when actionable is 0' + (c.mention_due === null ? '.' : ' and mention-due is 0.'));
 }

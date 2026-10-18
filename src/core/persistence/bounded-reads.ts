@@ -64,6 +64,21 @@ export function isStatementTimeout(error: unknown): error is { code: string } {
   return typeof code === 'string' && DEADLINE_SQLSTATES.has(code);
 }
 
+const SHARED_READ = Symbol('gbrain.shared-read');
+/**
+ * Flip lane C: the failure of a read several preparations share (group-publish.ts `preparationReads`), handed to every member
+ * waiting on it. It ran without any member's bound, so it is no member's own statement: a bounded member never reads it as
+ * its deadline, and the coordinator charges it once, to the first member that settles with it (`chargedSharedReads`); the
+ * other members waiting on the same failure are released uncounted.
+ */
+export function sharedReadFailure(error: unknown): unknown {
+  if (!(error instanceof Error)) return error;
+  return Object.assign(new Error(error.message, { cause: error }), { code: (error as { code?: unknown }).code, [SHARED_READ]: true });
+}
+export function isSharedReadFailure(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && (error as { [SHARED_READ]?: true })[SHARED_READ] === true;
+}
+
 /** The engine a preparer reads through: raw statements bounded by the clock's remaining budget, everything else untouched. */
 export function boundedReads(engine: BrainEngine, clock: ClaimPhaseClock | undefined): BrainEngine {
   const deadlineAt = clock?.deadlineAt;
@@ -83,7 +98,7 @@ export function boundedReads(engine: BrainEngine, clock: ClaimPhaseClock | undef
       } catch (error) {
         // A connection the engine discarded after the budget's cancel (a pooler that never completed the round-trip) is the deadline too.
         const discarded = isConnectionEnd(error) && (clock!.signal?.aborted || Date.now() >= deadlineAt);
-        if (!isStatementTimeout(error) && !discarded) throw error;
+        if (isSharedReadFailure(error) || (!isStatementTimeout(error) && !discarded)) throw error;
         if (clock!.signal?.aborted) throw clock!.signal.reason;
         throw new PreparationDeadlineError(clock!.step, (error as { code: string }).code, error);
       }

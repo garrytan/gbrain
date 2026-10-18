@@ -111,6 +111,7 @@ Every hold and error has three fields, from one table
 | `concurrent_write` | page | reconcile | yes | always: the file and the database page diverge |
 | `file_drift` | page | reconcile | yes | always: the page changed in the database since its file was last imported |
 | `preparation_stalled` | page | retry, upgrade | no | 3 failed attempts over 24 h, or writer status names a step that never finishes |
+| `write_interrupted` | page | retry | no | 3 failed attempts over 24 h: gbrain sources writer status --source <source> --json (read-only) names the load on the write owner |
 | `invalid_fence` | page | repair | no | the fence repair preview offers no plan (a manual reason) |
 | `invalid_frontmatter` | page | repair | no | the repair preview needs an interpretation (--include-ambiguous) |
 | `frontmatter_slug_conflict` | page | repair | no | the lane recorded why it could not decide |
@@ -218,6 +219,11 @@ it and kept going; the receipt lists the hold (`held`, `held_count`) and
 - `preparation_stalled`: the write owner, not the file, stalled;
   `gbrain sources writer status --source <id> --json` names the step.
   `unblock --apply` schedules the re-screen.
+- `write_interrupted`: the database ended the file's statements (SQLSTATE
+  57014, a statement timeout or cancel) at every attempt, so the file is held
+  and the rest of the source syncs. Writer status names the load on the write
+  owner; reduce it, then `gbrain sources retry-held <id>` (or
+  `unblock --apply`) and the same sync.
 - `invalid_fence` and `frontmatter_slug_conflict`: the content-repair lane
   clears them. Managed sync drops a `slug:` line naming no page or file
   (#6865). `unblock --apply` runs it on the held paths now; the maintenance

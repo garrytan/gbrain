@@ -1196,6 +1196,7 @@
       "idx_timeline_event_page": "CREATE INDEX idx_timeline_event_page ON public.timeline_entries USING btree (event_page_id) WHERE (event_page_id IS NOT NULL)",
       "idx_timeline_page": "CREATE INDEX idx_timeline_page ON public.timeline_entries USING btree (page_id)",
       "idx_versions_page": "CREATE INDEX idx_versions_page ON public.page_versions USING btree (page_id)",
+      "ingest_log_marked_idx": "CREATE INDEX ingest_log_marked_idx ON public.ingest_log USING btree (created_at) WHERE (writer_segment_reader IS TRUE)",
       "ingest_log_pkey": "CREATE UNIQUE INDEX ingest_log_pkey ON public.ingest_log USING btree (id)",
       "ingest_log_unmarked_idx": "CREATE INDEX ingest_log_unmarked_idx ON public.ingest_log USING btree (created_at) WHERE (writer_segment_reader IS NOT TRUE)",
       "link_edge_proposals_from_page_id_a_to_page_id_b_to_page_id__key": "CREATE UNIQUE INDEX link_edge_proposals_from_page_id_a_to_page_id_b_to_page_id__key ON public.link_edge_proposals USING btree (from_page_id, a_to_page_id, b_to_page_id, link_type, evidence_hash)",
@@ -1291,6 +1292,7 @@
       "pages_live_origin_key": "CREATE UNIQUE INDEX pages_live_origin_key ON public.pages USING btree (source_id, source_path) WHERE ((deleted_at IS NULL) AND (source_path IS NOT NULL))",
       "pages_pkey": "CREATE UNIQUE INDEX pages_pkey ON public.pages USING btree (id)",
       "pages_safe_chunk_pending_idx": "CREATE INDEX pages_safe_chunk_pending_idx ON public.pages USING btree (source_id) WHERE (chunker_version < 4)",
+      "pages_segmented_body_bytes_idx": "CREATE INDEX pages_segmented_body_bytes_idx ON public.pages USING btree (body_bytes) WHERE (body_storage = 'segmented'::text)",
       "pages_source_path_idx": "CREATE INDEX pages_source_path_idx ON public.pages USING btree (source_path) WHERE (source_path IS NOT NULL)",
       "pages_source_path_name_idx": "CREATE INDEX pages_source_path_name_idx ON public.pages USING btree (source_id, regexp_replace(replace(btrim(source_path), chr(92), '/'::text), '^.*/'::text, ''::text)) WHERE (source_path IS NOT NULL)",
       "pages_source_slug_key": "CREATE UNIQUE INDEX pages_source_slug_key ON public.pages USING btree (source_id, slug)",
@@ -3035,7 +3037,8 @@
           "49 segmenter_version integer/int4 NULL",
           "50 body_flags jsonb/jsonb NULL",
           "51 truth_lead text/text NULL",
-          "52 timeline_lead text/text NULL"
+          "52 timeline_lead text/text NULL",
+          "53 links_extract_failure jsonb/jsonb NULL"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },

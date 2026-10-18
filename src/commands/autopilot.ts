@@ -19,6 +19,7 @@
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, unlinkSync, chmodSync, statSync } from 'fs';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
+import { readGlobalMaintenanceVerdict } from '../core/minions/global-maintenance-stall.ts';
 import { detectExecutionEnvironment } from '../core/execution-env.ts';
 import { join, dirname, isAbsolute, resolve as resolvePath } from 'path';
 import { execSync } from '../core/spawn.ts';
@@ -532,7 +533,7 @@ export async function attemptAutopilotSelfUpgrade(
 }
 
 /** Flags that consume the following argv token as their value (#1525). */
-const AUTOPILOT_VALUE_FLAGS = new Set(['--repo', '--interval', '--target', '--reason']);
+const AUTOPILOT_VALUE_FLAGS = new Set(['--repo', '--interval', '--target', '--reason', '--phase']);
 
 /** Positional spellings → their canonical flags. A Map (not a plain object)
  * so prototype-chain words like `constructor` stay unknown positionals. */
@@ -619,6 +620,7 @@ const AUTOPILOT_MODES: Array<{ flags: string[]; run: (engine: BrainEngine, args:
   { flags: ['--uninstall'], run: () => { uninstallDaemon(); } },
   { flags: ['--status'], run: (_engine, args) => { runAutopilotStatus(args); } },
   { flags: ['--pause', '--resume'], run: async (_engine, args) => (await import('./autopilot-pause.ts')).runAutopilotPauseCommand(args) },
+  { flags: ['--retry-global'], run: async (engine, args) => (await import('./autopilot-retry-global.ts')).runAutopilotRetryGlobal(engine, args) },
 ];
 
 export async function runAutopilot(engine: BrainEngine, args: string[]) {
@@ -629,7 +631,8 @@ export async function runAutopilot(engine: BrainEngine, args: string[]) {
       '       gbrain autopilot --install [--repo <path>]\n' +
       '       gbrain autopilot --uninstall\n' +
       '       gbrain autopilot --status [--json]\n' +
-      '       gbrain autopilot pause [--reason <text>] | resume   (operator hold; upgrade and --install keep it)\n\n' +
+      '       gbrain autopilot pause [--reason <text>] | resume   (operator hold; upgrade and --install keep it)\n' +
+      '       gbrain autopilot --retry-global [--phase <name>] [--json]   (end a failing maintenance phase\'s back-off)\n\n' +
       'Self-maintaining brain daemon. Runs the full maintenance cycle\n' +
       '(lint + backlinks + sync + extract + embed + orphans) on an interval.\n\n' +
       'For a one-shot cron-triggered cycle, see `gbrain dream`.',
@@ -1489,11 +1492,13 @@ export interface AutopilotStatusReport {
  *       cooperative pause marker — a live migrate, or one that died without
  *       cleaning up; either way the brain is not being kept current)
  *   2 — the daemon took itself out of rotation (repo gone)
+ * A daemon that ticks but reports brain-wide maintenance stalled (its latest
+ * verdict file, GBRA-130 C-6) turns a 0 into 1.
  */
-export function autopilotStatusExitCode(state: AutopilotState): number {
+export function autopilotStatusExitCode(state: AutopilotState, globalMaintenanceStalled = false): number {
   if (state === 'disabled') return 2;
   if (state === 'stale' || state === 'never_run' || state === 'paused') return 1;
-  return 0;
+  return globalMaintenanceStalled ? 1 : 0;
 }
 
 /**
@@ -1590,9 +1595,11 @@ function showStatus(json: boolean, intervalSeconds: number) {
     lastLog: lastLine,
   });
   const processing = readAutopilotProcessingStatus();
+  const globalMaintenance = readGlobalMaintenanceVerdict();
+  const stalled = globalMaintenance !== null && globalMaintenance.status !== 'ok';
 
   if (json) {
-    console.log(JSON.stringify({ ...report, ...processing, job: jobStatus.report }));
+    console.log(JSON.stringify({ ...report, ...processing, job: jobStatus.report, global_maintenance: globalMaintenance }));
   } else {
     switch (report.state) {
       case 'not_installed':
@@ -1631,10 +1638,11 @@ function showStatus(json: boolean, intervalSeconds: number) {
       if (processing.processing_state === 'configuration_blocked') console.log('Repair the worker and selected child installation, then explicitly restart autopilot.');
     }
     for (const line of jobStatus.lines) console.log(line);
+    if (stalled) console.log(`Global maintenance: ${globalMaintenance.status.toUpperCase()}. ${globalMaintenance.message}`);
     if (lastLine) console.log(`Last log: ${lastLine}`);
   }
 
-  setCliExitVerdict(autopilotStatusExitCode(report.state));
+  setCliExitVerdict(autopilotStatusExitCode(report.state, stalled));
 }
 
 function escapeXml(s: string): string {

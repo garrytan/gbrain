@@ -64,7 +64,7 @@ describe('C7 file-drift argument rules', () => {
     }
   });
   test('stuck-recovery keeps validating --keep values', () => {
-    expect(() => parseRepairArgs(['stuck-recovery', '--keep', 'db'])).toThrow('--keep must be prior or disk');
+    expect(() => parseRepairArgs(['stuck-recovery', '--keep', 'db'])).toThrow('--keep must be prior, disk or withdrawn');
     expect(parseRepairArgs(['stuck-recovery', '--keep', 'disk']).keep).toBe('disk');
   });
 });

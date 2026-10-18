@@ -43,6 +43,7 @@ export async function runConnectorStatus(engine: BrainEngine, args: string[]): P
       attempts: e.attempts,
       updated_at: e.updatedAt,
       next_retry_at: e.nextRetryAt ?? null,
+      ...(e.code ? { code: e.code } : {}),
       needs_full_sync: !!prov.routesByOrg && !e.orgId,
     }));
     rows.push({

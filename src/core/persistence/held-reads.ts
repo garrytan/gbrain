@@ -21,7 +21,7 @@
 import type { BrainEngine } from '../engine.ts';
 import type { Action, Notice } from '../agent-output.ts';
 import { ALL_SOURCES } from '../source-id.ts';
-import { GIT_HOLD_OP, GIT_HOLD_SUMMARY_OP, contentRepairArgv, fenceAutoRepairFor, gitHoldDocs, gitHoldFix, holdRepairSteps, type GitHoldCode, type GitHoldReason, type GitHoldRecord, type HoldRepairRoute } from './sync-holds.ts';
+import { outOfAttemptsHold, GIT_HOLD_OP, GIT_HOLD_SUMMARY_OP, contentRepairArgv, fenceAutoRepairFor, gitHoldDocs, gitHoldFix, holdRepairSteps, type GitHoldCode, type GitHoldReason, type GitHoldRecord, type HoldRepairRoute } from './sync-holds.ts';
 import { fenceHoldLocation, fenceHoldRelay, type FenceAutoRepair, type FenceHoldLocation } from '../fence-repair/hold-fix.ts';
 
 type Exec = Pick<BrainEngine, 'executeRaw'>;
@@ -156,7 +156,7 @@ export function hostOperatorFix(sources: ReadonlyArray<{ source_id: string; rout
 /** The route of one hold record. */
 export function recordRoute(record: Pick<GitHoldRecord, 'code'>): HoldRepairRoute {
   return record.code === 'invalid_fence' ? { fences: 1, others: 0 } : record.code === 'concurrent_write' ? { fences: 0, others: 0, concurrent: 1 }
-    : record.code === 'preparation_stalled' ? { fences: 0, others: 0, stalled: 1 } : record.code === 'worktree_dirty' ? { fences: 0, others: 0, dirty: 1 } : record.code === 'file_drift' ? { fences: 0, others: 0, drift: 1 }
+    : outOfAttemptsHold(record.code) ? { fences: 0, others: 0, stalled: 1 } : record.code === 'worktree_dirty' ? { fences: 0, others: 0, dirty: 1 } : record.code === 'file_drift' ? { fences: 0, others: 0, drift: 1 }
       : record.code === 'frontmatter_slug_conflict' ? { fences: 0, others: 0, slug_conflicts: 1 } : { fences: 0, others: 1 };
 }
 
@@ -169,7 +169,7 @@ export function recordRoute(record: Pick<GitHoldRecord, 'code'>): HoldRepairRout
 export function fileHeldField(held: HeldPage, remote: boolean): FileHeld {
   const { record } = held;
   const fence = record.code === 'invalid_fence';
-  const stalled = record.code === 'preparation_stalled';
+  const stalled = outOfAttemptsHold(record.code);
   const why = `The canonical file of this page is held (${record.code}${record.meta.reason ? `, ${record.meta.reason}` : ''}): sync cannot import its newer version, so this page shows its last good revision `
     + `and is read-only for put_page until ${fence ? 'the file is repaired' : stalled ? 'the brain host operator fixes the write owner and re-screens the file' : 'the brain host operator repairs the file'}.`;
   const fix = !remote ? gitHoldFix(record, held.fenceAuto)

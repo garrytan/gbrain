@@ -34,7 +34,8 @@ import { __resetFactsQueueForTests } from '../../src/core/facts/queue.ts';
 import { resolveRepairScope, runRepair, type RepairHandler } from '../../src/core/repair/core.ts';
 import { operationsByName } from '../../src/core/operations.ts';
 import { managedBrain } from '../helpers/managed-brain.ts';
-import { openArm, pathologicalArms } from './_gbra60-shim.ts';
+import { pathologicalArms } from './harness.ts';
+import { isolatedSharedSkillsEngine } from '../helpers/shared-skills-engine.ts';
 
 const md = (title: string, type: string, aliases: string[] = []) =>
   `---\ntitle: ${title}\ntype: ${type}\n${aliases.length ? `aliases:\n${aliases.map(a => `  - ${JSON.stringify(a)}`).join('\n')}\n` : ''}---\n\n# ${title}\n`;
@@ -73,7 +74,7 @@ for (const arm of pathologicalArms()) {
   describe(`B-7 facts reach the organization page an extractor names under another directory (${arm.backend})`, () => {
     let engine: BrainEngine;
     let close: () => Promise<void>;
-    beforeAll(async () => { ({ engine, close } = await openArm(arm)); await seedPages(engine); }, 120_000);
+    beforeAll(async () => { ({ engine, close } = await isolatedSharedSkillsEngine(arm.databaseUrl)); await seedPages(engine); }, 120_000);
     afterAll(async () => { await close(); });
     beforeEach(async () => {
       __setChatTransportForTests(null); resetGateway(); __resetFactsQueueForTests();

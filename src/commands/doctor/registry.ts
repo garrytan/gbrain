@@ -84,6 +84,7 @@ import {
 import { queueHealthEntry, indexAuditEntry, imageAssetsEntry } from './checks/queue-assets.ts';
 import { imageEmbeddingCoverageEntry } from './checks/image-embedding-coverage.ts';
 import { globalMaintenanceTimeoutsEntry } from './checks/global-maintenance-timeouts.ts';
+import { globalMaintenanceStalledEntry } from './checks/global-maintenance-stalled.ts';
 import { embedBackfillStalledEntry } from './checks/embed-backfill-stalled.ts';
 import { connectorAccountMismatchEntry } from './checks/connector-account-mismatch.ts';
 import { legacyJobAuthorityEntry } from './checks/legacy-job-authority.ts';
@@ -218,6 +219,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   salienceEntry,
   queueHealthEntry,
   globalMaintenanceTimeoutsEntry,
+  globalMaintenanceStalledEntry,
   embedBackfillStalledEntry,
   connectorAccountMismatchEntry,
   legacyJobAuthorityEntry,

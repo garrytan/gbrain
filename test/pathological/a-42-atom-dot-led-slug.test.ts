@@ -17,7 +17,7 @@ import { isOpPageSlug, validatePageSlug } from '../../src/core/ops/context.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { managedBrain } from '../helpers/managed-brain.ts';
 import { requirePostgresTestDatabase, testBackends } from '../helpers/test-backends.ts';
-import { expectUnitNotAborted } from './_gbra60-shim.ts';
+import { expectUnitNotAborted } from './harness.ts';
 
 beforeAll(() => { configureGateway({ embedding_model: 'openai:text-embedding-3-large', embedding_dimensions: 1536, env: {} }); });
 afterAll(() => { resetGateway(); });

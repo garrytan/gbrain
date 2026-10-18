@@ -90,14 +90,14 @@ import { loadStorageConfig, isDbOnly } from '../storage-config.ts';
 import { serializeMarkdown, serializePageToMarkdown } from '../markdown.ts';
 import type { Page, PageType } from '../types.ts';
 import { validateSourceId } from '../utils.ts';
-import { safeSplitIndex } from '../text-safe.ts';
+import { safeSplitIndex, truncateUtf8 } from '../text-safe.ts';
 import { PAGE_SLUG_SEG } from '../cjk.ts';
 import { withChatPhase, estimateChatCostUsd } from '../ai/chat-usage.ts';
 import { verifyAndRepairDreamPages, normForGrounding, readVerifyEpoch, loadChildWriteEpochs, isDreamOwnedPage, type QuoteVerifyStats, type TranscriptForVerify } from './synthesize-verify.ts';
 import { dreamBreakerRefusal, loadDreamBreaker } from './dream-breaker.ts';
 import { resolveTriageDecide, type TriageDecide, type TriageDecideStats } from './triage-decide.ts';
 import { OperationError } from '../ops/contract.ts';
-import { backoffUntil, recordUnreliableTriage, responseDiagnostic, triageBackoffDetails, TRIAGE_UNRELIABLE_BACKOFF, type TriageDiagnostic } from './triage-backoff.ts';
+import { backoffUntil, recordUnreliableTriage, responseDiagnostic, triageBackoffDetails, TRIAGE_UNRELIABLE_BACKOFF, VerdictCacheWrites, type TriageDiagnostic, type VerdictCacheFailure } from './triage-backoff.ts';
 import { resolveGroundingDecide } from './grounding-decide.ts';
 import { passesTriageGate, rescueConfigOf, DEFAULT_RESCUE_FLOOR, DEFAULT_RESCUE_MIN_SEGMENTS, DEFAULT_RESCUE_CONTENT_TYPES, DEFAULT_RESCUE_CONFIG, type RescueConfig, type RescueVerdictLike } from './triage-rescue.ts';
 
@@ -568,7 +568,7 @@ async function runPhaseSynthesizeInner(
       judged: pass.judged,
       cache_hits: pass.cacheHits,
       unreliable: pass.unreliable,
-      deferred: pass.deferred, ...triageBackoffDetails(pass.backoff),
+      deferred: pass.deferred, ...triageBackoffDetails(pass.backoff), ...(pass.verdictCacheFailures.length ? { verdict_cache_failures: pass.verdictCacheFailures } : {}),
       degraded: degradedCount,
       below_threshold: pass.reports.filter(r => r.score !== null && !r.worth).length,
       // F6 spend visibility: judge-call tokens for this pass's cache MISSES
@@ -2172,7 +2172,7 @@ Quote verbatim; never paraphrase inside "quote".`;
     // buildTriageMapBlock (security review, #4152).
     const collapse = (s: string): string => s.replace(/\s+/g, ' ').trim();
     const contentType = typeof parsed.content_type === 'string'
-      ? collapse(parsed.content_type).toLowerCase().slice(0, 40) || null
+      ? truncateUtf8(collapse(parsed.content_type).toLowerCase(), 40) || null
       : null;
     const segments: TriageSegment[] = Array.isArray(parsed.segments)
       ? parsed.segments
@@ -2181,15 +2181,15 @@ Quote verbatim; never paraphrase inside "quote".`;
             && (s as { quote: string }).quote.trim().length > 0)
           .slice(0, 8)
           .map(s => ({
-            quote: collapse(s.quote).slice(0, 300),
-            ...(typeof s.note === 'string' && s.note.trim() ? { note: collapse(s.note).slice(0, 200) } : {}),
+            quote: truncateUtf8(collapse(s.quote), 300),
+            ...(typeof s.note === 'string' && s.note.trim() ? { note: truncateUtf8(collapse(s.note), 200) } : {}),
           }))
       : [];
     const entities = Array.isArray(parsed.entities)
       ? parsed.entities
           .filter((e): e is string => typeof e === 'string' && e.trim().length > 0)
           .slice(0, 12)
-          .map(e => collapse(e).slice(0, 80))
+          .map(e => truncateUtf8(collapse(e), 80))
       : [];
     const reasons = Array.isArray(parsed.reasons)
       ? parsed.reasons.filter((r): r is string => typeof r === 'string').slice(0, 4)
@@ -2378,6 +2378,8 @@ export interface TriagePassResult {
   tokens: { in: number; out: number };
   /** S7 decide stats, present only when the slot is not off. */
   decide?: TriageDecideStats;
+  /** Verdicts judged this pass that the database refused to cache (GBRA-130 B-6); each still decided this pass. */
+  verdictCacheFailures: VerdictCacheFailure[];
 }
 
 /**
@@ -2400,7 +2402,9 @@ export interface TriagePassResult {
  * Failure contract (byte-compatible with the pre-#4152 sequential loop):
  * a null judge client or an AIConfigError degrades PER TRANSCRIPT (reason
  * entry, nothing cached, phase continues); any other error aborts new pulls,
- * lets in-flight items settle, and rethrows (the phase fails).
+ * lets in-flight items settle, and rethrows (the phase fails). A verdict the
+ * database refuses to cache for one transcript does not stop the pass
+ * (`VerdictCacheWrites`, GBRA-130 B-6).
  *
  * Lock renewal: `yieldDuringPhase` ticks at most once per 30s (single-flight).
  * The cycle lock has its own background refresher (cycle.ts
@@ -2431,6 +2435,7 @@ export async function runTriagePass(
   let cursor = 0;
   let abortError: unknown = null;
   let stopped = false;
+  const verdictCache = new VerdictCacheWrites();
 
   // Coarse single-flight lock-renewal tick (at most every 30s).
   let lastTick = start;
@@ -2576,7 +2581,7 @@ export async function runTriagePass(
       if (triage.answeredBy) {
         process.stderr.write(`[dream] triage for ${t.basename} came from fallback model ${triage.answeredBy}; not caching in dream_verdicts\n`);
       } else {
-        await engine.putDreamVerdict(t.filePath, t.contentHash, {
+        await verdictCache.put(engine, t, {
           worth_processing: triage.worth_processing,
           reasons: triage.reasons,
           score: triage.score,
@@ -2585,7 +2590,7 @@ export async function runTriagePass(
           entities: triage.entities,
           model: cfg.model,
           triage_version: TRIAGE_VERSION,
-        });
+        }, { existing, keepExisting: existing !== null && isTriageCacheValid(existing, cfg.model), signal: cfg.signal });
       }
       byPath.set(t.filePath, {
         worth_processing: triage.worth_processing,
@@ -2650,6 +2655,7 @@ export async function runTriagePass(
     Array.from({ length: Math.min(concurrency, Math.max(1, transcripts.length)) }, () => worker()),
   );
   if (abortError !== null) throw abortError;
+  await verdictCache.backOff(engine, { model: cfg.model, triageVersion: TRIAGE_VERSION, aborted: cfg.signal?.aborted === true });
 
   // Defensive: today every claimed index either sets its report or the pass
   // rethrows above, so no holes can exist — but a future early-exit path
@@ -2670,7 +2676,7 @@ export async function runTriagePass(
     }
   }
 
-  return { reports, byPath, judged, cacheHits, unreliable: unreliableCount, deferred: deferredCount, backoff: backoffCount, tokens: { in: tokensIn, out: tokensOut }, ...(cfg.decide ? { decide: cfg.decide.stats } : {}) };
+  return { reports, byPath, judged, cacheHits, unreliable: unreliableCount, deferred: deferredCount, backoff: backoffCount, tokens: { in: tokensIn, out: tokensOut }, verdictCacheFailures: verdictCache.failures, ...(cfg.decide ? { decide: cfg.decide.stats } : {}) };
 }
 
 // ── Subagent prompt ──────────────────────────────────────────────────
@@ -2773,7 +2779,7 @@ export function buildTriageMapBlock(
     lines.push('- candidate segments:');
     for (let i = 0; i < segments.length; i++) {
       const s = segments[i];
-      lines.push(`  ${i + 1}. "${s.quote.slice(0, 300)}"${s.note ? ` — ${s.note.slice(0, 200)}` : ''}`);
+      lines.push(`  ${i + 1}. "${truncateUtf8(s.quote, 300)}"${s.note ? ` — ${truncateUtf8(s.note, 200)}` : ''}`);
     }
   }
   if (chunkTotal > 1) {

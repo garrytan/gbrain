@@ -60,15 +60,16 @@ afterAll(async () => {
   await closePostgres?.(); rmSync(home, { recursive: true, force: true });
 });
 
-/** The forced probe: the owner finishes the request for one of `paths` `failed` with `preparation_stalled` at `point`. */
-function stallPaths(engine: BrainEngine, sourceId: string, paths: Set<string>, point: FaultPoint = 'consumer:prepared'): { fired: string[] } {
+/** The forced probe: the owner finishes the request for one of `paths` `failed` with `preparation_stalled` (or `codeOf` its path) at `point`. */
+function stallPaths(engine: BrainEngine, sourceId: string, paths: Set<string>, point: FaultPoint = 'consumer:prepared',
+  codeOf: (path: string) => 'preparation_stalled' | 'write_interrupted' = () => 'preparation_stalled'): { fired: string[] } {
   const fired: string[] = [];
   installFaultHook(async (at, detail) => {
     if (at !== point || detail.sourceId !== sourceId || !detail.requestId) return;
     const [row] = await engine.executeRaw<{ path: string | null }>("SELECT intent->>'path' AS path FROM persistence_requests WHERE request_id=$1::uuid", [detail.requestId]);
     if (!row?.path || !paths.has(row.path)) return;
     fired.push(row.path);
-    throw new OperationError('preparation_stalled', `Preparation of ${row.path} did not finish within its attempts (forced probe).`, 'Inspect the writer with gbrain sources writer status.');
+    throw new OperationError(codeOf(row.path), `Preparation of ${row.path} did not finish within its attempts (forced probe).`, 'Inspect the writer with gbrain sources writer status.');
   });
   return { fired };
 }
@@ -451,6 +452,29 @@ test('breaker: five consecutive stalled entries with no commit between stop the 
   const rescreened = await s.sync();
   expect(rescreened).toMatchObject({ status: 'synced', added: 4 });
   expect(await s.holds()).toEqual([]);
+}), 240_000);
+
+test('breaker: write_interrupted receipts trip it like stalled ones, and the trip names each code instead of calling them preparations that could not finish', () => each(async engine => {
+  const files: Record<string, string> = {};
+  for (let i = 0; i < 7; i++) files[`notes/s${i}.md`] = note(`S${i}`);
+  const s = await source(engine, files);
+  const interrupted = new Set(['notes/s1.md', 'notes/s3.md']);
+  stallPaths(engine, s.id, new Set(Object.keys(files)), 'consumer:prepared', path => interrupted.has(path) ? 'write_interrupted' : 'preparation_stalled');
+  const tripped = await s.sync();
+  expect(tripped).toMatchObject({ status: 'blocked_by_failures', breaker: { code: 'preparation_systemic', rule: 'consecutive', stalled: 5, consecutive: 5 } });
+  expect(tripped.failureCodes).toEqual([{ code: 'preparation_stalled', count: 3 }, { code: 'write_interrupted', count: 2 }]);
+  const why = tripped.breaker!.fix.why;
+  expect(why).toContain('3 could not finish preparing');
+  expect(why).toContain('2 had their statements ended by the database');
+  expect(why).not.toContain('5 write(s) of this sync could not finish preparing');
+  expect((await s.holds()).map(hold => [hold.path, hold.code]).sort()).toEqual([['notes/s0.md', 'preparation_stalled'], ['notes/s1.md', 'write_interrupted'],
+    ['notes/s2.md', 'preparation_stalled'], ['notes/s3.md', 'write_interrupted']]);
+  // Only write_interrupted receipts: the trip names that code alone.
+  const t = await source(engine, files);
+  stallPaths(engine, t.id, new Set(Object.keys(files)), 'consumer:prepared', () => 'write_interrupted');
+  const all = await t.sync();
+  expect(all.failureCodes).toEqual([{ code: 'write_interrupted', count: 5 }]);
+  expect(all.breaker!.fix.why).not.toContain('could not finish preparing');
 }), 240_000);
 
 test('breaker: the count rule trips above GBRAIN_SYNC_HOLD_ESCALATE_COUNT (greater than), and a committed page resets the consecutive streak', () => each(async engine => {

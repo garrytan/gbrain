@@ -63,16 +63,16 @@ export function inertBlock(value: unknown, max = 1500): string {
   return s;
 }
 
-/** Delays before each retry of a GET that failed with a 5xx (GitHub's transient 502/503/504); writes are never retried. */
-export const GET_RETRY_DELAYS_MS = [1_000, 3_000];
+/** Delays before each retry of a GET that failed with a 5xx (GitHub's transient 502/503/504) or got no response at all; a 4xx fails at once and writes are never retried. */
+export const GET_RETRY_DELAYS_MS = [1_000, 3_000, 9_000];
 
 async function retryingGet<T>(method: string, sleep: (ms: number) => Promise<unknown>, call: () => Promise<T>): Promise<T> {
   for (let attempt = 0; ; attempt++) {
     try {
       return await call();
     } catch (e) {
-      const status = (e as { status?: number }).status ?? 0;
-      if (method !== 'GET' || status < 500 || attempt >= GET_RETRY_DELAYS_MS.length) throw e;
+      const { status, network } = e as { status?: number; network?: boolean };
+      if (method !== 'GET' || !((status ?? 0) >= 500 || network) || attempt >= GET_RETRY_DELAYS_MS.length) throw e;
       await sleep(GET_RETRY_DELAYS_MS[attempt]!);
     }
   }
@@ -98,6 +98,8 @@ function tokenClient(resolve: (path: string) => string, token: string): GitHubCl
           ...(body === undefined ? {} : { 'content-type': 'application/json' }),
         },
         body: body === undefined ? undefined : JSON.stringify(body),
+      }).catch((e: unknown) => {
+        throw Object.assign(new Error(`GitHub API ${method} ${url} -> no response: ${e instanceof Error ? e.message : String(e)}`), { network: true });
       });
       if (!res.ok) {
         const text = await res.text().catch(() => '');

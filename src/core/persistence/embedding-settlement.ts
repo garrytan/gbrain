@@ -24,8 +24,12 @@
  *
  * Every state change is a compare-and-set on state, attempts, execution token
  * and recovery. A candidate that changed since planning is `changed_since_preview`.
+ * Two failed effects are not candidates (GBRA-130 A-15): one with parked targets
+ * (`targets_parked`; `gbrain sources writer retry-effects` retries those) and a
+ * zero-norm refusal, which a retry repeats by design.
  */
 import { trueUpRequests } from './receipt-true-up.ts';
+import { EMBEDDING_ZERO_NORM } from '../ai/embedding-guard.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import { opError, OperationError } from '../ops/contract.ts';
@@ -55,7 +59,8 @@ export interface EmbeddingCandidate {
 
 /** Stale queued (over an hour, or re-queued by this repair and not yet settled) and failed embedding effects of committed writes. */
 export const EMBEDDING_CANDIDATE_WHERE = `e.kind='embedding' AND r.state='committed' AND e.recovery IS NULL AND e.execution_token IS NULL
-  AND (e.state='failed' OR e.state='queued' AND (e.updated_at < now() - interval '1 hour' OR e.data ? 'repair_requeued_at'))`;
+  AND (e.state='failed' OR e.state='queued' AND (e.updated_at < now() - interval '1 hour' OR e.data ? 'repair_requeued_at'))
+  AND NOT (e.state='failed' AND e.error_code IN ('targets_parked','${EMBEDDING_ZERO_NORM}'))`;
 
 export async function listEmbeddingCandidates(engine: Pick<BrainEngine, 'executeRaw'>, sourceIds: string[]): Promise<EmbeddingCandidate[]> {
   const rows = await engine.executeRaw<EmbeddingCandidate>(`SELECT e.id::text AS effect_id, r.source_id, r.slug, r.request_id::text AS request_id,

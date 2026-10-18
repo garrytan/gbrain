@@ -46,6 +46,7 @@ import { takeSupersessionRepair } from './take-supersession.ts';
 import { acceptedTakesRepair } from './accepted-takes.ts';
 import { orphanBindingsRepair } from './orphan-bindings.ts';
 import { managedSyncOrphansRepair } from './managed-sync-orphans.ts';
+import { contentReceiptRootRepair } from './content-receipt-root.ts';
 import { embeddingEffectsRepair } from './embedding-effects.ts';
 import { googleFileModesRepair } from './google-file-modes.ts';
 import { staleAtomsRepair } from './stale-atoms.ts';
@@ -73,6 +74,7 @@ import { aliasesRepair } from './aliases.ts';
 import { renameIdentityRepair, RENAME_IDENTITY_CONSENT_TEXT } from './rename-identity.ts';
 import { overwrittenEditsRepair } from './overwritten-edits.ts';
 import { missingTablesRepair } from './missing-tables.ts';
+import { urlCloneFencesRepair } from './url-clone-fences.ts';
 import { ERROR_CATALOGUE, catalogueError } from '../error-catalogue.ts';
 import type { OperationError } from '../ops/contract.ts';
 
@@ -302,6 +304,13 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
       + 'Bookkeeping only (op_checkpoints); no journal admission. The preview prints a hash; --apply --expect <hash> retires exactly that set. '
       + 'A cursor with a live pending request, or one the live writer can still resume, is kept and counted.',
   },
+  'content-receipt-root': {
+    handler: contentReceiptRootRepair, embeds: 'none', checks: ['sync_freshness'], explicit_only: true, preview_bound: true,
+    summary: 'Rebind a gbrain-owned content source\'s shared-skills content receipt that still names an old root after a writer transfer or relocation (#6892), '
+      + 'so doctor sync_freshness exempts the source again. Owner host only; rebinds only when the owner\'s tree still hashes to the recorded worktree manifest, '
+      + 'and otherwise lists why (source_path_mismatch: run sources set-path; tree_mismatch: a self-transfer re-verifies). The receipt row only; the previous '
+      + 'value is kept under <key>.backup. Preview-bound: --apply --expect <hash> rebinds exactly the previewed set.',
+  },
   'frontmatter-keys': {
     handler: frontmatterKeysRepair, embeds: 'none', checks: ['stale_frontmatter_keys'], explicit_only: true, preview_bound: true,
     summary: 'Strip the parser\'s reserved keys (type, title, tags, slug) that older imports stored inside pages.frontmatter (#6454). Since this release '
@@ -333,7 +342,8 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
       + 'published bytes, which stops every write on its worktree. The preview starts from the head blocker, lists each file of each blocked record '
       + '(prior and disk hash, size and mode) and writes a private diff to ~/.gbrain/backups/stuck-recovery/. --request-id <uuid> selects one request. '
       + 'Apply on the owner host with --apply --expect <hash> --keep prior|disk --yes (no default): both versions are backed up first; prior writes the recorded '
-      + 'bytes back and the accepted write publishes again, disk keeps the edit and abandons the write (reconcile the page afterwards). A terminal request is '
+      + 'bytes back and the accepted write publishes again, disk keeps the edit and abandons the write (reconcile the page afterwards). A file over 24 MiB is '
+      + 'hashed, copied and compared in pieces, and its diff is a bounded summary. A terminal request is '
       + 'refused (recovery_choice_refused). Runs only when named.',
   },
   'ghost-pages': {
@@ -403,6 +413,20 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
       + 'has (#6911), so the coordinated purge and search caching work again. A missing table that holds user data is listed for a restore, never '
       + 'recreated. DDL only (IF NOT EXISTS), no journal admission. The preview prints a hash; --apply --expect <hash> recreates exactly that set. '
       + 'Runs only when named; never on upgrade. Brain-wide.',
+  },
+  'url-clone-fences': {
+    handler: urlCloneFencesRepair, embeds: 'none', checks: [], explicit_only: true, preview_bound: true, consent: 'destructive',
+    consentText: {
+      what: 'Restore the previewed files of a clone gbrain owns from HEAD after keeping their gbrain fence rows database-only',
+      why: 'An older release appended ## Facts fence rows to these clone files, and the local change blocks every git pull --ff-only that touches them; the preview proved each file differs from HEAD by those rows alone.',
+      risk: 'Each file is backed up under ~/.gbrain/backups/url-clone-fences/ before it changes, and its fact rows stay active and recallable in the database. A file that changed since the preview is skipped. Copy the backup back to undo.',
+      user_message: 'Restore the previewed clone files from the last pulled commit? Their facts stay in the database and each file is backed up first',
+    },
+    summary: 'Clear the local changes an older release left in a gbrain-owned clone (sources add --url), which make every sync stop at the pull with '
+      + 'pull_blocked_local_changes (#6946). The preview lists each tracked file that differs from HEAD and proves the difference is only ## Facts fence '
+      + 'rows gbrain appended; any other difference (a user edit, a staged change, a deleted file) is named and left untouched. --apply --expect <hash> --yes, '
+      + 'per previewed file: back it up, keep its appended rows database-only in one transaction, import HEAD\'s bytes as the page, then restore the file '
+      + 'from HEAD. Unmanaged brains only (a managed brain uses gbrain sources mirror-readonly). Runs only when named.',
   },
 };
 
@@ -488,7 +512,7 @@ export async function repairRunner(engine: BrainEngine, opts: { apply: boolean; 
     async run(kind: RepairKind, scope: RepairScope, run: { limit?: number; sourceFlag?: string; explicit?: boolean; expect?: string; includeAmbiguous?: boolean; only?: string[]; skip?: string[];
       slugs?: string[]; noLlm?: boolean; maxLlmUsd?: number; deadline?: number;
       prefer?: 'file' | 'database'; requests?: string[]; allDrifted?: boolean; driftClass?: string; since?: string;
-      keep?: 'prior' | 'disk'; requestId?: string; olderThan?: string; includeFailures?: boolean; force?: boolean; from?: string; close?: boolean } = {}): Promise<RepairResult> {
+      keep?: 'prior' | 'disk' | 'withdrawn'; requestId?: string; olderThan?: string; includeFailures?: boolean; force?: boolean; from?: string; close?: boolean } = {}): Promise<RepairResult> {
       const ctx = { engine, config, logger, dryRun: !opts.apply, remote: false, sourceId: scope.source_ids[0], writeWaitMs } as OperationContext;
       const spec = repairSpec(kind, opts.registry);
       return runRepair(ctx, spec.handler, scope, { apply: opts.apply, limit: run.limit, embeddingModel, sourceFlag: run.sourceFlag, spec,

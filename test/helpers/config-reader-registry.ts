@@ -95,6 +95,7 @@ export const UNRESOLVED_CONFIG_READS: readonly UnresolvedConfigRead[] = [
   { file: 'src/core/cycle/extract-atoms-cost-gate.ts', expr: 'key', why: 'listConfigKeys walk over ATOMS_NO_PRICING_KEY_PREFIX (cycle. prefix)' },
   { file: 'src/core/cycle/nightly-probe-routes.ts', expr: 'key', why: 'Object.entries walk over NIGHTLY_PROBE_SLOT_KEYS' },
   { file: 'src/core/cycle/nightly-probe-search-config.ts', expr: 'key', why: 'walk over NIGHTLY_PROBE_SEARCH_CONFIG_KEYS (search. prefix)' },
+  { file: 'src/core/cycle/pattern-grounding.ts', expr: 'key', why: P },
   { file: 'src/core/cycle/patterns-plan.ts', expr: 'cadenceKey', why: P },
   { file: 'src/core/cycle/patterns.ts', expr: 'keys.evidence', why: 'patterns cooldown stamp key from its keys bag (dream. prefix)' },
   { file: 'src/core/cycle/patterns.ts', expr: 'key', why: P },

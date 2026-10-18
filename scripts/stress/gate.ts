@@ -28,7 +28,7 @@ import { armMode } from './plan.ts';
 import { readArmsList } from '../postgres-unit-arms.ts';
 import {
   DEFAULT_ITERATIONS, RACE_HUNT_DOCS, STRESS_DOCS, allTestFiles, changedFiles, expandHelper, iterationEstimateMs,
-  loadWeights, notStressedReason, parseFileList, planShards, profileFor, redact, reproduceLine, validRef,
+  loadWeights, mineStressIterations, notStressedReason, STRESS_ITERATION_WEIGHTS, parseFileList, planShards, profileFor, redact, reproduceLine, validRef,
   type HelperExpansion, type NotStressed, type ProfileName, type Shard, type Weights,
 } from './plan.ts';
 
@@ -424,7 +424,7 @@ function writeOutputs(plan: Plan) {
 async function main(argv: string[]): Promise<number> {
   const [command] = argv;
   const mode = (arg(argv, '--mode') ?? 'gate') as Mode;
-  if (!['gate', 'race-hunt'].includes(mode)) { console.error('usage: scripts/stress/gate.ts plan|report --mode gate|race-hunt'); return 2; }
+  if (command !== 'mine-iterations' && !['gate', 'race-hunt'].includes(mode)) { console.error('usage: scripts/stress/gate.ts plan|report --mode gate|race-hunt'); return 2; }
   if (command === 'plan') {
     const env = process.env;
     let plan: Plan;
@@ -473,7 +473,17 @@ async function main(argv: string[]): Promise<number> {
     if (result) { mkdirSync(dirname(result), { recursive: true }); writeFileSync(result, JSON.stringify({ exit: report.exit, errors: report.errors, timings }, null, 2)); }
     return report.exit;
   }
-  console.error('usage: bun scripts/stress/gate.ts plan|report --mode gate|race-hunt [--plan <plan.json>] [--manifests <dir>] [--json <out>]');
+  if (command === 'mine-iterations') {
+    const logs = argv.slice(1);
+    const mined = mineStressIterations(logs.map(path => readFileSync(path, 'utf8')));
+    if (!mined.size) { console.error('mine-iterations: no stress iterations in the given logs'); return 1; }
+    const path = join(ROOT, STRESS_ITERATION_WEIGHTS);
+    const merged = new Map([...(existsSync(path) ? Object.entries(JSON.parse(readFileSync(path, 'utf8')) as Record<string, number>) : []), ...mined]);
+    writeFileSync(path, `${JSON.stringify(Object.fromEntries([...merged].sort(([a], [b]) => (a < b ? -1 : 1))), null, 2)}\n`);
+    console.log(`stress iteration weights: ${mined.size} file(s) mined from ${logs.length} log(s) into ${STRESS_ITERATION_WEIGHTS} (${merged.size} total)`);
+    return 0;
+  }
+  console.error('usage: bun scripts/stress/gate.ts plan|report --mode gate|race-hunt [--plan <plan.json>] [--manifests <dir>] [--json <out>] | mine-iterations <stress-shard.log>…');
   return 2;
 }
 

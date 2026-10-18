@@ -183,13 +183,13 @@ jobs:
   # this job's logs); each shard's measured sum, doubled for a slow runner, must
   # end a minute inside the step's 20 minutes (ARM_SHARD_BUDGET_MS).
   unit-postgres-arms:
-    name: Unit-lane PostgreSQL arms ${{ matrix.shard }}/14 / Bun ${{ matrix.bun }}
+    name: Unit-lane PostgreSQL arms ${{ matrix.shard }}/16 / Bun ${{ matrix.bun }}
     runs-on: ubicloud-standard-4-ubuntu-2404
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
         bun: ['1.4.0', '1.4.3']
         # Event parity: every event, pull requests and merge-queue runs
         # included, runs both supported Bun versions (docs/TESTING.md#event-parity).
@@ -230,11 +230,11 @@ jobs:
           receipts_init pg-arms || exit 2
           # The list lives in test/postgres-unit-arms.txt (one path per line);
           # shards balance by measured runtime (scripts/postgres-arm-weights.json).
-          selected=$(bun scripts/postgres-unit-arms.ts shard "$SHARD" 14)
+          selected=$(bun scripts/postgres-unit-arms.ts shard "$SHARD" 16)
           files=()
           while IFS= read -r file; do [ -n "$file" ] && files+=("$file"); done <<< "$selected"
           if [ "${#files[@]}" -eq 0 ]; then
-            echo "::error::shard $SHARD/14 selected no files from test/postgres-unit-arms.txt. Why: an empty shard would pass without running any PostgreSQL arm. Fix: run 'bun scripts/postgres-unit-arms.ts shard $SHARD 14' locally and correct the list. Docs: docs/TESTING.md#postgres-arm-lanes" >&2
+            echo "::error::shard $SHARD/16 selected no files from test/postgres-unit-arms.txt. Why: an empty shard would pass without running any PostgreSQL arm. Fix: run 'bun scripts/postgres-unit-arms.ts shard $SHARD 16' locally and correct the list. Docs: docs/TESTING.md#postgres-arm-lanes" >&2
             exit 1
           fi
           # One bun process per file: *.serial.test.ts files require their own

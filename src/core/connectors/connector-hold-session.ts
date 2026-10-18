@@ -20,7 +20,7 @@ import { clearHoldRetryKeys, readHoldRetryKeys, writeHeldRetryPointer } from './
 import { holdsExhaustedError, ItemHoldsRun, type ClassifiedConnectorError, type ItemHoldMeta, type ItemHoldsFinish, type ItemHoldsState } from './item-holds.ts';
 
 /** Errors a managed connector must not absorb (the run aborts). Refusals raised before submission are counted instead. */
-function abortsManagedRun(error: unknown): boolean {
+export function abortsManagedRun(error: unknown): boolean {
   if (error instanceof LockStolenError || (error as { name?: string } | null)?.name === 'ConnectorWaitBudgetStop') return true;
   if (!(error instanceof OperationError)) return false;
   return !(error.code === 'invalid_connector_text' && !error.writeRequest);

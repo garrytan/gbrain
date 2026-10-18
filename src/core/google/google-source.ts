@@ -56,6 +56,7 @@ import {
 import { renderThreadPage, threadRelPath } from './google-render.ts';
 import {
   ALL_GOOGLE_SERVICES,
+  isGmailHoldKey,
   type GmailThreadData,
   type GoogleService,
   type GoogleSourceConfig,
@@ -411,7 +412,7 @@ async function sweepGmail(g: GmailSweep, onCurrent?: () => Promise<void>): Promi
   // Held threads no listing of this run reached: re-attempt those retry-held
   // asked for or whose transient reconsideration is due. A failure keeps the
   // hold and never blocks the cursor.
-  for (const tid of g.holds.dueHeldKeys()) {
+  for (const tid of g.holds.dueHeldKeys().filter(isGmailHoldKey)) {
     if (deps.opts.signal?.aborted) return false;
     await attemptThread(g, tid, null);
   }
@@ -806,7 +807,7 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
     if (activeServices.includes('contacts')) {
       const stop = startHeartbeat(progress, 'contacts sweep');
       try {
-        await sweepContacts(deps, people, state, activePack, summary, countedSlugs);
+        await sweepContacts(deps, people, state, activePack, summary, countedSlugs, holds);
       } catch (e) {
         if (managed) rethrowConnectorWriteError(e);
         serviceErrors.push(`contacts: ${e instanceof Error ? e.message : String(e)}`);
@@ -821,7 +822,7 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
     if (activeServices.includes('calendar')) {
       const stop = startHeartbeat(progress, 'calendar sweep');
       try {
-        await sweepCalendar(deps, calendar, state, activePack, summary, countedSlugs);
+        await sweepCalendar(deps, calendar, state, activePack, summary, countedSlugs, holds);
       } catch (e) {
         if (managed) rethrowConnectorWriteError(e);
         serviceErrors.push(`calendar: ${e instanceof Error ? e.message : String(e)}`);

@@ -765,8 +765,8 @@
               "array<string>",
               "array<string>"
             ],
-            "sql": "UPDATE pages p SET links_extracted_at = v.ts::timestamptz, links_attendance_blocked_revision = NULL, links_attendance_blocked_at = NULL FROM unnest($1::text[], $2::text[], $3::text[]) AS v(slug, source_id, ts) WHERE p.slug = v.slug AND p.source_id = v.source_id",
-            "textSha256": "38571ef9bc7efbcc636e789f18047fbcfab31eb71509440e6b7fadc7e70a93ad"
+            "sql": "UPDATE pages p SET links_extracted_at = v.ts::timestamptz, links_attendance_blocked_revision = NULL, links_attendance_blocked_at = NULL, links_extract_failure = NULL FROM unnest($1::text[], $2::text[], $3::text[]) AS v(slug, source_id, ts) WHERE p.slug = v.slug AND p.source_id = v.source_id",
+            "textSha256": "8aca8d9906c57653530ec671b03a9eaca5866385f12c765594cc8451c0d63679"
           }
         ]
       },

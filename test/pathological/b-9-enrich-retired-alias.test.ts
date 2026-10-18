@@ -18,7 +18,8 @@ import { importFromContent } from '../../src/core/import-file.ts';
 import { enrichEntity } from '../../src/core/enrichment-service.ts';
 import { operationsByName } from '../../src/core/operations.ts';
 import type { OperationContext } from '../../src/core/operations.ts';
-import { openArm, pathologicalArms } from './_gbra60-shim.ts';
+import { pathologicalArms } from './harness.ts';
+import { isolatedSharedSkillsEngine } from '../helpers/shared-skills-engine.ts';
 
 const page = (fm: Record<string, unknown>, title: string) =>
   `---\n${Object.entries({ title, ...fm }).map(([k, v]) => `${k}: ${JSON.stringify(v)}`).join('\n')}\n---\n\n# ${title}\n`;
@@ -45,7 +46,7 @@ const arms = pathologicalArms();
 const engines: Array<{ name: string; engine: BrainEngine; close: () => Promise<void> }> = [];
 beforeAll(async () => {
   for (const arm of arms) {
-    const { engine, close } = await openArm(arm); await seed(engine);
+    const { engine, close } = await isolatedSharedSkillsEngine(arm.databaseUrl); await seed(engine);
     engines.push({ name: arm.backend, engine, close });
   }
 }, 120_000);

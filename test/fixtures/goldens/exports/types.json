@@ -70,7 +70,7 @@
           "countKeywordPages: (query: string, opts?: SearchOpts & { timeoutMs?: number; }) => Promise<number>",
           "countStaleChunks: (opts?: { sourceId?: string; signature?: string; includeNullSignature?: boolean; }) => Promise<number>",
           "countStaleFrontmatterKeyPages: (opts: { sourceIds: string[]; }) => Promise<Array<{ source_id: string; n: number; }>>",
-          "countStalePagesForExtraction: (opts?: { sourceId?: string; versionTs?: string; attendance?: \"exclude\" | \"blocked\"; }) => Promise<number>",
+          "countStalePagesForExtraction: (opts?: { sourceId?: string; versionTs?: string; attendance?: \"exclude\" | \"blocked\"; held?: \"exclude\" | \"only\"; }) => Promise<number>",
           "countStaleTakes: (opts?: StaleTakeOpts) => Promise<number>",
           "countUnconsolidatedFacts: (source_id: string) => Promise<number>",
           "createSegmentedPageShell: (slug: string, meta: SegmentedPageMeta, opts: { sourceId: string; }) => Promise<{ id: number; }>",
@@ -162,7 +162,7 @@
           "listPrefixSampledPages: (opts: DomainBankSampleOpts) => Promise<DomainBankRow[]>",
           "listStaleChunks: (opts?: { batchSize?: number; afterPageId?: number; afterChunkIndex?: number; sourceId?: string; orderBy?: \"page_id\" | \"updated_desc\"; afterUpdatedAt?: string | null; }) => Promise<StaleChunkRow[]>",
           "listStaleFrontmatterKeyPages: (opts: { sourceId: string; afterId: number; limit: number; }) => Promise<Array<{ id: number; slug: string; keys: string[]; }>>",
-          "listStalePagesForExtraction: (opts: { batchSize: number; afterPageId?: number; sourceId?: string; versionTs?: string; }) => Promise<StalePageRow[]>",
+          "listStalePagesForExtraction: (opts: { batchSize: number; afterPageId?: number; sourceId?: string; versionTs?: string; held?: \"exclude\"; }) => Promise<StalePageRow[]>",
           "listStaleTakes: (opts?: StaleTakeOpts) => Promise<StaleTakeRow[]>",
           "listSupersessions: (source_id: string, opts?: { since?: Date; limit?: number; visibility?: FactVisibility[]; eligibility?: FactListOpts[\"eligibility\"]; excludePrivate?: boolean; }) => Promise<FactRow[]>",
           "listTakes: (opts?: TakesListOpts) => Promise<Take[]>",
@@ -176,7 +176,7 @@
           "mergeOntologyFact: (obs: OntologyObservationInput) => Promise<OntologyMergeResult>",
           "migrateFactsToCanonical: (phantomSlug: string, canonicalSlug: string, sourceId: string) => Promise<{ migrated: number; }>",
           "openBodyStaging: (input: BodyStagingInput) => Promise<void>",
-          "purgeDeletedPages: (olderThanHours: number, opts?: { dryRun?: boolean; }) => Promise<{ slugs: string[]; count: number; pages?: { slug: string; deleted_at: Date; }[]; }>",
+          "purgeDeletedPages: (olderThanHours: number, opts?: { dryRun?: boolean; excludeIds?: number[]; }) => Promise<{ slugs: string[]; count: number; pages?: { slug: string; deleted_at: Date; }[]; }>",
           "putContradictionCacheEntry: (opts: { chunk_a_hash: string; chunk_b_hash: string; model_id: string; prompt_version: string; truncation_policy: string; verdict: Record<string, unknown>; ttl_seconds?: number; }) => Promise<void>",
           "putDreamVerdict: (filePath: string, contentHash: string, verdict: DreamVerdictInput) => Promise<void>",
           "putPage: (slug: string, page: PageInput, opts?: PageWriteOptions) => Promise<Page>",
@@ -1069,7 +1069,7 @@
           "countKeywordPages: (query: string, opts?: SearchOpts & { timeoutMs?: number; }) => Promise<number>",
           "countStaleChunks: (opts?: { sourceId?: string; signature?: string; includeNullSignature?: boolean; }) => Promise<number>",
           "countStaleFrontmatterKeyPages: (opts: { sourceIds: string[]; }) => Promise<{ source_id: string; n: number; }[]>",
-          "countStalePagesForExtraction: (opts?: { sourceId?: string; versionTs?: string; attendance?: \"exclude\" | \"blocked\"; }) => Promise<number>",
+          "countStalePagesForExtraction: (opts?: { sourceId?: string; versionTs?: string; attendance?: \"exclude\" | \"blocked\"; held?: \"exclude\" | \"only\"; }) => Promise<number>",
           "countStaleTakes: (opts?: StaleTakeOpts) => Promise<number>",
           "countUnconsolidatedFacts: (source_id: string) => Promise<number>",
           "createSegmentedPageShell: (slug: string, meta: SegmentedPageMeta, opts: { sourceId: string; }) => Promise<{ id: number; }>",
@@ -1163,7 +1163,7 @@
           "listPrefixSampledPages: (opts: DomainBankSampleOpts) => Promise<DomainBankRow[]>",
           "listStaleChunks: (opts?: { batchSize?: number; afterPageId?: number; afterChunkIndex?: number; sourceId?: string; orderBy?: \"page_id\" | \"updated_desc\"; afterUpdatedAt?: string | null; }) => Promise<StaleChunkRow[]>",
           "listStaleFrontmatterKeyPages: (opts: { sourceId: string; afterId: number; limit: number; }) => Promise<{ id: number; slug: string; keys: string[]; }[]>",
-          "listStalePagesForExtraction: (opts: { batchSize: number; afterPageId?: number; sourceId?: string; versionTs?: string; }) => Promise<StalePageRow[]>",
+          "listStalePagesForExtraction: (opts: { batchSize: number; afterPageId?: number; sourceId?: string; versionTs?: string; held?: \"exclude\"; }) => Promise<StalePageRow[]>",
           "listStaleTakes: (opts?: StaleTakeOpts) => Promise<StaleTakeRow[]>",
           "listSupersessions: (source_id: string, opts?: { since?: Date; limit?: number; visibility?: (\"private\" | \"world\")[]; eligibility?: FactListOpts[\"eligibility\"]; excludePrivate?: boolean; }) => Promise<FactRow[]>",
           "listTakes: (opts?: TakesListOpts) => Promise<Take[]>",
@@ -1218,7 +1218,7 @@
           "private vectorIterativeScanSupported",
           "private vectorScope",
           "private withScopedReadTransaction",
-          "purgeDeletedPages: (olderThanHours: number, opts?: { dryRun?: boolean; }) => Promise<{ slugs: string[]; count: number; pages?: { slug: string; deleted_at: Date; }[]; }>",
+          "purgeDeletedPages: (olderThanHours: number, opts?: { dryRun?: boolean; excludeIds?: number[]; }) => Promise<{ slugs: string[]; count: number; pages?: { slug: string; deleted_at: Date; }[]; }>",
           "putContradictionCacheEntry: (opts: { chunk_a_hash: string; chunk_b_hash: string; model_id: string; prompt_version: string; truncation_policy: string; verdict: Record<string, unknown>; ttl_seconds?: number; }) => Promise<void>",
           "putDreamVerdict: (filePath: string, contentHash: string, verdict: DreamVerdictInput) => Promise<void>",
           "putPage: (slug: string, page: PageInput, opts?: PageWriteOptions) => Promise<Page>",
@@ -3366,7 +3366,7 @@
           "countKeywordPages: (query: string, opts?: SearchOpts & { timeoutMs?: number; }) => Promise<number>",
           "countStaleChunks: (opts?: { sourceId?: string; signature?: string; includeNullSignature?: boolean; }) => Promise<number>",
           "countStaleFrontmatterKeyPages: (opts: { sourceIds: string[]; }) => Promise<Array<{ source_id: string; n: number; }>>",
-          "countStalePagesForExtraction: (opts?: { sourceId?: string; versionTs?: string; attendance?: \"exclude\" | \"blocked\"; }) => Promise<number>",
+          "countStalePagesForExtraction: (opts?: { sourceId?: string; versionTs?: string; attendance?: \"exclude\" | \"blocked\"; held?: \"exclude\" | \"only\"; }) => Promise<number>",
           "countStaleTakes: (opts?: StaleTakeOpts) => Promise<number>",
           "countUnconsolidatedFacts: (source_id: string) => Promise<number>",
           "createSegmentedPageShell: (slug: string, meta: SegmentedPageMeta, opts: { sourceId: string; }) => Promise<{ id: number; }>",
@@ -3458,7 +3458,7 @@
           "listPrefixSampledPages: (opts: DomainBankSampleOpts) => Promise<DomainBankRow[]>",
           "listStaleChunks: (opts?: { batchSize?: number; afterPageId?: number; afterChunkIndex?: number; sourceId?: string; orderBy?: \"page_id\" | \"updated_desc\"; afterUpdatedAt?: string | null; }) => Promise<StaleChunkRow[]>",
           "listStaleFrontmatterKeyPages: (opts: { sourceId: string; afterId: number; limit: number; }) => Promise<Array<{ id: number; slug: string; keys: string[]; }>>",
-          "listStalePagesForExtraction: (opts: { batchSize: number; afterPageId?: number; sourceId?: string; versionTs?: string; }) => Promise<StalePageRow[]>",
+          "listStalePagesForExtraction: (opts: { batchSize: number; afterPageId?: number; sourceId?: string; versionTs?: string; held?: \"exclude\"; }) => Promise<StalePageRow[]>",
           "listStaleTakes: (opts?: StaleTakeOpts) => Promise<StaleTakeRow[]>",
           "listSupersessions: (source_id: string, opts?: { since?: Date; limit?: number; visibility?: FactVisibility[]; eligibility?: FactListOpts[\"eligibility\"]; excludePrivate?: boolean; }) => Promise<FactRow[]>",
           "listTakes: (opts?: TakesListOpts) => Promise<Take[]>",
@@ -3472,7 +3472,7 @@
           "mergeOntologyFact: (obs: OntologyObservationInput) => Promise<OntologyMergeResult>",
           "migrateFactsToCanonical: (phantomSlug: string, canonicalSlug: string, sourceId: string) => Promise<{ migrated: number; }>",
           "openBodyStaging: (input: BodyStagingInput) => Promise<void>",
-          "purgeDeletedPages: (olderThanHours: number, opts?: { dryRun?: boolean; }) => Promise<{ slugs: string[]; count: number; pages?: { slug: string; deleted_at: Date; }[]; }>",
+          "purgeDeletedPages: (olderThanHours: number, opts?: { dryRun?: boolean; excludeIds?: number[]; }) => Promise<{ slugs: string[]; count: number; pages?: { slug: string; deleted_at: Date; }[]; }>",
           "putContradictionCacheEntry: (opts: { chunk_a_hash: string; chunk_b_hash: string; model_id: string; prompt_version: string; truncation_policy: string; verdict: Record<string, unknown>; ttl_seconds?: number; }) => Promise<void>",
           "putDreamVerdict: (filePath: string, contentHash: string, verdict: DreamVerdictInput) => Promise<void>",
           "putPage: (slug: string, page: PageInput, opts?: PageWriteOptions) => Promise<Page>",
@@ -4441,7 +4441,7 @@
         "kind": "function",
         "name": "extractStaleFromDB",
         "signature": [
-          "(engine: BrainEngine, opts: { dryRun: boolean; jsonMode: boolean; quiet?: boolean; includeFrontmatter?: boolean; sourceIdFilter?: string; catchUp: boolean; timeBudgetMs?: number; }) => Promise<{ linksCreated: number; timelineCreated: number; pagesProcessed: number; staleRemaining: number; skippedMissingTarget?: number; skippedCrossSource?: number; skippedAttendanceIncomplete?: number; skippedChanged?: number; skippedConcurrentWrite?: number; mentions?: MentionPassResult; }>"
+          "(engine: BrainEngine, opts: { dryRun: boolean; jsonMode: boolean; quiet?: boolean; includeFrontmatter?: boolean; sourceIdFilter?: string; catchUp: boolean; timeBudgetMs?: number; retryHeld?: boolean; }) => Promise<{ linksCreated: number; timelineCreated: number; pagesProcessed: number; staleRemaining: number; skippedMissingTarget?: number; skippedCrossSource?: number; skippedAttendanceIncomplete?: number; skippedChanged?: number; skippedConcurrentWrite?: number; mentions?: MentionPassResult; linkFailed?: number; linkFailures?: LinkExtractionFailure[]; linkSystemic?: LinkExtractionSystemic[]; }>"
         ]
       },
       {
@@ -6041,7 +6041,7 @@
           "addAttachment: (jobId: number, input: AttachmentInput) => Promise<Attachment>",
           "cancelJob: (id: number, opts?: { ownerClientId?: string; }) => Promise<MinionJob | null>",
           "cancelJobs: (ids: number[], opts?: { reason?: string; rootStatuses?: MinionJobStatus[]; ownerClientId?: string; }) => Promise<MinionJob[]>",
-          "claim: (lockToken: string, lockDurationMs: number, queue: string, registeredNames: string[]) => Promise<MinionJob | null>",
+          "claim: (lockToken: string, lockDurationMs: number, queue: string, registeredNames: string[], opts?: { excludeWatchdogSuspects?: boolean; }) => Promise<MinionJob | null>",
           "classifyPrivateQueueForRecovery: (queueName: string) => Promise<\"orphan\" | \"live\" | \"unowned\" | \"not_orphan\">",
           "completeJob: (id: number, lockToken: string, result?: Record<string, unknown>) => Promise<MinionJob | null>",
           "deferJob: (id: number, lockToken: string, note: string, delayMs: number) => Promise<MinionJob | null>",
@@ -6074,6 +6074,7 @@
           "reconcilePrivateQueue: (queueName: string, reason: string) => Promise<MinionJob[]>",
           "releaseConfigurationJob: (id: number, lockToken: string, signal: AbortSignal) => Promise<\"released\" | \"no_op\" | \"unconfirmed\">",
           "releaseLeaseFullJob: (id: number, lockToken: string, errorText: string, backoffMs: number) => Promise<MinionJob | null>",
+          "releaseWatchdogClaim: (id: number, lockToken: string, errorText: string) => Promise<boolean>",
           "removeChildDependency: (childId: number) => Promise<void>",
           "removeJob: (id: number) => Promise<boolean>",
           "renewLock: (id: number, lockToken: string, lockDurationMs: number, opts?: { signal?: AbortSignal; }) => Promise<boolean>",
@@ -6310,7 +6311,7 @@
         "kind": "type",
         "name": "ErrorCode",
         "signature": [
-          "\"rate_limited\" | \"writer_lock_unavailable\" | \"writer_pool_capacity\" | \"owner_unavailable\" | \"recovery_required\" | \"queue_capacity\" | \"write_quota_exhausted\" | \"write_quota_insufficient\" | \"write_capacity_backpressure\" | \"revision_required\" | \"revision_conflict\" | \"idempotency_conflict\" | \"source_changed\" | \"write_pending\" | \"storage_error\" | \"cancelled\" | \"permission_denied\" | \"scope_denied\" | \"invalid_params\" | \"not_found\" | \"page_not_found\" | \"page_identity_changed\" | \"write_claim_lost\" | \"request_too_large\" | \"response_too_large\" | \"writer_registration_required\" | \"writer_identity_invalid\" | \"writer_not_initialized\" | \"writer_coordinator_required\" | \"fact_already_expired\" | \"source_writeback_required\" | \"unsupported_mutation_protocol\" | \"writer_upgrade_required\" | \"writer_not_quiesced\" | \"skill_bundle_required\" | \"take_row_collision\" | \"invalid_source_uri\" | \"writer_admin_locked\" | \"connector_account_changed\" | \"connector_intent_outdated\" | \"checkpoint_validation_timeout\" | \"invalid_connector_text\" | \"connector_holds_exhausted\" | \"connector_fence_below_timeline\" | \"core_budget_exceeded\" | \"core_mark_owner_only\" | \"core_remote_edit_refused\" | \"core_delete_owner_only\" | \"timeline_rows_would_be_removed\" | \"purged_content\" | \"preparation_stalled\" | \"fence_unrenderable\" | \"page_body_segmented\" | \"write_outcome_unknown\" | \"embedding_failed\" | \"bucket_not_found\" | \"database_error\" | \"unknown_transport\" | \"extraction_failed\" | \"fact_not_found\" | \"provenance_required\" | \"unavailable\" | \"budget_unsatisfiable\" | \"embedding_budget_below_worst_case\" | (string & {})"
+          "\"rate_limited\" | \"writer_lock_unavailable\" | \"writer_pool_capacity\" | \"owner_unavailable\" | \"recovery_required\" | \"queue_capacity\" | \"write_quota_exhausted\" | \"write_quota_insufficient\" | \"write_capacity_backpressure\" | \"revision_required\" | \"revision_conflict\" | \"idempotency_conflict\" | \"source_changed\" | \"write_pending\" | \"storage_error\" | \"cancelled\" | \"permission_denied\" | \"scope_denied\" | \"invalid_params\" | \"not_found\" | \"page_not_found\" | \"page_identity_changed\" | \"write_claim_lost\" | \"request_too_large\" | \"response_too_large\" | \"writer_registration_required\" | \"writer_identity_invalid\" | \"writer_not_initialized\" | \"writer_coordinator_required\" | \"fact_already_expired\" | \"source_writeback_required\" | \"unsupported_mutation_protocol\" | \"writer_upgrade_required\" | \"writer_not_quiesced\" | \"skill_bundle_required\" | \"take_row_collision\" | \"invalid_source_uri\" | \"writer_admin_locked\" | \"connector_account_changed\" | \"connector_intent_outdated\" | \"checkpoint_validation_timeout\" | \"invalid_connector_text\" | \"connector_holds_exhausted\" | \"connector_fence_below_timeline\" | \"core_budget_exceeded\" | \"core_mark_owner_only\" | \"core_remote_edit_refused\" | \"core_delete_owner_only\" | \"timeline_rows_would_be_removed\" | \"purged_content\" | \"preparation_stalled\" | \"fence_unrenderable\" | \"page_body_segmented\" | \"write_outcome_unknown\" | \"write_interrupted\" | \"embedding_failed\" | \"bucket_not_found\" | \"database_error\" | \"unknown_transport\" | \"extraction_failed\" | \"fact_not_found\" | \"provenance_required\" | \"unavailable\" | \"budget_unsatisfiable\" | \"embedding_budget_below_worst_case\" | (string & {})"
         ]
       },
       {
@@ -6400,7 +6401,7 @@
       {
         "kind": "class",
         "members": [
-          "canonical?: \"unknown\" | \"keyword_candidates_incomplete\" | \"projection_pending\" | \"timeout\" | \"rate_limited\" | \"embedding_disabled\" | \"writer_lock_unavailable\" | \"writer_pool_capacity\" | \"owner_unavailable\" | \"recovery_required\" | \"queue_capacity\" | \"write_quota_exhausted\" | \"write_quota_insufficient\" | \"write_capacity_backpressure\" | \"revision_required\" | \"revision_conflict\" | \"idempotency_conflict\" | \"source_changed\" | \"write_pending\" | \"storage_error\" | \"cancelled\" | \"permission_denied\" | \"scope_denied\" | \"invalid_params\" | \"not_found\" | \"page_not_found\" | \"page_identity_changed\" | \"write_claim_lost\" | \"request_too_large\" | \"response_too_large\" | \"writer_registration_required\" | \"writer_identity_invalid\" | \"writer_not_initialized\" | \"writer_coordinator_required\" | \"fact_already_expired\" | \"source_writeback_required\" | \"unsupported_mutation_protocol\" | \"writer_upgrade_required\" | \"writer_not_quiesced\" | \"skill_bundle_required\" | \"take_row_collision\" | \"invalid_source_uri\" | \"writer_admin_locked\" | \"connector_account_changed\" | \"connector_intent_outdated\" | \"checkpoint_validation_timeout\" | \"invalid_connector_text\" | \"connector_holds_exhausted\" | \"connector_fence_below_timeline\" | \"core_budget_exceeded\" | \"core_mark_owner_only\" | \"core_remote_edit_refused\" | \"core_delete_owner_only\" | \"timeline_rows_would_be_removed\" | \"purged_content\" | \"preparation_stalled\" | \"fence_unrenderable\" | \"page_body_segmented\" | \"write_outcome_unknown\" | \"embedding_failed\" | \"bucket_not_found\" | \"database_error\" | \"unknown_transport\" | \"extraction_failed\" | \"fact_not_found\" | \"provenance_required\" | \"unavailable\" | \"budget_unsatisfiable\" | \"embedding_budget_below_worst_case\" | \"access_command_failed\" | \"access_denied_test_user\" | \"access_env_missing\" | \"acknowledgment_unavailable\" | \"admin_policy_enforced\" | \"ambient_capture_off\" | \"ambiguous_id\" | \"ambiguous_ref\" | \"ambiguous_skill\" | \"answer_not_yours\" | \"answer_pending\" | \"answer_unavailable\" | \"api_not_enabled\" | \"approval_required\" | \"autopilot_job_owned_by_other_brain\" | \"body_staging_expired\" | \"budget_below_recent_runtime\" | \"backup_dump_failed\" | \"backup_too_large\" | \"belief_coverage_required\" | \"belief_stale_preparation\" | \"benchmark_duplicate_task_id\" | \"benchmark_empty\" | \"benchmark_exists\" | \"benchmark_judge_llm_no_rubric\" | \"benchmark_judge_qrels_no_expected\" | \"benchmark_judge_rule_no_checks\" | \"benchmark_judge_unknown_kind\" | \"benchmark_malformed\" | \"benchmark_missing_judge\" | \"benchmark_missing_task\" | \"benchmark_missing_task_id\" | \"benchmark_not_found\" | \"benchmark_rule_check_bad_arg\" | \"benchmark_rule_check_malformed\" | \"benchmark_rule_check_unknown_op\" | \"bootstrap_cleanup_pending\" | \"bootstrap_empty\" | \"bootstrap_pending_review\" | \"bridge_ownership_conflict\" | \"coverage_from\" | \"coverage_gap\" | \"clock_mismatch\" | \"known_as_of_unproven\" | \"cache_quota_exceeded\" | \"calendar_unreadable\" | \"capacity_paused\" | \"catalog_capacity_exceeded\" | \"catalog_unavailable\" | \"changed_since_preview\" | \"chronicle_skipped\" | \"no_pricing\" | \"checkpoint_missing\" | \"claim_already_used\" | \"client_json_unreadable\" | \"client_json_wrong_type\" | \"client_shape_invalid\" | \"code_callees_requires_symbol\" | \"code_callers_requires_symbol\" | \"code_def_requires_symbol\" | \"code_refs_requires_symbol\" | \"code_reused\" | \"colon_slug_windows_write_through\" | \"command_failed\" | \"commit_lock_busy\" | \"commit_paths_invalid\" | \"concurrent_write\" | \"config_error\" | \"confirmation_required\" | \"conflicting_source_scope\" | \"connection_lost\" | \"chunkless_pages_healable\" | \"consent_required\" | \"consent_timeout\" | \"consumers_without_heartbeat\" | \"content_repair_needs_human\" | \"content_rejected\" | \"continuation_unproven\" | \"corpus_chat_unavailable\" | \"corpus_window_backoff\" | \"corpus_window_dead_lettered\" | \"convergence_read_failed\" | \"cost_cap_exceeded\" | \"cost_preview_requires_yes\" | \"cursor_incarnation_retired\" | \"cycle_failed\" | \"d_sel_too_small\" | \"delta_cursor_upgrade_required\" | \"deleted_page_chunks_overdue\" | \"demo_graph_failed\" | \"demo_import_failed\" | \"demo_verification_failed\" | \"derived_cap_exhausted\" | \"destination_not_ready\" | \"drain_stalled\" | \"managed_sync_not_moving\" | \"dream_breaker_tripped\" | \"dirty_tree\" | \"doctor_tier_unavailable\" | \"effect_not_failed\" | \"embed_backfill_stalled\" | \"embedding_auth_failed\" | \"embedding_configuration\" | \"embedding_identity_unqualified\" | \"embedding_model_mismatch\" | \"embedding_plane_split\" | \"embedding_state_unknown\" | \"embedding_storage_unavailable\" | \"embedding_unavailable\" | \"embedding_unconfigured\" | \"embedding_width_mismatch\" | \"engine_graduated\" | \"entity_types_unavailable\" | \"eval_suite_unwired\" | \"export_limit\" | \"extractor_identity_mismatch\" | \"fact_withdrawn\" | \"fact_rows_collide\" | \"facts_absorb_write_refused\" | \"facts_backstop_skipped\" | \"facts_drain_deferred\" | \"facts_drain_job_failed\" | \"facts_payload_expired\" | \"feedback_disabled\" | \"feedback_not_authorized\" | \"fetch_failed\" | \"fix_not_writable\" | \"file_drift\" | \"file_removed_during_scan\" | \"file_too_large\" | \"follow_approval_required\" | \"forget_requires_owner\" | \"frontmatter_slug_conflict\" | \"full_resync_required\" | \"gate_failed\" | \"ghost_mass_delete_refused\" | \"origin_twin_mass_merge_refused\" | \"ghost_storage_unknown\" | \"git_branch_unborn\" | \"git_durability_not_enabled\" | \"git_checkout_required\" | \"git_detached_head\" | \"git_index_locked\" | \"git_index_stale\" | \"git_target_pending\" | \"git_operation_in_progress\" | \"git_push_unavailable\" | \"git_target_unsafe\" | \"git_unavailable\" | \"graduation_drain_timeout\" | \"graduation_embedding_dimension_mismatch\" | \"graduation_foreign_host_binding\" | \"graduation_in_progress\" | \"graduation_interrupted\" | \"graduation_rollback_writes_lost\" | \"graduation_source_writer_held\" | \"graduation_split_brain\" | \"graduation_target_auth_failed\" | \"graduation_target_ddl_unreachable\" | \"graduation_target_not_empty\" | \"graduation_target_unsupported\" | \"graduation_unclassified_table\" | \"graduation_unsupported_platform\" | \"graduation_verify_failed\" | \"graph_incomplete\" | \"host_identity_mismatch\" | \"harness_hook_duplicates\" | \"harness_hook_unowned\" | \"head_blocked\" | \"held_failed\" | \"held_out_overlaps_benchmark\" | \"held_out_required_for_bundled\" | \"independent_principal_required\" | \"insufficient_scope\" | \"integrate_conflict\" | \"internal\" | \"internal_error\" | \"interrupted\" | \"invalid_acknowledgment\" | \"invalid_client\" | \"invalid_fence\" | \"unclosed_ambiguous_tail\" | \"tail_exposure_approval\" | \"sync_in_progress\" | \"invalid_frontmatter\" | \"invalid_grant_clock_skew\" | \"invalid_grant_revoked\" | \"invalid_grant_testing_expiry\" | \"invalid_rating\" | \"invalid_receipt\" | \"invalid_receipt_transition\" | \"invalid_request\" | \"invalid_source\" | \"invalid_source_pin\" | \"invalid_token\" | \"invalid_write_wait\" | \"ipc_path_too_long\" | \"legacy_job_selection_invalid\" | \"legacy_jobs_active\" | \"local_conflict\" | \"lock_busy\" | \"loops_extraction_skipped\" | \"maintenance_backpressure\" | \"maintenance_lock_busy\" | \"managed_failure_unsettled\" | \"managed_remedy_unavailable\" | \"merge_recommended\" | \"movement_unknown\" | \"managed_sync_flag_refused\" | \"managed_pull_skipped\" | \"manual_only_skipped\" | \"membership_inactive\" | \"membership_not_found\" | \"method_not_allowed\" | \"migration_lease_lost\" | \"migration_declined\" | \"migration_failed\" | \"migrations_pending\" | \"migrations_running\" | \"missing_source_scope\" | \"missing_source_value\" | \"models_strict_violation\" | \"no_refresh_token\" | \"no_routing_eval\" | \"no_skill_md\" | \"no_worker\" | \"no_worker_surface\" | \"not_a_git_repo\" | \"not_owner_host\" | \"not_connected\" | \"no_brain\" | \"overlapping_path\" | \"page_projection_conflict\" | \"page_body_rows_unreadable\" | \"page_projection_stale\" | \"page_shrink_refused\" | \"page_too_large_for_inline\" | \"parse_error\" | \"parser_regression\" | \"pasted_wrong_url\" | \"payload_too_large\" | \"pattern_claims_pending\" | \"patterns_min_interval\" | \"pending_verify\" | \"pending_writes\" | \"persistence_restart_required\" | \"pool_inflight_over_budget\" | \"deep_health_probe_failed\" | \"serve_self_exit_suppressed\" | \"serve_unhealthy_exit\" | \"persistence_write_stall\" | \"push_unconfirmed\" | \"schema_lock_blocked\" | \"pg_connection_recovery_failed\" | \"pg_connection_stuck\" | \"pg_pool_stalled\" | \"pg_statement_build_failed\" | \"pglite_busy\" | \"pglite_vector_index_too_large\" | \"plan_output_failed\" | \"plan_stale\" | \"port_in_use\" | \"preview_changed\" | \"profile_incompatible\" | \"projection_owner_resident\" | \"knock_on_exhausted\" | \"keyword_skipped_after_timeout\" | \"publication_pending\" | \"purge_blocked_pending_recovery\" | \"purge_lookup_timeout\" | \"purge_mirror_unwritable\" | \"question_not_found\" | \"question_owner_only\" | \"read_budget_exhausted\" | \"receipt_conflict\" | \"receipt_fence_changed\" | \"receipt_fence_required\" | \"receipt_identity_mismatch\" | \"pat_file_unreadable\" | \"reconcile_read_incomplete\" | \"redirect_uri_mismatch\" | \"ref_not_in_answer\" | \"refresh_dirty\" | \"refresh_diverged\" | \"refresh_drain_timeout\" | \"refresh_no_upstream\" | \"refresh_not_managed\" | \"refresh_not_owner\" | \"refresh_source_changed\" | \"relay_disabled\" | \"relay_session_expired\" | \"relay_unreachable\" | \"rename_held\" | \"request_already_submitted\" | \"requirements_changed\" | \"requires_local_engine\" | \"resume_spec_mismatch\" | \"result_too_large\" | \"revision_changed\" | \"revision_unavailable\" | \"schema_owner_required\" | \"scope_missing\" | \"search_cursor_requires_keyword\" | \"search_mode_local_only\" | \"scorecard_group_by_local_only\" | \"search_offset_over_cap\" | \"serve_build_drift\" | \"serve_port_in_use\" | \"serve_status_only\" | \"setup_harness_unsupported\" | \"setup_hosted_connection\" | \"setup_owner_conflict\" | \"shared_skills_unavailable\" | \"shared_skills_unsupported\" | \"skill_asset_not_found\" | \"skill_candidate_invalid\" | \"skill_not_found\" | \"skill_retention_capacity\" | \"skill_unavailable\" | \"slug_page_mismatch\" | \"slug_root_mode_mismatch\" | \"source_binding_required\" | \"source_id_taken\" | \"source_mismatch\" | \"source_not_ready\" | \"source_profile_no_backfill\" | \"source_referenced\" | \"source_root_conflict\" | \"split_bad_ratio\" | \"split_unparseable\" | \"stale_unavailable\" | \"state_mismatch\" | \"sync_not_applicable\" | \"sync_drain_lease_held\" | \"sync_first_run_in_progress\" | \"sync_no_successful_sync\" | \"sync_cursor_replaced\" | \"sync_parser_regression\" | \"target_escape\" | \"timeline_comment_markup\" | \"topology_change_required\" | \"transcript_secret_exposure\" | \"triage_unreliable_backoff\" | \"trust_raise_refused\" | \"two_consumers_on_host\" | \"trusted_local_only\" | \"unexpected_file_bytes\" | \"unexpected_staging_bytes\" | \"unknown_command\" | \"unknown_flag\" | \"unknown_method\" | \"unknown_source\" | \"unknown_tool\" | \"unpriced_model\" | \"unmanaged_database_path\" | \"unmanaged_path\" | \"unsupported_export_data\" | \"upstream\" | \"verification_failed\" | \"withdrawal_capacity\" | \"withdrawal_provenance\" | \"write_capacity_low\" | \"write_gate_rejected\" | \"write_held\" | \"worktree_dirty\" | \"writer_admin_intent_required\" | \"writer_admin_state_changed\" | \"writer_busy\" | \"writer_identity_publish_failed\" | \"writer_manifest_mismatch\" | \"writer_manifest_rescope_required\" | \"writer_manifest_unsafe\" | \"writer_regrant_required\" | \"writer_transfer_conflict\" | \"writer_transfer_required\" | \"wrong_account_consented\" | \"schema_pack_too_large\" | \"schema_pack_emit_mismatch\" | undefined",
+          "canonical?: \"unknown\" | \"keyword_candidates_incomplete\" | \"projection_pending\" | \"timeout\" | \"rate_limited\" | \"embedding_disabled\" | \"writer_lock_unavailable\" | \"writer_pool_capacity\" | \"owner_unavailable\" | \"recovery_required\" | \"queue_capacity\" | \"write_quota_exhausted\" | \"write_quota_insufficient\" | \"write_capacity_backpressure\" | \"revision_required\" | \"revision_conflict\" | \"idempotency_conflict\" | \"source_changed\" | \"write_pending\" | \"storage_error\" | \"cancelled\" | \"permission_denied\" | \"scope_denied\" | \"invalid_params\" | \"not_found\" | \"page_not_found\" | \"page_identity_changed\" | \"write_claim_lost\" | \"request_too_large\" | \"response_too_large\" | \"writer_registration_required\" | \"writer_identity_invalid\" | \"writer_not_initialized\" | \"writer_coordinator_required\" | \"fact_already_expired\" | \"source_writeback_required\" | \"unsupported_mutation_protocol\" | \"writer_upgrade_required\" | \"writer_not_quiesced\" | \"skill_bundle_required\" | \"take_row_collision\" | \"invalid_source_uri\" | \"writer_admin_locked\" | \"connector_account_changed\" | \"connector_intent_outdated\" | \"checkpoint_validation_timeout\" | \"invalid_connector_text\" | \"connector_holds_exhausted\" | \"connector_fence_below_timeline\" | \"core_budget_exceeded\" | \"core_mark_owner_only\" | \"core_remote_edit_refused\" | \"core_delete_owner_only\" | \"timeline_rows_would_be_removed\" | \"purged_content\" | \"preparation_stalled\" | \"fence_unrenderable\" | \"page_body_segmented\" | \"write_outcome_unknown\" | \"write_interrupted\" | \"embedding_failed\" | \"bucket_not_found\" | \"database_error\" | \"unknown_transport\" | \"extraction_failed\" | \"fact_not_found\" | \"provenance_required\" | \"unavailable\" | \"budget_unsatisfiable\" | \"embedding_budget_below_worst_case\" | \"access_command_failed\" | \"access_denied_test_user\" | \"access_env_missing\" | \"acknowledgment_unavailable\" | \"admin_policy_enforced\" | \"ambient_capture_off\" | \"ambiguous_id\" | \"ambiguous_ref\" | \"ambiguous_skill\" | \"answer_not_yours\" | \"answer_pending\" | \"answer_unavailable\" | \"api_not_enabled\" | \"approval_required\" | \"autopilot_job_owned_by_other_brain\" | \"body_staging_expired\" | \"budget_below_recent_runtime\" | \"backup_dump_failed\" | \"backup_too_large\" | \"belief_coverage_required\" | \"belief_stale_preparation\" | \"benchmark_duplicate_task_id\" | \"benchmark_empty\" | \"benchmark_exists\" | \"benchmark_judge_llm_no_rubric\" | \"benchmark_judge_qrels_no_expected\" | \"benchmark_judge_rule_no_checks\" | \"benchmark_judge_unknown_kind\" | \"benchmark_malformed\" | \"benchmark_missing_judge\" | \"benchmark_missing_task\" | \"benchmark_missing_task_id\" | \"benchmark_not_found\" | \"benchmark_rule_check_bad_arg\" | \"benchmark_rule_check_malformed\" | \"benchmark_rule_check_unknown_op\" | \"bootstrap_cleanup_pending\" | \"bootstrap_empty\" | \"bootstrap_pending_review\" | \"bridge_ownership_conflict\" | \"coverage_from\" | \"coverage_gap\" | \"clock_mismatch\" | \"item_failures_systemic\" | \"known_as_of_unproven\" | \"cache_quota_exceeded\" | \"calendar_unreadable\" | \"capacity_paused\" | \"catalog_capacity_exceeded\" | \"catalog_unavailable\" | \"changed_since_preview\" | \"chronicle_skipped\" | \"no_pricing\" | \"checkpoint_missing\" | \"claim_already_used\" | \"client_json_unreadable\" | \"client_json_wrong_type\" | \"client_shape_invalid\" | \"code_callees_requires_symbol\" | \"code_callers_requires_symbol\" | \"code_def_requires_symbol\" | \"code_refs_requires_symbol\" | \"code_reused\" | \"colon_slug_windows_write_through\" | \"command_failed\" | \"commit_lock_busy\" | \"commit_paths_invalid\" | \"concurrent_write\" | \"config_error\" | \"confirmation_required\" | \"conflicting_source_scope\" | \"connection_lost\" | \"chunkless_pages_healable\" | \"consent_required\" | \"consent_timeout\" | \"consumers_without_heartbeat\" | \"content_repair_needs_human\" | \"content_rejected\" | \"continuation_unproven\" | \"corpus_chat_unavailable\" | \"corpus_window_backoff\" | \"corpus_window_dead_lettered\" | \"convergence_read_failed\" | \"cost_cap_exceeded\" | \"cost_preview_requires_yes\" | \"cursor_incarnation_retired\" | \"cycle_failed\" | \"d_sel_too_small\" | \"delta_cursor_upgrade_required\" | \"deleted_page_chunks_overdue\" | \"demo_graph_failed\" | \"demo_import_failed\" | \"demo_verification_failed\" | \"derived_cap_exhausted\" | \"destination_not_ready\" | \"drain_stalled\" | \"managed_sync_not_moving\" | \"dream_breaker_tripped\" | \"dirty_tree\" | \"doctor_tier_unavailable\" | \"effect_not_failed\" | \"embed_backfill_stalled\" | \"embedding_auth_failed\" | \"embedding_configuration\" | \"embedding_identity_unqualified\" | \"embedding_model_mismatch\" | \"embedding_plane_split\" | \"embedding_state_unknown\" | \"embedding_storage_unavailable\" | \"embedding_unavailable\" | \"embedding_unconfigured\" | \"embedding_width_mismatch\" | \"engine_graduated\" | \"entity_types_unavailable\" | \"eval_suite_unwired\" | \"export_limit\" | \"extractor_identity_mismatch\" | \"fact_withdrawn\" | \"fact_rows_collide\" | \"facts_absorb_write_refused\" | \"facts_backstop_skipped\" | \"facts_drain_deferred\" | \"facts_drain_job_failed\" | \"facts_payload_expired\" | \"feedback_disabled\" | \"feedback_not_authorized\" | \"fetch_failed\" | \"fix_not_writable\" | \"file_drift\" | \"file_removed_during_scan\" | \"file_too_large\" | \"follow_approval_required\" | \"forget_requires_owner\" | \"frontmatter_slug_conflict\" | \"full_resync_required\" | \"gate_failed\" | \"ghost_mass_delete_refused\" | \"origin_twin_mass_merge_refused\" | \"ghost_storage_unknown\" | \"git_branch_unborn\" | \"git_durability_not_enabled\" | \"git_checkout_required\" | \"git_detached_head\" | \"git_index_locked\" | \"git_index_stale\" | \"git_target_pending\" | \"git_operation_in_progress\" | \"git_push_unavailable\" | \"git_target_unsafe\" | \"git_unavailable\" | \"graduation_drain_timeout\" | \"graduation_embedding_dimension_mismatch\" | \"graduation_foreign_host_binding\" | \"graduation_in_progress\" | \"graduation_interrupted\" | \"graduation_rollback_writes_lost\" | \"graduation_source_writer_held\" | \"graduation_split_brain\" | \"graduation_target_auth_failed\" | \"graduation_target_ddl_unreachable\" | \"graduation_target_not_empty\" | \"graduation_target_unsupported\" | \"graduation_unclassified_table\" | \"graduation_unsupported_platform\" | \"graduation_verify_failed\" | \"graph_incomplete\" | \"host_identity_mismatch\" | \"harness_hook_duplicates\" | \"harness_hook_unowned\" | \"head_blocked\" | \"held_failed\" | \"held_out_overlaps_benchmark\" | \"held_out_required_for_bundled\" | \"independent_principal_required\" | \"insufficient_scope\" | \"integrate_conflict\" | \"internal\" | \"internal_error\" | \"interrupted\" | \"invalid_acknowledgment\" | \"invalid_client\" | \"invalid_fence\" | \"unclosed_ambiguous_tail\" | \"tail_exposure_approval\" | \"sync_in_progress\" | \"invalid_frontmatter\" | \"invalid_grant_clock_skew\" | \"invalid_grant_revoked\" | \"invalid_grant_testing_expiry\" | \"invalid_rating\" | \"invalid_receipt\" | \"invalid_receipt_transition\" | \"invalid_request\" | \"invalid_source\" | \"invalid_source_pin\" | \"invalid_token\" | \"invalid_write_wait\" | \"ipc_path_too_long\" | \"legacy_job_selection_invalid\" | \"legacy_jobs_active\" | \"legacy_lock_removal_refused\" | \"local_conflict\" | \"lock_busy\" | \"loops_extraction_skipped\" | \"maintenance_backpressure\" | \"maintenance_lock_busy\" | \"managed_failure_unsettled\" | \"managed_remedy_unavailable\" | \"merge_recommended\" | \"movement_unknown\" | \"managed_sync_flag_refused\" | \"managed_pull_skipped\" | \"manual_only_skipped\" | \"membership_inactive\" | \"membership_not_found\" | \"method_not_allowed\" | \"migration_lease_lost\" | \"migration_declined\" | \"migration_failed\" | \"migrations_pending\" | \"migrations_running\" | \"missing_source_scope\" | \"missing_source_value\" | \"models_strict_violation\" | \"no_refresh_token\" | \"no_routing_eval\" | \"no_skill_md\" | \"no_worker\" | \"no_worker_surface\" | \"not_a_git_repo\" | \"not_owner_host\" | \"not_connected\" | \"no_brain\" | \"overlapping_path\" | \"page_projection_conflict\" | \"page_body_rows_unreadable\" | \"page_projection_stale\" | \"page_shrink_refused\" | \"page_too_large_for_inline\" | \"parse_error\" | \"parser_regression\" | \"pasted_wrong_url\" | \"payload_too_large\" | \"pattern_claims_pending\" | \"patterns_min_interval\" | \"pending_verify\" | \"pending_writes\" | \"persistence_restart_required\" | \"pool_inflight_over_budget\" | \"deep_health_probe_failed\" | \"serve_self_exit_suppressed\" | \"serve_unhealthy_exit\" | \"persistence_write_stall\" | \"push_unconfirmed\" | \"schema_lock_blocked\" | \"pg_connection_recovery_failed\" | \"pg_connection_stuck\" | \"pg_pool_stalled\" | \"pg_statement_build_failed\" | \"pglite_busy\" | \"pglite_vector_index_too_large\" | \"plan_output_failed\" | \"plan_stale\" | \"port_in_use\" | \"preview_changed\" | \"profile_incompatible\" | \"projection_owner_resident\" | \"knock_on_exhausted\" | \"keyword_skipped_after_timeout\" | \"publication_pending\" | \"pull_blocked_local_changes\" | \"purge_blocked_pending_recovery\" | \"purge_lookup_timeout\" | \"purge_mirror_unwritable\" | \"question_not_found\" | \"question_owner_only\" | \"read_budget_exhausted\" | \"receipt_conflict\" | \"receipt_fence_changed\" | \"receipt_fence_required\" | \"receipt_identity_mismatch\" | \"pat_file_unreadable\" | \"reconcile_read_incomplete\" | \"recovery_prior_stage_unavailable\" | \"redirect_uri_mismatch\" | \"ref_not_in_answer\" | \"refresh_dirty\" | \"refresh_diverged\" | \"refresh_drain_timeout\" | \"refresh_no_upstream\" | \"refresh_not_managed\" | \"refresh_not_owner\" | \"refresh_source_changed\" | \"relay_disabled\" | \"relay_session_expired\" | \"relay_unreachable\" | \"rename_held\" | \"request_already_submitted\" | \"requirements_changed\" | \"requires_local_engine\" | \"resume_spec_mismatch\" | \"result_too_large\" | \"revision_changed\" | \"revision_unavailable\" | \"schema_owner_required\" | \"scope_missing\" | \"search_cursor_requires_keyword\" | \"search_mode_local_only\" | \"scorecard_group_by_local_only\" | \"search_offset_over_cap\" | \"serve_build_drift\" | \"serve_port_in_use\" | \"serve_status_only\" | \"setup_harness_unsupported\" | \"setup_hosted_connection\" | \"setup_owner_conflict\" | \"shared_skills_unavailable\" | \"shared_skills_unsupported\" | \"skill_asset_not_found\" | \"skill_candidate_invalid\" | \"skill_not_found\" | \"skill_retention_capacity\" | \"skill_unavailable\" | \"slug_page_mismatch\" | \"slug_root_mode_mismatch\" | \"source_binding_required\" | \"source_id_taken\" | \"source_mismatch\" | \"source_not_ready\" | \"source_profile_no_backfill\" | \"source_referenced\" | \"source_root_conflict\" | \"split_bad_ratio\" | \"split_unparseable\" | \"stale_unavailable\" | \"state_mismatch\" | \"sync_not_applicable\" | \"sync_drain_lease_held\" | \"content_receipt_stale\" | \"sync_first_run_in_progress\" | \"sync_no_successful_sync\" | \"sync_cursor_replaced\" | \"sync_parser_regression\" | \"target_escape\" | \"timeline_comment_markup\" | \"topology_change_required\" | \"transcript_secret_exposure\" | \"triage_unreliable_backoff\" | \"trust_raise_refused\" | \"two_consumers_on_host\" | \"trusted_local_only\" | \"unexpected_file_bytes\" | \"unexpected_staging_bytes\" | \"unknown_command\" | \"unknown_flag\" | \"unknown_method\" | \"unknown_source\" | \"unknown_tool\" | \"unpriced_model\" | \"unmanaged_database_path\" | \"unmanaged_path\" | \"unsupported_export_data\" | \"upstream\" | \"verification_failed\" | \"withdrawal_capacity\" | \"withdrawal_mirror_failed\" | \"withdrawal_mirror_pending\" | \"withdrawal_provenance\" | \"write_capacity_low\" | \"write_gate_rejected\" | \"write_held\" | \"worktree_dirty\" | \"writer_admin_intent_required\" | \"writer_admin_state_changed\" | \"writer_busy\" | \"writer_identity_publish_failed\" | \"writer_manifest_mismatch\" | \"writer_manifest_rescope_required\" | \"writer_manifest_unsafe\" | \"writer_regrant_required\" | \"writer_transfer_conflict\" | \"writer_transfer_required\" | \"wrong_account_consented\" | \"schema_pack_too_large\" | \"schema_pack_emit_mismatch\" | undefined",
           "canonicalCode: string",
           "cause?: unknown",
           "code: ErrorCode",
@@ -6420,10 +6421,10 @@
           "stack?: string | undefined",
           "suggestion?: string | undefined",
           "syncRefusal?: Record<string, unknown> | undefined",
-          "toJSON: () => { contract_version?: 1 | undefined; withdrawn?: WithdrawnDetail | undefined; fence_issues?: Record<string, unknown>[] | undefined; fence?: Record<string, unknown> | undefined; notices?: unknown[] | undefined; fix?: unknown; why?: string | undefined; reason?: string | undefined; write_error?: \"writer_lock_unavailable\" | \"writer_pool_capacity\" | \"owner_unavailable\" | \"recovery_required\" | \"queue_capacity\" | \"write_quota_exhausted\" | \"write_quota_insufficient\" | \"write_capacity_backpressure\" | \"revision_required\" | \"revision_conflict\" | \"idempotency_conflict\" | \"source_changed\" | \"write_pending\" | \"storage_error\" | \"cancelled\" | \"permission_denied\" | \"scope_denied\" | \"invalid_params\" | \"not_found\" | \"page_not_found\" | \"page_identity_changed\" | \"write_claim_lost\" | \"request_too_large\" | \"response_too_large\" | \"writer_registration_required\" | \"writer_identity_invalid\" | \"writer_not_initialized\" | \"writer_coordinator_required\" | \"fact_already_expired\" | \"source_writeback_required\" | \"unsupported_mutation_protocol\" | \"writer_upgrade_required\" | \"writer_not_quiesced\" | \"skill_bundle_required\" | \"take_row_collision\" | \"invalid_source_uri\" | \"writer_admin_locked\" | \"connector_account_changed\" | \"connector_intent_outdated\" | \"checkpoint_validation_timeout\" | \"invalid_connector_text\" | \"connector_holds_exhausted\" | \"connector_fence_below_timeline\" | \"core_budget_exceeded\" | \"core_mark_owner_only\" | \"core_remote_edit_refused\" | \"core_delete_owner_only\" | \"timeline_rows_would_be_removed\" | \"purged_content\" | \"preparation_stalled\" | \"fence_unrenderable\" | \"page_body_segmented\" | \"write_outcome_unknown\" | undefined; write_request?: WriteReceipt | undefined; error: ErrorCode; code: string; message: string; suggestion: string | undefined; docs: string | undefined; detail: string | undefined; protocol_version: number | undefined; }",
+          "toJSON: () => { contract_version?: 1 | undefined; withdrawn?: WithdrawnDetail | undefined; fence_issues?: Record<string, unknown>[] | undefined; fence?: Record<string, unknown> | undefined; notices?: unknown[] | undefined; fix?: unknown; why?: string | undefined; reason?: string | undefined; write_error?: \"writer_lock_unavailable\" | \"writer_pool_capacity\" | \"owner_unavailable\" | \"recovery_required\" | \"queue_capacity\" | \"write_quota_exhausted\" | \"write_quota_insufficient\" | \"write_capacity_backpressure\" | \"revision_required\" | \"revision_conflict\" | \"idempotency_conflict\" | \"source_changed\" | \"write_pending\" | \"storage_error\" | \"cancelled\" | \"permission_denied\" | \"scope_denied\" | \"invalid_params\" | \"not_found\" | \"page_not_found\" | \"page_identity_changed\" | \"write_claim_lost\" | \"request_too_large\" | \"response_too_large\" | \"writer_registration_required\" | \"writer_identity_invalid\" | \"writer_not_initialized\" | \"writer_coordinator_required\" | \"fact_already_expired\" | \"source_writeback_required\" | \"unsupported_mutation_protocol\" | \"writer_upgrade_required\" | \"writer_not_quiesced\" | \"skill_bundle_required\" | \"take_row_collision\" | \"invalid_source_uri\" | \"writer_admin_locked\" | \"connector_account_changed\" | \"connector_intent_outdated\" | \"checkpoint_validation_timeout\" | \"invalid_connector_text\" | \"connector_holds_exhausted\" | \"connector_fence_below_timeline\" | \"core_budget_exceeded\" | \"core_mark_owner_only\" | \"core_remote_edit_refused\" | \"core_delete_owner_only\" | \"timeline_rows_would_be_removed\" | \"purged_content\" | \"preparation_stalled\" | \"fence_unrenderable\" | \"page_body_segmented\" | \"write_outcome_unknown\" | \"write_interrupted\" | undefined; write_request?: WriteReceipt | undefined; error: ErrorCode; code: string; message: string; suggestion: string | undefined; docs: string | undefined; detail: string | undefined; protocol_version: number | undefined; }",
           "why?: string | undefined",
           "withdrawn?: WithdrawnDetail | undefined",
-          "writeError?: \"writer_lock_unavailable\" | \"writer_pool_capacity\" | \"owner_unavailable\" | \"recovery_required\" | \"queue_capacity\" | \"write_quota_exhausted\" | \"write_quota_insufficient\" | \"write_capacity_backpressure\" | \"revision_required\" | \"revision_conflict\" | \"idempotency_conflict\" | \"source_changed\" | \"write_pending\" | \"storage_error\" | \"cancelled\" | \"permission_denied\" | \"scope_denied\" | \"invalid_params\" | \"not_found\" | \"page_not_found\" | \"page_identity_changed\" | \"write_claim_lost\" | \"request_too_large\" | \"response_too_large\" | \"writer_registration_required\" | \"writer_identity_invalid\" | \"writer_not_initialized\" | \"writer_coordinator_required\" | \"fact_already_expired\" | \"source_writeback_required\" | \"unsupported_mutation_protocol\" | \"writer_upgrade_required\" | \"writer_not_quiesced\" | \"skill_bundle_required\" | \"take_row_collision\" | \"invalid_source_uri\" | \"writer_admin_locked\" | \"connector_account_changed\" | \"connector_intent_outdated\" | \"checkpoint_validation_timeout\" | \"invalid_connector_text\" | \"connector_holds_exhausted\" | \"connector_fence_below_timeline\" | \"core_budget_exceeded\" | \"core_mark_owner_only\" | \"core_remote_edit_refused\" | \"core_delete_owner_only\" | \"timeline_rows_would_be_removed\" | \"purged_content\" | \"preparation_stalled\" | \"fence_unrenderable\" | \"page_body_segmented\" | \"write_outcome_unknown\" | undefined",
+          "writeError?: \"writer_lock_unavailable\" | \"writer_pool_capacity\" | \"owner_unavailable\" | \"recovery_required\" | \"queue_capacity\" | \"write_quota_exhausted\" | \"write_quota_insufficient\" | \"write_capacity_backpressure\" | \"revision_required\" | \"revision_conflict\" | \"idempotency_conflict\" | \"source_changed\" | \"write_pending\" | \"storage_error\" | \"cancelled\" | \"permission_denied\" | \"scope_denied\" | \"invalid_params\" | \"not_found\" | \"page_not_found\" | \"page_identity_changed\" | \"write_claim_lost\" | \"request_too_large\" | \"response_too_large\" | \"writer_registration_required\" | \"writer_identity_invalid\" | \"writer_not_initialized\" | \"writer_coordinator_required\" | \"fact_already_expired\" | \"source_writeback_required\" | \"unsupported_mutation_protocol\" | \"writer_upgrade_required\" | \"writer_not_quiesced\" | \"skill_bundle_required\" | \"take_row_collision\" | \"invalid_source_uri\" | \"writer_admin_locked\" | \"connector_account_changed\" | \"connector_intent_outdated\" | \"checkpoint_validation_timeout\" | \"invalid_connector_text\" | \"connector_holds_exhausted\" | \"connector_fence_below_timeline\" | \"core_budget_exceeded\" | \"core_mark_owner_only\" | \"core_remote_edit_refused\" | \"core_delete_owner_only\" | \"timeline_rows_would_be_removed\" | \"purged_content\" | \"preparation_stalled\" | \"fence_unrenderable\" | \"page_body_segmented\" | \"write_outcome_unknown\" | \"write_interrupted\" | undefined",
           "writeRequest?: WriteReceipt | undefined"
         ],
         "name": "OperationError",
@@ -6623,7 +6624,7 @@
           "countKeywordPages: (query: string, opts?: SearchOpts & { timeoutMs?: number; }) => Promise<number>",
           "countStaleChunks: (opts?: { sourceId?: string; signature?: string; includeNullSignature?: boolean; }) => Promise<number>",
           "countStaleFrontmatterKeyPages: (opts: { sourceIds: string[]; }) => Promise<{ source_id: string; n: number; }[]>",
-          "countStalePagesForExtraction: (opts?: { sourceId?: string; versionTs?: string; attendance?: \"exclude\" | \"blocked\"; }) => Promise<number>",
+          "countStalePagesForExtraction: (opts?: { sourceId?: string; versionTs?: string; attendance?: \"exclude\" | \"blocked\"; held?: \"exclude\" | \"only\"; }) => Promise<number>",
           "countStaleTakes: (opts?: StaleTakeOpts) => Promise<number>",
           "countUnconsolidatedFacts: (source_id: string) => Promise<number>",
           "createSegmentedPageShell: (slug: string, meta: SegmentedPageMeta, opts: { sourceId: string; }) => Promise<{ id: number; }>",
@@ -6716,7 +6717,7 @@
           "listPrefixSampledPages: (opts: DomainBankSampleOpts) => Promise<DomainBankRow[]>",
           "listStaleChunks: (opts?: { batchSize?: number; afterPageId?: number; afterChunkIndex?: number; sourceId?: string; orderBy?: \"page_id\" | \"updated_desc\"; afterUpdatedAt?: string | null; }) => Promise<StaleChunkRow[]>",
           "listStaleFrontmatterKeyPages: (opts: { sourceId: string; afterId: number; limit: number; }) => Promise<{ id: number; slug: string; keys: string[]; }[]>",
-          "listStalePagesForExtraction: (opts: { batchSize: number; afterPageId?: number; sourceId?: string; versionTs?: string; }) => Promise<StalePageRow[]>",
+          "listStalePagesForExtraction: (opts: { batchSize: number; afterPageId?: number; sourceId?: string; versionTs?: string; held?: \"exclude\"; }) => Promise<StalePageRow[]>",
           "listStaleTakes: (opts?: StaleTakeOpts) => Promise<StaleTakeRow[]>",
           "listSupersessions: (source_id: string, opts?: { since?: Date; limit?: number; visibility?: (\"private\" | \"world\")[]; eligibility?: FactListOpts[\"eligibility\"]; excludePrivate?: boolean; }) => Promise<FactRow[]>",
           "listTakes: (opts?: TakesListOpts) => Promise<Take[]>",
@@ -6762,7 +6763,7 @@
           "private getBulkRetryOpts",
           "private vectorIterativeScan",
           "private vectorScope",
-          "purgeDeletedPages: (olderThanHours: number, opts?: { dryRun?: boolean; }) => Promise<{ slugs: string[]; count: number; pages?: { slug: string; deleted_at: Date; }[]; }>",
+          "purgeDeletedPages: (olderThanHours: number, opts?: { dryRun?: boolean; excludeIds?: number[]; }) => Promise<{ slugs: string[]; count: number; pages?: { slug: string; deleted_at: Date; }[]; }>",
           "putContradictionCacheEntry: (opts: { chunk_a_hash: string; chunk_b_hash: string; model_id: string; prompt_version: string; truncation_policy: string; verdict: Record<string, unknown>; ttl_seconds?: number; }) => Promise<void>",
           "putDreamVerdict: (filePath: string, contentHash: string, verdict: DreamVerdictInput) => Promise<void>",
           "putPage: (slug: string, page: PageInput, opts?: PageWriteOptions) => Promise<Page>",
@@ -6932,6 +6933,46 @@
     ],
     "./pglite-lock": [
       {
+        "kind": "variable",
+        "name": "LEGACY_UNVERIFIED_WHY",
+        "signature": [
+          "Readonly<Record<LegacyUnverifiedReason, string>>"
+        ]
+      },
+      {
+        "kind": "class",
+        "members": [
+          "cause?: unknown",
+          "message: string",
+          "name: string",
+          "readonly code: \"pglite_busy\"",
+          "readonly dataDir: string",
+          "readonly fix: Action",
+          "readonly legacyPid: number | null",
+          "readonly retryable: false",
+          "readonly why: string",
+          "reason: \"timeout\" | \"live_serve\" | \"legacy_owner_unverified\"",
+          "stack?: string | undefined"
+        ],
+        "name": "LegacyOwnerUnverifiedError",
+        "signature": [
+          "new (dataDir: string, legacyPid: number | null, why: string) => LegacyOwnerUnverifiedError"
+        ],
+        "statics": [
+          "captureStackTrace: { (targetObject: object, constructorOpt?: Function): void; (targetObject: object, constructorOpt?: Function): void; (targetObject: object, constructorOpt?: Function): void; }",
+          "isError: { (error: unknown): error is Error; (value: unknown): value is Error; (value: unknown): value is Error; }",
+          "prepareStackTrace: (err: Error, stackTraces: NodeJS.CallSite[]) => any",
+          "stackTraceLimit: number"
+        ]
+      },
+      {
+        "kind": "type",
+        "name": "LegacyUnverifiedReason",
+        "signature": [
+          "\"metadata_unreadable\" | \"metadata_missing\" | \"no_pid\" | \"namespace_unverified\""
+        ]
+      },
+      {
         "kind": "class",
         "members": [
           "cause?: unknown",
@@ -6940,8 +6981,8 @@
           "readonly code: \"pglite_busy\"",
           "readonly ownerPid?: number | undefined",
           "readonly ownerTransport?: \"stdio\" | \"http\" | undefined",
-          "readonly retryable: true",
-          "reason: \"timeout\" | \"live_serve\"",
+          "readonly retryable: boolean",
+          "reason: \"timeout\" | \"live_serve\" | \"legacy_owner_unverified\"",
           "stack?: string | undefined"
         ],
         "name": "LiveServeLockError",
@@ -6982,6 +7023,22 @@
       {
         "kind": "interface",
         "members": [
+          "acquired_at?: number | undefined",
+          "argv?: string[] | undefined",
+          "boot_id?: string | null | undefined",
+          "command?: string | undefined",
+          "owner_token?: string | undefined",
+          "pid?: number | undefined",
+          "pid_ns?: string | null | undefined",
+          "protocol?: string | undefined",
+          "refreshed_at?: number | undefined",
+          "subcommand?: string | undefined"
+        ],
+        "name": "LockMetadata"
+      },
+      {
+        "kind": "interface",
+        "members": [
           "acquiredAt?: number | undefined",
           "held: boolean",
           "http?: boolean | undefined",
@@ -6991,19 +7048,26 @@
         "name": "LockPeekResult"
       },
       {
+        "kind": "variable",
+        "name": "PGLITE_LOCK_PROTOCOL",
+        "signature": [
+          "\"kernel-v1\""
+        ]
+      },
+      {
         "kind": "class",
         "members": [
           "cause?: unknown",
           "message: string",
           "name: string",
           "readonly code: \"pglite_busy\"",
-          "readonly retryable: true",
-          "reason: \"timeout\" | \"live_serve\"",
+          "readonly retryable: boolean",
+          "reason: \"timeout\" | \"live_serve\" | \"legacy_owner_unverified\"",
           "stack?: string | undefined"
         ],
         "name": "PgliteBusyError",
         "signature": [
-          "new (message: string, reason?: \"timeout\" | \"live_serve\") => PgliteBusyError"
+          "new (message: string, reason?: \"timeout\" | \"live_serve\" | \"legacy_owner_unverified\") => PgliteBusyError"
         ],
         "statics": [
           "captureStackTrace: { (targetObject: object, constructorOpt?: Function): void; (targetObject: object, constructorOpt?: Function): void; (targetObject: object, constructorOpt?: Function): void; }",
@@ -7070,6 +7134,13 @@
       },
       {
         "kind": "function",
+        "name": "legacyOwnerUnverified",
+        "signature": [
+          "(metadata: LockMetadata | null, lockDir: string) => LegacyUnverifiedReason | null"
+        ]
+      },
+      {
+        "kind": "function",
         "name": "msSinceLastReap",
         "signature": [
           "(dataDir: string | undefined) => number | null"
@@ -7105,9 +7176,23 @@
       },
       {
         "kind": "function",
+        "name": "readMetadata",
+        "signature": [
+          "(lockDir: string) => LockMetadata | null"
+        ]
+      },
+      {
+        "kind": "function",
         "name": "readPidNs",
         "signature": [
           "() => string | null"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "readProcessArgs",
+        "signature": [
+          "(pid: number, deps?: ProcessCommandProbeDeps) => string | null"
         ]
       },
       {

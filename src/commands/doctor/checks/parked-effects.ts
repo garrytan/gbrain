@@ -67,7 +67,7 @@ export async function checkParkedEffects(engine: BrainEngine, sourceIds?: string
     const listed = effects.map(effect => `${effect.kind} ${effect.source_id}: ${effect.parked.map(target =>
       `${target.slug ?? '(whole effect)'} (${target.error_code})`).join(', ')}; ${'exit' in effect ? effect.exit : effect.command}`);
     return { name: 'parked_effects', status: 'warn', details,
-      message: `${count} Git or withdrawal effect(s) have parked targets after five consecutive failures; their withdrawal or Git backup is incomplete. ` +
+      message: `${count} Git, withdrawal or embedding effect(s) have parked targets after repeated failures; their withdrawal, Git backup or vectors are incomplete. ` +
         `Inspect \`gbrain sources writer status <source>\`, fix the cause, preview with the command shown, then rerun it without --dry-run to authorize one more attempt: ${listed.join(' | ')}` +
         (count > rows.length ? ` (first ${rows.length} of ${count} shown)` : '') +
         (effects.some(effect => effect.parked.some(target => target.error_code === 'git_target_pending'))

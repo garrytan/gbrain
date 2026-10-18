@@ -162,6 +162,7 @@ import { searchKeywordCJK } from './engine-sql/cjk-search.ts';
 import * as titlesImpl from './engine-sql/titles.ts';
 import * as keywordPagesImpl from './engine-sql/keyword-pages.ts';
 import { applyForwardReferenceBootstrap, pgliteBootstrapTarget } from './engine-sql/bootstrap.ts';
+import { wellFormedJson } from './text-safe.ts';
 
 /**
  * #4284 — opt-in out-of-band watchdog for a PGLite disconnect with a live
@@ -1295,7 +1296,7 @@ export class PGLiteEngine implements BrainEngine {
 
   async purgeDeletedPages(
     olderThanHours: number,
-    opts?: { dryRun?: boolean },
+    opts?: { dryRun?: boolean; excludeIds?: number[] },
   ): Promise<{ slugs: string[]; count: number; pages?: { slug: string; deleted_at: Date }[] }> {
     return pagesImpl.purgeDeletedPages(this.engineSql, olderThanHours, opts);
   }
@@ -1884,7 +1885,7 @@ export class PGLiteEngine implements BrainEngine {
     return chunksImpl.deleteChunks(this.engineSql, slug, opts);
   }
 
-  async countStalePagesForExtraction(opts?: { sourceId?: string; versionTs?: string; attendance?: 'exclude' | 'blocked' }): Promise<number> {
+  async countStalePagesForExtraction(opts?: { sourceId?: string; versionTs?: string; attendance?: 'exclude' | 'blocked'; held?: 'exclude' | 'only' }): Promise<number> {
     return pagesImpl.countStalePagesForExtraction(scopedRead(this.engineSql), opts);
   }
 
@@ -1893,6 +1894,7 @@ export class PGLiteEngine implements BrainEngine {
     afterPageId?: number;
     sourceId?: string;
     versionTs?: string;
+    held?: 'exclude';
   }): Promise<StalePageRow[]> {
     return pagesImpl.listStalePagesForExtraction(scopedRead(this.engineSql), opts);
   }
@@ -2377,6 +2379,7 @@ export class PGLiteEngine implements BrainEngine {
   }
 
   async putDreamVerdict(filePath: string, contentHash: string, verdict: DreamVerdictInput): Promise<void> {
+    verdict = wellFormedJson(verdict);
     // $N::jsonb + JSON.stringify is legal ONLY on PGLite (its db.query parses
     // text→jsonb natively); the postgres.js twin must use sql.json().
     // Expiry is computed server-side (now() + TTL) so it lives on the same

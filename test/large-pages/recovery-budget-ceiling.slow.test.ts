@@ -7,8 +7,10 @@
  *    restore reserves the file twice (its staging file and the file), over 256 MiB for both pages; with
  *    `persistence.limits.worktree_recovery_bytes` configured to that old default the restore refuses with
  *    `request_too_large` before touching anything (the page stays deleted, no file or staging appears, nothing stays
- *    reserved).
- * 2. Fails when: the default budget stays 256 MiB (the restore refuses), or a configured budget is overridden.
+ *    reserved). With `pages.segmented_storage` turned off after the page is stored, the default still holds it (it
+ *    follows the largest stored segmented page), so it deletes and restores byte for byte again.
+ * 2. Fails when: the default budget stays 256 MiB (the restore refuses), follows the switch alone (the restore after
+ *    off refuses), or a configured budget is overridden.
  * 3. Existing coverage: segmented-delete-restore-file.slow.test.ts deletes and restores 27 and 90 MiB pages, within the
  *    old budget; recovery-budget-default.test.ts pins the default's arithmetic.
  * 4. Runs on PGLite, and on Postgres when DATABASE_URL is set.
@@ -130,6 +132,17 @@ async function roundTrip(engine: BrainEngine): Promise<void> {
     expect(statSync(file).size).toBe(original.size);
     expect(fileSha(file)).toBe(original.sha);
     expect(stagingLeft(f)).toEqual([]);
+
+    // Switched off after the page was stored: the default budget still follows the stored page, so it deletes and
+    // restores byte for byte (the default used to follow the switch alone and refuse the restore).
+    await engine.setConfig('pages.segmented_storage', 'off');
+    expect(await submit(engine, f, 'delete_page', slug)).toMatchObject({ status: 'soft_deleted', noop: false });
+    const afterOff = await submit(engine, f, 'restore_page', slug).catch((error: Error & { code?: string }) => ({ refused: error.code, message: error.message }));
+    expect(afterOff).toMatchObject({ status: 'restored', noop: false });
+    expect(statSync(file).size).toBe(original.size);
+    expect(fileSha(file)).toBe(original.sha);
+    expect(stagingLeft(f)).toEqual([]);
+    await engine.setConfig('pages.segmented_storage', 'on');
 
     expect(await submit(engine, f, 'delete_page', slug, { purge: true })).toMatchObject({ status: 'purged' });
     expect(existsSync(file)).toBe(false);

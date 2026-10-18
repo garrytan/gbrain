@@ -58,6 +58,7 @@ import { matchingCloseBracket } from '../llm-json.ts';
 import { TAKE_KIND_VALUES } from '../takes-fence.ts';
 import { attributionChecksEnabled } from './attribution-checks.ts';
 import { downgradeAssistantOnlyHolders } from './propose-takes-attribution.ts';
+import { ProposeTakesFailures, PROPOSE_TAKES_HOLD_RUNS, type FailedPage } from './propose-takes-failures.ts';
 import type { OperationContext } from '../operations.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { PhaseStatus, CyclePhase } from '../cycle.ts';
@@ -271,6 +272,12 @@ export interface ProposeTakesResult {
   llm_calls_succeeded: number;
   /** Extractor calls that threw (global or per-page alike). */
   llm_calls_failed: number;
+  /** GBRA-130 A-25: every page whose extractor call failed this run, with its counted attempts; a `held` page got a failure tombstone. */
+  failed_pages: FailedPage[];
+  /** Failure tombstones written this run (pages held after PROPOSE_TAKES_HOLD_RUNS counted runs failing the same way). */
+  failure_tombstones_written: number;
+  /** Set when most fresh pages failed (item_failures_systemic): this run's failures were recorded but not counted. */
+  systemic?: { code: string; message: string };
   warnings: string[];
 }
 
@@ -909,6 +916,8 @@ class ProposeTakesPhase extends BaseCyclePhase {
       budget_exhausted: false,
       llm_calls_succeeded: 0,
       llm_calls_failed: 0,
+      failed_pages: [],
+      failure_tombstones_written: 0,
       warnings: callTimeout.warning ? [callTimeout.warning] : [],
       deadline_hit: false,
     };
@@ -927,7 +936,12 @@ class ProposeTakesPhase extends BaseCyclePhase {
     }
 
     // Load pages eligible for proposal. Source-scoped per BaseCyclePhase; #5213 types narrow it.
-    const pages = await listCandidatePages(engine, scope, pageLimit, await proposeTakesTypes(engine));
+    // GBRA-130 A-25: a page that failed before at this content hash and prompt
+    // version is retried after the fresh pages, so failing pages at the head of
+    // the list cannot halt the run before the rest are tried.
+    const listed = await listCandidatePages(engine, scope, pageLimit, await proposeTakesTypes(engine));
+    const failures = await ProposeTakesFailures.load(engine, listed.map(page => page.source_id ?? scope.sourceId ?? 'default'), promptVersion);
+    const pages = failures.order(listed, page => [page.source_id ?? scope.sourceId ?? 'default', contentHash(page.compiled_truth ?? '')]);
 
     if (opts.reporter) {
       opts.reporter.start('propose_takes.pages' as never, pages.length);
@@ -1011,6 +1025,10 @@ class ProposeTakesPhase extends BaseCyclePhase {
           attributionRules, dateGrounding,
         });
       } catch (err) {
+        // GBRA-130: a run-scoped error (abort, lost connection, failed
+        // transaction) stops the phase and records nothing. Every failure feeds
+        // the breaker except a recorded page repeating its content-class code.
+        failures.fail(sourceId, page.slug, ch, err);
         result.llm_calls_failed += 1;
         const msg = err instanceof Error ? err.message : String(err);
         const detail = `extractor failed on ${page.slug}: ${msg}`;
@@ -1028,9 +1046,12 @@ class ProposeTakesPhase extends BaseCyclePhase {
         // Halt instead of spending an LLM call on every remaining page. A
         // single success anywhere in the run keeps llm_calls_succeeded > 0
         // and permanently disarms this halt (mixed runs are per-page noise).
+        // GBRA-130 A-25: a recorded page repeating its content-class code is the
+        // expected outcome and does not count; a transient or provider failure
+        // always does, so an outage halts even on pages that failed before.
         if (
           result.llm_calls_succeeded === 0 &&
-          result.llm_calls_failed >= EXTRACTOR_FAILURE_HALT_STREAK
+          failures.freshFailures >= EXTRACTOR_FAILURE_HALT_STREAK
         ) {
           result.aborted_failure_streak = true;
           result.warnings.push(
@@ -1043,6 +1064,7 @@ class ProposeTakesPhase extends BaseCyclePhase {
         continue;
       }
       result.llm_calls_succeeded += 1;
+      failures.succeed(sourceId, page.slug, ch);
       llmHalt.reset();
       if (attributionChecks) proposals = downgradeAssistantOnlyHolders(proposals, body);
 
@@ -1117,53 +1139,17 @@ class ProposeTakesPhase extends BaseCyclePhase {
 
     if (opts.reporter) opts.reporter.finish();
 
-    // v0.42 Wave B3: receipt + rollup for propose_takes. Source-scoped
-    // via the read scope. Receipt only when proposals actually written.
-    const sourceIdForReceipt = scope.sourceId ?? 'default';
-    // Managed brains skip the receipt page (a legacy putPage the coordinator
-    // refuses), like extract_atoms and synthesize_concepts; the rollup stays.
-    if (result.proposals_inserted > 0 && !await managedPersistenceEnabled(engine)) {
-      try {
-        await writeReceipt(engine, {
-          kind: 'takes.proposed',
-          source_id: sourceIdForReceipt,
-          run_id: proposalRunId,
-          round: 'single',
-          extracted_at: new Date().toISOString(),
-          total_rows: result.proposals_inserted,
-          cost_usd: 0, // tracker isn't exposed at this layer; cost tracked centrally
-          summary:
-            `Proposed ${result.proposals_inserted} new takes from ${result.pages_scanned} pages ` +
-            `(${result.cache_hits} cached).`,
-        });
-      } catch (err) {
-        console.error(`[propose_takes] receipt write failed: ${(err as Error).message}`);
-      }
-    }
-    // #4482: three-way stop classification. A budget/deadline cap is the
-    // extractor working as designed (partial progress banked; the rest
-    // drains over future runs) — recorded as expected_limit_delta, a
-    // capacity signal doctor's failure rate excludes. A global-error abort
-    // (#3044) or an all-failures streak (#3763) is a REAL halt, unchanged
-    // from today. An error alongside a cap counts as the error.
-    // `halted` (any incomplete round, caps included) is kept for the phase
-    // result's status/details below — the diagnostic split is rollup-only.
-    const halted =
-      result.budget_exhausted ||
-      result.deadline_hit === true ||
-      result.aborted_global_error !== undefined ||
-      result.aborted_failure_streak === true;
-    await upsertExtractRollup(engine, {
-      kind: 'takes.proposed',
-      source_id: sourceIdForReceipt,
-      ...classifyRunStop({
-        budget_exhausted: result.budget_exhausted === true,
-        deadline_hit: result.deadline_hit === true,
-        error:
-          result.aborted_global_error !== undefined ? providerHaltReason(result.aborted_global_error) ?? 'item_error'
-            : result.aborted_failure_streak === true ? 'item_error' : false,
-      }),
-    });
+    // GBRA-130 A-25: fold this run into the failure ledgers. A page failing the
+    // same content-class way in PROPOSE_TAKES_HOLD_RUNS counted runs gets a
+    // failure tombstone (the idempotency check then skips it until its content
+    // or the prompt version changes); a systemic run or a whole-run LLM halt
+    // counts nothing.
+    const settled = await failures.settle(engine, { counted: result.aborted_global_error === undefined, proposalRunId, modelId });
+    result.failed_pages = settled.failed;
+    result.failure_tombstones_written = settled.tombstones;
+    if (settled.systemic) result.systemic = settled.systemic;
+
+    const halted = await recordProposeTakesRun(engine, result, scope.sourceId ?? 'default', proposalRunId);
 
     // Status folds warnings in (the extract_facts precedent from #1928): a
     // run with swallowed per-page failures must not read as a clean 'ok'.
@@ -1181,6 +1167,9 @@ class ProposeTakesPhase extends BaseCyclePhase {
     return {
       summary:
         `propose_takes: scanned ${result.pages_scanned} pages, ${result.cache_hits} cached, ${result.proposals_inserted} new proposals, ${result.tombstones_written} empty (run ${proposalRunId})` +
+        (result.failure_tombstones_written > 0
+          ? `; ${result.failure_tombstones_written} page(s) held after ${PROPOSE_TAKES_HOLD_RUNS} failed runs (gbrain takes propose --failed)`
+          : '') +
         (result.aborted_global_error
           ? `; aborted on ${result.aborted_global_error} error after ${result.pages_scanned} page(s)`
           : '') +
@@ -1192,6 +1181,57 @@ class ProposeTakesPhase extends BaseCyclePhase {
       status: phaseFailed ? 'fail' : halted || warningCount > 0 ? 'warn' : 'ok',
     };
   }
+}
+
+/** The takes.proposed receipt and rollup of one run; returns whether the run halted (any cap or halt). */
+async function recordProposeTakesRun(engine: BrainEngine, result: ProposeTakesResult, sourceIdForReceipt: string, proposalRunId: string): Promise<boolean> {
+  // v0.42 Wave B3: receipt + rollup for propose_takes. Source-scoped
+  // via the read scope. Receipt only when proposals actually written.
+  // Managed brains skip the receipt page (a legacy putPage the coordinator
+  // refuses), like extract_atoms and synthesize_concepts; the rollup stays.
+  if (result.proposals_inserted > 0 && !await managedPersistenceEnabled(engine)) {
+    try {
+      await writeReceipt(engine, {
+        kind: 'takes.proposed',
+        source_id: sourceIdForReceipt,
+        run_id: proposalRunId,
+        round: 'single',
+        extracted_at: new Date().toISOString(),
+        total_rows: result.proposals_inserted,
+        cost_usd: 0, // tracker isn't exposed at this layer; cost tracked centrally
+        summary:
+          `Proposed ${result.proposals_inserted} new takes from ${result.pages_scanned} pages ` +
+          `(${result.cache_hits} cached).`,
+      });
+    } catch (err) {
+      console.error(`[propose_takes] receipt write failed: ${(err as Error).message}`);
+    }
+  }
+  // #4482: three-way stop classification. A budget/deadline cap is the
+  // extractor working as designed (partial progress banked; the rest
+  // drains over future runs) — recorded as expected_limit_delta, a
+  // capacity signal doctor's failure rate excludes. A global-error abort
+  // (#3044) or an all-failures streak (#3763) is a REAL halt, unchanged
+  // from today. An error alongside a cap counts as the error.
+  // `halted` (any incomplete round, caps included) is kept for the phase
+  // result's status/details below — the diagnostic split is rollup-only.
+  const halted =
+    result.budget_exhausted ||
+    result.deadline_hit === true ||
+    result.aborted_global_error !== undefined ||
+    result.aborted_failure_streak === true;
+  await upsertExtractRollup(engine, {
+    kind: 'takes.proposed',
+    source_id: sourceIdForReceipt,
+    ...classifyRunStop({
+      budget_exhausted: result.budget_exhausted === true,
+      deadline_hit: result.deadline_hit === true,
+      error:
+        result.aborted_global_error !== undefined ? providerHaltReason(result.aborted_global_error) ?? 'item_error'
+          : result.aborted_failure_streak === true ? 'item_error' : false,
+    }),
+  });
+  return halted;
 }
 
 /**

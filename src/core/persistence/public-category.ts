@@ -43,7 +43,7 @@ export const PUBLIC_BY_CODE: Readonly<Record<string, PublicCategory>> = {
   canonical_file_missing: 'file_missing',
   parser_regression: 'defect', outside_fence: 'defect', preparation_systemic: 'defect', drain_stalled: 'defect',
   cancelled: 'superseded', knock_on: 'superseded', run_replaced: 'superseded', knock_on_exhausted: 'superseded', cursor_incarnation_retired: 'superseded',
-  preparation_stalled: 'transient', sync_incomplete: 'transient', connection_lost: 'transient', database_contention: 'transient', write_capacity: 'transient',
+  preparation_stalled: 'transient', sync_incomplete: 'transient', connection_lost: 'transient', database_contention: 'transient', write_interrupted: 'transient', write_capacity: 'transient',
   write_capacity_backpressure: 'transient', capacity_paused: 'transient', sync_drain_lease_held: 'transient', graduation_in_progress: 'transient',
   storage_error: 'storage', recovery_required: 'storage',
   permission_denied: 'permission',

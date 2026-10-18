@@ -219,6 +219,26 @@ export function providerContentBlockReason(err: unknown): string | undefined {
   return undefined;
 }
 
+const CONTEXT_OVERFLOW_RE = /context[_ ]length|maximum context|prompt is too long|too many (?:input )?tokens|input (?:is )?too long/i;
+
+/**
+ * GBRA-130: a provider refusal of one request's own input, which fails the same
+ * way until that input changes: a content-policy block (`content_rejected`), or
+ * a 413 / a context-length 400 (`request_too_large`). A 400 without a
+ * context-length phrase can be a malformed request every call shares, so it
+ * stays unclassified.
+ */
+export function providerItemRefusal(err: unknown): 'content_rejected' | 'request_too_large' | null {
+  if (providerContentBlockReason(err)) return 'content_rejected';
+  const { status } = readProviderFailureSignals(err);
+  if (status === 413) return 'request_too_large';
+  if (status !== 400) return null;
+  for (const layer of wrappedErrorLayers(err)) {
+    if (typeof layer.message === 'string' && CONTEXT_OVERFLOW_RE.test(layer.message)) return 'request_too_large';
+  }
+  return null;
+}
+
 /** Whole-run LLM failure classes — see classifyGlobalLlmError. */
 export type GlobalLlmErrorClass = 'auth' | 'billing' | 'rate_limit' | 'model_not_found';
 
@@ -244,11 +264,11 @@ const PER_ITEM_HTTP_STATUSES = new Set([400, 408, 413, 422]);
 // EMBEDDING_QUOTA regex (which matches bare /billing/): a global-error hit
 // halts an entire cycle phase, so a stray word inside a raw-output slice
 // must not trip it. Only specific provider phrasings qualify.
-const BILLING_MESSAGE_RE =
+export const BILLING_MESSAGE_RE =
   /insufficient_quota|quota exceeded|exceeded your (?:current )?quota|credit balance is too low|spend limit|billing_not_active|billing hard limit|payment required/i;
 const AUTH_MESSAGE_RE =
   /authentication_error|permission_error|invalid (?:x-)?api[-_ ]?key|api key (?:is )?(?:invalid|expired|missing)|unauthorized/i;
-const RATE_MESSAGE_RE = /rate[-_ ]?limit(?:ed|_error)?\b|too many requests/i;
+export const RATE_MESSAGE_RE = /rate[-_ ]?limit(?:ed|_error)?\b|too many requests/i;
 // Provider phrasings for an unknown or inaccessible model: OpenAI
 // `model_not_found` / "does not exist or you do not have access" (404),
 // Anthropic `not_found_error`, and the project-level access denial OpenAI

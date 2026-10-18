@@ -195,9 +195,9 @@ for (const backend of testBackends()) {
         const untouched = async () => { expect(await liveAtoms()).toBe(30); expect(await activeFacts()).toBe(0); };
         const previews = { 'accepted-takes': 'gbrain repair accepted-takes', 'google-file-modes': 'gbrain repair google-file-modes', 'stale-atoms': 'gbrain repair stale-atoms', 'extractor-facts': 'gbrain repair extractor-facts',
           'conversation-labels': 'gbrain repair conversation-labels', 'captured-facts': 'gbrain repair captured-facts', 'loop-facts': 'gbrain repair loop-facts', 'ontology-facts': 'gbrain repair ontology-facts', 'facts-rehome': 'gbrain repair facts-rehome', 'orphan-children': 'gbrain repair orphan-children', 'failed-writes': 'gbrain repair failed-writes', 'split-facts': 'gbrain repair split-facts',
-          frontmatter: 'gbrain repair frontmatter', 'timeline-comments': 'gbrain repair timeline-comments', 'managed-sync-orphans': 'gbrain repair managed-sync-orphans', 'frontmatter-keys': 'gbrain repair frontmatter-keys', 'file-drift': 'gbrain repair file-drift',
+          frontmatter: 'gbrain repair frontmatter', 'timeline-comments': 'gbrain repair timeline-comments', 'managed-sync-orphans': 'gbrain repair managed-sync-orphans', 'content-receipt-root': 'gbrain repair content-receipt-root', 'frontmatter-keys': 'gbrain repair frontmatter-keys', 'file-drift': 'gbrain repair file-drift',
           'stuck-recovery': 'gbrain repair stuck-recovery', 'ghost-pages': 'gbrain repair ghost-pages', 'origin-twins': 'gbrain repair origin-twins', 'receipt-compaction': 'gbrain repair receipt-compaction', aliases: 'gbrain repair aliases', 'rename-identity': 'gbrain repair rename-identity',
-          'overwritten-edits': 'gbrain repair overwritten-edits', 'missing-tables': 'gbrain repair missing-tables' };
+          'overwritten-edits': 'gbrain repair overwritten-edits', 'missing-tables': 'gbrain repair missing-tables', 'url-clone-fences': 'gbrain repair url-clone-fences' };
 
         // The post-upgrade banner names both findings with the kind's read-only preview.
         const banner = await postUpgradeRecoveryBanner(engine, 'host');

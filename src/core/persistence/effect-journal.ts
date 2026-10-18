@@ -6,7 +6,7 @@ import { opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import type { PreparedMutation } from './coordinator.ts';
 import { fileContentHash } from './large-file.ts';
-import { PARK_AFTER_FAILURES, REMOTE_AUTO_LINKS_KEY, REMOTE_MENTION_OPERATIONS, type EffectKind, type PersistenceEffect, type EffectRequest } from './effect-model.ts';
+import { PARK_AFTER_FAILURES, REMOTE_AUTO_LINKS_KEY, REMOTE_MENTION_OPERATIONS, WITHHELD_BY_MIRROR, type EffectKind, type PersistenceEffect, type EffectRequest } from './effect-model.ts';
 import type { SqlEngine, WriteRequest } from './model.ts';
 import { recordChronicleDecision } from '../chronicle/ledger.ts';
 import { isFactsExtractionEnabled } from '../facts/extract.ts';
@@ -134,7 +134,7 @@ export async function claimPersistenceEffect(engine: BrainEngine, hostId: string
       AND NOT EXISTS (SELECT 1 FROM persistence_requests blocked
         WHERE blocked.worktree_id=e.worktree_id AND blocked.recovery IS NOT NULL)
       AND (e.kind='withdrawal-mirror' OR NOT EXISTS (SELECT 1 FROM persistence_effects mirror
-        WHERE mirror.request_id=e.request_id AND mirror.kind='withdrawal-mirror' AND mirror.state<>'committed'))
+        WHERE mirror.request_id=e.request_id AND mirror.kind='withdrawal-mirror' AND mirror.state IN ('queued','running')))
       ORDER BY e.next_attempt_at,e.id LIMIT 1 FOR UPDATE OF e SKIP LOCKED`, [hostId]);
     if (!candidate) return null;
     const [claimed] = await tx.executeRaw<PersistenceEffect>(`UPDATE persistence_effects SET state='running',execution_token=$2::uuid,
@@ -147,6 +147,76 @@ export async function claimPersistenceEffect(engine: BrainEngine, hostId: string
 export function singleFileGitEffect(effect: PersistenceEffect): boolean {
   return effect.kind === 'git' && typeof effect.data.relative_path === 'string' && effect.data.version === undefined
     && !effect.data.source_scan && effect.data.targets === undefined;
+}
+
+/**
+ * GBRA-130 A-12: what a request's withdrawal mirror proves about its pages, read
+ * when a Git or embedding attempt executes. `pending`: the mirror is queued or
+ * running (a retry-effects requeue lands between the claim and the attempt), so
+ * the attempt waits. `published`: pages whose file the mirror rewrote (its
+ * recovery records each one, `data.published`); a cursor position is no proof,
+ * since the mirror also passes pages it skipped or found without a file.
+ * `passed`: pages the mirror moved past without parking or awaiting a retry; it
+ * never revisits them. `files`: the hash of the bytes the mirror wrote to each
+ * published page's file and the revision it rendered (`data.published_files`).
+ */
+export interface MirrorGate { state: 'pending' | 'failed' | 'committed'; published: Set<string>; passed: Set<string>; files: Map<string, { hash: string; revision: string }> }
+
+/**
+ * Per request id, the gate of its withdrawal mirror: every mirror that has not
+ * committed, and a committed one that recorded its publications. A request
+ * without such a mirror is absent and its work is unrestricted.
+ */
+export async function mirrorGates(engine: SqlEngine, requestIds: readonly string[]): Promise<Map<string, MirrorGate>> {
+  if (!requestIds.length) return new Map();
+  const rows = await engine.executeRaw<{ request_id: string; state: PersistenceEffect['state']; data: PersistenceEffect['data'] }>(
+    `SELECT request_id::text AS request_id,state,data FROM persistence_effects WHERE kind='withdrawal-mirror' AND (state<>'committed' OR data ? 'published')
+      AND request_id=ANY($1::uuid[])`, [[...new Set(requestIds)]]);
+  return new Map(rows.map(({ request_id, state, data }) => {
+    const after = data.after_slug;
+    const unfinished = new Set([...(data.parked ?? []).flatMap(entry => entry.slug ? [entry.slug] : []), ...(data.retry_slugs ?? [])]);
+    const passed = (data.targets ?? []).filter(target => after !== undefined && target.slug <= after && !unfinished.has(target.slug)).map(target => target.slug);
+    return [request_id, { state: state === 'queued' || state === 'running' ? 'pending' : state, published: new Set(data.published ?? []), passed: new Set(passed),
+      files: new Map(Object.entries(data.published_files ?? {})) }];
+  }));
+}
+
+/**
+ * GBRA-130 A-12: once a request's withdrawal mirror has committed, the Git and
+ * embedding targets parked behind it (`withdrawal_mirror_failed`) get another
+ * attempt with no operator retry: a scan revisits them first
+ * (`data.retry_slugs`), a single-target effect runs again. Other parked targets
+ * stay parked, and a claimed effect is left to its claim. The mirror's commit
+ * calls this in its own transaction; each effect pass calls it again for the
+ * requests it touched, for a park that settled after a concurrent mirror commit.
+ */
+const REARMABLE = `e.request_id=ANY($1::uuid[])
+    AND e.kind IN ('git','embedding') AND e.state IN ('queued','failed') AND e.execution_token IS NULL AND e.recovery IS NULL
+    AND EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(e.data->'parked','[]'::jsonb)) AS p(target) WHERE p.target->>'error_code'=$2)
+    AND EXISTS (SELECT 1 FROM persistence_effects m WHERE m.request_id=e.request_id AND m.kind='withdrawal-mirror' AND m.state='committed')`;
+
+/** Whether any of these requests has a target rearmWithheldTargets would re-arm; a pass opens its re-arm transaction only then. */
+export async function hasRearmableTargets(engine: SqlEngine, requestIds: readonly string[]): Promise<boolean> {
+  if (!requestIds.length) return false;
+  return (await engine.executeRaw(`SELECT 1 FROM persistence_effects e WHERE ${REARMABLE} LIMIT 1`, [[...new Set(requestIds)], WITHHELD_BY_MIRROR])).length > 0;
+}
+
+export async function rearmWithheldTargets(engine: SqlEngine, requestIds: readonly string[]): Promise<number> {
+  if (!requestIds.length) return 0;
+  const rows = await engine.executeRaw<PersistenceEffect>(`SELECT e.* FROM persistence_effects e WHERE ${REARMABLE}
+    ORDER BY e.id FOR UPDATE OF e SKIP LOCKED`, [[...new Set(requestIds)], WITHHELD_BY_MIRROR]);
+  for (const effect of rows) {
+    const { parked = [], ...data } = effect.data;
+    const kept = parked.filter(entry => entry.error_code !== WITHHELD_BY_MIRROR);
+    const scanning = data.targets !== undefined || data.source_scan === true;
+    const slugs = scanning ? parked.flatMap(entry => entry.error_code === WITHHELD_BY_MIRROR && entry.slug ? [entry.slug] : []) : [];
+    const retrying = [...new Set([...(data.retry_slugs ?? []), ...slugs])];
+    await engine.executeRaw(`UPDATE persistence_effects SET state='queued',data=$2::text::jsonb,error_code=NULL,claim_expires_at=NULL,
+      next_attempt_at=now(),updated_at=now() WHERE id=$1 AND execution_token IS NULL AND recovery IS NULL AND ${PERSISTENCE_PROTOCOL_PREDICATE}`,
+    [effect.id, JSON.stringify({ ...data, ...(kept.length ? { parked: kept } : {}), ...(retrying.length ? { retry_slugs: retrying } : {}),
+      ...(effect.kind === 'embedding' ? { embedding_attempt_base: effect.attempts } : {}) })]);
+  }
+  return rows.length;
 }
 
 /**
@@ -171,7 +241,7 @@ export async function claimCoalescedGitEffects(engine: BrainEngine, hostId: stri
       AND (e.state='queued' OR e.state='running' AND e.claim_expires_at<now()) AND e.next_attempt_at<=now()
       AND e.recovery IS NULL
       AND NOT EXISTS (SELECT 1 FROM persistence_effects mirror
-        WHERE mirror.request_id=e.request_id AND mirror.kind='withdrawal-mirror' AND mirror.state<>'committed')
+        WHERE mirror.request_id=e.request_id AND mirror.kind='withdrawal-mirror' AND mirror.state IN ('queued','running'))
       ORDER BY e.next_attempt_at,e.id LIMIT $3 FOR UPDATE OF e SKIP LOCKED)
       UPDATE persistence_effects p SET state='running',execution_token=gen_random_uuid(),
       claim_expires_at=now()+interval '2 minutes',attempts=attempts+1,updated_at=now()
@@ -204,6 +274,29 @@ export async function releaseAbandonedClaims(engine: BrainEngine, processStarted
     WHERE state='running' AND recovery IS NULL AND publication_started=false AND updated_at<$1::timestamptz
     AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING id`, [processStartedAt.toISOString(), chargePreparing]);
   return effects.length + requests.length;
+}
+
+/** @internal Claim renewals made between the pieces of a segmented page's file (effectClaimKeeper), by effect kind, for the bounded-work test. Counts, not time. */
+export const effectClaimWork: Record<string, number> = {};
+
+/**
+ * Called between the pieces of a long read or write under a withdrawal-mirror or Git claim (a segmented page's file
+ * rendered, staged or compared): renews the 2-minute claim once `intervalMs` has passed since the last renewal, also
+ * while the mirror holds its recovery record, and refuses with `write_claim_lost` once the claim moved.
+ */
+export function effectClaimKeeper(engine: BrainEngine, effect: PersistenceEffect, intervalMs: number): () => Promise<void> {
+  let last = performance.now();
+  return async () => {
+    if (performance.now() - last < intervalMs) return;
+    last = performance.now();
+    effectClaimWork[effect.kind] = (effectClaimWork[effect.kind] ?? 0) + 1;
+    const rows = await engine.executeRawDirect(`UPDATE persistence_effects SET claim_expires_at=now()+interval '2 minutes',updated_at=now()
+      WHERE id=$1 AND execution_token=$2::uuid AND state='running' AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING id`, [effect.id, effect.execution_token]);
+    if (rows.length !== 1) throw opError('write_claim_lost', 'The effect claim changed.',
+      `Another worker took over this ${effect.kind} effect of source ${effect.source_id} (its claim expired or was reassigned), so this attempt stopped; the current holder finishes it. Inspect the owner's effects rather than retrying by hand.`,
+      { fix: readFix(`Shows source ${effect.source_id}'s canonical owner with its blocking, retrying and parked effects, read-only.`,
+        { argv: ['gbrain', 'sources', 'writer', 'status', '--source', effect.source_id, '--json'] }) });
+  };
 }
 
 export async function renewPersistenceEffectClaim(engine: SqlEngine, effect: PersistenceEffect): Promise<boolean> {

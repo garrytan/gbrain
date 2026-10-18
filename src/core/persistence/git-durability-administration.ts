@@ -190,7 +190,7 @@ export async function retryParkedPushes(engine: BrainEngine, worktreeId: string,
     const target = { source_id: row.source_id, request_id: row.request_id };
     let result: Record<string, unknown> | null;
     try {
-      result = await retryParkedEffects(engine, row.source_id, row.request_id, dryRun, { internalId: row.id });
+      result = await retryParkedEffects(engine, row.source_id, row.request_id, dryRun, { internalId: row.id, parkedOnly: true });
     } catch (error) {
       if (!(error instanceof OperationError) || !REQUEST_REFUSALS.has(error.code)) throw error;
       refused.push({ ...target, ...refusalEnvelope(error) });

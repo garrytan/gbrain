@@ -44,9 +44,10 @@ export async function maybeDelegateExtractStale(hostConfig: GBrainConfig | null,
         if (arg === '--source') i++;
         params.source_mode = selection.mode;
       } else if (arg === '--catch-up') params.catch_up = true;
+      else if (arg === '--retry-held') params.retry_held = true;
       else if (!['--stale', '--json', '--include-frontmatter', 'all'].includes(arg)) {
         throw invalid(`Unsupported owner-delegated extract --stale option: ${arg.split('=')[0]}.`,
-          `Remove ${arg.split('=')[0]}; while the running serve holds the brain, extract --stale accepts --source-id, --dry-run, --json, --include-frontmatter and --catch-up. Stop the serve to use other extract options.`);
+          `Remove ${arg.split('=')[0]}; while the running serve holds the brain, extract --stale accepts --source-id, --dry-run, --json, --include-frontmatter, --catch-up and --retry-held. Stop the serve to use other extract options.`);
       }
     }
     const delegated = await maybeDelegateLocalAdministration('writer_extract_stale', params, config, { timeoutMs: 86_400_000 });

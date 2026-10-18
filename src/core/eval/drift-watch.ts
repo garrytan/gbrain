@@ -95,33 +95,37 @@ export const RACY_DIFF_MS = 75;
  * the range). When omitted, compares HEAD against
  * working tree (uncommitted changes only).
  */
-export function filesDriftedSince(repoRoot: string, commitSha?: string, racyDiffMs = RACY_DIFF_MS): string[] | null {
+export function filesDriftedSince(repoRoot: string, commitSha?: string, racyDiffMs = RACY_DIFF_MS, diffTimeoutMs = 5000): string[] | null {
   if (!existsSync(repoRoot)) return null;
   if (commitSha !== undefined && (commitSha === '' || commitSha.startsWith('-'))) return null;
+  const refreshIndex = () => {
+    try {
+      execFileSync('git', ['update-index', '-q', '--refresh'], { env: gitChildEnv(), cwd: repoRoot, stdio: ['pipe', 'pipe', 'pipe'], timeout: 30_000 });
+    } catch {
+      /* a held index.lock or read-only checkout keeps the index as it was */
+    }
+  };
+  const startedAt = Date.now();
   try {
     const args = commitSha
       ? ['diff', '--name-only', '--end-of-options', `${commitSha}..HEAD`]
       : ['diff', '--name-only', 'HEAD'];
-    const startedAt = Date.now();
     const out = execFileSync('git', args, {
       env: gitChildEnv(),
       cwd: repoRoot,
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
-      timeout: 5000,
+      timeout: diffTimeoutMs,
     });
-    if (!commitSha && Date.now() - startedAt >= racyDiffMs) {
-      try {
-        execFileSync('git', ['update-index', '-q', '--refresh'], { env: gitChildEnv(), cwd: repoRoot, stdio: ['pipe', 'pipe', 'pipe'], timeout: 5000 });
-      } catch {
-        /* a held index.lock or read-only checkout keeps the index as it was */
-      }
-    }
+    if (!commitSha && Date.now() - startedAt >= racyDiffMs) refreshIndex();
     return out
       .split('\n')
       .map(s => s.trim())
       .filter((s): s is string => s.length > 0);
   } catch {
+    // A diff never rewrites the index, so one that ran out of time on a racy index would time out the same way
+    // on every later probe; refresh it so the next probe answers.
+    if (!commitSha && Date.now() - startedAt >= diffTimeoutMs) refreshIndex();
     return null;
   }
 }

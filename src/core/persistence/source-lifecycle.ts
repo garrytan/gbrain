@@ -28,6 +28,7 @@ import { claimPhysicalRoot } from './physical-root.ts';
 import { inspectRelocatedPhysicalRoot, relocatePhysicalRoot } from './physical-root-record.ts';
 import { assertWriterAdminState, WRITER_INSPECTION_HINT } from './admin-intent.ts';
 import { assertWriterAdminUnlocked } from './admin-lock.ts';
+import { rebindContentReceipts } from '../shared-skills/receipt-root.ts';
 
 export interface SourceLifecycleInput {
   operation:'add'|'claim'|'archive'|'restore'|'remove'|'purge'|'rebind'|'reclone';
@@ -278,6 +279,7 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
         await tx.executeRaw('DELETE FROM sources WHERE id=$1 AND incarnation=$2::uuid',[input.sourceId,incarnation]);
         await tx.executeRaw('DELETE FROM persistence_source_bindings WHERE source_id=$1 AND source_incarnation=$2::uuid',[input.sourceId,incarnation]);
       }
+      const contentReceipts=input.operation==='rebind'?await rebindContentReceipts(tx,worktrees,localHostId(),relocated?undefined:[input.sourceId]):[];
       await advanceTopology(tx,worktrees);
       for(const id of worktrees){
         const [host]=await tx.executeRaw<{local_path:string}>('SELECT local_path FROM persistence_host_bindings WHERE worktree_id=$1::uuid AND host_id=$2::uuid',[id,localHostId()]);
@@ -288,7 +290,7 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
       // stale installations cannot write after a source moved or disappeared.
       await refreshManagedFilesystemRoots(tx,managedFilesystemDatastorePath(engine));
       return {operation:input.operation,source_id:input.sourceId,source_incarnation:incarnation,invalidated_requests:invalidated,
-        ...(missingCheckout?{retired_without_checkout:missingCheckout}:{}),
+        ...(missingCheckout?{retired_without_checkout:missingCheckout}:{}),...(contentReceipts.length?{content_receipts:contentReceipts}:{}),
         ...(root?{local_path:root.source}:{}),...(['remove','purge'].includes(input.operation)?{storage_retained:true,local_path:ownedSourcePath??null,pages_deleted:pagesDeleted}:{}),
         ...(input.operation==='add'?{name:input.name??source?.name??input.sourceId,config:redactSourceConfig({...source?.config,...input.config}),id:input.sourceId}: {})};
     },principalAttribution({kind:'local_cli',id:principal}));

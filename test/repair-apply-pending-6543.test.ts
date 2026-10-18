@@ -152,7 +152,7 @@ describe('#6543 D1: repair apply continues past accepted-but-pending writes', ()
       const spec = repairSpec('timeline');
       let calls = 0;
       const dying = { ...spec.handler, apply: async (...args: Parameters<typeof spec.handler.apply>) => {
-        if (++calls === 3) throw new Error('process died');
+        if (++calls === 3) throw Object.assign(new Error('process died'), { name: 'AbortError' });
         return spec.handler.apply(...args);
       } };
       slowPublications(1_000);

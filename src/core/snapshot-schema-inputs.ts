@@ -56,6 +56,7 @@ export const SNAPSHOT_DYNAMIC_IMPORTS_NOT_HASHED: Readonly<Record<string, string
   'remember-batch.ts': 'verbs.ts request-time verb handlers (remember items[])',
   'mentions/siblings.ts': 'entities/resolve.ts request-time entity resolution (identity-sibling names)',
   'mentions/policy.ts': 'entities/resolve.ts request-time entity resolution (pack linkable types)',
+  '../version.ts': 'backfill-base.ts skip-ledger producer stamp, read when a backfill runs (never shapes the schema)',
 };
 
 const STATIC_SPECIFIER =

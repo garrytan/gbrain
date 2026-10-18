@@ -20,13 +20,14 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { OperationError } from '../ops/contract.ts';
-import { resolveRepairScope, type RepairKind } from '../repair/core.ts';
+import { resolveRepairScope, type RepairKind, type RepairResult, type RepairScope } from '../repair/core.ts';
 import { AUTO_REPAIR_REGISTRY, explicitKindRequired, repairApplyCommand, repairMayEmbed, repairRunner, repairSpec, type RepairKindSpec } from '../repair/registry.ts';
 import { cliRenderContext, renderAction, type RenderedAction } from '../agent-output.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { isStatementTimeoutError } from '../retry-matcher.ts';
 import { redactConnectionInfo } from '../audit/redact-connection-info.ts';
 import { withAdmissionOrigin } from '../persistence/admission-origin.ts';
+import { classifyItemFailure } from '../item-failure.ts';
 
 export interface RepairPlanStep {
   step: number;
@@ -74,7 +75,7 @@ export interface RepairPlanReport { steps: RepairPlanStep[]; previewFailures: Re
 const PREVIEW_ERROR_MAX_CHARS = 300;
 
 /** Redact before truncating, so a cut can never split a credential the redactor would have matched. */
-function describePreviewFailure(kind: RepairKind, error: unknown): RepairPreviewFailure {
+export function describePreviewFailure(kind: RepairKind, error: unknown): RepairPreviewFailure {
   const timedOut = isStatementTimeoutError(error);
   const detail = redactConnectionInfo(error instanceof Error ? error.message : String(error));
   const cause = timedOut ? 'hit the database statement timeout (GBRAIN_STATEMENT_TIMEOUT)' : 'raised an error';
@@ -88,6 +89,21 @@ function describePreviewFailure(kind: RepairKind, error: unknown): RepairPreview
       verify: { argv: ['gbrain', 'doctor', '--remediation-plan', '--json'] },
     }, cliRenderContext()),
   };
+}
+
+/**
+ * GBRA-130 (A-45, A-46): a kind whose plan or apply threw an item-scoped error inside a multi-kind loop (`gbrain repair`,
+ * `--all`, the content lane), as an empty result that stops with reason `error`, the redacted message and the kind's
+ * read-only preview as its fix, so the loop reports it and runs the next kind.
+ */
+export function kindErrorResult(kind: RepairKind, scope: RepairScope, opts: { apply: boolean; error: unknown; source?: string }): RepairResult {
+  const { message } = describePreviewFailure(kind, opts.error);
+  const preview = ['gbrain', 'repair', kind, ...(opts.source ? ['--source', opts.source] : [])];
+  return { kind, mode: opts.apply ? 'apply' : 'dry_run', scope, affected: 0, sample: [], residuals: {},
+    cost: { lifetime_ids: 0, receipt_bytes: 0, embedding_pages: 0, embedding_usd: 0 }, capacity: [], resumed_from: null, applied: 0, skipped: 0, failed: [], complete: false,
+    apply_command: repairApplyCommand(kind, { source: opts.source }),
+    stopped: { reason: 'error', code: classifyItemFailure(opts.error).code, message: `The ${kind} ${opts.apply ? 'repair' : 'preview'} raised an error, so ${kind} did not finish; every other kind ran. ${message}`,
+      fix: readFix(`Repeats the ${kind} preview on the brain host to show the error; it writes nothing.`, { argv: [...preview, '--json'] }) } };
 }
 
 /** `{ repair_preview_failures }` when any preview failed, else nothing, so a healthy plan's JSON is unchanged. */

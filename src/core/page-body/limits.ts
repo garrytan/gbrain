@@ -3,8 +3,8 @@
  * number and config key in one place. The product numbers (ceilings, version
  * retention) are open product calls; change them here and nowhere else.
  *
- * `pages.segmented_storage` defaults to `off` (SEGMENTED_STORAGE_DEFAULT); set
- * `on`, it is effectively on only while no recent writer predates segmented
+ * `pages.segmented_storage` defaults to `on` (SEGMENTED_STORAGE_DEFAULT); on, it
+ * is effectively on only while no recent writer predates segmented
  * pages (`segmentedWriterBlockers`). While
  * it is off no page is newly segmented, every page stays inline up to
  * `PAGE_MAX_BYTES` (Wave A) and no code path below the inline threshold changes.
@@ -36,6 +36,13 @@ export const SEGMENT_TARGET_BYTES = 256 * 1024;
 export const SEGMENT_RANK4_BYTES = 384 * 1024;
 /** Hard bound, matched by the `page_segment_texts.byte_len` CHECK. */
 export const SEGMENT_MAX_BYTES = 1024 * 1024;
+/**
+ * The longest facts fence a withdrawal holds as one string, counted from its begin marker through its end marker
+ * (UTF-8 bytes): withdrawal discovery, the purge and forget rewrite of the segments (segment-rewrite.ts), the trusted
+ * read's join (read-range.ts `trustedSegments`) and the canonical file's overlaid digest (body-digests.ts) all count a
+ * fence this way and refuse a longer one with `page_body_segmented` (`fenceTooLargeError`).
+ */
+export const FENCE_MAX_BYTES = PAGE_MAX_BYTES;
 
 /** Raw prefix of each region kept on the page row (`truth_lead`, `timeline_lead`), equal to Wave A's bounded prefix. */
 export const BODY_LEAD_BYTES = 64 * 1024;
@@ -121,7 +128,7 @@ function positiveInt(raw: string | null, fallback: number): number {
 }
 
 /** The effective `pages.segmented_storage` when it is not configured. */
-export const SEGMENTED_STORAGE_DEFAULT: 'on' | 'off' = 'off';
+export const SEGMENTED_STORAGE_DEFAULT: 'on' | 'off' = 'on';
 
 /** The configured `pages.segmented_storage`: unset means SEGMENTED_STORAGE_DEFAULT; an unrecognized value counts as `off`. */
 export function parseSegmentedStorage(raw: string | null): 'on' | 'off' | 'unset' | 'invalid' {
@@ -137,8 +144,8 @@ export const segmentedWriterGateWork = { reads: 0 };
 
 /**
  * Writers seen in the last `SEGMENTED_WRITER_WINDOW_DAYS` days that do not read segmented pages
- * (`segmentedGateWriters`: evidence without the segment-reader mark, or a managed write stamped below
- * `SEGMENTED_WRITER_FLOOR`). Any one keeps segmented storage off. Cached per engine for
+ * (`segmentedGateWriters`: evidence without the segment-reader mark, or marked evidence of any role stamped below
+ * `SEGMENTED_WRITER_FLOOR`, writer-floor.ts). Any one keeps segmented storage off. Cached per engine for
  * `SEGMENTED_WRITER_GATE_TTL_MS`; `fresh` (doctor) reads through.
  */
 export async function segmentedWriterBlockers(engine: Pick<BrainEngine, 'executeRaw'>, opts: { fresh?: boolean } = {}): Promise<SegmentedGateWriter[]> {
@@ -146,9 +153,9 @@ export async function segmentedWriterBlockers(engine: Pick<BrainEngine, 'execute
   for (let proto = Object.getPrototypeOf(root); proto && !Object.hasOwn(proto, 'constructor'); proto = Object.getPrototypeOf(proto)) root = proto;
   const cached = writerGate.get(root);
   if (!opts.fresh && cached && Date.now() - cached.at < SEGMENTED_WRITER_GATE_TTL_MS) return cached.blockers;
-  const { segmentedGateWriters } = await import('../persistence/writer-versions.ts');
+  const [{ segmentedGateWriters }, { SEGMENTED_WRITER_FLOOR }] = await Promise.all([import('../persistence/writer-versions.ts'), import('./writer-floor.ts')]);
   segmentedWriterGateWork.reads++;
-  const blockers = await segmentedGateWriters(engine, SEGMENTED_WRITER_WINDOW_DAYS);
+  const blockers = await segmentedGateWriters(engine, SEGMENTED_WRITER_WINDOW_DAYS, SEGMENTED_WRITER_FLOOR);
   writerGate.set(root, { at: Date.now(), blockers });
   return blockers;
 }
@@ -178,33 +185,37 @@ export function segmentedMaxBytes(kind: BrainEngine['kind'], maxRaw: string | nu
 export const RECOVERY_FILE_HEADROOM_BYTES = 1024 ** 2;
 
 /**
- * The default `persistence.limits.worktree_recovery_bytes` (persistence/limits.ts): never below `floor`, and room for
- * the largest page the configured switch admits. A restore that writes a page's file back reserves the file twice
- * (persistence/coordinator.ts `pageRecoveryRecord`: its staging file and the file), so a page near the ceiling needs
- * twice its body plus RECOVERY_FILE_HEADROOM_BYTES per copy. It follows the configured switch, not the writer gate: a
- * page admitted while the switch was effective stays deletable and restorable while an older writer holds it off.
+ * The default `persistence.limits.worktree_recovery_bytes` (persistence/limits.ts): never below `floor`, room for the
+ * largest page the configured switch admits, and room for the largest page already stored in segments
+ * (`storedSegmentedBytes`, deleted pages included, which a restore brings back). A restore that writes a page's file
+ * back reserves the file twice (persistence/coordinator.ts `pageRecoveryRecord`: its staging file and the file), so a
+ * page needs twice its body plus RECOVERY_FILE_HEADROOM_BYTES per copy. It ignores the writer gate, and a switch turned
+ * off or a lowered `pages.max_bytes` never shrinks it below a stored page: that page stays deletable, restorable and
+ * mirrorable (a withdrawal rewrites its file) instead of being refused `request_too_large` with its file unchanged.
  */
-export function pageRecoveryBytes(kind: BrainEngine['kind'], switchRaw: string | null, maxRaw: string | null, floor: number): number {
+export function pageRecoveryBytes(kind: BrainEngine['kind'], switchRaw: string | null, maxRaw: string | null, floor: number, storedSegmentedBytes = 0): number {
   const maxBytes = segmentedStorageRequested(parseSegmentedStorage(switchRaw)) ? segmentedMaxBytes(kind, maxRaw) : PAGE_MAX_BYTES;
-  return Math.max(floor, 2 * (maxBytes + RECOVERY_FILE_HEADROOM_BYTES));
+  return Math.max(floor, 2 * (Math.max(maxBytes, storedSegmentedBytes) + RECOVERY_FILE_HEADROOM_BYTES));
 }
 
 /**
  * Read the segmented-storage policy once per write. The switch is effectively on when it is configured `on`
  * (or unset while SEGMENTED_STORAGE_DEFAULT is `on`) and no recent writer predates segmented pages; an
- * unreadable gate counts as blocked. A configured `pages.max_bytes` never exceeds the engine ceiling.
+ * unreadable gate counts as blocked, and so does a failed read of `pages.segmented_storage` or `pages.max_bytes`
+ * (only a missing row is unset, which means on). A configured `pages.max_bytes` never exceeds the engine ceiling.
  */
 export async function readPageBodyPolicy(engine: PolicyEngine): Promise<PageBodyPolicy> {
-  const read = (key: string) => engine.getConfig(key).catch(() => null);
-  const [switchRaw, maxRaw, retireRaw, versionsRaw, pinnedRaw] = await Promise.all([
-    read(PAGE_BODY_CONFIG_KEYS.segmentedStorage), read(PAGE_BODY_CONFIG_KEYS.maxBytes), read(PAGE_BODY_CONFIG_KEYS.flipRetireMaxRows),
+  const readOrFail = (key: string) => engine.getConfig(key).then(value => ({ value }), () => null);
+  const read = async (key: string) => (await readOrFail(key))?.value ?? null;
+  const [switchRead, maxRead, retireRaw, versionsRaw, pinnedRaw] = await Promise.all([
+    readOrFail(PAGE_BODY_CONFIG_KEYS.segmentedStorage), readOrFail(PAGE_BODY_CONFIG_KEYS.maxBytes), read(PAGE_BODY_CONFIG_KEYS.flipRetireMaxRows),
     read(PAGE_BODY_CONFIG_KEYS.versionsMaxPerPage), read(PAGE_BODY_CONFIG_KEYS.versionsMaxPinnedBytes),
   ]);
-  const setting = parseSegmentedStorage(switchRaw);
+  const setting = switchRead && maxRead ? parseSegmentedStorage(switchRead.value) : 'off';
   const segmented = segmentedStorageRequested(setting) && (await segmentedWriterBlockers(engine).catch(() => null))?.length === 0;
   return {
     segmented,
-    maxBytes: segmented ? segmentedMaxBytes(engine.kind, maxRaw) : PAGE_MAX_BYTES,
+    maxBytes: segmented ? segmentedMaxBytes(engine.kind, maxRead!.value) : PAGE_MAX_BYTES,
     flipRetireMaxRows: positiveInt(retireRaw, DEFAULT_FLIP_RETIRE_MAX_ROWS),
     versionsMaxPerPage: positiveInt(versionsRaw, DEFAULT_SEGMENTED_VERSIONS_MAX_PER_PAGE),
     versionsMaxPinnedBytes: positiveInt(pinnedRaw, DEFAULT_SEGMENTED_VERSIONS_MAX_PINNED_BYTES),

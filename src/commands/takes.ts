@@ -476,6 +476,26 @@ async function cmdCalibration(engine: BrainEngine, args: string[]): Promise<void
  */
 async function cmdPropose(engine: BrainEngine, args: string[], sourceId: string): Promise<void> {
   const json = flagPresent(args, '--json');
+  // GBRA-130 A-25: pages propose_takes held with a failure tombstone after
+  // repeated deterministic extractor failures: list them, or release one page
+  // (or every page) so the next run re-extracts it.
+  if (flagPresent(args, '--failed') || flagPresent(args, '--retry-failed')) {
+    const explicit = flagValue(args, '--source');
+    const target = explicit ? await resolveSourceId(engine, explicit) : sourceId;
+    const { listFailedProposals, retryFailedProposals } = await import('../core/cycle/propose-takes-failures.ts');
+    if (flagPresent(args, '--retry-failed')) {
+      const { released } = await retryFailedProposals(engine, target, flagValue(args, '--slug'));
+      if (json) console.log(JSON.stringify({ source_id: target, released }, null, 2));
+      else console.log(released.length ? `Released ${released.length} page(s) in ${target}; the next propose_takes run re-extracts them: ${released.join(', ')}` : `No held pages in ${target}.`);
+      return;
+    }
+    const failed = await listFailedProposals(engine, target);
+    if (json) { console.log(JSON.stringify(failed, null, 2)); return; }
+    if (failed.length === 0) { console.log(`No pages held by propose_takes in ${target}.`); return; }
+    for (const f of failed) console.log(`${f.slug} (${f.code}, prompt ${f.prompt_version}, held ${f.proposed_at})`);
+    console.log(`Retry one with \`gbrain takes propose --retry-failed --slug <slug> --source ${target}\`, or every page by omitting --slug.`);
+    return;
+  }
   const acceptRaw = flagValue(args, '--accept');
   const rejectRaw = flagValue(args, '--reject');
   if (acceptRaw !== undefined && rejectRaw !== undefined) {
@@ -604,6 +624,10 @@ Subcommands:
                                           Promote a proposal into the page's takes fence (source take_proposals#<id>;
                                           edits mark it "(edited)" and the queue keeps the original text)
   takes propose --reject <id>             Dismiss a proposal
+  takes propose --failed [--source <id>] [--json]
+                                          Pages propose_takes held after repeated extractor failures
+  takes propose --retry-failed [--slug <slug>] [--source <id>] [--json]
+                                          Release held pages so the next propose_takes run re-extracts them
   takes scorecard [<holder>] [--domain <prefix>] [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--json]
                                           Aggregate calibration scorecard (v0.30.0)
                   [--group-by holder|source] [--min-n N] [--source-id <id>]

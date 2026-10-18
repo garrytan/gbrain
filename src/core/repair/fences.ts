@@ -65,6 +65,7 @@ import { analyzeFences, attemptCandidate, runTier3, tier3Estimate, tier3Memo, ty
 import type { FenceFix, FenceIssue, FencePage, FenceReason, FenceTier, GateLetter } from '../fence-repair/types.ts';
 import { lineDiff } from './frontmatter.ts';
 import type { RepairHandler, RepairItem, RepairItemOutcome, RepairListing, RepairPlan, RepairPlanOptions, RepairResult, RepairScope } from './core.ts';
+import { rotate, rotationAfter, rotationBrain, rotationKeyOf, saveRotation } from './rotation.ts';
 
 /** The fences result's `verification` (report hook): what the run did and what is left, for the CLI and the cycle phase report. */
 export interface FenceRepairVerification {
@@ -207,17 +208,7 @@ function selected(cand: FenceCandidate, selection: Selection): boolean {
   return (!!cand.path && selection.only.includes(cand.path)) || selection.slugs.includes(cand.key);
 }
 
-async function rotationAfter(engine: BrainEngine, brainId: string): Promise<string | null> {
-  const [row] = await engine.executeRaw<{ last: string | null }>("SELECT completed_keys->0->>'last' AS last FROM op_checkpoints WHERE op=$1 AND fingerprint=$2", [ROTATION_OP, brainId]);
-  return row?.last ?? null;
-}
-
-async function saveRotation(engine: BrainEngine, brainId: string, last: string): Promise<void> {
-  await engine.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb)
-    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()`, [ROTATION_OP, brainId, JSON.stringify([{ last }])]);
-}
-
-const rotationKey = (entry: Pick<ApprovedFence, 'source_id' | 'key'>) => `${entry.source_id}\u0000${entry.key}`;
+const rotationKey = (entry: Pick<ApprovedFence, 'source_id' | 'key'>) => rotationKeyOf(entry.source_id, entry.key);
 
 function item(entry: ApprovedFence, index: number, hash: string | null, last: boolean, partial: boolean): FenceItem {
   return { cursor: { phase: 1, id: index + 1 }, source_id: entry.source_id, slug: entry.slug, chars: 0, action: `${entry.tier}:${entry.path ?? entry.slug}`,
@@ -262,9 +253,8 @@ export const fencesRepair: RepairHandler = {
     for (const id of scope.source_ids) sources.set(id, await loadFenceSource(engine, id, { remote: opts?.remote !== false }));
     const found = await listFenceCandidates(engine, scope.source_ids);
     const { extra, unknown } = await extraCandidates(engine, scope, selection, found, sources);
-    let candidates = [...found, ...extra].filter(cand => selected(cand, selection));
-    const rotation = opts?.apply ? await rotationAfter(engine, scope.brain_id) : null;
-    if (rotation) candidates = [...candidates.filter(c => rotationKey({ source_id: c.source_id, key: c.key }) > rotation), ...candidates.filter(c => rotationKey({ source_id: c.source_id, key: c.key }) <= rotation)];
+    const candidates = rotate([...found, ...extra].filter(cand => selected(cand, selection)), c => rotationKey({ source_id: c.source_id, key: c.key }),
+      opts?.apply ? await rotationAfter(engine, ROTATION_OP, scope.brain_id) : null);
     const s = await settings(engine, opts ?? { noLlm: false });
     const store = attemptStore(engine);
     const residuals: Record<string, number> = {};
@@ -391,10 +381,7 @@ export const fencesRepair: RepairHandler = {
       return await applyFence(ctx, entry, { embed: opts?.embed === true, expect: hash, allowanceUsd: opts?.llmAllowanceUsd, deadline: opts?.deadline, noLlm: opts?.noLlm === true });
     } finally {
       if (hash && last) await clearApprovedSet(ctx.engine, { command: 'fences', hash });
-      if (!hash) {
-        const [brain] = await ctx.engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1').catch(() => []);
-        await saveRotation(ctx.engine, brain?.brain_id ?? 'host', rotationKey(entry)).catch(() => undefined);
-      }
+      if (!hash) await saveRotation(ctx.engine, ROTATION_OP, await rotationBrain(ctx.engine), rotationKey(entry)).catch(() => undefined);
     }
   },
   render(details, opts) {

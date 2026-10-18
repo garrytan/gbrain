@@ -376,6 +376,7 @@ src/core/persistence/connector-sync.ts	prepareConnectorMutation	field	SEGW
 src/core/persistence/core-guard.ts	prepareCoreGuard	field	INLINE	
 src/core/persistence/effect-facts.ts	bodyAlreadyOffered	field	META	
 src/core/persistence/effect-links.ts	mentionTargets	field	INLINE	inline arm; a segmented page streams its compiled truth through extractSegmentedPageLinks
+src/core/persistence/effect-recovery.ts	mirrorContent	call:serializePageToMarkdown	SEGW	the inline withdrawal mirror bytes for a stale-record rebase: rebaseStaleEffectRecovery refuses a segmented page before rendering (a segmented mirror streams through unreadPageFile)
 src/core/persistence/effects.ts	publishGitPage	call:serializePageToMarkdown	SEGW	segmented target skipped (skipped reason page_body_segmented) before the serialize
 src/core/persistence/effects.ts	mirrorPage	call:serializePageToMarkdown	SEGW	segmented target skipped (skipped reason page_body_segmented) before the serialize; per-segment mirror in PR 2
 src/core/persistence/embedding-settlement.ts	listEmbeddingCandidates	sql	META	

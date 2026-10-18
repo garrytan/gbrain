@@ -24,7 +24,7 @@ import { REPAIR_HELP, parseRepairArgs, runRepairCommand } from '../src/commands/
 import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-force-exit.ts';
 import { withEnv } from './helpers/with-env.ts';
 
-const EXPLICIT: RepairKind[] = ['accepted-takes', 'google-file-modes', 'stale-atoms', 'extractor-facts', 'conversation-labels', 'captured-facts', 'loop-facts', 'ontology-facts', 'facts-rehome', 'orphan-children', 'failed-writes', 'split-facts', 'frontmatter', 'timeline-comments', 'managed-sync-orphans', 'frontmatter-keys', 'file-drift', 'stuck-recovery', 'ghost-pages', 'origin-twins', 'receipt-compaction', 'aliases', 'rename-identity', 'overwritten-edits', 'missing-tables'];
+const EXPLICIT: RepairKind[] = ['accepted-takes', 'google-file-modes', 'stale-atoms', 'extractor-facts', 'conversation-labels', 'captured-facts', 'loop-facts', 'ontology-facts', 'facts-rehome', 'orphan-children', 'failed-writes', 'split-facts', 'frontmatter', 'timeline-comments', 'managed-sync-orphans', 'content-receipt-root', 'frontmatter-keys', 'file-drift', 'stuck-recovery', 'ghost-pages', 'origin-twins', 'receipt-compaction', 'aliases', 'rename-identity', 'overwritten-edits', 'missing-tables', 'url-clone-fences'];
 let engine: PGLiteEngine;
 const home = mkdtempSync(join(tmpdir(), 'gbrain-repair-explicit-'));
 

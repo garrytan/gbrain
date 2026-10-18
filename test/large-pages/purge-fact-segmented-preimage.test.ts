@@ -114,8 +114,8 @@ for (const kind of testBackends()) {
       expect(strip(after.segmented)).toEqual(strip(after.inline));
       expect(after.segmented.events.filter(e => e.moved).every(e => e.preimage === true)).toBe(true);
       expect(after.segmented.versions.some(v => v.claim)).toBe(false);
-      // The canonical file is left out: the purge's withdrawal-mirror effect does not rewrite a segmented page's file yet
-      // (src/core/persistence/effects.ts mirrorPage skips it with page_body_segmented), a gap outside this test.
+      // The canonical file is left out: this test does not wait for the purge's withdrawal-mirror effect, which rewrites
+      // it (test/large-pages/segmented-withdrawal-mirror.test.ts).
       const view = async (slug: string) => { const { file, ...rest } = await brain.view(slug); return rest; };
       expect(await view(SEGMENTED)).toEqual(await view(INLINE));
       expect(JSON.stringify(await view(SEGMENTED))).not.toContain(CLAIMS[SEGMENTED]);

@@ -601,24 +601,30 @@ async function reindexManaged(engine: BrainEngine, opts: ReindexOpts, type: stri
     logger: { info: (msg: string) => process.stderr.write(`${msg}\n`), warn: (msg: string) => process.stderr.write(`${msg}\n`), error: (msg: string) => process.stderr.write(`${msg}\n`) } };
   const scope = await resolveRepairScope(engine);
   const stopped: string[] = [];
+  const failures: string[] = [];
   let unsupported = 0;
   for (const handler of opts.noEmbed ? [safeChunksRepair] : [safeChunksRepair, contextualModeRepair]) {
     const run = await runRepair(ctx as Parameters<typeof runRepair>[0], handler, scope, { apply: true, limit: opts.limit, embed: !opts.noEmbed });
     if (run.stopped) stopped.push(run.stopped.message);
     unsupported += Object.values(run.residuals).reduce((sum, count) => sum + count, 0);
+    // GBRA-130 A-26: pages the repair held (projection_unbuildable) or failed per item are counted, not thrown.
+    failures.push(...run.failed.map(f => `${f.item} (${f.reason}): ${f.message}`),
+      ...(run.outcome_items ?? []).filter(o => o.outcome === 'held').map(o => `${o.item} (${o.reason}): ${String(o.detail?.message ?? '')}`));
   }
+  const failed = failures.length;
   if (pending > 0) await refreshProjectionStatistics(engine, pending);
   const pendingAfter = await countPending(engine, type, !!opts.noEmbed);
   const reindexed = Math.max(0, pending - pendingAfter);
-  if (stopped.length) setCliExitVerdict(1);
+  if (stopped.length || failed) setCliExitVerdict(1);
   if (opts.json) {
-    process.stdout.write(JSON.stringify({ pending, pending_after: pendingAfter, reindexed, skipped: 0, failed: 0, chunker_version: MARKDOWN_CHUNKER_VERSION, type,
-      delegated_to: repairs, ...(unsupported ? { unsupported_pages: unsupported } : {}), ...(stopped.length ? { stopped } : {}) }) + '\n');
+    process.stdout.write(JSON.stringify({ pending, pending_after: pendingAfter, reindexed, skipped: 0, failed, chunker_version: MARKDOWN_CHUNKER_VERSION, type,
+      delegated_to: repairs, ...(unsupported ? { unsupported_pages: unsupported } : {}), ...(stopped.length ? { stopped } : {}), ...(failed ? { failures } : {}) }) + '\n');
   } else {
     process.stderr.write(`[reindex] Managed brain: re-chunked through ${repairs.map(kind => `gbrain repair ${kind}`).join(' and ')} (no page writes). `
       + `reindexed=${reindexed} pending_before=${pending} pending_after=${pendingAfter}\n`);
     if (unsupported) process.stderr.write(`[reindex] ${unsupported} page(s) the projection repairs cannot rebuild (code without a source path, or another page kind) are left for their importer.\n`);
     for (const message of stopped) process.stderr.write(`[reindex] ${message}\n`);
+    for (const failure of failures) process.stderr.write(`[reindex] not re-chunked, its chunks stay withheld: ${failure}. Retry with: gbrain repair safe-chunks --apply\n`);
   }
-  return { ...base, pendingAfter, reindexed, skipped: 0, failed: 0 };
+  return { ...base, pendingAfter, reindexed, skipped: 0, failed };
 }

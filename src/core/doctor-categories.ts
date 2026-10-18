@@ -336,6 +336,8 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'queue_health',
   // #4578: brain-wide maintenance jobs dying at their deadline.
   'global_maintenance_timeouts',
+  // GBRA-130 C-6: no completed brain-wide pass while jobs fail or a phase keeps blocking it.
+  'global_maintenance_stalled',
   'embed_backfill_stalled',
   'connector_account_mismatch',
   // #5157: queued jobs from before the v0.50 authority cutover block every worker.

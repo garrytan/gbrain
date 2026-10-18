@@ -290,6 +290,15 @@ export function autopilotPausedMarkerPath(): string {
 }
 
 /**
+ * The daemon's latest brain-wide maintenance verdict (GBRA-130 C-6), written
+ * each full-cycle tick so the engine-free `autopilot --status` can exit 1 while
+ * maintenance is stalled without opening the database.
+ */
+export function autopilotGlobalMaintenanceVerdictPath(): string {
+  return join(gbrainPath(), 'autopilot-global-maintenance.json');
+}
+
+/**
  * Consecutive-miss counter for the wrapper's self-disable guard. A repo on an
  * external volume, NFS, or a cloud-synced folder is routinely absent for the
  * first daemon launch after login, and a single missed probe must not

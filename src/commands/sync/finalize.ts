@@ -332,6 +332,12 @@ async function applyBookmarkGate(
     commit: pin,
     skipFailed: !company && opts.skipFailed === true,
     ...(company ? { threshold: 0 } : {}),
+    // GBRA-130 A-18: files of this drain imported this run or banked by an
+    // earlier run of it (an infra code on one file while others import goes
+    // chronic, also across resumes) and the import breaker's verdict (a run
+    // where most files failed counts no attempt and auto-skips nothing).
+    imported: run.filesImported + run.bankedImports,
+    systemic: run.itemRun.systemic() !== null,
     advance,
   });
   // #3479 blocker 2 — self-heal for orphaned `<rename:…>` sentinels: a
@@ -392,6 +398,15 @@ async function applyBookmarkGate(
         `\nSync blocked: a rename left a stale duplicate that could not be removed:\n` +
         `${renameDetail || codeBreakdown}\n\n` +
         renameRemedy,
+      );
+    } else if (run.itemRun.systemic()) {
+      const fileFailCount = failedFiles.filter(f => isSkippablePath(f.path)).length;
+      serr(
+        `\nSync blocked: ${fileFailCount} file(s) failed, most of the files this run tried; this looks like ` +
+        `a shared cause, so no attempt was counted and nothing auto-skips:\n` +
+        `${codeBreakdown}\n${formatFailedFileList(failedFiles)}\n\n` +
+        `Fix the shared cause (permissions, the embedding provider, the database) and re-run 'gbrain sync', ` +
+        `or acknowledge these files with 'gbrain sync --skip-failed${opts.sourceId ? ` --source ${opts.sourceId}` : ''}'.`,
       );
     } else {
       const fileFailCount = failedFiles.filter(f => isSkippablePath(f.path)).length;

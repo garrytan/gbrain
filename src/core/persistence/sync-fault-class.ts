@@ -59,6 +59,11 @@ export const SYNC_FAULT_TABLE: ReadonlyArray<SyncFaultRule> = [
     human_reason: 'The database page moved since sync last imported its file, and importing would replace it; a person chooses which version wins (gbrain repair file-drift --source <source> --slug <slug> --prefer database|file previews it and writes nothing until applied).' },
   { code: 'preparation_stalled', class: 'page', safe_actions: ['retry', 'upgrade'], needs_human: false,
     escalate: `${ESCALATE_AFTER}, or writer status names a step that never finishes`, human_reason: 'The write owner cannot finish preparing this file; writer status names the step, fix or report it.' },
+  // Flip lane C: the database ended the write's statements (SQLSTATE 57014) persistence.max_preparation_attempts times; like
+  // preparation_stalled the write ran out of attempts, so the entry is held and the run goes on.
+  { code: 'write_interrupted', class: 'page', safe_actions: ['retry'], needs_human: false,
+    escalate: `${ESCALATE_AFTER}: gbrain sources writer status --source <source> --json (read-only) names the load on the write owner`,
+    human_reason: 'The database keeps ending this file\'s statements before they finish; writer status names the load on the write owner. Reduce it, then gbrain sources retry-held and the same sync.' },
   { code: 'invalid_fence', class: 'page', safe_actions: ['repair'], needs_human: false, escalate: 'the fence repair preview offers no plan (a manual reason)', human_reason: 'Edit the facts or takes table the hold names and commit.' },
   { code: 'invalid_frontmatter', class: 'page', safe_actions: ['repair'], needs_human: false, escalate: 'the repair preview needs an interpretation (--include-ambiguous)', human_reason: 'Approve the proposed frontmatter fix or edit the file.' },
   { code: 'frontmatter_slug_conflict', class: 'page', safe_actions: ['repair'], needs_human: false, escalate: 'the lane recorded why it could not decide', human_reason: 'The content-repair lane could not clear the hold; its recorded verdict names the page, edit or setting.' },

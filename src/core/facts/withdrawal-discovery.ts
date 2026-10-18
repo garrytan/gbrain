@@ -3,8 +3,9 @@ import { OperationError } from '../ops/contract.ts';
 import { getCode } from '../retry-matcher.ts';
 import { parseRowCells, isSeparatorRow, stripStrikethrough } from '../fence-shared.ts';
 import { withdrawalFenceBlocks, ambiguousWithdrawalFenceSegments } from './withdrawal-overlay.ts';
-import { PAGE_MAX_BYTES } from '../page-size-policy.ts';
-import { pageBodySegmentedError } from '../page-body/page-shape.ts';
+import { fenceTooLargeError, readStoredFence } from '../page-body/read-range.ts';
+import { FENCE_MAX_BYTES } from '../page-body/limits.ts';
+import type { BodyRegion } from '../page-body/types.ts';
 
 export const WITHDRAWAL_LIMITS = { targets: 256, targetBytes: 1024 * 1024, scanMs: 10_000, batch: 128 } as const;
 export interface WithdrawalTarget { slug: string; page_id: number; revision: string }
@@ -48,11 +49,13 @@ function fenceClaims(id: number, slug: string, body: string): Array<{ id: number
 
 /**
  * Wave B (spec 11): every live facts fence of a segmented page that a forced
- * cut split (its slots carry `open_start`), joined from its slots' bytes in
- * segment order and kept when its lowered text holds every token of a claim
- * keyed to the page. Private rows never reach chunks, so this is the only
- * scan that sees them. A fence above PAGE_MAX_BYTES is refused, never
- * skipped. Keyset by (page, region, fence start); one fence in memory.
+ * cut split (its slots carry `open_start`), read from its begin marker through
+ * its end marker across the cuts (readStoredFence: a cut inside either marker
+ * leaves part of it outside every slot) and kept when its lowered text holds
+ * every token of a claim keyed to the page. Private rows never reach chunks, so
+ * this is the only scan that sees them. A fence above FENCE_MAX_BYTES is
+ * refused, never skipped. Keyset by (page, region, fence start); one fence in
+ * memory.
  */
 async function* splitFactsFences(engine: BrainEngine, sourceId: string, keyed: readonly KeyedClaim[], subjects: string[] | null, deadline: number):
   AsyncIterable<{ id: number; slug: string; fence: string }> {
@@ -67,11 +70,10 @@ async function* splitFactsFences(engine: BrainEngine, sourceId: string, keyed: r
     [sourceId, subjects, after[0], after[1], after[2], WITHDRAWAL_LIMITS.batch]);
     for (const f of fences) {
       if (performance.now() > deadline) refuse();
-      if (Number(f.bytes) > PAGE_MAX_BYTES) throw pageBodySegmentedError({ slug: f.slug, source_id: sourceId }, 'withdrawal discovery of a fence larger than the single-string ceiling');
-      const parts = await engine.executeRaw<{ part: Uint8Array }>(`SELECT substring(t.body from (s->>'start')::int + 1 for (s->>'end')::int - (s->>'start')::int) AS part
-        FROM page_body_manifest m CROSS JOIN LATERAL jsonb_array_elements(m.facts_slots) s JOIN page_segment_texts t ON t.source_id=m.source_id AND t.sha256=m.sha256
-        WHERE m.page_id=$1 AND m.region=$2 AND m.gen_to IS NULL AND m.staging_id IS NULL AND (s->>'open_start')::bigint=$3::bigint ORDER BY m.seq`, [f.page_id, f.region, f.open_start]);
-      const fence = Buffer.concat(parts.map(p => Buffer.from(p.part))).toString('utf8');
+      // Its slots hold part of the fence (a cut inside a marker leaves the marker's bytes outside them), so slots over the
+      // bound prove the fence is, before any of it is read.
+      if (Number(f.bytes) > FENCE_MAX_BYTES) throw fenceTooLargeError(f.slug, sourceId, Number(f.bytes));
+      const fence = await readStoredFence(engine, { id: Number(f.page_id), slug: f.slug, sourceId }, f.region as BodyRegion, Number(f.open_start));
       const lowered = fence.toLowerCase();
       if (keyed.some(k => (k.subject === '*' || k.subject === f.slug) && (k.norm ?? '').split(' ').filter(Boolean).every(token => lowered.includes(token)))) {
         yield { id: Number(f.page_id), slug: f.slug, fence };

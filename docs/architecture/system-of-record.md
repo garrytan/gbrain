@@ -299,6 +299,7 @@ or a physical projection that leaves attribution untouched):
 - `src/core/repair/stale-atoms.ts` (3): a request on managed brains; the unmanaged retirement runs in `maintenanceTransaction`.
 - `src/core/repair/take-supersession.ts` (1): `gbrain repair take-supersession` reprojection: a receipted `managed_maintenance_take_reproject` request on managed brains, `maintenanceTransaction` on unmanaged ones; fence edits go through a revision-bound `put_page`.
 - `src/core/repair/timeline-comments.ts` (1): `gbrain repair timeline-comments` row cleanup: `withCoordinatedWrite` under the page key on managed brains, `maintenanceTransaction` otherwise.
+- `src/core/repair/url-clone-fences.ts` (2): `gbrain repair url-clone-fences` (#6946), unmanaged brains only (a managed brain previews nothing); keeping the appended fence rows database-only (clearing `row_num`, inserting a row the database lost) runs in one `maintenanceTransaction` under the page lock after the preview recheck; HEAD's bytes then import through `importFromContent`.
 - `src/core/schema-pack/page-to-alias.ts` (1): the page-to-alias conversion soft-deletes each converted page in `maintenanceTransaction`.
 - `src/core/schema-pack/page-to-link.ts` (1): the page-to-link conversion soft-deletes each converted page in `maintenanceTransaction`.
 - `src/core/schema-pack/retype.ts` (1): each bounded retype batch runs in `maintenanceTransaction`.

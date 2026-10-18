@@ -140,8 +140,7 @@ receipt: the write is refused as `request_too_large`.
 ### Segmented page storage
 
 A page over 1 MiB is stored as segments of about 256 KiB instead of one text
-column when `pages.segmented_storage` is on (off by default in this release;
-`gbrain config set pages.segmented_storage on` turns it on). Reading a window, an
+column (`pages.segmented_storage`, on by default). Reading a window, an
 outline or a chunk's context costs the size of the window, not the page, and
 a rewrite re-indexes only the segments that changed. Pages at or under 1 MiB
 are stored exactly as before; a segmented page goes back to one column when a
@@ -154,14 +153,17 @@ files that is only the file at its own place in the checkout, which gbrain
 never rewrites; a database-only source takes it by `gbrain import`.
 
 The switch stays off while an older gbrain writes to the same brain: a
-writer older than the release that added this check, or one that stamps no
-version, that admitted or published a managed write in the last 7 days keeps
-new pages inline, even when the setting is `on`. `gbrain doctor` check
-`segmented_storage` shows the configured and effective value and names each
-blocking host by UUID. Run `gbrain upgrade` there; the hold clears 7 days
-after that writer's last write. An older binary that writes without managed
-persistence (a classic brain shared by several hosts) is not detected, so
-upgrade every host before turning the switch on.
+gbrain older than the release that turned it on by default (v0.60.290.0
+included), or one that stamps no version, that in the last 7 days admitted or
+published a managed write, logged an import, sync or connector run, or ran a
+resident process keeps new pages inline, even when the setting is `on`.
+`gbrain doctor` check `segmented_storage` shows the configured and effective
+value and names each blocking host by UUID. Run `gbrain upgrade` there; the
+hold clears 7 days after that writer's last write. An older binary's
+single-page write on a brain without managed persistence (a classic brain
+shared by several hosts) is not detected: upgrade every host that writes to
+such a brain, or run `gbrain config set pages.segmented_storage off` until
+they are upgraded.
 
 <a id="segmented-searchable"></a>
 **When a segmented write is searchable.** The receipt of a write that stores a
@@ -191,6 +193,19 @@ page is searchable when the restore commits, or, when its chunks were never
 built, right after it (`gbrain projections drain` builds it if that build
 dies).
 
+<a id="segmented-withdrawal-mirror"></a>
+**Withdrawals rewrite a segmented page's file.** `forget`, `forget_fact` and
+`purge_fact` on a page stored in segments, on a source backed by files,
+rewrite its canonical file as they rewrite an inline page's: the file shows the
+row forgotten, or loses the purged row, and holds the bytes `gbrain export`
+writes for the page; the withdrawal's Git effect commits it. The file is
+streamed from the segments into its staging file, one segment at a time, and
+never held whole. Its recovery record names that staging file by path and
+SHA-256 instead of holding the file, so the mirror reserves the file once in
+the recovery budget. A mirror interrupted before, during or after writing the
+staging file finishes on the writer's next pass: a staging file a crash cut
+short is discarded and written again.
+
 <a id="segmented-doctor-skips"></a>
 **What doctor does not read on a segmented page.** Some doctor checks read a
 page's whole body as one string, and a page stored in segments has none.
@@ -210,8 +225,8 @@ frontmatter re-import of a page stored in segments works the same way up to
 24 MiB; over it the file is listed `needs_review` with `page_body_segmented`
 and nothing is written.
 
-While the switch is off (unset in this release, set to `off`, or held by an
-older writer), new pages are stored inline up to 24 MiB as before.
+While the switch is off (`gbrain config set pages.segmented_storage off`, or
+held by an older writer), new pages are stored inline up to 24 MiB as before.
 Pages already stored in segments stay readable and exportable; a write that
 would leave one over 24 MiB is refused until the switch is on again.
 

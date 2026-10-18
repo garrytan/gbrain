@@ -312,6 +312,8 @@ export interface GmailThreadData {
 export interface CalendarEventData {
   /** Recurrence-instance id when expanded (singleEvents=true). */
   id: string;
+  /** The event's revision: a held event whose etag changed upstream is re-attempted (GBRA-130 A-3). */
+  etag?: string;
   summary: string;
   description: string;
   startIso: string;
@@ -328,6 +330,8 @@ export interface CalendarEventData {
 
 export interface ContactData {
   resourceName: string;
+  /** The person's revision: a held contact whose etag changed upstream is re-attempted (GBRA-130 A-3). */
+  etag?: string;
   displayName: string | null;
   emails: string[];
   /** #6324: E.164 `canonicalForm` when Google supplies it, else the entered value; deduplicated. */
@@ -343,6 +347,14 @@ export interface ContactData {
   groups: Array<{ id: string; name: string | null }>;
   deleted: boolean;
 }
+
+/**
+ * GBRA-130 A-3: connector item-hold keys of the Contacts and Calendar sweeps.
+ * A Gmail hold keeps its bare (hex) thread id, so the prefixes never collide.
+ */
+export const contactHoldKey = (resourceName: string): string => `contact:${resourceName}`;
+export const eventHoldKey = (calendarId: string, eventId: string): string => `event:${calendarId}:${eventId}`;
+export const isGmailHoldKey = (key: string): boolean => !key.startsWith('contact:') && !key.startsWith('event:');
 
 /** Extract the bare lowercase address from "Name <a@b.c>" or "a@b.c". */
 export function bareAddress(raw: string): string {

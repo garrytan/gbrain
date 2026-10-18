@@ -512,6 +512,7 @@ export class GmailClient extends GoogleApiClient {
 
 interface RawCalendarEvent {
   id: string;
+  etag?: string;
   status?: string;
   summary?: string;
   description?: string;
@@ -522,6 +523,30 @@ interface RawCalendarEvent {
   location?: string;
   hangoutLink?: string;
   htmlLink?: string;
+}
+
+function calendarEvent(e: RawCalendarEvent, account: string): CalendarEventData {
+  return {
+    id: e.id,
+    ...(e.etag ? { etag: e.etag } : {}),
+    summary: e.summary ?? '(no title)',
+    description: e.description ?? '',
+    startIso: e.start?.dateTime ?? (e.start?.date ? `${e.start.date}T00:00:00Z` : ''),
+    endIso: e.end?.dateTime ?? (e.end?.date ? `${e.end.date}T00:00:00Z` : ''),
+    allDay: Boolean(e.start?.date),
+    organizer: e.organizer?.email?.toLowerCase() ?? null,
+    attendees: (e.attendees ?? []).map((a) => ({
+      email: (a.email ?? '').toLowerCase(),
+      displayName: a.displayName ?? null,
+      self: a.self ?? false,
+      responseStatus: a.responseStatus ?? null,
+    })),
+    location: e.location ?? null,
+    hangoutLink: e.hangoutLink ?? null,
+    htmlLink: e.htmlLink ?? null,
+    status: e.status ?? 'confirmed',
+    account,
+  };
 }
 
 export class CalendarClient extends GoogleApiClient {
@@ -568,27 +593,21 @@ export class CalendarClient extends GoogleApiClient {
       'calendar-json',
       opts,
     );
-    const events = raw.map((e): CalendarEventData => ({
-      id: e.id,
-      summary: e.summary ?? '(no title)',
-      description: e.description ?? '',
-      startIso: e.start?.dateTime ?? (e.start?.date ? `${e.start.date}T00:00:00Z` : ''),
-      endIso: e.end?.dateTime ?? (e.end?.date ? `${e.end.date}T00:00:00Z` : ''),
-      allDay: Boolean(e.start?.date),
-      organizer: e.organizer?.email?.toLowerCase() ?? null,
-      attendees: (e.attendees ?? []).map((a) => ({
-        email: (a.email ?? '').toLowerCase(),
-        displayName: a.displayName ?? null,
-        self: a.self ?? false,
-        responseStatus: a.responseStatus ?? null,
-      })),
-      location: e.location ?? null,
-      hangoutLink: e.hangoutLink ?? null,
-      htmlLink: e.htmlLink ?? null,
-      status: e.status ?? 'confirmed',
-      account,
-    }));
-    return { events, nextSyncToken };
+    return { events: raw.map((e) => calendarEvent(e, account)), nextSyncToken };
+  }
+
+  /**
+   * GBRA-130 A-3: one event by id, for re-attempting a held event that no
+   * listing of this run returns. Null when the event is gone (404/410).
+   */
+  async getEvent(account: string, calendarId: string, eventId: string, opts: { signal?: AbortSignal } = {}): Promise<CalendarEventData | null> {
+    const calId = encodeURIComponent(calendarId.trim() || DEFAULT_CALENDAR_ID);
+    try {
+      return calendarEvent(await this.fetchJSON<RawCalendarEvent>(`${CALENDAR_BASE}/calendars/${calId}/events/${encodeURIComponent(eventId)}`, 'calendar-json', opts), account);
+    } catch (e) {
+      if (e instanceof GoogleCursorExpiredError) return null;
+      throw e;
+    }
   }
 
   /**
@@ -646,6 +665,7 @@ export class CalendarClient extends GoogleApiClient {
 
 interface RawPerson {
   resourceName: string;
+  etag?: string;
   names?: Array<{ displayName?: string; metadata?: { primary?: boolean } }>;
   emailAddresses?: Array<{ value?: string }>;
   phoneNumbers?: Array<{ value?: string; canonicalForm?: string }>;
@@ -677,6 +697,29 @@ const SYSTEM_CONTACT_GROUPS = new Set(
 /** Bounded directory walk: 1000 groups a page, ten pages; past that the result is explicitly incomplete. */
 const CONTACT_GROUP_PAGES = 10;
 
+function contactData(p: RawPerson): ContactData {
+  const primaryName = p.names?.find((n) => n.metadata?.primary) ?? p.names?.[0];
+  const primaryOrg = p.organizations?.find((o) => o.metadata?.primary) ?? p.organizations?.[0];
+  return {
+    resourceName: p.resourceName,
+    ...(p.etag ? { etag: p.etag } : {}),
+    displayName: primaryName?.displayName ?? null,
+    emails: (p.emailAddresses ?? [])
+      .map((e) => (e.value ?? '').trim().toLowerCase())
+      .filter((e) => e.includes('@')),
+    phones: [...new Set((p.phoneNumbers ?? [])
+      .map((n) => (n.canonicalForm ?? n.value ?? '').trim())
+      .filter((n) => n.length > 0))],
+    organization: primaryOrg?.name ?? null,
+    title: primaryOrg?.title ?? null,
+    groups: [...new Set((p.memberships ?? [])
+      .map((m) => m.contactGroupMembership?.contactGroupResourceName ?? '')
+      .filter((g) => g.startsWith('contactGroups/') && !SYSTEM_CONTACT_GROUPS.has(g)))]
+      .map((id) => ({ id, name: null })),
+    deleted: p.metadata?.deleted ?? false,
+  };
+}
+
 export class PeopleClient extends GoogleApiClient {
   /** Incremental with syncToken; full otherwise. 410 → GoogleCursorExpiredError. */
   async listConnections(opts: {
@@ -705,28 +748,21 @@ export class PeopleClient extends GoogleApiClient {
       'people',
       opts,
     );
-    const contacts = raw.map((p): ContactData => {
-      const primaryName = p.names?.find((n) => n.metadata?.primary) ?? p.names?.[0];
-      const primaryOrg = p.organizations?.find((o) => o.metadata?.primary) ?? p.organizations?.[0];
-      return {
-        resourceName: p.resourceName,
-        displayName: primaryName?.displayName ?? null,
-        emails: (p.emailAddresses ?? [])
-          .map((e) => (e.value ?? '').trim().toLowerCase())
-          .filter((e) => e.includes('@')),
-        phones: [...new Set((p.phoneNumbers ?? [])
-          .map((n) => (n.canonicalForm ?? n.value ?? '').trim())
-          .filter((n) => n.length > 0))],
-        organization: primaryOrg?.name ?? null,
-        title: primaryOrg?.title ?? null,
-        groups: [...new Set((p.memberships ?? [])
-          .map((m) => m.contactGroupMembership?.contactGroupResourceName ?? '')
-          .filter((g) => g.startsWith('contactGroups/') && !SYSTEM_CONTACT_GROUPS.has(g)))]
-          .map((id) => ({ id, name: null })),
-        deleted: p.metadata?.deleted ?? false,
-      };
-    });
-    return { contacts, nextSyncToken };
+    return { contacts: raw.map(contactData), nextSyncToken };
+  }
+
+  /**
+   * GBRA-130 A-3: one contact by resource name, for re-attempting a held
+   * contact that no listing of this run returns. Null when it is gone (404/410).
+   */
+  async getContact(resourceName: string, opts: { signal?: AbortSignal } = {}): Promise<ContactData | null> {
+    const path = resourceName.split('/').map(encodeURIComponent).join('/');
+    try {
+      return contactData(await this.fetchJSON<RawPerson>(`${PEOPLE_BASE}/${path}?personFields=${CONTACT_PERSON_FIELDS}`, 'people', opts));
+    } catch (e) {
+      if (e instanceof GoogleCursorExpiredError) return null;
+      throw e;
+    }
   }
 
   /**

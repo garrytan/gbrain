@@ -136,5 +136,5 @@ async function failCall(tool: string, error: unknown, out: (text: string) => Pro
   const envelope = localCallErrorEnvelope(tool, error);
   await out(JSON.stringify(envelope, null, 2) + '\n');
   console.error(`Error [${envelope.code}]: ${envelope.message}`);
-  setCliExitVerdict(exitCodeForCode(envelope.code));
+  setCliExitVerdict(exitCodeForCode(envelope.code, envelope.reason));
 }

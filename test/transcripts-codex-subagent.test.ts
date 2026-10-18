@@ -122,8 +122,8 @@ describe('#6741 A: Codex sub-agent rollouts are understood, not drift', () => {
   }, 120_000);
 
   test('the scan summary reports sub-agent rollouts separately from drift', () => {
-    const summary = fmtSummary({ files: [], pages: { imported: 0, skipped: 2, errored: 0, planned: 0 }, sessionsSeen: 2, sessionsImported: 2,
-      sessionsFiltered: 0, sessionsErrored: 0, sessionsSkippedNoTimestamp: 0, redactions: 0, imperatives: 0, partsDeleted: 0, driftFiles: 0,
+    const summary = fmtSummary({ files: [], pages: { imported: 0, skipped: 2, errored: 0, planned: 0, pending: 0 }, sessionsSeen: 2, sessionsImported: 2,
+      sessionsFiltered: 0, sessionsErrored: 0, sessionsPending: 0, sessionsSkippedNoTimestamp: 0, redactions: 0, imperatives: 0, partsDeleted: 0, driftFiles: 0,
       subagentRollouts: 3, truncatedFiles: 0, erroredFiles: 0, slugsTouched: [], cleanScan: true, maxSessionTs: '' });
     expect(summary).toContain('3 sub-agent rollouts (no user turns by design)');
     expect(summary).not.toContain('DRIFT WARNING');

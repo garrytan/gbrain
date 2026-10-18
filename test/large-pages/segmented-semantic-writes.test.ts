@@ -13,9 +13,10 @@
  *    get_page without the tag; a fence or timeline write on a segmented page within 24 MiB refuses or differs from
  *    its inline twin; one above 24 MiB writes anything.
  * 3. PGLite always; PostgreSQL when DATABASE_URL is set (test/postgres-unit-arms.txt). Cost assertions are row
- *    counts and work counters, never time.
+ *    counts and work counters, never time. Each step calls both twins under one frozen clock reading, because takes
+ *    rows carry the day they were added and resolved: a step that straddled midnight UTC stamped the twins a day apart.
  */
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, setSystemTime, test } from 'bun:test';
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -79,8 +80,12 @@ for (const kind of testBackends()) {
         ['add_tag', { tag: 'lane-l-kept' }],
       ];
       for (const [verb, params] of steps) {
-        const inline = await call(verb, { slug: INLINE, ...params });
-        const segmented = await call(verb, { slug: SEGMENTED, ...params });
+        setSystemTime(new Date());
+        let inline, segmented;
+        try {
+          inline = await call(verb, { slug: INLINE, ...params });
+          segmented = await call(verb, { slug: SEGMENTED, ...params });
+        } finally { setSystemTime(); }
         expect({ verb, error: segmented.error, status: segmented.status }).toEqual({ verb, error: inline.error, status: inline.status });
         expect(segmented.state ?? segmented.write_request?.state ?? 'committed').not.toBe('failed');
         expect(await view(SEGMENTED)).toEqual(await view(INLINE));

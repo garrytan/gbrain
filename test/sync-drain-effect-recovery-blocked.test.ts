@@ -3,7 +3,8 @@
  * refuses `unexpected_file_bytes` and retains its record: only the user resolving the file clears it. The head probe used to
  * classify every effect recovery as live, so a sync behind it waited the whole no-progress window (5 minutes) before stopping.
  * Such a recovery is now intervention-required: the drain stops `drain_stalled` / `cause: head_blocked` after one governor tick
- * with a fix naming the file. A recovery that can still finish forward (the file holds a recorded version) keeps the wait.
+ * with a fix naming the file and running the `gbrain repair stuck-recovery` preview of the effect (GBRA-130 C-1: its `--keep withdrawn` is the exit).
+ * A recovery that can still finish forward (the file holds a recorded version) keeps the wait.
  * A page write's own publication recovery refused the same way (#6650) stops the same way, its fix pointing at
  * `gbrain repair stuck-recovery`.
  */
@@ -89,7 +90,7 @@ async function crashedMirror(engine: BrainEngine) {
   const published = readFileSync(file, 'utf8');
   const head = await admit();
   const [row] = await engine.executeRaw<{ id: string }>('SELECT id::text AS id FROM persistence_requests WHERE request_id=$1::uuid', [head.request_id]);
-  return { sourceId, slug, file, published, effectId: effect!.id, head: { id: row!.id, request_id: head.request_id },
+  return { sourceId, slug, file, published, effectId: effect!.id, withdrawalRequestId: withdrawal.request_id, head: { id: row!.id, request_id: head.request_id },
     recover: async () => { await only(); await runPersistenceEffects(engine, config, { hostId, limit: 1 }); },
     /** Runs the mirror until it settles (after its recovery it requeues to finish its scan). */
     settle: async () => {
@@ -136,11 +137,13 @@ describe('withdrawal-mirror effect recovery blocking a sync', () => {
       expect(elapsed, kind).toBeLessThan(5_000);
       const resume = `gbrain sync --source ${f.sourceId}`;
       const next = drainNext(result, resume, f.sourceId)!;
+      const preview = ['gbrain', 'repair', 'stuck-recovery', '--source', f.sourceId, '--request-id', f.withdrawalRequestId];
       expect(next, kind).toMatchObject({ code: 'drain_stalled', cause: 'head_blocked', safe_to_loop: false, docs: 'docs/guides/write-refusals.md#head-blocked',
-        fix: { actor: 'user', next: 'tell_user_to_run', argv: ['gbrain', 'sources', 'writer', 'status', '--source', f.sourceId, '--json'] } });
+        command: preview.join(' '), fix: { actor: 'agent', next: 'run', argv: preview } });
       expect(next.why, kind).toContain(f.file);
       expect(next.fix!.user_message, kind).toContain(f.file);
       expect(next.fix!.user_message, kind).toContain(resume);
+      expect(next.fix!.user_message, kind).toContain(preview.join(' '));
       expect(formatDrainSummary(result, resume, f.sourceId).join('\n'), kind).toContain(`blocked_by=effect_recovery(unexpected_file_bytes ${f.effectId})`);
       const status = await readWriterDiagnostics(engine);
       const row = (status.blockers as Array<Record<string, unknown>>).find(b => b.request_id === f.head.request_id)!;

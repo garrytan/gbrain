@@ -1014,10 +1014,12 @@ export interface BrainEngine {
    * the cutoff (or is soft-deleted/restored) between the two statements.
    * Dry-run responses additionally carry `pages` (slug + deleted_at) for
    * display; the destructive path leaves `pages` undefined.
+   * `opts.excludeIds` keeps those page ids out of both (GBRA-130 A-49: the
+   * tombstones the unmanaged belief-ledger expiry failed or parked).
    */
   purgeDeletedPages(
     olderThanHours: number,
-    opts?: { dryRun?: boolean },
+    opts?: { dryRun?: boolean; excludeIds?: number[] },
   ): Promise<{ slugs: string[]; count: number; pages?: { slug: string; deleted_at: Date }[] }>;
   /**
    * v0.26.5: by default `listPages` excludes soft-deleted rows. Set
@@ -1379,7 +1381,7 @@ export interface BrainEngine {
    * `attendance` (#5761) excludes or selects pages whose attendance marker
    * equals their current knowledge revision.
    */
-  countStalePagesForExtraction(opts?: { sourceId?: string; versionTs?: string; attendance?: 'exclude' | 'blocked' }): Promise<number>;
+  countStalePagesForExtraction(opts?: { sourceId?: string; versionTs?: string; attendance?: 'exclude' | 'blocked'; held?: 'exclude' | 'only' }): Promise<number>;
   /**
    * List a keyset page (ordered by `id`, `id > afterPageId`) of stale pages
    * WITH their content so the caller extracts without an N+1 `getPage`. Same
@@ -1392,6 +1394,7 @@ export interface BrainEngine {
     afterPageId?: number;
     sourceId?: string;
     versionTs?: string;
+    held?: 'exclude';
   }): Promise<StalePageRow[]>;
   /**
    * Stamp `links_extracted_at` for a batch of pages keyed on the unique

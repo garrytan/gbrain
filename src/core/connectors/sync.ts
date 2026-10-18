@@ -94,6 +94,8 @@ export interface ConnectorSyncResult {
   skippedUnchanged: number;
   /** Conversation ids quarantined after repeated fetch or ingest failures (retried by id on a backoff). */
   quarantined: string[];
+  /** Conversation ids whose write was accepted and is still publishing: not synced, and they hold the watermark. */
+  pending: string[];
   /** Conversations in the failed ledger after this run: not archived yet (#6387). */
   unresolved: number;
   /** Unresolved conversations that only a `--full` sync can retry (recorded before their org was). */
@@ -195,6 +197,7 @@ export async function runConnectorSync(
     fetchErrors: 0,
     skippedUnchanged: 0,
     quarantined: [],
+    pending: [],
     unresolved: 0,
     held: [],
     gone: [],
@@ -344,7 +347,7 @@ export async function runConnectorSync(
           return { ...base, status: 'forbidden', listed: stubs.length, fetched, fetchErrors, spoolPaths };
         }
         fetchErrors++;
-        const attempts = recordFailure(stub);
+        const attempts = recordFailure(stub, null);
         log(`[connector] fetch error for ${stub.id} (attempt ${attempts}): ${e instanceof Error ? e.message : String(e)}`);
       }
     }
@@ -356,8 +359,8 @@ export async function runConnectorSync(
      * watermark, and a retry by id never blocked it (the watermark describes
      * listed history).
      */
-    function recordFailure(stub: ConversationStub): number {
-      const { attempts } = recordFailedAttempt(failed, stub, now());
+    function recordFailure(stub: ConversationStub, code: string | null): number {
+      const { attempts } = recordFailedAttempt(failed, stub, now(), code);
       if (attempts >= QUARANTINE_ATTEMPTS) quarantined.push(stub.id);
       else if (!retryIds.has(stub.id)) blockingFailures++;
       return attempts;
@@ -388,8 +391,15 @@ export async function runConnectorSync(
         for (const stub of convStubs) {
           const session = sessions.get(stub.id);
           if (fileFailed || session?.error) {
-            const attempts = recordFailure(stub);
+            const attempts = recordFailure(stub, session?.code ?? null);
             log(`[connector] ingest error for ${stub.id} (attempt ${attempts}): ${session?.error ?? 'spool file failed to ingest'}`);
+            continue;
+          }
+          // An accepted write still publishing is neither synced nor a failure: the next run waits on the same
+          // request (transcripts ingest derives its id), and until then the conversation holds the watermark.
+          if (session?.pending) {
+            base.pending.push(stub.id);
+            if (!retryIds.has(stub.id)) blockingFailures++;
             continue;
           }
           if (stub.updatedAt) synced[stub.id] = stub.updatedAt;
@@ -456,23 +466,33 @@ export async function runConnectorSync(
   pruneSpool(opts.provider, 0);
 
   base.unresolved = Object.keys(failed).length;
-  if (base.unresolved > 0) {
-    base.hint =
-      `${base.unresolved} conversation(s) not archived yet; sync retries them automatically ` +
-      `(\`gbrain connectors status ${opts.provider} --json\` lists them).` +
-      (base.held.length
-        ? ` ${base.held.length} recorded before their organization was tracked need one full re-sync, which ` +
-          `re-downloads the whole history: ask the user, then run \`${fullSyncArgv(opts.provider, sourceId).join(' ')}\`.`
-        : '');
-  }
-
+  base.hint = unresolvedHint(base, opts.provider, sourceId) ?? base.hint;
   base.status =
-    fetchErrors > 0 || capped || !allBatchesClean || listErrored || aborted || base.unresolved > 0
+    fetchErrors > 0 || capped || !allBatchesClean || listErrored || aborted || base.unresolved > 0 || base.pending.length > 0
       ? 'partial'
       : importedTotal === 0
         ? 'nothing_new'
         : 'success';
   return base;
+}
+
+/** What the run left unarchived (failed or still publishing) and the command that shows it. */
+function unresolvedHint(base: ConnectorSyncResult, provider: ConnectorProviderName, sourceId: string): string | undefined {
+  const parts: string[] = [];
+  if (base.unresolved > 0) {
+    parts.push(
+      `${base.unresolved} conversation(s) not archived yet; sync retries them automatically ` +
+      `(\`gbrain connectors status ${provider} --json\` lists them).` +
+      (base.held.length
+        ? ` ${base.held.length} recorded before their organization was tracked need one full re-sync, which ` +
+          `re-downloads the whole history: ask the user, then run \`${fullSyncArgv(provider, sourceId).join(' ')}\`.`
+        : ''));
+  }
+  if (base.pending.length) {
+    parts.push(`${base.pending.length} conversation(s) were accepted and are still publishing; the next sync `
+      + `finishes them without a second write (\`gbrain sources writer status --source ${sourceId} --json\` shows the queue).`);
+  }
+  return parts.length ? parts.join(' ') : undefined;
 }
 
 export async function maybeKickoffEmbed(

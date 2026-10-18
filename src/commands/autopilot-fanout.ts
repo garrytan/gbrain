@@ -39,6 +39,7 @@ import { existsSync } from 'fs';
 import type { BrainEngine, SourceRow } from '../core/engine.ts';
 import type { MinionQueue } from '../core/minions/queue.ts';
 import { SOURCE_FRESHNESS_PHASES, MAINTENANCE_PHASES, LAST_GLOBAL_AT_KEY } from '../core/cycle.ts';
+import { GLOBAL_FLOOR_MIN, resolveGlobalFloorMin } from '../core/minions/handlers/autopilot-global-maintenance.ts';
 import { CONNECTOR_SOURCE_PHASES } from '../core/cycle/phase-scope.ts';
 import { isConnectorSourceKind } from '../core/persistence/connector-identity.ts';
 import { attemptedConnectorSourceIds, type ConnectorAccountMismatch } from '../core/persistence/connector-state.ts';
@@ -688,8 +689,6 @@ export async function dispatchPerSource(
   };
 }
 
-const GLOBAL_FLOOR_MIN = 60;
-
 /** Is the brain-wide maintenance overdue? Null/unparseable → overdue. */
 export function isGlobalMaintenanceStale(lastGlobalAtIso: string | null, now = Date.now(), floorMin = GLOBAL_FLOOR_MIN): boolean {
   if (!lastGlobalAtIso) return true;
@@ -732,12 +731,7 @@ export async function dispatchGlobalMaintenance(
   const emit = opts.emit ?? ((line) => process.stderr.write(line + '\n'));
   const log = opts.log ?? ((line) => console.log(line));
 
-  let floorMin = GLOBAL_FLOOR_MIN;
-  const floorCfg = await engine.getConfig('autopilot.global_floor_min');
-  if (floorCfg) {
-    const n = parseInt(floorCfg, 10);
-    if (Number.isFinite(n) && n >= 1) floorMin = n;
-  }
+  const floorMin = await resolveGlobalFloorMin(engine);
   const lastGlobalAt = await engine.getConfig(LAST_GLOBAL_AT_KEY);
   if (!isGlobalMaintenanceStale(lastGlobalAt, Date.now(), floorMin)) {
     return { dispatched: false, reason: 'fresh' };

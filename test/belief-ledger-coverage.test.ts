@@ -314,6 +314,7 @@ for (const engineCase of testBackends().map(beliefEngineCase)) {
     test('probe 16: activation after large-page version pruning baselines the page per subject at its current state', async () => {
       await brain(async b => {
         const big = (n: number) => page({ prose: `Edit ${n}. ${'Long prose. '.repeat(100_000)}` });
+        await b.engine.setConfig('pages.segmented_storage', 'off');
         await b.put('people/alice-example', beliefPage({ type: 'person', title: 'Alice Example' }));
         for (let n = 0; n < 7; n++) await b.put('companies/huge-example', big(n));
         const [{ versions }] = await b.engine.executeRaw<{ versions: number }>(`SELECT count(*)::int AS versions FROM page_versions v JOIN pages p ON p.id = v.page_id

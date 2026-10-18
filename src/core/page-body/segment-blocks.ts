@@ -16,13 +16,13 @@
  * ordinary short lines or dated bullets with no structural candidate are cut
  * only by force. A joined run longer than BLOCK_MAX_BYTES (a line or fence many
  * segments long) refuses with `page_body_segmented`; a facts fence crossing a
- * forced cut while the source has withdrawals refuses with
- * `page_projection_stale` (read-range.ts).
+ * forced cut while the source has withdrawals is read joined across it by
+ * read-range.ts `trustedSegments` (up to FENCE_MAX_BYTES, the bound withdrawal
+ * discovery and the purge rewrite share), and a block it yields longer than
+ * BLOCK_MAX_BYTES still refuses here.
  */
 import type { BrainEngine } from '../engine.ts';
-import { opError } from '../ops/contract.ts';
-import { SEGMENT_MAX_BYTES } from './limits.ts';
-import { bodyRowWork, confirmBodyPin, openSegmentedBody, readBodyRange, trustedSegments, type BodyPin } from './read-range.ts';
+import { BLOCK_MAX_BYTES, blockTooLargeError, bodyRowWork, confirmBodyPin, openSegmentedBody, readBodyRange, trustedSegments, type BodyPin } from './read-range.ts';
 import { ledgerApplies } from './segment-ledger.ts';
 import { cutBlocked, SEGMENTER_VERSION } from './segmenter.ts';
 import { assertGenerationTiles } from './body-tiling.ts';
@@ -58,8 +58,7 @@ export const segmentedPassWork = { bytes: 0, blocks: 0, windows: 0, carry: 0, li
 
 const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 
-/** The longest run of segments joined across forced cuts that a pass holds as one string. */
-export const BLOCK_MAX_BYTES = 8 * SEGMENT_MAX_BYTES;
+export { BLOCK_MAX_BYTES, blockTooLargeError } from './read-range.ts';
 
 export interface BodyBlock {
   /** The block's region; null for the separator between two regions. */
@@ -95,13 +94,6 @@ export class BodyReadStopped extends Error {
     super(`Reading page ${slug} stopped: the caller's budget ran out.`);
     this.name = 'BodyReadStopped';
   }
-}
-
-/** `page_body_segmented`: a run a derived pass must read whole is over BLOCK_MAX_BYTES. */
-export function blockTooLargeError(slug: string, sourceId: string, bytes: number) {
-  return opError('page_body_segmented',
-    `Page ${slug} (source ${sourceId}) has a ${bytes}-byte run a derived pass must read whole (a line or fence longer than a segment), over its ${BLOCK_MAX_BYTES}-byte bound. Nothing was derived from it.`,
-    'Break the long line or fence into shorter lines and write the page again.');
 }
 
 /**

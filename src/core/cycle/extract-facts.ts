@@ -45,7 +45,9 @@
  * `guardTriggered` and the halt rollup still report the run; status returns
  * `warn` naming each failed page. Rows with no backing page or checkout
  * (slugify-floor / stub-guard-blocked slugs from the inline writer) are
- * structurally unfenceable and never gate.
+ * structurally unfenceable and never gate, and neither are the rows of a
+ * clone gbrain owns (#6946), which stay database-only and out of
+ * reconciliation.
  */
 
 import { withUnmanagedBeliefs } from '../belief/projection-point.ts';
@@ -70,6 +72,7 @@ import { resolveManagedFactsEmbedding } from '../persistence/facts-maintenance.t
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { REVISION_BACKFILL_PENDING } from '../page-state/types.ts';
 import { opError, OperationError } from '../ops/contract.ts';
+import { ItemRun } from '../item-failure.ts';
 import {
   resolveSupersededByRow,
   supersessionChainOf,
@@ -95,6 +98,7 @@ import { embed, getEmbeddingDimensions, getEmbeddingModel, isAvailable } from '.
 import { isAborted } from '../abort-check.ts';
 import { parseMarkdown } from '../markdown.ts';
 import { isWriteThroughDisabled, resolvePageWriteTarget } from '../write-through.ts';
+import { urlCloneReadOnly } from '../url-clone.ts';
 import { acquirePageLock } from '../page-lock.ts';
 import {
   lockReconcileRevision,
@@ -796,9 +800,10 @@ export async function runExtractFacts(
   // the destructive reconciliation pass; the other pages reconcile.
   // #6610: rows the unbound-source policy keeps unfenced on database-only pages stay held out of reconciliation
   // but never gate the run; doctor fence_integrity names the opt-in that fences them.
+  // #6946: so do the database-only rows of a clone gbrain owns, which is never fenced.
   const pending = await pendingLegacyRows(engine, sourceId);
   const legacySlugs = new Set(pending.keys());
-  const gating = [...pending].filter(([slug]) => !unboundRefused.has(slug));
+  const gating = await urlCloneReadOnly(engine, sourceId) ? [] : [...pending].filter(([slug]) => !unboundRefused.has(slug));
   const legacyCount = gating.reduce((sum, [, n]) => sum + n, 0);
   result.legacyRowsPending = legacyCount;
   result.legacyPages = gating.map(([slug]) => slug).sort();
@@ -874,6 +879,8 @@ export async function runExtractFacts(
   result.phantomsHeldLegacyRows = phantomResult.held_legacy_rows;
   result.phantomsLockBusy = phantomResult.lock_busy;
   result.phantomsMorePending = phantomResult.more_pending;
+  for (const f of phantomResult.failures) result.warnings.push(`phantom_redirect_failed: ${f.key} (${f.code}); retry: ${(f.fix.argv ?? []).join(' ')}`);
+  if (phantomResult.stopped) result.warnings.push(`phantom_redirect_stopped: ${phantomResult.stopped.message.slice(0, 300)}`);
 
   // ── Facts of soft-deleted pages ────────────────────────────────
   // Deleting a page removes the fence that is the facts' system of record,
@@ -897,7 +904,7 @@ export async function runExtractFacts(
     // Managed: one receipted request per page, rechecked under its key, so a
     // concurrent restore is either seen as restored or waited for, never
     // expired underneath it.
-    const expired = managed ? await expireDeletedPagesManaged(engine, sourceId, managedAuthority) : await maintenanceTransaction(engine, expireDeleted);
+    const expired = managed ? await expireDeletedPagesManaged(engine, sourceId, managedAuthority, result.warnings) : await maintenanceTransaction(engine, expireDeleted);
     result.factsExpiredForDeletedPages = expired.length;
   }
 
@@ -1112,8 +1119,12 @@ export async function runExtractFacts(
   return result;
 }
 
+/**
+ * A refused page never stops the expiry or the reconcile after it (GBRA-130 A-21): it is a
+ * FACTS_EXPIRE_FAILED warning retried by the next run; a page the refusal breaker holds back is skipped.
+ */
 async function expireDeletedPagesManaged(engine: BrainEngine, sourceId: string,
-  managedAuthority: () => Promise<MaintenanceAuthority | null>): Promise<Array<{ id: number }>> {
+  managedAuthority: () => Promise<MaintenanceAuthority | null>, warnings: string[]): Promise<Array<{ id: number }>> {
   const pages = await engine.executeRaw<{ slug: string }>(
     `SELECT DISTINCT f.source_markdown_slug AS slug FROM facts f
       WHERE f.source_id = $1 AND f.row_num IS NOT NULL AND f.expired_at IS NULL
@@ -1121,9 +1132,20 @@ async function expireDeletedPagesManaged(engine: BrainEngine, sourceId: string,
     [sourceId],
   );
   const expired: Array<{ id: number }> = [];
+  const run = new ItemRun('extract_facts.expire_deleted');
   for (const { slug } of pages) {
     const authority = (await managedAuthority())!;
-    expired.push(...(await expireDeletedPageFactsManaged(engine, authority, slug)).map(id => ({ id })));
+    try {
+      expired.push(...(await expireDeletedPageFactsManaged(engine, authority, slug)).map(id => ({ id })));
+      run.succeed();
+    } catch (error) {
+      if (error instanceof OperationError && error.detail === 'refusal_breaker') {
+        warnings.push(`FACTS_EXPIRE_SKIPPED: ${slug}: ${error.code}: the same expiry was refused repeatedly; it is tried again once the page changes or the oldest refusal is 24 hours old`);
+        continue;
+      }
+      const failure = run.fail(slug, error);
+      warnings.push(`FACTS_EXPIRE_FAILED: ${slug}: ${failure.code}: ${failure.message.slice(0, 200)} (retried by the next extract_facts run${failure.requestId ? `; gbrain write-request -- ${failure.requestId} names the refusal` : ''})`);
+    }
   }
   return expired;
 }

@@ -67,7 +67,8 @@ import { pricingSetCommand } from '../budget/no-pricing.ts';
 import type { CapSource } from '../consent.ts';
 import { sha256 } from '../persistence/digest.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
-import { clearGitHold, readGitHold, readGitSourceHolds, recordContentHoldRepair, type ContentHoldRepairState, type GitHoldRecord } from '../persistence/sync-holds.ts';
+import { clearGitHold, readGitHold, readGitSourceHolds, recordContentHoldRepair, recordHoldAttempt, type ContentHoldRepairState, type GitHoldRecord } from '../persistence/sync-holds.ts';
+import { rotate, rotationAfter, rotationBrain, rotationKeyOf, saveRotation } from './rotation.ts';
 import { confinedRepairTarget, prepareRepairPublication, repairScreenConfig, submitManagedFileRepair } from '../persistence/file-repair.ts';
 import { repairBusy, repairBusyMessage } from '../persistence/repair-busy.ts';
 import { frozenImportScreenInput, loadSyncScreenRun, screenFrozenContent } from '../persistence/sync-screen.ts';
@@ -145,6 +146,8 @@ const TRANSIENT: ReadonlySet<string> = new Set(['llm_unavailable', 'ledger_unava
 const STOPWORDS: ReadonlySet<string> = new Set(['a', 'an', 'the', 'of', 'and', 'or', 'for', 'to', 'in', 'on', 'at', 'by', 'with', 'from', 'inc', 'llc', 'ltd', 'co', 'corp', 'company', 'mr', 'ms', 'dr']);
 
 const itemName = (entry: Pick<ApprovedConflict, 'source_id' | 'path'>) => `${entry.source_id}:${entry.path}`;
+const ROTATION_OP = 'slug-conflict-repair-rotation';
+const rotationKey = (entry: Pick<ApprovedConflict, 'source_id' | 'path'>) => rotationKeyOf(entry.source_id, entry.path);
 const isImport = (entry: Pick<ApprovedConflict, 'rule'>) => entry.rule === 'already_clean' || entry.rule === 'already_exempt';
 
 function previewArgv(scope: RepairScope, selection: Selection): string[] {
@@ -500,6 +503,8 @@ export const slugConflictsRepair: RepairHandler = {
         llmItems.push({ item: name, named: cand.namedSlug, estimate_usd: estimate.usd });
       }
     }
+    // GBRA-130 A-44: a bare apply starts after the candidate the last one attempted (the fences rotation).
+    if (opts?.apply) approved.splice(0, approved.length, ...rotate(approved, rotationKey, await rotationAfter(engine, ROTATION_OP, scope.brain_id)));
     let waiting = 0;
     for (const entry of [...approved].reverse()) { if (entry.tier === 'llm') waiting++; entry.llm_waiting = entry.tier === 'llm' ? waiting : 0; }
     const sourcesRows = await engine.executeRaw<{ id: string; incarnation: string }>('SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids]);
@@ -530,6 +535,16 @@ export const slugConflictsRepair: RepairHandler = {
       return await applyConflict(ctx, entry, { embed: opts?.embed === true, expect: hash, allowanceUsd: opts?.llmAllowanceUsd, deadline: opts?.deadline, noLlm: opts?.noLlm === true });
     } finally {
       if (hash && last) await clearApprovedSet(ctx.engine, { command: 'slug-conflicts', hash });
+      if (!hash) await saveRotation(ctx.engine, ROTATION_OP, await rotationBrain(ctx.engine), rotationKey(entry)).catch(() => undefined);
+    }
+  },
+  /** GBRA-130 A-44: a candidate whose apply failed item-scoped counts a failed attempt on its hold, so HOLD_ATTEMPTS_NEEDS_HUMAN escalates it. */
+  async onItemFailures(ctx, failures) {
+    for (const { item } of failures) {
+      const { entry } = item as ConflictItem;
+      const [source] = await ctx.engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [entry.source_id]);
+      if (!source) continue;
+      await recordHoldAttempt(ctx.engine, { sourceId: entry.source_id, incarnation: source.incarnation, path: entry.path, code: CONTENT_REPAIR_HOLD_CODE });
     }
   },
   render(details, opts) {

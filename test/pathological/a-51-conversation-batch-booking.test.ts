@@ -19,7 +19,7 @@ import { installFaultHook } from '../../src/core/persistence/fault-points.ts';
 import { OperationError } from '../../src/core/ops/contract.ts';
 import { managedBrain } from '../helpers/managed-brain.ts';
 import { requirePostgresTestDatabase, testBackends } from '../helpers/test-backends.ts';
-import { expectUnitNotAborted } from './_gbra60-shim.ts';
+import { expectUnitNotAborted } from './harness.ts';
 
 const X = 'meetings/2026-09-28-oversized';
 const Y = 'meetings/2026-09-28-plan-sync';

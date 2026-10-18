@@ -87,6 +87,7 @@ export { withRetry };
 export type { WithRetryOpts } from '../core/retry.ts';
 import { buildGazetteer, findMentionedEntities, hashGazetteer } from '../core/by-mention.ts';
 import { pageMentions, runMentionPass, type MentionPassResult } from '../core/mentions/pass.ts';
+import type { LinkExtractionFailure, LinkExtractionSystemic } from '../core/persistence/links-maintenance.ts';
 import { formatMentionSummary, linkPhaseDeadline, mentionJsonFields, previewMentionPass } from '../core/mentions/stale.ts';
 // #4611: the cross-source link fallback follows the configured
 // `sources.default` (validated shape) instead of the literal 'default'.
@@ -880,12 +881,15 @@ Extraction:
 Incremental sweep:
 ${ATTENDANCE_REPAIR_HELP}
   gbrain extract --stale [--source-id <id>] [--include-frontmatter]
-                         [--catch-up] [--dry-run] [--json]
+                         [--catch-up] [--retry-held] [--dry-run] [--json]
       Re-extract links + timeline for stale pages, then the mention pass (entity
       aliases and title subjects; link_source='mentions'; off: gbrain config set
       mentions.auto_link false). DB-source; safe to cron; 30 min per run, the next
       resumes; --catch-up runs until none remain. Scope with --source-id (--source
       is fs|db). Done when --dry-run --json reports actionable 0 and mention_due 0.
+      On a managed brain a page whose extraction fails is reported and skipped;
+      after 3 runs failing it the same way it is held until it is edited, the
+      extractor changes, or --retry-held clears the holds and retries it now.
 
 Inspection:
   gbrain extract mentions --explain <name|slug> [--page <slug>] [--source-id <id>] [--json]
@@ -976,6 +980,7 @@ export async function runExtract(engine: BrainEngine, args: string[], authority?
       includeFrontmatter: args.includes('--include-frontmatter') || undefined,
       sourceIdFilter: staleSourceId,
       catchUp: args.includes('--catch-up'),
+      retryHeld: args.includes('--retry-held'),
     });
     return;
   }
@@ -2097,8 +2102,10 @@ export async function extractStaleFromDB(
      * explicit `gbrain extract --stale` command. Ignored when catchUp.
      */
     timeBudgetMs?: number;
+    /** GBRA-130 A-1 (managed brains): clear held link-extraction failures first. */ retryHeld?: boolean;
   },
-): Promise<{ linksCreated: number; timelineCreated: number; pagesProcessed: number; staleRemaining: number; skippedMissingTarget?: number; skippedCrossSource?: number; skippedAttendanceIncomplete?: number; skippedChanged?: number; skippedConcurrentWrite?: number; mentions?: MentionPassResult }> {
+): Promise<{ linksCreated: number; timelineCreated: number; pagesProcessed: number; staleRemaining: number; skippedMissingTarget?: number; skippedCrossSource?: number; skippedAttendanceIncomplete?: number; skippedChanged?: number; skippedConcurrentWrite?: number; mentions?: MentionPassResult;
+  linkFailed?: number; linkFailures?: LinkExtractionFailure[]; linkSystemic?: LinkExtractionSystemic[] }> {
   const { dryRun, jsonMode, sourceIdFilter, catchUp } = opts;
   const includeFrontmatter = opts.includeFrontmatter ?? await resolveIncludeFrontmatter(engine);
   const log = opts.quiet ? (..._args: unknown[]) => {} : console.log;
@@ -2122,11 +2129,12 @@ export async function extractStaleFromDB(
   // (the mention pass runs inside it).
   if (await managedPersistenceEnabled(engine)) {
     const { runManagedStaleExtraction, formatManagedStaleExtraction } = await import('../core/persistence/links-maintenance.ts');
-    const r = await runManagedStaleExtraction(engine, { sourceId: sourceIdFilter, catchUp, timeBudgetMs, counts: !opts.quiet });
+    const r = await runManagedStaleExtraction(engine, { sourceId: sourceIdFilter, catchUp, timeBudgetMs, counts: !opts.quiet, retryHeld: opts.retryHeld });
     if (!jsonMode) log(formatManagedStaleExtraction(r, false, false));
     else if (!opts.quiet) process.stdout.write(formatManagedStaleExtraction(r, false, true) + '\n');
     return { linksCreated: r.created, timelineCreated: r.timeline, pagesProcessed: r.pages, staleRemaining: r.remaining + (r.mentions?.remaining ?? 0),
-      ...(r.skipped ? { skippedChanged: r.skipped } : {}), ...(r.mentions ? { mentions: r.mentions } : {}) };
+      ...(r.skipped ? { skippedChanged: r.skipped } : {}), ...(r.mentions ? { mentions: r.mentions } : {}),
+      ...(r.failed ? { linkFailed: r.failed, linkFailures: r.failures } : {}), ...(r.systemic?.length ? { linkSystemic: r.systemic } : {}) };
   }
 
   // Resolver + cross-source resolution map built ONCE before the loop (the

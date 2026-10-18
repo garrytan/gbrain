@@ -117,14 +117,21 @@ export function reproduceCommand(file: string, postgres: boolean): string | unde
   return `bun run test:stress ${file} --iterations 10${postgres ? ' --postgres' : ''}`;
 }
 
+/**
+ * GitHub answers a 100-job page of a large run's attempt with a 502 every time (its
+ * server-side render times out near 10s), so retrying that page never succeeds;
+ * 50-job pages of the same attempt return in a few seconds.
+ */
+export const JOBS_PER_PAGE = 50;
+
 export async function pagedJobs(client: GitHubClient, run: RunInfo): Promise<{ jobs: JobInfo[]; complete: boolean }> {
   const jobs: JobInfo[] = [];
   let total = 0;
-  for (let page = 1; page <= 5; page++) {
-    const r = await client.request<{ jobs: JobInfo[]; total_count: number }>('GET', `repos/{repo}/actions/runs/${run.id}/attempts/${run.run_attempt}/jobs?per_page=100&page=${page}`);
+  for (let page = 1; page <= 500 / JOBS_PER_PAGE; page++) {
+    const r = await client.request<{ jobs: JobInfo[]; total_count: number }>('GET', `repos/{repo}/actions/runs/${run.id}/attempts/${run.run_attempt}/jobs?per_page=${JOBS_PER_PAGE}&page=${page}`);
     jobs.push(...r.jobs);
     total = r.total_count;
-    if (jobs.length >= r.total_count || r.jobs.length < 100) break;
+    if (jobs.length >= r.total_count || r.jobs.length < JOBS_PER_PAGE) break;
   }
   return { jobs, complete: jobs.length >= total };
 }

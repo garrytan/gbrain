@@ -21,7 +21,8 @@
  * coordinator publishes database-only pages too; archived sources are
  * skipped) or the source has a `local_path` and the page's canonical file
  * exists on this host. Everything else is counted and left alone: a NULL
- * entity slug, a missing page or file, or a source without a checkout here.
+ * entity slug, a missing page or file, a source without a checkout here, or
+ * (unmanaged, #6946) a clone gbrain owns, whose checkout is never written.
  *
  * Adoption oracle (#6278, `adoptableClaim`): the fence codec trims a claim,
  * folds CRLF/CR to LF, reads `~~x~~` as a struck row and `<br>` as a line
@@ -75,6 +76,7 @@ import { UNBOUND_WRITE_KEY } from '../persistence/unbound-source.ts';
 import { contentHash } from '../utils.ts';
 import { resolvePageWriteTarget } from '../write-through.ts';
 import { commitFactFenceFile, gitPathState } from './fence-write.ts';
+import { isOwnedClone } from '../url-clone.ts';
 
 export interface UnfencedFactRow {
   id: string;
@@ -105,6 +107,8 @@ export interface UnfencedFactsOutcome {
   skipped_no_local_path: number;
   skipped_no_page: number;
   skipped_archived: number;
+  /** Unmanaged (#6946): rows of a clone gbrain owns (`sources add --url`), kept database-only so its checkout keeps fast-forwarding. */
+  skipped_url_clone: number;
   pages_touched: number;
   /** `<slug> (<reason>)` per page whose fence write failed; its rows stay unfenced. */
   failed_pages: string[];
@@ -263,9 +267,10 @@ export function unboundRefusedSentence(pages: UnfencedFactsOutcome['unbound_refu
 /** Read the unfenced active rows of one source (or every source) and group the fenceable ones per page. */
 export async function planUnfencedFacts(engine: BrainEngine, opts: { sourceId?: string } = {}): Promise<UnfencedFactsPlan> {
   const managed = await managedPersistenceEnabled(engine);
-  const sources = await engine.executeRaw<{ id: string; local_path: string | null; archived?: boolean }>(
-    'SELECT id, local_path, archived FROM sources',
+  const sources = await engine.executeRaw<{ id: string; local_path: string | null; archived?: boolean; config: unknown }>(
+    'SELECT id, local_path, archived, config FROM sources',
   );
+  const urlClones = new Set(managed ? [] : sources.filter(isOwnedClone).map(s => s.id));
   const localPathById = new Map(sources.map(s => [s.id, s.local_path] as const));
   const archived = new Set(sources.filter(s => s.archived).map(s => s.id));
   const rows = await engine.executeRaw<UnfencedFactRow>(
@@ -282,7 +287,7 @@ export async function planUnfencedFacts(engine: BrainEngine, opts: { sourceId?: 
   );
   const outcome: UnfencedFactsOutcome = {
     scanned: rows.length, fenced: 0, skipped_no_entity: 0, skipped_no_local_path: 0, skipped_no_page: 0,
-    skipped_archived: 0, pages_touched: 0, failed_pages: [], fenced_slugs: [], missing_files: [], unbound_refused: [], unadoptable_rows: [],
+    skipped_archived: 0, skipped_url_clone: 0, pages_touched: 0, failed_pages: [], fenced_slugs: [], missing_files: [], unbound_refused: [], unadoptable_rows: [],
   };
   const groups = new Map<string, UnfencedFactRow[]>();
   for (const row of rows) {
@@ -290,6 +295,7 @@ export async function planUnfencedFacts(engine: BrainEngine, opts: { sourceId?: 
     // A managed brain publishes through the source's maintenance authority,
     // which an archived source does not grant; it never blocks the others.
     if (managed && archived.has(row.source_id)) { outcome.skipped_archived += 1; continue; }
+    if (urlClones.has(row.source_id)) { outcome.skipped_url_clone += 1; continue; }
     if (!localPathById.get(row.source_id) && !managed) { outcome.skipped_no_local_path += 1; continue; }
     if (!row.page_exists) { outcome.skipped_no_page += 1; continue; }
     const key = `${row.source_id}\0${row.entity_slug}`;

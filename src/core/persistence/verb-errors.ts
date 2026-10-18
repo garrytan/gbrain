@@ -133,6 +133,9 @@ export function writeFailureDiagnostic(code: string, message?: string | null): {
   // #5575: a purged claim or page content is refused for good; the owner alone can clear its tombstone.
   if (code === 'purged_content') return { reason: code, message: 'This content was purged from this source and cannot be saved again.',
     suggestion: PURGED_SUGGESTION };
+  // Flip lane C: the receipt names the attempts, the limit and the SQLSTATE; the next step is the read-only writer status.
+  if (code === 'write_interrupted' && message) return { reason: code, message,
+    suggestion: 'Inspect the owner with gbrain sources writer status --source <source> --json (read-only), then submit the write again with a new request_id once the database is less loaded; a held sync file needs gbrain sources retry-held <source> and the same sync.' };
   const memory = code === 'invalid_params' ? MEMORY_REFUSAL.exec(message ?? '') : null;
   if (memory) return { reason: code, message: message!, suggestion: MEMORY_REFUSAL_SUGGESTION[/, extracted from that conversation page\.$/.test(message!) ? 'replaces_cross_page_derived' : memory[1]!]! };
   const reason = isWriteErrorCode(code) ? code : 'storage_error';

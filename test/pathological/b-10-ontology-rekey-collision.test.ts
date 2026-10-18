@@ -21,7 +21,8 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import { importFromContent } from '../../src/core/import-file.ts';
 import { readFacts } from '../../src/core/persistence/prepared-maintenance.ts';
 import { relinkFactHash, submitRelinkGroup } from '../../src/core/facts/relink-publish.ts';
-import { openArm, pathologicalArms } from './_gbra60-shim.ts';
+import { pathologicalArms } from './harness.ts';
+import { isolatedSharedSkillsEngine } from '../helpers/shared-skills-engine.ts';
 
 const VALID_FROM = '2026-03-01T00:00:00Z';
 const observe = (engine: BrainEngine, entitySlug: string, source: string) =>
@@ -34,7 +35,7 @@ const arms = pathologicalArms();
 const engines: Array<{ name: string; engine: BrainEngine; close: () => Promise<void> }> = [];
 beforeAll(async () => {
   for (const arm of arms) {
-    const { engine, close } = await openArm(arm);
+    const { engine, close } = await isolatedSharedSkillsEngine(arm.databaseUrl);
     engines.push({ name: arm.backend, engine, close });
   }
 }, 120_000);

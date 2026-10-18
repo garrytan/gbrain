@@ -19,6 +19,7 @@ const EXEMPT: Record<string, string> = {
   'src/commands/extract-timeline-db.ts': 're-derives timeline rows from stored page text the page gate already assessed',
   'src/commands/migrate-engine.ts': 'copies rows verbatim between engines; tiers and receipts travel with them',
   'src/commands/sync/holds.ts': 'held-file bookkeeping; writes no content',
+  'src/core/repair/url-clone-fences.ts': 'restores a gbrain-owned clone file to its HEAD bytes (what a sync imports) and keeps the fence rows the database already holds; it adds no content',
   'src/core/repair/rename-identity.ts': 'owner repair behind preview-bound destructive consent: moves the old page to the new slug (updateSlug), copies fence-row attributes the two pages already store and retires the provisional page; the new file imports through importFile, which passes the owner gate input (import-file.ts)',
   'src/commands/sync/rename-collision.ts': 'moves a page between slugs (updateSlug, tombstone re-key, source_path repair) and writes no content; the renamed body still imports through importFile, which passes the owner gate input (import-file.ts)',
   'src/core/calibration/undo-wave.ts': 'restores prior take lifecycle fields; no new text',

@@ -75,8 +75,13 @@ those (`maintenance_lock_busy`) and the holder runs them.
 
 # Autopilot health gate — daily at 7 AM. The exit code is the signal:
 # 0 fresh (or nothing installed), 1 needs attention (stale heartbeat,
-# never ran, or paused), 2 the daemon took itself out of rotation.
-# Status is filesystem-only, so it works even during a DB outage.
+# never ran, paused, or brain-wide maintenance stalled: no completed pass
+# for 3 global intervals while its jobs fail or a phase keeps blocking it,
+# or passes stamping past a phase that failed 3+ passes in a row),
+# 2 the daemon took itself out of rotation. Status is filesystem-only (the
+# daemon writes the maintenance verdict each tick), so it works even during
+# a DB outage. On a stall: gbrain doctor --only global_maintenance_stalled
+# names the phase and the command to run.
 0 7 * * * gbrain autopilot --status >> /tmp/gbrain-autopilot-health.log 2>&1 || your-notify "gbrain autopilot needs attention"
 
 # Dream cycle — nightly at 2 AM
@@ -187,6 +192,13 @@ per-transcript synthesis subagents. The dials:
   There is no per-page force flag: the tombstone is keyed by a hash of the
   page body, so any edit to the body re-extracts the page on the next cycle,
   and that is the only way to send one tombstoned page again.
+  A page the model refuses the same way in 3 cycles (a prompt too long for
+  the model, a content block) gets a separate failure tombstone and is
+  skipped while its body and the prompt version are unchanged; pages that
+  failed before are retried after the fresh ones, so they never block the
+  rest. `gbrain takes propose --failed` lists held pages and
+  `gbrain takes propose --retry-failed [--slug <slug>]` releases them.
+  Timeouts, rate limits and other transient errors are never held.
 - `dream.synthesize.attribution_rules` and `dream.propose_takes.attribution_rules`
   (default off) — extra prompt rules from #5425: keep who proposed what and
   later corrections explicit; an assistant-authored judgment is not the

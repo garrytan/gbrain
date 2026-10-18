@@ -34,6 +34,7 @@ const BROAD = new Set(['isUndefinedColumnError', 'isUndefinedTableError']);
 const ALLOWLIST: Record<string, string> = {
   'src/core/oauth-provider.ts': 'OAuth token/client degrade ladders retry narrower projections on any 42703; per-column audit is a follow-up',
   'src/core/grants/legacy-token.ts': 'maps a missing grant column to grant_schema_required (a refusal, never a silent ok)',
+  'src/core/item-failure.ts': 'classifies a missing table or column as run-scoped (the unit stops, never a silent ok or a skipped item)',
   'src/core/grants/rescope.ts': 'rescope degrade ladder over optional oauth_clients columns; per-column audit is a follow-up',
   'src/core/ops/request-tools.ts': 'surface-column degrade on the request-tools op; per-column audit is a follow-up',
   'src/core/token-mint.ts': 'maps a missing grant column to a schema refusal (never a silent ok)',

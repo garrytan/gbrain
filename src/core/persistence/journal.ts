@@ -784,12 +784,20 @@ export async function releaseUnpublishedClaim(engine: SqlEngine, row: WriteReque
     AND state='running' AND recovery IS NULL AND publication_started=false AND ${PERSISTENCE_PROTOCOL_PREDICATE}`, [row.id, row.execution_token, reason, opts.charge === true]);
 }
 
+/** A recovery larger than a budget: names both budgets and the bytes needed, since a configured budget is the user's. */
+function recoveryTooLarge(bytes: number, limits: JournalLimits): OperationError {
+  const worktree = journalLimitKey('worktreeRecoveryBytes'), brain = journalLimitKey('brainRecoveryBytes');
+  return new OperationError('request_too_large',
+    `This request needs ${bytes} bytes of recovery space, more than the recovery budget (${worktree} ${limits.worktreeRecoveryBytes}, ${brain} ${limits.brainRecoveryBytes}); nothing was changed.`,
+    `A configured budget is the user's choice: ask them before raising it with gbrain config set, or unset ${worktree} for the default, which holds the largest page stored in segments.`);
+}
+
 /** Called while holding the root lock; the durable record precedes any rename. */
 export async function prepareRecovery(engine: BrainEngine, row: WriteRequest, recovery: RecoveryRecord, bytes: number,
   overrides?: Partial<JournalLimits>): Promise<void> {
   const limits = await readJournalLimits(engine,overrides);
   if (!row.worktree_id) throw new TypeError('Filesystem recovery requires a worktree.');
-  if (bytes > limits.worktreeRecoveryBytes || bytes > limits.brainRecoveryBytes) throw new OperationError('request_too_large', 'This request exceeds the configured recovery capacity.', 'Increase recovery capacity before submitting a new request.');
+  if (bytes > limits.worktreeRecoveryBytes || bytes > limits.brainRecoveryBytes) throw recoveryTooLarge(bytes, limits);
   await engine.transaction(async tx => {
     // A crash after rename must never lose the earlier recovery reservation,
     // even when the deployment defaults ordinary transactions to async commit.
@@ -834,9 +842,8 @@ export async function prepareRecoveries(engine: BrainEngine, members: { row: Wri
   if (!worktree || members.some(member => member.row.worktree_id !== worktree)) throw new TypeError('Grouped filesystem recovery requires one worktree.');
   const limits = knownLimits ?? await readJournalLimits(engine);
   const total = members.reduce((sum, member) => sum + member.bytes, 0);
-  if (members.some(member => member.bytes > limits.worktreeRecoveryBytes || member.bytes > limits.brainRecoveryBytes)) {
-    throw new OperationError('request_too_large', 'This request exceeds the configured recovery capacity.', 'Increase recovery capacity before submitting a new request.');
-  }
+  const largest = Math.max(...members.map(member => member.bytes));
+  if (largest > limits.worktreeRecoveryBytes || largest > limits.brainRecoveryBytes) throw recoveryTooLarge(largest, limits);
   await transaction(async tx => {
     const [, counters] = await pipelined(tx, [() => declareDurablePersistence(tx), () => lockCounters(tx, ['brain', `worktree:${worktree}`])]) as [unknown, Counter[]];
     for (const c of counters) if (Number(c.recovery_bytes) + total > (c.key === 'brain' ? limits.brainRecoveryBytes : limits.worktreeRecoveryBytes)) throw capacityError('recovery bytes currently reserved by other requests');

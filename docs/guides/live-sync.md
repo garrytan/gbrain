@@ -643,11 +643,14 @@ vars — incident-time escape hatches, not everyday knobs.
 4. **Gate on the daemon's heartbeat.** If the built-in daemon runs your sync
    (`gbrain autopilot --install`), wire your scheduler's health check to
    `gbrain autopilot --status`. The exit code is the signal: 0 fresh (or
-   nothing installed), 1 needs attention (stale heartbeat, never ran, or
-   paused by a migration), 2 the daemon took itself out of rotation.
-   `--json` emits the full report, including `heartbeat_age_seconds`. Status
-   reads only the filesystem — no database connection — so it keeps working
-   during the exact outages it exists to diagnose.
+   nothing installed), 1 needs attention (stale heartbeat, never ran,
+   paused by a migration, or brain-wide maintenance stalled), 2 the daemon
+   took itself out of rotation. `--json` emits the full report, including
+   `heartbeat_age_seconds` and `global_maintenance` (the stall verdict the
+   daemon writes each full-cycle tick, the same one doctor reports as
+   `global_maintenance_stalled`). Status reads only the filesystem — no
+   database connection — so it keeps working during the exact outages it
+   exists to diagnose.
 
 ## Several brains on one host
 

@@ -442,6 +442,13 @@ export function formatSaveOutcome(
       exitCode: 0,
     };
   }
+  if (dbSaved && writeThrough.skipped === 'url_clone') {
+    return {
+      stdout: `\n_Saved to DB page \`${ctx.slug}\` (the source is a clone gbrain pulls from upstream — kept database-only)._`,
+      stderr,
+      exitCode: 0,
+    };
+  }
   if (dbSaved) {
     // File write attempted but errored (already on stderr). Row is durable.
     return {

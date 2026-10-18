@@ -21,18 +21,18 @@ import { listWriterVersions } from './writer-versions.ts';
 import { readFix, trustedCliRequired } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';
 
-const invalid = (message: string, suggestion: string, fix?: Action) =>
+export const invalid = (message: string, suggestion: string, fix?: Action) =>
   opError('invalid_params', message, suggestion, fix ? { fix } : {});
 const sourcesListFix = (why: string) => readFix(why, { argv: ['gbrain', 'sources', 'list', '--json'] });
 const writerListFix = readFix('Lists the local writer registrations and their ids, read-only.', { argv: ['gbrain', 'auth', 'local-writer', 'list', '--json'] });
 const LIST_EXAMPLES: Record<string, string> = { source_ids: 'default,notes', scopes: 'read,write', allowed_operations: 'search,get_page', slug_prefixes: 'people/,companies/' };
 const cliFlag = (key: string) => `--${key.replaceAll('_', '-')}`;
-function source(value: unknown): string {
+export function source(value: unknown): string {
   if (typeof value !== 'string' || !isValidSourceId(value)) throw invalid('An explicit active source ID is required.', 'Name the source explicitly with its id; gbrain sources list --json shows the active sources.',
     sourcesListFix('Lists the active source ids, read-only.'));
   return value;
 }
-function path(value: unknown): string {
+export function path(value: unknown): string {
   if (typeof value !== 'string' || !isAbsolute(value) || value.includes('\0')) throw invalid('path must be an absolute directory path on this host.',
     'Pass --path with an absolute directory on this host, e.g. --path /srv/brain/notes; a relative path or one containing a NUL byte is refused.');
   return value;
@@ -46,18 +46,11 @@ function strings(value: unknown, key: string): string[] {
     `Pass ${cliFlag(key)} as a comma-separated list with no empty entries, e.g. ${cliFlag(key)} ${LIST_EXAMPLES[key] ?? 'a,b'}.`);
   return [...new Set(value)];
 }
-function bool(params: Record<string, unknown>, key: string): void {
+export function bool(params: Record<string, unknown>, key: string): void {
   if (params[key] !== undefined && typeof params[key] !== 'boolean') throw invalid(`${key} must be a boolean.`,
     `Send ${key} as a JSON boolean (true or false); on the CLI it is the bare flag ${cliFlag(key)}, which takes no value.`);
 }
-/** #5914: `--confirm-relocated-root` only qualifies a self-transfer; alone it is a usage error, never a silent no-op. */
-function transferOptions(params: Record<string, unknown>): { selfTransfer: boolean; relocated: boolean } {
-  bool(params, 'confirm_relocated_root');
-  if (params.confirm_relocated_root === true && params.self_transfer !== true) throw invalid('confirm_relocated_root requires self_transfer.',
-    'Pass --confirm-relocated-root together with --self-transfer: it waives only the directory identity comparison of a self-transfer that repairs a checkout recreated at its recorded path.');
-  return { selfTransfer: params.self_transfer === true, relocated: params.confirm_relocated_root === true };
-}
-function keys(params: Record<string, unknown>, allowed: string[]) {
+export function keys(params: Record<string, unknown>, allowed: string[]) {
   const unknown = Object.keys(params).filter(key => !allowed.includes(key));
   if (unknown.length) throw invalid(`Unsupported administration parameters: ${unknown.join(', ')}.`,
     `Remove ${unknown.join(', ')}; this operation accepts ${allowed.length ? allowed.join(', ') : 'no parameters'}. A caller on another gbrain release sends the parameters of its own release: run one release on both sides.`);
@@ -122,9 +115,6 @@ function writerFailuresQuery(sourceId: string, params: Record<string, unknown>):
     ...(p.category ? { category: p.category } : {}) };
 }
 
-const transferStatusFix = (sourceId: string) =>
-  readFix(`Shows source ${sourceId}'s owner binding and prepared transfer, read-only.`, { argv: ['gbrain', 'sources', 'writer', 'status', sourceId, '--json'] });
-
 export async function runPersistenceAdministration(engine: BrainEngine, operation: PersistenceAdminOperation,
   params: Record<string, unknown>, config?: GBrainConfig, embeddingRetryPolicy: 'owner' | 'mounted_database' = 'owner'): Promise<Record<string, unknown>> {
   if (operation === 'writer_reconcile_preview') return (await import('./reconcile.ts')).runReconcilePreview(engine, params);
@@ -153,7 +143,7 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
     return { ...await setWriterAdminLock(engine, operation === 'writer_lock') };
   }
   // Early refusal before any native lock or preview; the checks inside each transaction stay authoritative.
-  if (['writer_claim', 'writer_activate', 'writer_transfer_prepare', 'writer_transfer_accept'].includes(operation)) await assertWriterAdminUnlocked(engine);
+  if (['writer_claim', 'writer_activate', 'writer_transfer_prepare', 'writer_transfer_accept', 'writer_transfer_cancel'].includes(operation)) await assertWriterAdminUnlocked(engine);
   if (operation === 'writer_sync') return (await import('./sync-administration.ts')).runAuthenticatedSyncSlice(engine, params);
   if (operation === 'writer_refresh') {
     keys(params, ['source_id', 'dry_run', 'resume', 'abandon', 'wait_drain_ms', 'fetch_timeout_ms']);
@@ -171,7 +161,7 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
       ...(waitDrainMs !== undefined ? { waitDrainMs } : {}), ...(fetchTimeoutMs !== undefined ? { fetchTimeoutMs } : {}) }) };
   }
   if (operation === 'writer_extract_stale') {
-    keys(params, ['source_id', 'dry_run', 'catch_up', 'source_mode']);
+    keys(params, ['source_id', 'dry_run', 'catch_up', 'source_mode', 'retry_held']);
     const writer = currentVerifiedLocalWriter();
     if (!writer || writer.remote || writer.principal.kind !== 'local_cli') throw trustedCliRequired('Stale extraction requires a trusted CLI registration.');
     const { managedPersistenceEnabled } = await import('./ownership.ts');
@@ -180,7 +170,7 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
     // #6803 (D2): the CLI validated --source before the hand-off; only the owner can see whether a source is named db.
     if (params.source_mode === 'db') await (await import('../../commands/extract-stale-options.ts')).assertStaleSourceModeUnambiguous(engine, ['--stale', '--source', 'db', ...(sourceId ? ['--source-id', sourceId] : [])]);
     return { ...await (await import('./links-maintenance.ts')).runManagedStaleExtraction(engine,
-      { sourceId, dryRun: params.dry_run === true, catchUp: params.catch_up === true }) };
+      { sourceId, dryRun: params.dry_run === true, catchUp: params.catch_up === true, retryHeld: params.retry_held === true }) };
   }
   if (operation === 'writer_reindex_code') return (await import('./reindex-administration.ts')).runAuthenticatedCodeReindex(engine, params);
   if (operation === 'writer_embed_facts') return (await import('./embed-facts-administration.ts')).runAuthenticatedFactEmbedding(engine, params, config);
@@ -245,7 +235,7 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
     const adminState = await writerAdminState(engine);
     const diagnostics = await writerDiagnostics(engine);
     const bindings = await engine.executeRaw(`SELECT b.source_id,b.source_incarnation,b.worktree_id,b.relative_path,b.topology_generation::text AS topology_generation,
-      w.owner_host_id,w.owner_epoch::text AS owner_epoch,w.state,w.manifest->>'digest' AS manifest_digest,h.local_path,h.git_durability,
+      w.owner_host_id,w.owner_epoch::text AS owner_epoch,w.state,w.manifest->>'digest' AS manifest_digest,w.manifest->>'prepared_at' AS prepared_at,h.local_path,h.git_durability,
       CASE h.git_durability WHEN 'enabled' THEN 'on' WHEN 'disabled' THEN 'off' ELSE 'unknown' END AS git_durability_state FROM persistence_source_bindings b
       JOIN persistence_worktrees w ON w.id=b.worktree_id
       LEFT JOIN persistence_host_bindings h ON h.worktree_id=b.worktree_id AND h.host_id=$1::uuid
@@ -336,51 +326,7 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
     return { ...await deactivatePersistence(engine, { expectedState, requestId: params.request_id === undefined ? undefined
       : uuid(params.request_id, 'A valid deactivation request UUID is required.', 'Pass --request-id as a UUID, or omit it and gbrain generates one.') }) };
   }
-  if (operation === 'writer_transfer_prepare') {
-    keys(params, ['source_id', 'dry_run', 'admin_intent', 'expected_state', 'self_transfer', 'confirm_relocated_root']);
-    const sourceId = source(params.source_id);
-    bool(params, 'self_transfer');
-    const transfer = transferOptions(params);
-    if (params.dry_run) {
-      const binding = await getWorktreeBinding(engine, sourceId, existingLocalHostId());
-      if (!binding || binding.owner_host_id !== existingLocalHostId() || !binding.local_path) {
-        throw opError('permission_denied', 'Only the current owner can prepare a transfer.',
-          `This host is not source ${sourceId}'s current owner. Run the transfer prepare on the owner host that writer status names; a transfer is a deliberate topology change the operator reviews.`,
-          { fix: readFix(`Shows which host owns source ${sourceId}, read-only.`, { argv: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'] }) });
-      }
-      const { manifest } = await prepareWriterTransfer(engine, sourceId, existingLocalHostId()!, undefined, { ...transfer, dryRun: true });
-      return { dry_run: true, action: operation, binding, manifest: { digest: manifest.digest, file_count: manifest.file_count }, ...(transfer.relocated ? { relocated: true } : {}) };
-    }
-    const expectedState = await requireWriterAdminIntent(engine, operation, params);
-    const prepared = await prepareWriterTransfer(engine, sourceId, undefined, expectedState, transfer);
-    // #6099: a Git-scoped manifest covers tracked files only; untracked files Git does not ignore are reported as a count.
-    const untracked = prepared.manifest.untracked_count ?? 0;
-    return { prepared: true, source_id: sourceId, worktree_id: prepared.worktree_id, owner_epoch: prepared.owner_epoch,
-      manifest: { digest: prepared.manifest.digest, file_count: prepared.manifest.file_count, ...(prepared.manifest.scope ? { scope: prepared.manifest.scope } : {}) },
-      ...(untracked ? { untracked_files: untracked, warning: `${untracked} untracked file(s) in the checkout that Git does not ignore are not part of the transfer manifest and are not carried to the successor; commit them, or add them to .gitignore, before the successor clones.` } : {}) };
-  }
-  if (operation === 'writer_transfer_accept') {
-    keys(params, ['source_id', 'path', 'expected_epoch', 'manifest', 'dry_run', 'admin_intent', 'expected_state', 'self_transfer', 'confirm_relocated_root']);
-    bool(params, 'self_transfer');
-    const transfer = transferOptions(params);
-    const sourceId = source(params.source_id), root = path(params.path);
-    if (typeof params.expected_epoch !== 'string' || !/^[1-9]\d{0,18}$/.test(params.expected_epoch)
-      || BigInt(params.expected_epoch) > 9_223_372_036_854_775_807n) throw invalid('expected_epoch must be the prepared positive owner epoch.',
-      `Pass --expected-epoch with the owner_epoch that gbrain sources writer transfer prepare ${sourceId} printed (a positive integer).`, transferStatusFix(sourceId));
-    if (typeof params.manifest !== 'string' || !/^[a-f0-9]{64}$/.test(params.manifest)) throw invalid('manifest must be the prepared SHA-256 manifest digest.',
-      `Pass --manifest with the 64-character manifest digest that gbrain sources writer transfer prepare ${sourceId} printed.`, transferStatusFix(sourceId));
-    if (params.dry_run && params.self_transfer === true) await acceptWriterTransfer(engine, sourceId, root, params.expected_epoch, params.manifest, existingLocalHostId()!, undefined, { ...transfer, dryRun: true });
-    if (params.dry_run) {
-      const current = await getWorktreeBinding(engine, sourceId, existingLocalHostId());
-      const [prepared] = current ? await engine.executeRaw<{ manifest: StoredWorktreeManifest | null }>('SELECT manifest FROM persistence_worktrees WHERE id=$1::uuid', [current.worktree_id]) : [];
-      const candidate = worktreeManifest(root, { progress: humanManifestProgress(), scope: storedManifestScope(prepared?.manifest) });
-      return { dry_run: true, action: operation, source_id: sourceId, current, manifest_matches: candidate.digest === params.manifest, expected_epoch: params.expected_epoch,
-        ...(candidate.scope ? { manifest_scope: candidate.scope } : {}), ...(candidate.untracked_count ? { untracked_files: candidate.untracked_count } : {}) };
-    }
-    const expectedState = await requireWriterAdminIntent(engine, operation, params);
-    await acceptWriterTransfer(engine, sourceId, root, params.expected_epoch, params.manifest, undefined, expectedState, transfer);
-    return { transferred: true, binding: await getWorktreeBinding(engine, sourceId) };
-  }
+  if (operation === 'writer_transfer_prepare' || operation === 'writer_transfer_accept' || operation === 'writer_transfer_cancel') return (await import('./transfer-administration.ts')).runWriterTransferAdministration(engine, operation, params);
   if (operation === 'local_writer_list') {
     keys(params, ['limit', 'before']);
     const limit = params.limit ?? 100;

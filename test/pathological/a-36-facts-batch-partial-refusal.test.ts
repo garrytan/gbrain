@@ -31,7 +31,7 @@ import { publishManagedEntityFacts } from '../../src/core/facts/managed-fact-wri
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
 import { withEnv } from '../helpers/with-env.ts';
 import { requirePostgresTestDatabase, testBackends } from '../helpers/test-backends.ts';
-import { expectItemFailure, expectOthersUnchanged, expectUnitNotAborted, runScopedErrors, snapshotItems } from './_gbra60-shim.ts';
+import { expectItemFailure, expectOthersUnchanged, expectUnitNotAborted, runScopedErrors, snapshotItems } from './harness.ts';
 
 const A = 'people/alice-example';
 const B = 'companies/acme-example';

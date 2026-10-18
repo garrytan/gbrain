@@ -185,6 +185,12 @@ function classifiedConnectionCheck(e: unknown, dbSource?: DbUrlSource): Check {
         { requires_exclusive: true }), owner),
     };
   }
+  // C-3: a legacy lock whose owner cannot be proven dead never frees itself; its fix asks the user and starts with the preview.
+  const legacy = e as { code?: unknown; reason?: unknown; fix?: Action; message?: unknown } | null;
+  if (legacy?.code === 'pglite_busy' && legacy.reason === 'legacy_owner_unverified' && legacy.fix) {
+    return { name: 'connection', status: 'fail', readiness_state: 'unknown', message: `${String(legacy.message)} The database checks did not run.`,
+      details: { reason: 'legacy_owner_unverified' }, fix: legacy.fix };
+  }
   const d = classifyPgAccessError(e, { url: loadConfig()?.database_url ?? null });
   const source = describeUrlSource(dbSource ?? getDbUrlSource());
   return {

@@ -16,9 +16,10 @@
  * cuts inside a fence, so a fence lies in one block: a fence longer than a
  * segment is a run of forced cuts, which bodyBlocks joins up to
  * BLOCK_MAX_BYTES and refuses above with `page_body_segmented`. Joining a
- * fence across blocks is a fallback that keeps the same bound. A fence
- * crossing a forced cut while the source has withdrawals refuses with
- * `page_projection_stale` (read-range.ts).
+ * fence across blocks is a fallback that keeps the same bound. While the
+ * source has withdrawals, a fence crossing a forced cut is read joined across
+ * it and overlaid whole (read-range.ts `trustedSegments`, up to
+ * FENCE_MAX_BYTES), then cut into blocks here as any run is.
  *
  * `segmentedBodyMatchesFile` is the stale-cache check (canonicalCacheState)
  * for a segmented page: the canonical file's split regions, streamed from

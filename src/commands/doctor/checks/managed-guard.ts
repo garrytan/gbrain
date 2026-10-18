@@ -14,7 +14,7 @@ export const GUARDED_TABLE_COLUMNS: Readonly<Record<string, readonly string[]>> 
   pages: ['body_bytes', 'body_flags', 'body_generation', 'body_lines', 'body_storage', 'chunker_version', 'compiled_truth', 'content_hash', 'contextual_retrieval_mode', 'corpus_generation', 'created_at', 'database_only_reason',
     'deleted_at', 'effective_date', 'effective_date_source', 'embedding_signature', 'emotional_weight', 'emotional_weight_recomputed_at', 'frontmatter',
     'generation', 'id', 'import_filename', 'ingested_at', 'ingested_via', 'knowledge_revision', 'last_retrieved_at', 'links_attendance_blocked_at',
-    'links_attendance_blocked_revision', 'links_extracted_at', 'page_kind', 'revision_principal_id', 'revision_principal_kind', 'revision_write_request_id',
+    'links_attendance_blocked_revision', 'links_extract_failure', 'links_extracted_at', 'page_kind', 'revision_principal_id', 'revision_principal_kind', 'revision_write_request_id',
     'salience_touched_at', 'search_vector', 'segment_count', 'segmenter_version', 'slug', 'source_id', 'source_kind', 'source_path', 'source_uri',
     'text_projection_revision', 'timeline', 'timeline_lead', 'title', 'trust_tier', 'truth_bytes', 'truth_lead', 'type', 'updated_at', 'write_origin'],
   tags: ['id', 'page_id', 'tag', 'tag_source'],

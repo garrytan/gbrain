@@ -9,8 +9,8 @@
  *    torn at the stage's own name (what a crash mid-copy left before the temporary name) while the file still holds
  *    its prior bytes is dropped the same way. When recovery truly cannot proceed (the file was removed and its copy is
  *    torn) the pass records `unexpected_staging_bytes` instead of throwing, and the `gbrain repair stuck-recovery`
- *    preview still runs: it counts that record, and lists a large-file record blocked on an edited file as refused
- *    (`recovery_large_file_unsupported`) instead of aborting.
+ *    preview still runs: it counts that record, and lists a large-file record blocked on an edited file as a resolvable
+ *    item (stuck-recovery-large.slow.test.ts resolves one) instead of aborting.
  * 2. Fails when: a torn copy at the stage name throws `unexpected_staging_bytes` on every pass without recording it (the
  *    worktree wedges), the copy is made in place, a temporary copy is left behind, or the preview aborts on a large-file
  *    record.
@@ -69,12 +69,12 @@ const cases: Case[] = [
     for (let pass = 0; pass < 2; pass++) expect(await run('recover')).toMatchObject({ recovered: 'recovering', recovery: 'set', blocked_reason: 'unexpected_staging_bytes' });
     expect(await run('scan')).toEqual({ items: 0, refused: [], residuals: { unexpected_staging_bytes: 1 } });
   } },
-  { name: 'the file edited after its copy: the preview lists it as refused', seam: 'publication:prepared', crashed(crashed, initialized, file) {
+  { name: 'the file edited after its copy: the preview lists it as resolvable', seam: 'publication:prepared', crashed(crashed, initialized, file) {
     expect(crashed.file_sha).toBe(initialized.sha);
     appendFileSync(file, 'edited by hand\n');
   }, async recover(run) {
     expect(await run('recover')).toMatchObject({ recovered: 'recovering', recovery: 'set', blocked_reason: 'unexpected_file_bytes' });
-    expect(await run('scan')).toEqual({ items: 0, refused: ['recovery_large_file_unsupported'], residuals: { large_file_refused: 1 } });
+    expect(await run('scan')).toEqual({ items: 1, refused: [], residuals: {} });
   } },
 ];
 
