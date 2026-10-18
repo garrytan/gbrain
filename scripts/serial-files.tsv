@@ -101,6 +101,7 @@ test/cycle-patterns-cadence.serial.test.ts	R2	R2: mock.module(../src/core/ai/gat
 test/cycle-patterns-read-budget.serial.test.ts	R2	R2: mock.module(../src/core/ai/gateway.ts, ../src/core/cycle/synthesize.ts, ../src/core/minions/wait-for-completion.ts) replaces modules for every file in the process
 test/cycle-pglite-lock-ordering.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)
 test/cycle-start-recovery-throw.serial.test.ts	R2	R2: mock.module(../src/core/minions/queue.ts) replaces modules for every file in the process
+test/cycle-synthesize-premanaged-completion.serial.test.ts	R2	R2: mock.module(../src/core/persistence/prepared-maintenance.ts, ../src/core/cycle/synthesize-postprocess.ts) replaces modules for every file in the process
 test/cycle/cycle-sync-uncommitted-warn.serial.test.ts	R2	R2: mock.module(../../src/commands/sync.ts) replaces modules for every file in the process
 test/cycle/global-freshness-postcondition.serial.test.ts	R2	R2: mock.module(../../src/commands/embed.ts, ../../src/core/ai/gateway.ts, ../../src/core/cycle/inline-drain.ts) replaces modules for every file in the process
 test/db-repair.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, GBRAIN_DATABASE_URL, DATABASE_URL, GBRAIN_BRAIN_ID (+1 more))
