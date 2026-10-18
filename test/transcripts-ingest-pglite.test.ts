@@ -166,7 +166,7 @@ describe('--max-bytes reaches the adapters', () => {
   // from the import lane — and an adapter-level test cannot see that, because
   // it calls codexAdapter.parse() directly. Revert the ingest.ts threading and
   // this test is the only thing in the suite that fails.
-  test('a rollout over the budget drops mid-file turns but keeps head identity and the tail', async () => {
+  test('a rollout over the budget is refused before writes; a complete retry imports all turns', async () => {
     const p = join(tmp, 'oversized-rollout.jsonl');
     const line = (payload: Record<string, unknown>, ts: string) =>
       JSON.stringify({ type: 'event_msg', timestamp: ts, payload });
@@ -193,15 +193,24 @@ describe('--max-bytes reaches the adapters', () => {
     writeFileSync(p, lines.join('\n') + '\n');
 
     const r = await runTranscriptsIngest(engine, baseOpts([p], { maxBytes: 64 * 1024 }));
-    expect(r.erroredFiles).toBe(0);
-    expect(r.sessionsImported).toBe(1);
+    expect(r.erroredFiles).toBe(1);
+    expect(r.truncatedFiles).toBe(1);
+    expect(r.cleanScan).toBe(false);
+    expect(r.sessionsImported).toBe(0);
+    expect(await engine.listPages({ type: 'conversation', sourceId: 'default', limit: 10 })).toHaveLength(0);
 
+    // Without maxBytes reaching the adapter the first call would import this
+    // complete file, so refusal still discriminates the ingest -> adapter wiring.
+    const complete = await runTranscriptsIngest(engine, baseOpts([p], { maxBytes: 4 * 1024 * 1024 }));
+    expect(complete.erroredFiles).toBe(0);
+    expect(complete.truncatedFiles).toBe(0);
+    expect(complete.sessionsImported).toBe(1);
     const pages = await engine.listPages({ type: 'conversation', sourceId: 'default', limit: 10 });
     expect(pages).toHaveLength(1);
     const page = await engine.getPage(pages[0].slug, { sourceId: 'default' });
     expect(page).not.toBeNull();
     expect(page!.compiled_truth).toContain('NEWEST_TURN_SURVIVES');
-    expect(page!.compiled_truth).not.toContain('MIDDLE_TURN_MUST_BE_DROPPED');
+    expect(page!.compiled_truth).toContain('MIDDLE_TURN_MUST_BE_DROPPED');
   });
 
   // A truncated read leaves seam partials in skippedLines, which freezes the
