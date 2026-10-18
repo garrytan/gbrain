@@ -396,7 +396,7 @@ export async function listFactsByEntity(
     const rows = (await exec.run<FactRowSqlShape>(sqlFragment`
       SELECT * FROM facts
       WHERE source_id = ${source_id}
-        AND entity_slug = ${entitySlug}
+        AND entity_slug = ${entitySlug}${opts?.sessionId != null ? sqlFragment` AND source_session = ${opts.sessionId}` : sqlFragment``}
         ${activeOnly ? sqlFragment`AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now())` : sqlFragment``}
         ${unconsolidatedOnly ? sqlFragment`AND consolidated_at IS NULL` : sqlFragment``}
         ${kinds ? sqlFragment`AND kind = ANY(${kinds}::text[])` : sqlFragment``}

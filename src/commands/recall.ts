@@ -635,6 +635,7 @@ async function fetchRowsLocal(
           excludeAuditRows: true,
         })
       : await engine.listFactsByEntity(sourceId, slug, {
+          sessionId: flags.sessionId || undefined,
           activeOnly: !flags.includeExpired,
           limit: flags.limit,
           grep: flags.grep ?? undefined,

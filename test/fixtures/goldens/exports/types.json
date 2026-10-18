@@ -3633,6 +3633,7 @@
           "kinds?: FactKind[] | undefined",
           "limit?: number | undefined",
           "offset?: number | undefined",
+          "sessionId?: string | undefined",
           "unconsolidatedOnly?: boolean | undefined",
           "visibility?: FactVisibility[] | undefined"
         ],
