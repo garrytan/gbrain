@@ -1029,6 +1029,26 @@ describe('session-end', () => {
     expect(existsSync(spooled('sess-drift.txt'))).toBe(false);
   });
 
+  test('a Claude Code session with only slash commands is empty_session, not parser_drift', async () => {
+    const projRoot = join(tmp, 'projects');
+    const transcript = seedTranscript(join(projRoot, 'p1'), 'empty.jsonl', [
+      JSON.stringify({ type: 'permission-mode', permissionMode: 'default', sessionId: 'sess-empty' }),
+      JSON.stringify({ type: 'user', isMeta: true, message: { role: 'user', content: '<system-reminder>session renamed</system-reminder>' } }),
+      JSON.stringify({ type: 'system', subtype: 'local_command', content: '<command-name>/rename</command-name>' }),
+      JSON.stringify({ type: 'cost-state', sessionId: 'sess-empty' }),
+    ]);
+    const ws = join(tmp, 'ws');
+    mkdirSync(ws, { recursive: true });
+    await runHook(['session-end'], {
+      stdin: JSON.stringify({ session_id: 'sess-empty', transcript_path: transcript, cwd: ws }),
+      transcriptRoot: projRoot,
+    });
+    const hb = await lastHeartbeat();
+    expect(hb?.reason).toBe('empty_session');
+    expect(hb?.outcome).not.toBe('error');
+    expect(existsSync(await hookStatusPath())).toBe(false);
+  });
+
   test('confinement rejection: degraded heartbeat, no corpus write [S3#8]', async () => {
     const outside = join(tmp, 'outside.jsonl');
     writeFileSync(outside, userLine('outside content') + '\n');
