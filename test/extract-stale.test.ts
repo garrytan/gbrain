@@ -303,16 +303,17 @@ describe('gbrain extract --stale', () => {
     // NON-swallowing (no try/catch), so the throw must propagate AND no page in
     // the batch may be stamped (stamp runs only AFTER a successful flush).
     const origBatch = engine.replaceDerivedLinks.bind(engine);
-    let threw = false;
     (engine as unknown as { replaceDerivedLinks: unknown }).replaceDerivedLinks = async () => { throw new Error('__flush_boom__'); };
     try {
-      await runExtract(engine, ['--stale']);
-    } catch (e) {
-      if ((e as Error).message === '__flush_boom__') threw = true; else throw e;
+      await expect(runExtract(engine, ['--stale'])).rejects.toMatchObject({
+        code: 'EXTRACT_BATCH_WRITE_FAILED',
+        failures: expect.arrayContaining([expect.objectContaining({
+          kind: 'links', error: expect.objectContaining({ message: '__flush_boom__' }),
+        })]),
+      });
     } finally {
       (engine as unknown as { replaceDerivedLinks: unknown }).replaceDerivedLinks = origBatch;
     }
-    expect(threw).toBe(true);
     // Pages whose edges were lost are NOT stamped fresh — they stay stale.
     expect(await stampOf('people/alice')).toBeNull();
     expect(await stampOf('companies/acme')).toBeNull();
@@ -335,15 +336,16 @@ describe('gbrain extract --stale', () => {
       if (origin.slug === 'notes/boom') throw new Error('__page_boom__');
       return (origBatch as (...a: unknown[]) => unknown)(origin, ...rest);
     };
-    let threw = false;
     try {
-      await extractStaleFromDB(engine, { dryRun: false, jsonMode: true, quiet: true, catchUp: true });
-    } catch (e) {
-      if ((e as Error).message === '__page_boom__') threw = true; else throw e;
+      await expect(extractStaleFromDB(engine, { dryRun: false, jsonMode: true, quiet: true, catchUp: true })).rejects.toMatchObject({
+        code: 'EXTRACT_BATCH_WRITE_FAILED',
+        failures: expect.arrayContaining([expect.objectContaining({
+          kind: 'links', error: expect.objectContaining({ message: '__page_boom__' }),
+        })]),
+      });
     } finally {
       (engine as unknown as { replaceDerivedLinks: unknown }).replaceDerivedLinks = origBatch;
     }
-    expect(threw).toBe(true);
     expect(await stampOf('people/alice')).not.toBeNull();
     expect(await stampOf('notes/first')).not.toBeNull();
     expect(await engine.executeRaw(`SELECT t.summary FROM timeline_entries t JOIN pages p ON p.id = t.page_id WHERE p.slug = 'notes/first'`))
