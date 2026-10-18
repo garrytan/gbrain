@@ -57,6 +57,7 @@ import { packGateSkip, resolvePackPhaseGate } from './cycle/pack-phase-gate.ts';
 import { managedPullWarning, type UpstreamRefresh } from './sync-upstream.ts';
 import { assertValidSourceId } from './source-id.ts';
 import { PHASE_SCOPE, SOURCE_FRESHNESS_PHASES, type PhaseScope } from './cycle/phase-scope.ts';
+import { decideSourceStamp } from './cycle/source-freshness.ts';
 import { acquireLeaseSet, maintenanceLockBusySkip, MAINTENANCE_LEASE_ID } from './cycle/lock-set.ts';
 import { assertEmbedNotStalled } from './embed-stall.ts'; import { embedBackfillFix } from './embed-consent.ts';
 import { anyAbortSignal } from './abort-signals.ts';
@@ -438,6 +439,8 @@ export interface CycleReport {
    * so re-running (the advice doctor gives) could never fix it.
    */
   stamp_write_failed?: { source_id: string; error: string };
+  /** Freshness phases that hard-failed, so the source stamp was withheld (cycle/source-freshness.ts). */
+  freshness_withheld_for?: string[];
   /**
    * #1972: dead-holder sync/cycle locks the cycle-start reaper cleared this
    * run (count + lock ids). Omitted when nothing was reaped or no engine.
@@ -3141,7 +3144,7 @@ async function runCycleUnscoped(
   // autopilot's per-source freshness gate next tick. Skipped when:
   //   - opts.sourceId is unset (legacy callers — autopilot still here)
   //   - engine is null (no-DB path)
-  //   - status is 'failed' or 'skipped' (don't mark a non-run as fresh)
+  //   - status is 'failed'/'skipped' (a non-run is not fresh) or a freshness phase hard-failed (cycle/source-freshness.ts)
   //   - dryRun (writes are out of scope)
   //
   // #3504: the write is still best-effort in the sense that it never throws out
@@ -3152,7 +3155,8 @@ async function runCycleUnscoped(
   // timestamp post-failure is still higher than missing a successful write, so
   // the stamp itself is unchanged — only the reporting is.
   let stampWriteFailed: { source_id: string; error: string } | undefined;
-  if (opts.sourceId && phases.length > 0 && engine && !dryRun && !aborted && (status === 'ok' || status === 'clean' || status === 'partial')) {
+  const stampDecision = decideSourceStamp({ sourceId: opts.sourceId, phaseCount: phases.length, hasEngine: !!engine, dryRun, aborted, status, phaseResults });
+  if (stampDecision.stamp && !aborted && opts.sourceId && engine) {
     try {
       const nowIso = new Date().toISOString();
       // #2194 fix #3 (the cycle split): `last_source_cycle_at` is the NEW gate
@@ -3191,6 +3195,7 @@ async function runCycleUnscoped(
     status: effectiveStatus,
     ...(lockStolenAbort ? { reason: 'lock_stolen' } : aborted ? { reason: 'aborted' } : stampWriteFailed ? { reason: 'stamp_write_failed' } : {}),
     ...(stampWriteFailed ? { stamp_write_failed: stampWriteFailed } : {}),
+    ...(stampDecision.withheldFor ? { freshness_withheld_for: stampDecision.withheldFor } : {}),
     ...(reapedLocks ? { reaped_dead_holder_locks: reapedLocks } : {}),
     brain_dir: opts.brainDir,
     phases: phaseResults,
