@@ -20,6 +20,12 @@ import type { DiscoveredTranscript } from './transcript-discovery.ts';
  * did); a dry run on a managed brain reads the source incarnation read-only
  * so its synth-v2 keys match the identity a real run would use. The key lists
  * are returned for the fan-out's own per-transcript checks.
+ *
+ * A managed brain also honours what its classic runs completed for this same
+ * source row (legacy keys and synth-v2 keys under the bare source id), so
+ * turning on managed persistence does not re-buy triage and synthesis for the
+ * whole history. Keys of an older incarnation, and classic jobs submitted
+ * before the source row was (re)created, still do not count.
  */
 export async function partitionCompletedSynthesis(
   engine: BrainEngine,
@@ -27,19 +33,49 @@ export async function partitionCompletedSynthesis(
   sourceId: string,
   maintenance: MaintenanceAuthority | null,
   dryRun: boolean,
-): Promise<{ completed: Set<string>; successfulLegacyKeys: string[]; successfulV2Keys: string[]; synthesisIdentity: string }> {
+): Promise<{ completed: Set<string>; successfulLegacyKeys: string[]; successfulV2Keys: string[]; preManagedV2Keys: string[]; synthesisIdentity: string }> {
   const incarnation = maintenance
     ? maintenance.writer.sourceIncarnation
     : dryRun ? await readManagedSourceIncarnation(engine, sourceId) : null;
   const synthesisIdentity = incarnation !== null ? `${sourceId}/${incarnation}` : sourceId;
   const successfulV2Keys = await loadSuccessfulSynthesisKeys(engine, sourceId, 'dream:synth-v2:');
-  const successfulLegacyKeys = incarnation !== null ? [] : await loadSuccessfulSynthesisKeys(engine, sourceId, 'dream:synth:');
+  const preManaged = incarnation !== null ? await loadPreManagedSynthesisKeys(engine, sourceId) : null;
+  const successfulLegacyKeys = preManaged ? preManaged.legacy : await loadSuccessfulSynthesisKeys(engine, sourceId, 'dream:synth:');
+  const preManagedV2Keys = preManaged?.v2 ?? [];
   const completed = new Set(transcripts.filter(t => {
     const hash16 = t.contentHash.slice(0, 16);
     return findLegacyCompletion(successfulLegacyKeys, t.filePath, hash16) !== null
-      || findSynthV2Completion(successfulV2Keys, t.filePath, hash16, synthesisIdentity) !== null;
+      || findSynthV2Completion(successfulV2Keys, t.filePath, hash16, synthesisIdentity) !== null
+      || findSynthV2Completion(preManagedV2Keys, t.filePath, hash16, sourceId) !== null;
   }).map(t => t.filePath));
-  return { completed, successfulLegacyKeys, successfulV2Keys, synthesisIdentity };
+  return { completed, successfulLegacyKeys, successfulV2Keys, preManagedV2Keys, synthesisIdentity };
+}
+
+/**
+ * Classic-run completions of the CURRENT source row on a managed brain: the
+ * legacy family and synth-v2 keys under the bare source id (a managed run
+ * always keys `<source>/<incarnation>`, so only a classic run wrote these).
+ * Only jobs SUBMITTED after the current source row was created count, so a
+ * source removed and re-added under the same id does not inherit the
+ * completions of the pages it lost, even when an old job finishes late.
+ * `dream_synthesis_completions` is not consulted: it keeps no submission time
+ * (and prune stamps an unknown finish as now()), so it cannot prove a row
+ * belongs to the current source; a pruned classic completion re-runs.
+ */
+async function loadPreManagedSynthesisKeys(engine: BrainEngine, sourceId: string): Promise<{ legacy: string[]; v2: string[] }> {
+  const v2Prefix = `dream:synth-v2:${encodeURIComponent(sourceId)}:filename:`;
+  const rows = await engine.executeRaw<{ idempotency_key: string }>(
+    `SELECT j.idempotency_key
+       FROM minion_jobs j JOIN sources s ON s.id = $1
+      WHERE j.name = 'subagent'
+        AND j.status = 'completed'
+        AND COALESCE(NULLIF(j.data->>'source_id', ''), 'default') = $1
+        AND (j.idempotency_key LIKE 'dream:synth:%' OR left(j.idempotency_key, length($2)) = $2)
+        AND j.created_at >= s.created_at`,
+    [sourceId, v2Prefix],
+  );
+  const keys = rows.map(row => row.idempotency_key);
+  return { legacy: keys.filter(k => k.startsWith('dream:synth:')), v2: keys.filter(k => k.startsWith(v2Prefix)) };
 }
 
 /**

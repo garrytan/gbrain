@@ -532,7 +532,7 @@ async function runPhaseSynthesizeInner(
       process.stderr.write(`[dream] warning: verdict cache sweep failed: ${e instanceof Error ? e.message : String(e)}\n`);
     }
 
-    const { completed, successfulLegacyKeys, successfulV2Keys, synthesisIdentity } = await partitionCompletedSynthesis(engine, transcripts, opts.sourceId ?? 'default', maintenance, opts.dryRun);
+    const { completed, successfulLegacyKeys, successfulV2Keys, preManagedV2Keys, synthesisIdentity } = await partitionCompletedSynthesis(engine, transcripts, opts.sourceId ?? 'default', maintenance, opts.dryRun);
     const synthesisState = { candidates: transcripts.length - completed.size, already_synthesized: completed.size };
     const pass = await runTriagePass(engine, transcripts.filter(t => !completed.has(t.filePath)), {
       model: config.triage.model,
@@ -754,6 +754,21 @@ async function runPhaseSynthesizeInner(
           reason: legacyCompletion === 'chunked'
             ? 'already_synthesized_legacy_chunked'
             : 'already_synthesized_legacy_single_chunk',
+        });
+        continue;
+      }
+
+      // A managed brain's classic-run synth-v2 completion (bare source id)
+      // is synthesized output that predates managed persistence: skip it like
+      // the legacy family rather than re-attaching its children for managed
+      // postprocessing.
+      const preManagedCompletion = findSynthV2Completion(preManagedV2Keys, t.filePath, hash16, cycleSourceId);
+      if (preManagedCompletion) {
+        skipReports.push({
+          filePath: t.filePath,
+          reason: preManagedCompletion === 'chunked'
+            ? 'already_synthesized_v2_chunked'
+            : 'already_synthesized_v2_single_chunk',
         });
         continue;
       }
