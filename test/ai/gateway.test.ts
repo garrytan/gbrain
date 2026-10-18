@@ -295,11 +295,14 @@ describe('Voyage openai-compatible request shim', () => {
         env: { VOYAGE_API_KEY: 'voyage-fake' },
       });
 
-      const vectors = await embed(['dimension probe']);
+      const vectors = await embed(['dimension probe'], { preserveInput: true });
 
       expect(vectors[0].length).toBe(2048);
       expect(requestBody?.output_dimension).toBe(2048);
       expect(requestBody?.encoding_format).toBe('base64');
+      expect(requestBody?.truncation).toBe(false);
+      await embed(['ordinary dimension probe']);
+      expect(requestBody?.truncation).toBeUndefined();
     } finally {
       globalThis.fetch = originalFetch;
     }

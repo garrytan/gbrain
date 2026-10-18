@@ -122,10 +122,10 @@ export function embedRequestMaxInputTokens(texts: string[], recipe: Recipe, mode
 }
 
 /** Per-request input ceilings `embed()` would reserve for these texts on `modelStr`, at the declared safety factor (empty inputs are never sent, #4616). */
-export function embedRequestCeilings(texts: ReadonlyArray<string>, modelStr: string, envMaxBatchTokens?: number): number[] {
+export function embedRequestCeilings(texts: ReadonlyArray<string>, modelStr: string, envMaxBatchTokens?: number, preserveInput = false): number[] {
   const { parsed, recipe } = resolveRecipe(modelStr);
   const safety = recipe.touchpoints?.embedding?.safety_factor ?? DEFAULT_SAFETY_FACTOR;
-  const truncated = truncateEmbedInputs(texts);
+  const truncated = preserveInput ? [...texts] : truncateEmbedInputs(texts);
   const sent = sendableEmbeddingInputs(truncated);
   if (!sent.length) return [];
   return planEmbedRequests(sent.map(i => truncated[i]!), recipe, safety, envMaxBatchTokens)

@@ -25,16 +25,48 @@
  * (a resolver bug must never change chunking for unaffected installs).
  */
 
-import { DEFAULT_MAX_CHUNK_TOKENS } from './chunkers/token-estimate.ts';
+import { DEFAULT_MAX_CHUNK_TOKENS, estimateEmbedTokens } from './chunkers/token-estimate.ts';
 import { getEmbeddingModel } from './ai/gateway.ts';
 import { resolveRecipe } from './ai/model-resolver.ts';
 import type { Recipe } from './ai/types.ts';
+import { AIConfigError } from './ai/errors.ts';
+import { truncateEmbedInputs } from './ai/embed-batch-plan.ts';
 
 /** Utilization ceiling applied to a recipe-declared per-input token limit. */
 export const EMBED_INPUT_SAFETY = 0.6;
 
 /** Hard floor so a tiny declared limit can't produce confetti chunks. */
 const MIN_CHUNK_TOKENS = 64;
+
+/** Whole facts are not page chunks. Keep the provider's conservative input bound. */
+export function fitsEmbeddingInput(text: string, model: string): boolean {
+  if (process.env.GBRAIN_MAX_CHUNK_TOKENS?.trim()
+    && estimateEmbedTokens(text) > resolveMaxChunkTokens(process.env, model)) {
+    return false;
+  }
+  try {
+    const { parsed, recipe } = resolveRecipe(model);
+    const declared = maxInputTokensForModel(recipe, parsed.modelId);
+    if (declared !== undefined) {
+      const ratio = recipe.touchpoints?.embedding?.chars_per_token;
+      const estimated = Math.max(estimateEmbedTokens(text),
+        typeof ratio === 'number' && Number.isFinite(ratio) && ratio > 0
+          ? Math.ceil(Buffer.byteLength(text, 'utf8') / ratio) : 0);
+      return estimated <= Math.floor(declared * EMBED_INPUT_SAFETY);
+    }
+  } catch { /* unknown model retains the conservative chunk bound */ }
+  return Buffer.byteLength(text, 'utf8') <= DEFAULT_MAX_CHUNK_TOKENS * 4
+    && estimateEmbedTokens(text) <= resolveMaxChunkTokens(process.env, model);
+}
+
+/** Inputs `embed()` sends. Whole facts (`preserveInput`) keep their exact text: one over the model's conservative input limit is refused, never truncated. */
+export function embedInputs(texts: ReadonlyArray<string>, model: string, preserveInput = false): string[] {
+  if (!preserveInput) return truncateEmbedInputs(texts);
+  if (texts.some(text => !fitsEmbeddingInput(text, model))) {
+    throw new AIConfigError('An intact embedding input exceeds the conservative provider limit');
+  }
+  return [...texts];
+}
 
 /**
  * wave-g: warn once per distinct invalid value, not once per call — the

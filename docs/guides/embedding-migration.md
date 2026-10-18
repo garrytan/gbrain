@@ -157,6 +157,11 @@ even if a custom base URL still serves its old model.
 ## Recovery
 
 Legacy saved facts have no recorded embedding model until they are repaired.
+Whole-fact repairs preserve the exact stored text in the embedding request.
+Their input limit follows the model's declared context with conservative headroom;
+page chunk sizing remains unchanged. Unknown models retain conservative limits.
+Voyage whole-fact requests disable provider truncation. Oversized facts are retained and
+reported as failures, never silently shortened or stamped as fully embedded.
 Exact-text duplicate detection still works, but semantic duplicate detection
 and consolidation do not compare these unverified vectors. Preview the scoped
 work with `gbrain embed --facts --stale --source 'source-example' --dry-run --json`;

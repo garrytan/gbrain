@@ -158,7 +158,10 @@ export async function planMigrationWorstCase(engine: BrainEngine, plan: Embeddin
   const sizes = { current: resolveMaxChunkTokens(), target };
   await eachStalePage(engine, plan, sizes, add);
   await eachReprojectedPage(engine, sizes, texts => ceilingsOf(texts).reduce((sum, n) => sum + n, 0), add);
-  await eachStaleFactBatch(engine, plan, add);
+  await eachStaleFactBatch(engine, plan, texts => {
+    ceilings.push(...embedRequestCeilings(texts, plan.to_model,
+      Number.isFinite(envCap) && envCap > 0 ? envCap : undefined, true));
+  });
   const embedTokens = ceilings.reduce((sum, n) => sum + n, 0);
   const rerankTokens = opts.rerankerModel ? rerankRequestMaxInputTokens(RERANKER_PROBE.query, RERANKER_PROBE.documents) : 0;
   const overrides = await loadPricingOverrides(engine);

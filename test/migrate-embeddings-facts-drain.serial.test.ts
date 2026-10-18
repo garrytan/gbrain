@@ -9,6 +9,8 @@ import { configureGateway, resetGateway, __setEmbedTransportForTests } from '../
 import { runSchemaTransition, MIGRATION_STATE_KEY, MIGRATION_COMPLETED_KEY } from '../src/core/embedding-migration.ts';
 import { executeMigrationFlow, planMigrationFlow, GLOBAL_MIGRATION_LOCK_ID } from '../src/commands/migrate-embeddings.ts';
 import { embedStaleFacts } from '../src/core/embed-facts.ts';
+import { fitsEmbeddingInput, resolveMaxChunkTokens } from '../src/core/embedding-input-limit.ts';
+import { embedRequestCeilings } from '../src/core/ai/embed-batch-plan.ts';
 
 const model = 'openai:text-embedding-3-small';
 const dimensions = 8;
@@ -182,4 +184,43 @@ test('new fact arrivals do not extend the initial drain census or falsely comple
   expect(calls.flat()).not.toContain('Synthetic late arrival');
   expect(await engine.getConfig(MIGRATION_STATE_KEY)).toBeTruthy();
   expect(await engine.getConfig(MIGRATION_COMPLETED_KEY)).toBeFalsy();
+});
+
+async function stored(sourceId: string) {
+  return engine.executeRaw<{ fact: string; embedded: boolean; identity_ok: boolean | null }>(
+    `SELECT fact, embedding IS NOT NULL AS embedded, embedded_text_hash=md5(fact) AS identity_ok
+     FROM facts WHERE source_id=$1 ORDER BY id`, [sourceId]);
+}
+
+test('whole-fact repair embeds a fact past the 8000-char gateway cap intact, not a truncated prefix', async () => {
+  const long = ' understanding'.repeat(700).trim(); // ~9.8k chars, ~700 tokens
+  const wide = 'word '.repeat(3000).trim(); // ~3000 tokens: over the 2000 page-chunk cap, inside the model context
+  await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1) ON CONFLICT DO NOTHING', ['whole']);
+  for (const fact of [long, wide]) await engine.insertFact({ fact, source: 'synthetic' }, { source_id: 'whole' });
+  const result = await embedStaleFacts(engine, { sourceId: 'whole', yes: true, maxCostUsd: 1, batchSize: 1 });
+  expect(result).toMatchObject({ embedded: 2, remaining: 0, failures: 0 });
+  expect(calls.map(batch => batch[0] === long || batch[0] === wide)).toEqual([true, true]);
+  expect((await stored('whole')).map(row => [row.embedded, row.identity_ok])).toEqual([[true, true], [true, true]]);
+});
+
+test('whole-fact repair refuses a fact beyond the provider context without sending or stamping it', async () => {
+  const oversized = 'word '.repeat(6000).trim();
+  await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1) ON CONFLICT DO NOTHING', ['whole']);
+  await engine.insertFact({ fact: oversized, source: 'synthetic' }, { source_id: 'whole' });
+  const result = await embedStaleFacts(engine, { sourceId: 'whole', yes: true, maxCostUsd: 1 });
+  expect(result).toMatchObject({ embedded: 0, remaining: 1, failures: 1, cost_usd: 0 });
+  expect(calls).toHaveLength(0);
+  const [row] = await stored('whole');
+  expect(row.fact === oversized).toBe(true);
+  expect(row.embedded).toBe(false);
+});
+
+test('whole-fact limits follow the model context; page chunk sizing is unchanged', () => {
+  expect(resolveMaxChunkTokens({}, 'voyage:voyage-4')).toBe(2000);
+  expect(fitsEmbeddingInput('word '.repeat(3000), 'voyage:voyage-4')).toBe(true);
+  expect(fitsEmbeddingInput('word '.repeat(5000), 'voyage:voyage-4')).toBe(false);
+  expect(fitsEmbeddingInput('word '.repeat(3000), 'unknown:example')).toBe(false);
+  const long = ' understanding'.repeat(700).trim();
+  expect(embedRequestCeilings([long], 'voyage:voyage-4', undefined, true)).toEqual([Buffer.byteLength(long)]);
+  expect(embedRequestCeilings([long], 'voyage:voyage-4')).toEqual([8000]);
 });

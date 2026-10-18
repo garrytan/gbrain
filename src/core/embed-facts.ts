@@ -14,9 +14,9 @@ import { OperationError, opError } from './ops/contract.ts';
 import { readFix } from './ops/op-fix.ts';
 import { validateEmbedFactsOptions, type EmbedFactsOptions } from './embed-facts-options.ts';
 import { AUDIT_ROW_SOURCES } from './facts/audit-sources.ts';
-import { resolveMaxChunkTokens } from './embedding-input-limit.ts';
-import { estimateTokens } from './chunkers/token-estimate.ts';
+import { fitsEmbeddingInput } from './embedding-input-limit.ts';
 import { eligibleFactEmbedding, staleFactEmbedding } from './facts/embedding-identity.ts';
+import { embedRequestCeilings } from './ai/embed-batch-plan.ts';
 
 export interface EmbedFactsOpts extends EmbedFactsOptions {
   signal?: AbortSignal;
@@ -123,7 +123,6 @@ export async function embedStaleFacts(engine: BrainEngine, opts: EmbedFactsOpts,
   const signal = AbortSignal.any([...(budgetTimer ? [budgetTimer] : []), ...(opts.signal ? [opts.signal] : [])]);
   const budgetStop = (error?: unknown) => opts.signal?.aborted !== true
     && (budgetTimer?.aborted === true || error instanceof BudgetExhausted && error.reason === 'runtime');
-  const maxTokens = resolveMaxChunkTokens();
   let afterId = '0';
   while (result.attempted < maxFacts) {
     if (budgetStop()) { result.stopped = 'time_budget'; break; }
@@ -135,11 +134,12 @@ export async function embedStaleFacts(engine: BrainEngine, opts: EmbedFactsOpts,
     if (!batch.length) break;
     result.attempted += batch.length;
     try {
-      if (batch.some(row => estimateTokens(row.fact) > maxTokens)) {
+      if (batch.some(row => !fitsEmbeddingInput(row.fact, model))) {
         throw new Error('A fact exceeds the embedding input limit; no batch was sent');
       }
       signal.throwIfAborted();
-      const inputCeiling = batch.reduce((sum, row) => sum + Math.max(1, Buffer.byteLength(row.fact, 'utf8')), 0);
+      const inputCeiling = embedRequestCeilings(batch.map(row => row.fact), model, undefined, true)
+        .reduce((sum, ceiling) => sum + ceiling, 0);
       const vectors = await withAIInvocationGuard(async call => {
         signal.throwIfAborted();
         if (call.kind !== 'embedding') throw new Error('Fact backfill permits embedding calls only');
@@ -157,7 +157,7 @@ export async function embedStaleFacts(engine: BrainEngine, opts: EmbedFactsOpts,
           tracker.record({ modelId: call.model, reservation, kind: 'embed', inputTokens: usage?.inputTokens ?? inputCeiling, outputTokens: 0 });
         } };
       }, () => embed(batch.map(row => row.fact), {
-        abortSignal: signal, embeddingModel: model, dimensions: dims, inputType: 'document',
+        abortSignal: signal, embeddingModel: model, dimensions: dims, inputType: 'document', preserveInput: true,
       }), { inherit: true });
       signal.throwIfAborted();
       if (vectors.length !== batch.length || vectors.some(vector =>

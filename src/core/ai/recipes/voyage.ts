@@ -48,6 +48,8 @@ export const voyage: Recipe = {
       // NEW_INSTALL_DEFAULT_EMBEDDING_MODEL in ai/defaults.ts.
       default_model: 'voyage-4',
       default_dims: 1024,
+      // Hosted v4 input contexts, verified against https://docs.voyageai.com/docs/embeddings.
+      max_input_tokens: { 'voyage-4': 32_000, 'voyage-4-large': 32_000, 'voyage-4-lite': 32_000 },
       // Display hint for `gbrain providers` only (billing math goes through
       // src/core/embedding-pricing.ts). Rate for the default voyage-4-large.
       cost_per_1m_tokens_usd: 0.12,

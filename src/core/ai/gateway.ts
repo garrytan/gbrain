@@ -33,7 +33,8 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { z } from 'zod';
 
-import { DEFAULT_CHARS_PER_TOKEN, DEFAULT_SAFETY_FACTOR, embedRequestMaxInputTokens, planEmbedRequests, rerankRequestMaxInputTokens, truncateEmbedInputs } from './embed-batch-plan.ts';
+import { DEFAULT_CHARS_PER_TOKEN, DEFAULT_SAFETY_FACTOR, embedRequestMaxInputTokens, planEmbedRequests, rerankRequestMaxInputTokens } from './embed-batch-plan.ts';
+import { embedInputs } from '../embedding-input-limit.ts';
 export { splitByTokenBudget, capBatchItems, NO_BATCH_CAP_SUB_BATCH_ITEMS } from './embed-batch-plan.ts';
 import { BudgetTracker, type BudgetReservation } from '../budget/budget-tracker.ts';
 import { failedCallUsage, recordOnTracker } from './budget-record.ts';
@@ -1093,6 +1094,7 @@ export function isAvailable(touchpoint: TouchpointKind, modelOverride?: string):
 // ---- Embedding ----
 
 const __embedInputTypeStore = new AsyncLocalStorage<'query' | 'document'>();
+const __embedPreserveInputStore = new AsyncLocalStorage<boolean>();
 
 /**
  * Voyage AI compatibility shim. Voyage's `/v1/embeddings` endpoint is OpenAI-shaped
@@ -1120,6 +1122,8 @@ const voyageCompatFetch = (async (input: RequestInfo | URL, init?: RequestInit) 
       const parsed = JSON.parse(init.body);
       if (parsed && typeof parsed === 'object') {
         let mutated = false;
+        // preserveInput requests fail on overflow instead of embedding a silently truncated prefix.
+        if (__embedPreserveInputStore.getStore() === true && parsed.truncation !== false) { parsed.truncation = false; mutated = true; }
         // Voyage rejects 'float' (the SDK default). Force the value Voyage accepts.
         if (parsed.encoding_format !== 'base64') {
           parsed.encoding_format = 'base64';
@@ -1559,6 +1563,8 @@ const MIN_SUB_BATCH = 1;
  */
 
 export interface EmbedOpts {
+  /** Whole facts retain exact text identity; refuse oversized inputs instead of truncating. */
+  preserveInput?: boolean;
   /**
    * v0.33.4: propagated to Vercel AI SDK's `embedMany({abortSignal})`.
    * When the caller's wall-clock budget fires, an in-flight HTTP request
@@ -1606,7 +1612,7 @@ export async function embed(texts: string[], opts?: EmbedOpts): Promise<Float32A
   const resolveTarget = opts?.embeddingModel ?? getEmbeddingModel();
   const tracker = __budgetStore.getStore() ?? null;
   const { model, recipe, modelId } = await resolveEmbeddingProvider(resolveTarget);
-  const truncated = truncateEmbedInputs(texts);
+  const truncated = embedInputs(texts, resolveTarget, opts?.preserveInput);
 
   // Dim override (D10) — when caller passes `dimensions`, use it. Otherwise
   // fall back to the global cfg default. dimsProviderOptions throws a
@@ -1783,9 +1789,9 @@ async function embedSubBatch(
     // actually emitted one, so non-asymmetric paths run store-empty and the
     // fetch shims leave their wire bodies untouched.
     const threadedInputType = providerOpts?.openaiCompatible?.input_type;
-    const result = await (threadedInputType === 'query' || threadedInputType === 'document'
+    const result = await __embedPreserveInputStore.run(opts?.preserveInput === true, () => (threadedInputType === 'query' || threadedInputType === 'document'
       ? __embedInputTypeStore.run(threadedInputType, callTransport)
-      : callTransport());
+      : callTransport()));
 
     if (!Array.isArray(result.embeddings) || result.embeddings.length !== texts.length) {
       throw new AIConfigError(
