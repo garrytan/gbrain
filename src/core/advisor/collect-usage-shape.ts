@@ -35,7 +35,7 @@ export const collectUsageShape: AdvisorCollector = {
           id: 'low_embed_coverage',
           severity: 'warn',
           title: `Only ${Math.round(health.embed_coverage * 100)}% of content is embedded — semantic search is degraded.`,
-          detail: `${health.missing_embeddings} pages are missing embeddings. Backfill to restore full recall.`,
+          detail: `${health.missing_embeddings} content chunk${health.missing_embeddings === 1 ? ' is' : 's are'} missing embeddings. Backfill to restore full recall.`,
           fix: { command_argv: ['gbrain', 'embed', '--all'] },
           collector: 'usage-shape',
           ask_user: true,
