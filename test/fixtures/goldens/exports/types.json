@@ -1790,7 +1790,8 @@
           "dimensions?: number | undefined",
           "embeddingModel?: string | undefined",
           "inputType?: \"query\" | \"document\" | undefined",
-          "maxRetries?: number | undefined"
+          "maxRetries?: number | undefined",
+          "preserveInput?: boolean | undefined"
         ],
         "name": "EmbedOpts"
       },
