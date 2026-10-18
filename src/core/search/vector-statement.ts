@@ -287,7 +287,17 @@ export function buildVectorSearchStatement(input: VectorSearchStatementInput): V
   const innerLimit = offset + Math.max(limit * 5, 100);
   // issue #160: the guard predicate is projected as `unverified_stub` so
   // unverified auto-extracted stubs get factor 1.0 inside the re-rank.
-  const sourceFactorCaseOnSlug = buildSourceFactorCase('slug', opts?.source_boosts ?? resolveBoostMap(), opts?.detail, 'unverified_stub');
+  const sourceBoosts = opts?.source_boosts ?? resolveBoostMap();
+  const sourceFactorCaseOnSlug = buildSourceFactorCase('slug', sourceBoosts, opts?.detail, 'unverified_stub');
+  // A bounded second window can recover higher-weight neighbours hidden by a
+  // full low-weight primary window. It supplements, never excludes primary
+  // candidates, and does not promise globally weighted top-K recall.
+  const factors = [1, ...Object.entries(sourceBoosts)
+    .filter(([prefix, factor]) => prefix.length > 0 && Number.isFinite(factor) && factor >= 0)
+    .map(([, factor]) => factor)];
+  const minimumFactor = factors.reduce((minimum, factor) => Math.min(minimum, factor), 1);
+  const sourceFactorOnPage = buildSourceFactorCase('p.slug', sourceBoosts, opts?.detail);
+  const supplementSources = sourceFactorCaseOnSlug !== '1.0' && factors.some(factor => factor > minimumFactor);
   const hardExcludeClause = buildHardExcludeClause('p.slug', resolveHardExcludes(opts?.exclude_slug_prefixes, opts?.include_slug_prefixes));
 
   const params: unknown[] = ['[' + Array.from(input.embedding).join(',') + ']'];
@@ -445,7 +455,25 @@ export function buildVectorSearchStatement(input: VectorSearchStatementInput): V
         JOIN pages p ON p.id = cc.page_id
       ),`;
 
-  const statement = (candidates: string, relax: boolean) => `${candidates}
+  const statement = (candidates: string, relax: boolean, exact = false) => {
+    const supplemental = supplementSources && !exact;
+    const primary = supplemental ? 'primary_candidates' : 'hnsw_candidates';
+    const candidateCtes = supplemental ? `${candidates.replace('hnsw_candidates AS (', 'primary_candidates AS (')}
+      source_candidates AS (
+        SELECT ${candidateColumns}${relax ? `${hashCurrent} AS hash_current,` : ''}
+          1 - (cc.${col} <=> ${castSql}) AS raw_score
+        ${candidateFrom(guardedGeneration)}
+          AND ${sourceFactorOnPage} > ${minimumFactor}
+        ORDER BY cc.${col} <=> ${castSql}
+        LIMIT LEAST(${innerLimitParam}::int, 100)
+      ),
+      hnsw_candidates AS (
+        SELECT * FROM primary_candidates
+        UNION ALL
+        SELECT * FROM source_candidates extra
+        WHERE NOT EXISTS (SELECT 1 FROM primary_candidates base_chunk WHERE base_chunk.chunk_id = extra.chunk_id)
+      ),` : candidates;
+    return `${candidateCtes}
       -- score computed as a select-list expr (NOT in the inner ORDER BY, which
       -- must stay pure-distance so the HNSW index is usable).
       scored AS (
@@ -474,14 +502,15 @@ export function buildVectorSearchStatement(input: VectorSearchStatementInput): V
       )
       SELECT page_results.*, pool.candidate_pool, pool.eligible_pool
       FROM (SELECT count(*)::int AS candidate_pool, ${relax ? `(count(*) FILTER (WHERE ${freshFilter}))::int` : 'count(*)::int'} AS eligible_pool
-        FROM hnsw_candidates) pool
+        FROM ${primary}) pool
       LEFT JOIN page_results ON true
       ORDER BY score DESC NULLS LAST, page_id ASC, chunk_id ASC
     `;
+  };
 
   return {
     sql: statement(joinedCandidates(false), relaxed),
-    exactSql: statement(joinedCandidates(true), false),
+    exactSql: statement(joinedCandidates(true), false, true),
     hasMoreSql: `SELECT count(*)::int AS eligible FROM (
             SELECT 1 ${candidateFrom(guardedGeneration)} AND $1::text IS NOT NULL LIMIT $${innerLimitIdx + 1}
           ) eligible`,
