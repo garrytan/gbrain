@@ -3,7 +3,7 @@ import { dirname, join, relative, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { loadConfig, loadConfigWithEngine } from '../config.ts';
 import { loadOperatorLiterals } from '../content-sanity-literals.ts';
-import { parseMarkdown } from '../markdown.ts';
+import { parseMarkdown, resolveParsedSubtype, type ParsedMarkdown } from '../markdown.ts';
 import { parseDataFrontmatter } from '../data-frontmatter.ts';
 import { OperationError, opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
@@ -214,7 +214,7 @@ export async function readReconcileState(engine: BrainEngine, sourceId: string, 
   const importPath = scannerSourcePath(root, path, mode);
   const reading = reconcileFileReading(text, importPath, snapshot.page);
   const parsed = parseMarkdown(reading.content, `${slug}.md`, { validate: true, expectedSlug: slug });
-  if (reading.inferred) parsed.type = snapshot.page.type;
+  alignWithStored(parsed, reading.inferred, snapshot.page);
   const errors = parsed.errors?.filter(e => !['MISSING_OPEN', 'MISSING_CLOSE', 'EMPTY_FRONTMATTER'].includes(e.code)) ?? [];
   if (!errors.length && !parsed.errors?.some(e => e.code === 'MISSING_CLOSE') && parsed.slug !== slug) {
     // #5966 (W14 P1.7): a well-formed file whose path derives another slug is a legacy render of a slug the
@@ -302,6 +302,12 @@ export function validateReconcileArtifact(value: unknown): ReconcileArtifact {
   for (const conflict of value.conflicts as unknown[]) strictReconcileKeys(conflict, ['path', 'file', 'database']);
   for (const withdrawal of value.preimages.database.withdrawals as unknown[]) strictReconcileKeys(withdrawal, ['visibility', 'fact_hash', 'withdrawn_at', 'purged'], ['visibility', 'fact_hash', 'withdrawn_at']);
   return JSON.parse(stableJson(value)) as ReconcileArtifact;
+}
+
+/** Aligns a canonical file's parse with what its import over `stored` keeps (#1035, #5521): without an explicit `type:`, the stored type and with it the stored subtype. */
+export function alignWithStored(parsed: ParsedMarkdown, inferred: boolean, stored: Pick<ParsedMarkdown, 'type'> & { frontmatter?: Record<string, unknown> | null }): void {
+  if (inferred || !parsed.typeExplicit) parsed.type = stored.type;
+  resolveParsedSubtype(parsed, stored);
 }
 
 /**

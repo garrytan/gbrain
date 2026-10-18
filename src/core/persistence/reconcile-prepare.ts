@@ -21,7 +21,7 @@ import { preserveProtectedTakes } from './protected-takes.ts';
 import { digest, sha256 } from './digest.ts';
 import { mergeReconcile, reconcileCanonical, type ReconcileDecision } from './reconcile-merge.ts';
 import { stabilizeSafetyAssessments } from './reconcile-safety.ts';
-import { ABSENT_FILE_HASH, assertReconcilePins, readReconcileState, reconcileFileReading, reconcileReadOptions, staleReconcile, validateReconcileArtifact, type ReconcileState } from './reconcile-state.ts';
+import { ABSENT_FILE_HASH, alignWithStored, assertReconcilePins, readReconcileState, reconcileFileReading, reconcileReadOptions, staleReconcile, validateReconcileArtifact, type ReconcileState } from './reconcile-state.ts';
 import { verifyReconcileBackup } from './reconcile-backup.ts';
 import { assertAutoDecisions } from './reconcile-additive.ts';
 import { bindOrigin } from './origin-guard.ts';
@@ -169,7 +169,7 @@ export async function prepareReconcileMutation(engine: BrainEngine, row: WriteRe
       const scanStateTransferred = final ? await transferLegacyAtomPageState(tx, state.snapshot, final) : false;
       const reading = reconcileFileReading(readFileSync(state.path, 'utf8'), state.importPath, final?.page ?? state.snapshot.page);
       const file = parseMarkdown(reading.content, row.slug);
-      if (reading.inferred && final) file.type = final.page.type;
+      if (final) alignWithStored(file, reading.inferred, final.page);
       if (!sameCanonicalImport(final, prepared.result) || digest(reconcileCanonical(file, file.tags)) !== artifact.result_digest) {
         throw opError('storage_error', 'Reconciliation canonical readback did not match the reviewed result.',
           `After publishing, ${row.slug} in source ${row.source_id} read back differently from the reviewed result, so the database change rolled back and the owner's recovery restores the file. Inspect request ${row.request_id}'s receipt before anything else and do not apply the preview again until it is terminal.`,
