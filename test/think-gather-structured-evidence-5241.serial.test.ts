@@ -17,7 +17,7 @@ mock.module('../src/core/page-window/bounded-lead.ts', () => ({
 const { runGather } = await import('../src/core/think/gather.ts');
 const day = '2026-07-18T12:00:00.000Z';
 const window = { startMs: Date.parse('2026-07-01'), endMs: Date.parse('2026-07-31') };
-const hit = (slug: string, source_id = 'default', dated = false): SearchResult => ({ slug, source_id, title: slug, type: 'note', chunk_text: 'synthetic', score: 1, stale: false, chunk_id: 0, chunk_index: 0, chunk_source: 'compiled_truth', effective_date: dated ? day : null });
+const hit = (slug: string, source_id = 'default', dated = false): SearchResult => ({ slug, page_id: 0, source_id, title: slug, type: 'note', chunk_text: 'synthetic', score: 1, stale: false, chunk_id: 0, chunk_index: 0, chunk_source: 'compiled_truth', effective_date: dated ? day : null });
 const page = (slug: string, source_id = 'default'): Page => ({ slug, source_id, id: 1, title: slug, type: 'note', compiled_truth: 'synthetic', effective_date: new Date(day) } as Page);
 const engine = {
  listPages: async (opts: unknown) => { seenFloor = opts; if (failFloor) throw new Error('synthetic unavailable'); return floor; },
