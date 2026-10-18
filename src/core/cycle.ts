@@ -3144,7 +3144,7 @@ async function runCycleUnscoped(
   // autopilot's per-source freshness gate next tick. Skipped when:
   //   - opts.sourceId is unset (legacy callers — autopilot still here)
   //   - engine is null (no-DB path)
-  //   - status is 'failed' or 'skipped' (don't mark a non-run as fresh)
+  //   - status is 'failed'/'skipped' (a non-run is not fresh) or a freshness phase hard-failed (cycle/source-freshness.ts)
   //   - dryRun (writes are out of scope)
   //
   // #3504: the write is still best-effort in the sense that it never throws out
@@ -3154,10 +3154,9 @@ async function runCycleUnscoped(
   // "done" stamp stops claiming it finished. The cost of writing the wrong
   // timestamp post-failure is still higher than missing a successful write, so
   // the stamp itself is unchanged — only the reporting is.
-  // A hard-failed freshness phase withholds the stamp even on 'partial' (cycle/source-freshness.ts).
   let stampWriteFailed: { source_id: string; error: string } | undefined;
   const stampDecision = decideSourceStamp({ sourceId: opts.sourceId, phaseCount: phases.length, hasEngine: !!engine, dryRun, aborted, status, phaseResults });
-  if (stampDecision.stamp && opts.sourceId && engine) {
+  if (stampDecision.stamp && !aborted && opts.sourceId && engine) {
     try {
       const nowIso = new Date().toISOString();
       // #2194 fix #3 (the cycle split): `last_source_cycle_at` is the NEW gate
