@@ -1,3 +1,4 @@
+import { extractionWrite } from '../extract-watermark.ts';
 import type { BrainEngine } from '../engine.ts';
 import { effectiveLinkExtractorWatermark } from '../link-extraction-watermark.ts';
 import { isQuarantined } from '../quarantine.ts';
@@ -101,7 +102,7 @@ export async function extractManagedStaleLinks(engine: BrainEngine,
     if (!snapshot || isQuarantined(snapshot.page.frontmatter)) return;
     const prepared = await prepareAutomaticLinks(settings, slug, snapshot.page, sourceId);
     const canonical = await storedCanonicalTimeline(engine, snapshot.page, slug);
-    const outcome = await engine.transaction(async tx => withCoordinatedWrite(tx, [sourceId], async () => {
+    const outcome = await extractionWrite('links', 1, [{ slug, source_id: sourceId }], () => engine.transaction(async tx => withCoordinatedWrite(tx, [sourceId], async () => {
       await tx.lockPageKeys(prepared.pageKeys);
       const current = await tx.readPageSnapshot(slug, { sourceId });
       if (current?.revision !== snapshot.revision) return null;
@@ -117,7 +118,7 @@ export async function extractManagedStaleLinks(engine: BrainEngine,
       const at = stamp ?? new Date().toISOString();
       await tx.markPagesExtractedBatch([{ slug, source_id: sourceId, extractedAt: at }], at);
       return { ...written, timeline: added };
-    }, attribution));
+    }, attribution)));
     if (!outcome) { result.skipped++; return; }
     result.pages++;
     result.created += outcome.created;

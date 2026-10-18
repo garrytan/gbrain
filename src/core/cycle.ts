@@ -1443,6 +1443,7 @@ async function runPhaseExtract(
         staleRemaining: drained.staleRemaining, ...(drained.mentions ? { mention_pages: drained.mentions.pages, mention_links_created: drained.mentions.created, mention_due: drained.mentions.remaining, mention_state: drained.mentions.state } : {}),
       };
     } catch (e) {
+      if ((e as { code?: unknown })?.code === 'EXTRACT_BATCH_WRITE_FAILED') throw e;
       staleDetails = { stale_drain_error: e instanceof Error ? e.message : String(e) };
     }
     const { sweepStaleRelationships } = await import('./link-relationships.ts');
@@ -3135,7 +3136,7 @@ async function runCycleUnscoped(
   // autopilot's per-source freshness gate next tick. Skipped when:
   //   - opts.sourceId is unset (legacy callers — autopilot still here)
   //   - engine is null (no-DB path)
-  //   - status is 'failed' or 'skipped' (don't mark a non-run as fresh)
+  //   - failed/skipped or fail-bearing partial (warn-only partial still stamps)
   //   - dryRun (writes are out of scope)
   //
   // #3504: the write is still best-effort in the sense that it never throws out
@@ -3146,7 +3147,7 @@ async function runCycleUnscoped(
   // timestamp post-failure is still higher than missing a successful write, so
   // the stamp itself is unchanged — only the reporting is.
   let stampWriteFailed: { source_id: string; error: string } | undefined;
-  if (opts.sourceId && phases.length > 0 && engine && !dryRun && !aborted && (status === 'ok' || status === 'clean' || status === 'partial')) {
+  if (opts.sourceId && phases.length > 0 && engine && !dryRun && !aborted && (status === 'ok' || status === 'clean' || (status === 'partial' && !phaseResults.some(p => p.status === 'fail')))) {
     try {
       const nowIso = new Date().toISOString();
       // #2194 fix #3 (the cycle split): `last_source_cycle_at` is the NEW gate

@@ -53,6 +53,7 @@ import { effectiveLinkExtractorWatermark, linkExtractorWatermarkFor } from '../c
 import { concurrentWriteSkipLine, replaceDerivedLinksBatchOrReplay, replaceDerivedLinksDeferringConflicts, settingsChangedSkipLine, type DerivedLinkBatchItem } from '../core/derived-links.ts';
 import { pageSnapshotKey } from '../core/page-snapshot-batch.ts';
 import type { PageSnapshot } from '../core/page-state/types.ts';
+import { ExtractBatchWriteError, batchFailure, timelineSnapshotRefs, withoutFailedRefs, extractionWrite, type ExtractBatchFailure } from '../core/extract-watermark.ts';
 export { reconcileSourceLinks, type SourceLinkReconciliationResult } from '../core/link-reconciliation.ts';
 export { extractMarkdownLinks } from '../core/link-extraction.ts';
 import {
@@ -800,6 +801,7 @@ export async function runExtractCore(engine: BrainEngine, opts: ExtractOpts): Pr
     return result;
   }
 
+  const failures: ExtractBatchFailure[] = [];
   // Full walk path: CLI `gbrain extract` or first-run.
   //
   // #3957 review (D4): snapshot the walked pages' updated_at BEFORE the walk
@@ -816,6 +818,7 @@ export async function runExtractCore(engine: BrainEngine, opts: ExtractOpts): Pr
     const r = await extractLinksFromDir(engine, opts.dir, dryRun, jsonMode, workers, opts.signal, opts.sourceId, quiet);
     result.links_created = r.created;
     result.pages_processed = r.pages;
+    failures.push(...r.failures);
     const processed = new Set(r.processed);
     stampRefs = stampRefs.filter(ref => processed.has(ref.slug));
   }
@@ -823,6 +826,9 @@ export async function runExtractCore(engine: BrainEngine, opts: ExtractOpts): Pr
     const r = await extractTimelineFromDir(engine, opts.dir, dryRun, jsonMode, workers, opts.signal, opts.sourceId, quiet);
     result.timeline_entries_created = r.created;
     result.pages_processed = Math.max(result.pages_processed, r.pages);
+    failures.push(...r.failures);
+    const processed = new Set(r.processed);
+    stampRefs = stampRefs.filter(ref => processed.has(ref.slug));
   }
 
   // #3957: stamp the links_extracted_at watermark for the walked pages —
@@ -834,12 +840,14 @@ export async function runExtractCore(engine: BrainEngine, opts: ExtractOpts): Pr
   // source id + the row's pre-read updated_at (D4); files with no pages row
   // at snapshot time are skipped (nothing to stamp — they stay visible to
   // `extract --stale` once synced).
+  stampRefs = withoutFailedRefs(stampRefs, failures);
   if (!dryRun && opts.mode === 'all' && !isAborted(opts.signal)) {
     for (let i = 0; i < stampRefs.length; i += BATCH_SIZE) {
       await stampExtracted(engine, stampRefs.slice(i, i + BATCH_SIZE));
     }
   }
 
+  if (failures.length) throw new ExtractBatchWriteError(failures);
   return result;
 }
 
@@ -1337,6 +1345,7 @@ async function extractForSlugs(
   // Embedded callers own the report: nothing on stdout (see ExtractOpts.quiet).
   quiet: boolean = false,
 ): Promise<{ links_created: number; timeline_created: number; pages: number }> {
+  const failures: ExtractBatchFailure[] = [];
   const stdoutQuiet = jsonMode || quiet;
   // Build the full slug set for link resolution (fast: just readdir, no file reads)
   const allFiles = walkMarkdownFiles(brainDir);
@@ -1389,6 +1398,7 @@ async function extractForSlugs(
     try {
       return await replacePageFileLinks(engine, slug, sourceId ?? 'default', links, includeFrontmatter, owner) ?? 0;
     } catch (e) {
+      failures.push(batchFailure('links', links.length, [{ slug, source_id: sourceId ?? 'default' }], e));
       const msg = e instanceof Error ? e.message : String(e);
       if (jsonMode) {
         process.stderr.write(JSON.stringify({ event: 'batch_error', size: links.length, error: msg }) + '\n');
@@ -1406,6 +1416,7 @@ async function extractForSlugs(
     try {
       timelineCreated += await addProjectedTimelineBatch(engine, snapshot, { auditSite: 'extract.timeline_inc' });
     } catch (e) {
+      failures.push(batchFailure('timeline', snapshot.length, timelineSnapshotRefs(snapshot), e));
       const msg = e instanceof Error ? e.message : String(e);
       if (jsonMode) {
         process.stderr.write(JSON.stringify({ event: 'batch_error', size: snapshot.length, error: msg }) + '\n');
@@ -1450,7 +1461,7 @@ async function extractForSlugs(
             let written: number | null | undefined;
             if (snapshot?.page.type === 'meeting' || ownership.origins.has(slug) || links.some(link => link.link_type === 'attended' && link.origin_slug === slug && link.to_slug === slug)) {
               if (!snapshot) throw new Error('Link extraction origin is missing');
-              written = await replaceFileLinks(engine, slug, sourceId ?? 'default', links, includeFrontmatter, snapshot, ownership, content, { pack, globalBasename });
+              written = await extractionWrite('links', links.length, [{ slug, source_id: sourceId ?? 'default' }], () => replaceFileLinks(engine, slug, sourceId ?? 'default', links, includeFrontmatter, snapshot!, ownership!, content, { pack, globalBasename }));
               if (written === null) return;
             }
             linksCreated += written ?? await replaceLinksReportingLoss(slug, links, ownership);
@@ -1473,7 +1484,9 @@ async function extractForSlugs(
 
         pagesProcessed++;
         if (!dryRun) processedRefs.push({ slug, source_id: sourceId ?? 'default' });
-      } catch { /* skip unreadable */ }
+      } catch (error) {
+        if ((error as { code?: unknown })?.code === 'EXTRACT_BATCH_WRITE_FAILED') failures.push(...(error as ExtractBatchWriteError).failures);
+      }
       progress.tick(1);
     },
   });
@@ -1486,7 +1499,7 @@ async function extractForSlugs(
   // with the pre-read updated_at snapshot (D4) — refs the snapshot never
   // saw (row created mid-run) are skipped and stay stale.
   if (!dryRun && mode === 'all') {
-    await stampExtracted(engine, refsWithSnapshotStamps(processedRefs, stampSnapshot));
+    await stampExtracted(engine, refsWithSnapshotStamps(withoutFailedRefs(processedRefs, failures), stampSnapshot));
   }
   progress.finish();
 
@@ -1495,6 +1508,7 @@ async function extractForSlugs(
     console.log(`Incremental extract: ${label} ${linksCreated} link(s), ${timelineCreated} timeline entries from ${pagesProcessed}/${slugs.length} page(s)`);
   }
 
+  if (failures.length) throw new ExtractBatchWriteError(failures);
   return { links_created: linksCreated, timeline_created: timelineCreated, pages: pagesProcessed };
 }
 
@@ -1507,7 +1521,7 @@ async function extractLinksFromDir(
   sourceId?: string,
   // Embedded callers own the report: nothing on stdout (see ExtractOpts.quiet).
   quiet: boolean = false,
-): Promise<{ created: number; pages: number; processed: string[] }> {
+): Promise<{ created: number; pages: number; processed: string[]; failures: ExtractBatchFailure[] }> {
   const stdoutQuiet = jsonMode || quiet;
   const files = walkMarkdownFiles(brainDir);
   const allSlugs = new Set(files.map(f => pathToSlug(f.relPath)));
@@ -1523,6 +1537,7 @@ async function extractLinksFromDir(
   const pageTypes = loadFsPageTypes(files, pack);
   const ownership = dryRun ? undefined : await fileLinkOwnership(engine, sourceId ?? 'default');
   const processed: string[] = [];
+  const failures: ExtractBatchFailure[] = [];
 
   // Progress stream on stderr (separate from the action-events --json writes
   // to stdout, which tests grep for). Rate-gated; respects global --quiet /
@@ -1544,6 +1559,7 @@ async function extractLinksFromDir(
       // #1972: bail before this file on abort; each page's links are replaced in its own transaction.
       if (isAborted(signal)) return;
       if (quarantined.has(pathToSlug(file.relPath))) return;
+      let writing = false;
       try {
         const slug = pathToSlug(file.relPath);
         const snapshot = ownership && (ownership.metadata.get(`${sourceId ?? 'default'}\0${slug}`)?.type === 'meeting' || ownership.origins.has(slug))
@@ -1551,6 +1567,7 @@ async function extractLinksFromDir(
         const content = readFileSync(file.path, 'utf-8');
         const links = await extractLinksFromFile(content, file.relPath, allSlugs, { globalBasename, pack, pageTypes });
         if (ownership) {
+          writing = true;
           let written: number | null | undefined;
           if (snapshot?.page.type === 'meeting' || ownership.origins.has(slug) || links.some(link => link.link_type === 'attended' && link.origin_slug === slug && link.to_slug === slug)) {
             if (!snapshot) throw new Error('Link extraction origin is missing');
@@ -1569,7 +1586,9 @@ async function extractLinksFromDir(
           created++;
         }
         processed.push(slug);
-      } catch { /* skip unreadable */ }
+      } catch (error) {
+        if (writing) failures.push(batchFailure('links', 0, [{ slug: pathToSlug(file.relPath), source_id: sourceId ?? 'default' }], error));
+      }
       progress.tick(1);
     },
   });
@@ -1579,7 +1598,7 @@ async function extractLinksFromDir(
     const label = dryRun ? '(dry run) would create' : 'created';
     console.log(`Links: ${label} ${created} from ${files.length} pages`);
   }
-  return { created, pages: files.length, processed };
+  return { created, pages: files.length, processed, failures };
 }
 
 async function extractTimelineFromDir(
@@ -1592,7 +1611,9 @@ async function extractTimelineFromDir(
   sourceId?: string,
   // Embedded callers own the report: nothing on stdout (see ExtractOpts.quiet).
   quiet: boolean = false,
-): Promise<{ created: number; pages: number }> {
+): Promise<{ created: number; pages: number; processed: string[]; failures: ExtractBatchFailure[] }> {
+  const processed: string[] = [];
+  const failures: ExtractBatchFailure[] = [];
   const stdoutQuiet = jsonMode || quiet;
   const files = walkMarkdownFiles(brainDir);
   const quarantined = await quarantinedSlugs(engine, sourceId ?? 'default');
@@ -1612,6 +1633,7 @@ async function extractTimelineFromDir(
     try {
       created += await addProjectedTimelineBatch(engine, snapshot, { auditSite: 'extract.timeline_fs' });
     } catch (e) {
+      failures.push(batchFailure('timeline', snapshot.length, timelineSnapshotRefs(snapshot), e));
       const msg = e instanceof Error ? e.message : String(e);
       if (jsonMode) {
         process.stderr.write(JSON.stringify({ event: 'batch_error', size: snapshot.length, error: msg }) + '\n');
@@ -1646,7 +1668,8 @@ async function extractTimelineFromDir(
             if (batch.length >= BATCH_SIZE) await flush();
           }
         }
-      } catch { /* skip unreadable */ }
+        processed.push(slug);
+      } catch { /* unreadable or uncompleted pages remain due */ }
       progress.tick(1);
     },
   });
@@ -1657,7 +1680,7 @@ async function extractTimelineFromDir(
     const label = dryRun ? '(dry run) would create' : 'created';
     console.log(`Timeline: ${label} ${created} entries from ${files.length} pages`);
   }
-  return { created, pages: files.length };
+  return { created, pages: files.length, processed, failures };
 }
 
 // --- Sync integration hooks ---
@@ -2202,11 +2225,11 @@ export async function extractStaleFromDB(
     const attendanceBlocked: Array<{ slug: string; source_id: string; revision: string }> = [];
     const flushBatch = async () => {
       for (let i = 0; i < timelineRows.length; i += BATCH_SIZE) {
-        timelineCreated += await addProjectedTimelineBatch(engine, timelineRows.slice(i, i + BATCH_SIZE), { auditSite: 'extract.stale' });
+        timelineCreated += await extractionWrite('timeline', timelineRows.slice(i, i + BATCH_SIZE).length, timelineSnapshotRefs(timelineRows.slice(i, i + BATCH_SIZE)), () => addProjectedTimelineBatch(engine, timelineRows.slice(i, i + BATCH_SIZE), { auditSite: 'extract.stale' }));
       }
       // Stamp LAST, directly (not the swallowing stampExtracted) so a stamp
       // failure surfaces instead of looping forever.
-      await engine.markPagesExtractedBatch(processedRefs, new Date().toISOString());
+      await extractionWrite('stamp', processedRefs.length, processedRefs, () => engine.markPagesExtractedBatch(processedRefs, new Date().toISOString()));
       await engine.markPagesAttendanceBlocked(attendanceBlocked);
     };
 
@@ -2260,13 +2283,13 @@ export async function extractStaleFromDB(
           wanted: { producers: includeFrontmatter ? ['body', 'frontmatter'] as const : ['body'] as const, rows: wanted },
           ...(extracted.temporalBody ? { temporalBody: extracted.temporalBody } : {}) };
         const stampIso = page.updated_at.getTime() >= Date.parse(versionTs) ? page.updated_at_iso : versionTs;
-        const written = await replaceDerivedLinksDeferringConflicts(engine, origin, linkRows, linkOpts);
+        const written = await extractionWrite('links', linkRows.length, [{ slug: page.slug, source_id: page.source_id }], () => replaceDerivedLinksDeferringConflicts(engine, origin, linkRows, linkOpts));
         // Settings moved, or a concurrent writer moved the page or an endpoint (#6272): not stamped, re-extracts next run.
         if (written === 'settings_changed') { skippedChanged++; continue; }
         if (written === 'concurrent_write') { skippedConcurrentWrite++; continue; }
         linksCreated += written.created;
         const timelineText = fullContent ?? await segmentedTimelineText(engine, snapshot.page);
-        await retractRemovedTimelineEntries(engine, page.slug, page.source_id, timelineText);
+        await extractionWrite('timeline', 0, [{ slug: page.slug, source_id: page.source_id }], () => retractRemovedTimelineEntries(engine, page.slug, page.source_id, timelineText));
         for (const entry of typeof timelineText === 'string' ? parseTimelineEntries(timelineText) : timelineText.entries) {
           // #3957: carry the parsed source label — omitting it wrote source=''
           // while the FS path wrote the split label, so the same bullet
@@ -2298,7 +2321,10 @@ export async function extractStaleFromDB(
       // S4 (#6228): links and timeline both ran for every page in
       // processedRefs, so keep them before rethrowing; the next run resumes at
       // the failing page instead of redoing (and re-failing) the whole batch.
-      await flushBatch().catch(() => { /* the original error is the one to report */ });
+      try { await flushBatch(); } catch (flushError) {
+        // A partial-drain read error must not hide a second, failed write.
+        if ((flushError as { code?: unknown })?.code === 'EXTRACT_BATCH_WRITE_FAILED') throw flushError;
+      }
       throw error;
     }
     await flushBatch();

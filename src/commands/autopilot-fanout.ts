@@ -58,7 +58,7 @@ const FAILURE_COOLDOWN_BASE_MIN = 10;
 const FAILURE_COOLDOWN_CAP_MIN = 120;
 const FAILURE_COOLDOWN_EXP_CAP = 4; // 2^4 = 16× base before the cap clamps
 
-/** Recent-failure record for one source (from minion_jobs dead/failed rows). */
+/** Recent failures include completed cycles carrying a failed phase. */
 export interface SourceFailure { count: number; lastFailedAt: Date; }
 
 /** Resolved cooldown knobs. baseMin <= 0 means the cooldown is disabled. */
@@ -308,7 +308,8 @@ export async function readRecentSourceFailures(
               max(finished_at) AS last_failed_at
          FROM minion_jobs
         WHERE name = 'autopilot-cycle'
-          AND status IN ('dead','failed')
+          AND (status IN ('dead','failed')
+               OR (status = 'completed' AND result->'report'->'phases' @> '[{"status":"fail"}]'::jsonb))
           AND data->>'source_id' IS NOT NULL
           AND finished_at IS NOT NULL
           AND finished_at > $1`;
