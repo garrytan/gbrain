@@ -58,6 +58,17 @@ afterAll(async () => {
 });
 
 describe('journaled memory publication, both engines', () => {
+  test('entity page requirement defaults off and preserves unresolved named saves', async () => {
+    for (const engine of engines) {
+      expect(await engine.getConfig('facts.require_entity_page')).toBeNull();
+      const result = await submitRememberMutation(context(engine), {
+        entity: 'Unregistered Default Fixture', fact: 'Default fixture identifier DEF456', provenance: 'synthetic regression',
+      });
+      expect(result).toMatchObject({ state: 'committed', entity_slug: 'unregistered-default-fixture' });
+      expect(await engine.readPageSnapshot('unregistered-default-fixture', { sourceId })).toBeNull();
+    }
+  });
+
   test('required entity page rejects unresolved names before saving any fact or request', async () => {
     for (const engine of engines) {
       await engine.setConfig('facts.require_entity_page', 'true');
@@ -67,7 +78,7 @@ describe('journaled memory publication, both engines', () => {
           const fact = `Fixture identifier ${requestId}`;
           await expect(submitRememberMutation(context(engine, remote), {
             entity, fact, provenance: 'synthetic regression', request_id: requestId,
-          })).rejects.toMatchObject({ code: 'invalid_params' });
+          })).rejects.toMatchObject({ code: 'invalid_params', message: expect.stringContaining('entity_page_required') });
           expect(await engine.executeRaw('SELECT id FROM facts WHERE source_id=$1 AND fact=$2', [sourceId, fact])).toHaveLength(0);
           expect(await engine.executeRaw('SELECT id FROM persistence_requests WHERE request_id=$1', [requestId])).toHaveLength(0);
         }
@@ -85,6 +96,10 @@ describe('journaled memory publication, both engines', () => {
         const result = await submitRememberMutation(context(engine), { entity: slug, fact, provenance: 'synthetic regression' });
         expect(result).toMatchObject({ state: 'committed', entity_slug: slug });
         expect((await engine.readPageSnapshot(slug, { sourceId }))!.page.compiled_truth).toContain(fact);
+        const resolved = await submitRememberMutation(context(engine), {
+          entity: 'registered-fixture', fact: 'Registered fixture name resolves to its canonical page', provenance: 'synthetic regression',
+        });
+        expect(resolved).toMatchObject({ state: 'committed', entity_slug: slug });
         const subjectless = await submitRememberMutation(context(engine), {
           fact: 'Synthetic general observation with no named subject', provenance: 'synthetic regression', infer_entity: false,
         });
